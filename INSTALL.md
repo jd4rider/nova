@@ -52,7 +52,7 @@ xcode-select --install
 
 ## macOS DMG
 
-**[Download Nova Studio 0.1.0 for macOS arm64](https://github.com/jd4rider/nova/releases/download/v0.1.0/Nova-Studio-0.1.0-arm64.dmg)** (115 MB)
+**[Download Nova Studio 0.1.0 for macOS arm64](https://github.com/jd4rider/nova/releases/download/v0.1.0/Nova-Studio-0.1.0-arm64.dmg)** (114 MB)
 
 1. Open the DMG.
 2. Drag **Nova Studio** into **Applications**.
@@ -61,6 +61,8 @@ xcode-select --install
 ```sh
 xattr -dr com.apple.quarantine "/Applications/Nova Studio.app"
 ```
+
+The macOS app is ad-hoc signed after packaging, so its bundle signature is valid and macOS 14+ no longer reports it as **damaged**. It is still not Developer ID signed or notarized, so the first launch shows the unidentified-developer prompt. If you downloaded the DMG before 23 November 2026, delete it and download again — that build had a linker-only signature and failed with *“Nova Studio is damaged and can’t be opened.”*
 
 The DMG installs Studio only. Install the language with Homebrew or from source:
 
@@ -169,13 +171,14 @@ Get-FileHash .\Nova-Studio-0.1.0-x64-setup.exe -Algorithm SHA256
 Current preview hashes:
 
 ```text
-6c0deeabb5b719b2ca51dfad46508959a3b585ce75b50f47729f30fb9b4cb589  Nova-Studio-0.1.0-arm64.dmg
+4a89c3fed642b1f6e80474cc6f60970ed606e9dacae8c0f5ee99ef9c8c7dae91  Nova-Studio-0.1.0-arm64.dmg
+4336156c5ab8c8c492cfcab4657e9b8855b924f74fb7807466c8a6f8d35bab92  Nova-Studio-0.1.0-arm64.zip
 72db666b7db6d41ea1ffae6e6cd91e27d658bfbf4e4d97c3896a76fa01dec0b4  Nova-Studio-0.1.0-x64-setup.exe
 03ad1c66644b90837ce5b44fb9fbb375ae7164d4be28851d041bdea0f367c067  nova-0.1.0-aarch64-apple-darwin.tar.gz
 4ac85913627459c5dc9a10dcfbd40f09487cf59ed9069a521e3204cd13f4381a  nova-language-0.1.0.vsix
 ```
 
-The Windows executable and macOS app are **not Authenticode/Developer ID signed**. Do not treat checksums as a substitute for code signing.
+The Windows executable and macOS app are **not Authenticode/Developer ID signed**. The macOS app does carry a valid ad-hoc bundle signature, which is what keeps macOS from calling it damaged; that is not notarization. Do not treat checksums as a substitute for code signing.
 
 ## Uninstall
 

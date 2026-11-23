@@ -1,6 +1,6 @@
 cask "nova-studio" do
   version "0.1.0"
-  sha256 "6c0deeabb5b719b2ca51dfad46508959a3b585ce75b50f47729f30fb9b4cb589"
+  sha256 "4a89c3fed642b1f6e80474cc6f60970ed606e9dacae8c0f5ee99ef9c8c7dae91"
 
   url "https://github.com/jd4rider/nova/releases/download/v#{version}/Nova-Studio-#{version}-arm64.dmg"
   name "Nova Studio"

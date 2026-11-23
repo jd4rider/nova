@@ -47,6 +47,12 @@ jobs:
           npm run dist:mac
           npm run dist:win
 
+      - name: Verify macOS bundle signature
+        run: |
+          app="editor/release/mac-arm64/Nova Studio.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -dv "$app" 2>&1 | grep "Sealed Resources version="
+
       - name: Build CLI archive and source archive
         run: |
           version="${GITHUB_REF_NAME#v}"

@@ -33,7 +33,7 @@ The tap is [jd4rider/homebrew-tap](https://github.com/jd4rider/homebrew-tap). It
 
 ### Direct installers
 
-- [Nova Studio v0.1.0 macOS arm64 DMG](https://github.com/jd4rider/nova/releases/download/v0.1.0/Nova-Studio-0.1.0-arm64.dmg) (115 MB)
+- [Nova Studio v0.1.0 macOS arm64 DMG](https://github.com/jd4rider/nova/releases/download/v0.1.0/Nova-Studio-0.1.0-arm64.dmg) (114 MB)
 - [Nova Studio v0.1.0 Windows x64 NSIS EXE](https://github.com/jd4rider/nova/releases/download/v0.1.0/Nova-Studio-0.1.0-x64-setup.exe) (94 MB)
 - [macOS arm64 CLI archive](https://github.com/jd4rider/nova/releases/download/v0.1.0/nova-0.1.0-aarch64-apple-darwin.tar.gz)
 - [Nova Language VS Code extension](https://github.com/jd4rider/nova/releases/download/v0.1.0/nova-language-0.1.0.vsix) (309 KB)

@@ -35,7 +35,7 @@ npm run package
 
 ## Signing status
 
-- macOS: unsigned and not notarized. The DMG is an ad-hoc/linker-signed Electron build.
+- macOS: unsigned and not notarized. The bundle is ad-hoc signed after packing (`codesign --sign -`) so its resources are sealed and macOS does not report the app as damaged; it is still not Developer ID signed, so Gatekeeper asks for confirmation on first launch.
 - Windows: unsigned. SmartScreen may warn.
 - VS Code extension: unsigned local VSIX; not published to the Marketplace or Open VSX.
 - No release assets are represented as signed until a real Developer ID/Authenticode pipeline exists.
