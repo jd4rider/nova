@@ -1,0 +1,45 @@
+---
+import SiteLayout from '../layouts/SiteLayout.astro'
+import { links } from '../data/site'
+---
+<SiteLayout title="Security" path="security" description="Nova's current threat model, security boundaries and reporting guidance.">
+  <section class="page-hero">
+    <div class="wrap">
+      <span class="eyebrow">Current model · not hardened</span>
+      <h1>Security boundaries, stated.</h1>
+      <p>Nova Studio isolates the renderer from Node, confines filesystem operations to the workspace and avoids shell concatenation. Workspace trust gating and signed releases are not implemented.</p>
+    </div>
+  </section>
+
+  <section class="section" style="padding-top: 20px;">
+    <div class="wrap grid-2" style="align-items: start;">
+      <div class="prose">
+        <h2>Implemented boundaries</h2>
+        <ul>
+          <li>Electron context isolation and sandbox; Node integration disabled.</li>
+          <li>Preload exposes a narrow typed API; main validates IPC sender and payloads.</li>
+          <li>CSP applied; navigation and new windows denied.</li>
+          <li>Workspace paths resolved, including symlinks, before access checks.</li>
+          <li>Tasks use argv arrays, bounded output and process-group cancellation.</li>
+          <li>No dependency installation on folder open.</li>
+          <li>No repository content sent automatically to FreeBuff or any provider.</li>
+        </ul>
+        <h2>Known gaps</h2>
+        <ul>
+          <li>No workspace trust prompt or extension execution boundary.</li>
+          <li>TOCTOU races remain possible in path checks.</li>
+          <li>No signed updates, release signatures or provenance.</li>
+          <li>No fuzzing/sanitizer evidence for the compiler/runtime.</li>
+          <li>No full dependency audit.</li>
+        </ul>
+      </div>
+      <aside class="card">
+        <div class="kicker">Reporting</div>
+        <h3>Do not disclose publicly</h3>
+        <p>If the repository is public and GitHub private security advisories are enabled, use that channel. Otherwise contact the maintainer who provided this source. Never include credentials, private source or exploit details in a public issue.</p>
+        <div style="margin-top: 16px;"><a class="button" href={links.github} rel="noreferrer">Repository ↗</a></div>
+        <div class="meta">Threat model: docs/threat-model.md</div>
+      </aside>
+    </div>
+  </section>
+</SiteLayout>

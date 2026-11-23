@@ -1,0 +1,77 @@
+---
+import SiteLayout from '../layouts/SiteLayout.astro'
+import Badge from '../components/Badge.astro'
+import { href } from '../lib/url'
+const capabilities = [
+  ['Monaco editor + Nova grammar', 'implemented'],
+  ['Gruvbox Dark, Light and High Contrast', 'implemented'],
+  ['LSP diagnostics, completion, hover, definition, formatting', 'implemented'],
+  ['Explorer, tabs, dirty state, conflict-aware save', 'implemented'],
+  ['Real build/run/check/test tasks', 'implemented'],
+  ['Integrated terminal', 'experimental'],
+  ['Vim mode', 'experimental'],
+  ['Visual effects + synthesized sound', 'experimental'],
+  ['Git, debugger, test explorer, split groups', 'planned'],
+  ['FreeBuff structured chat and inline AI', 'unavailable']
+] as const
+---
+<SiteLayout title="Nova Studio" path="studio" description="The Nova Studio workbench, architecture, implemented features and verification limits.">
+  <section class="page-hero">
+    <div class="wrap">
+      <span class="eyebrow"><span class="status-dot"></span> Electron · Monaco · TypeScript strict</span>
+      <h1>An IDE that speaks<br /><span style="color: var(--yellow)">native.</span></h1>
+      <p>Nova Studio is a standalone workbench for Nova: real language-server diagnostics, real compiler tasks and a keyboard-first editor. It works without AI or a network connection.</p>
+      <div class="hero-actions" style="margin-top: 26px;">
+        <a class="button primary" href={href('install')}>Build Studio</a>
+        <a class="button" href={href('studio/overview/')}>Capabilities and limits</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <p class="notice"><strong>No screenshot is published here.</strong> Studio typechecks and its production bundle builds, but automated GUI interaction has not been completed. Presenting a conceptual mockup as a shipped screenshot would violate this project's evidence rule. The verification gap is tracked on the <a href={href('roadmap')}>roadmap</a>.</p>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head"><div><div class="kicker">Workbench</div><h2>Implemented, experimental, planned.</h2><p class="section-intro">The editor uses Monaco, not a native text engine. That choice buys mature Unicode editing, IME, multi-cursor, accessibility primitives and LSP rendering today.</p></div></div>
+      <div class="grid-3">
+        <article class="card"><div class="card-icon">⌘</div><h3>Keyboard-first</h3><p>Quick open, command palette, tasks, settings, status bar and a Vim mode built on monaco-vim. Partial Vim emulation is labeled as partial.</p><div class="meta">Cmd/Ctrl+P · Cmd/Ctrl+Shift+P</div></article>
+        <article class="card"><div class="card-icon">LSP</div><h3>Native services</h3><p>The Rust language server runs as its own process over stdio. Builds invoke the real nova CLI with argv arrays and show actual output and exit codes.</p><div class="meta">No mocked compiler output</div></article>
+        <article class="card"><div class="card-icon">▣</div><h3>Deliberate AI boundary</h3><p>FreeBuff is available as a dedicated terminal only. The installed CLI has no documented structured chat protocol, so chat, agents and ghost text are disabled rather than faked.</p><div class="meta">See FreeBuff ADR</div></article>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap grid-2" style="align-items: start;">
+      <div>
+        <div class="kicker">Feature ledger</div>
+        <h2 style="font-size: clamp(28px, 3.6vw, 42px); margin-bottom: 18px;">Status without adjectives.</h2>
+        <p class="section-intro">“Implemented” is not “complete.” Missing Git/DAP/test-explorer surfaces and the lack of GUI automation are stated explicitly.</p>
+        <div class="card" style="margin-top: 20px;">
+          <table class="status-table">
+            <thead><tr><th>Capability</th><th>Status</th></tr></thead>
+            <tbody>{capabilities.map(([name, status]) => <tr><td>{name}</td><td><Badge status={status} /></td></tr>)}</tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card">
+        <div class="kicker">Architecture</div>
+        <h3 style="font-size: 24px;">Electron retained on evidence.</h3>
+        <p style="margin-bottom: 14px;">Monaco and Chromium provide the strongest available editor substrate for this milestone. Tauri 2 and fully native Rust candidates were evaluated on paper but not prototyped; they are risks, not rejected forever.</p>
+        <ul class="proof" style="display: grid; gap: 8px;">
+          <li>Context isolation and sandbox on</li>
+          <li>No renderer Node access</li>
+          <li>Workspace-confined file operations</li>
+          <li>argv-based child processes</li>
+        </ul>
+        <div class="meta" style="margin-top: 16px; color: var(--faint); font-family: var(--mono); font-size: 12px;">ADR 0001 · docs/adr/0001-ide-architecture.md</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section"><div class="wrap"><div class="cta"><div><div class="kicker">Run it locally</div><h2>Source build, no fake download button.</h2><p>Studio installers are not published. Build it against your local compiler.</p></div><a class="button primary" href={href('install')}>Installation →</a></div></div></section>
+</SiteLayout>

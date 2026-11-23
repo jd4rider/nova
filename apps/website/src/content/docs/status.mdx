@@ -1,0 +1,26 @@
+---
+title: Status
+description: The central, evidence-backed maturity matrix for Nova and Nova Studio.
+---
+
+This is the public status contract. **Tested** means automated tests pass; **implemented** means it works but lacks a focused automated test; **experimental** means partial; **planned** means not implemented; **unavailable** means a documented external capability is missing. It is generated from `apps/website/src/data/maturity.ts`.
+
+import FeatureTable from '../../components/FeatureTable.astro'
+import MilestoneList from '../../components/MilestoneList.astro'
+
+## Features
+
+<FeatureTable />
+
+## Milestones
+
+<MilestoneList />
+
+## Verification snapshot
+
+- Compiler: `cargo test --workspace` — 69 tests, five consecutive clean runs after the temporary-directory race fix.
+- Editor: `npm run typecheck` and `npm run build` — pass. GUI interaction is not automated.
+- Website: `astro check`, production build, base-path/link verification and checked snippet compilation are CI gates.
+- Deployment: no Git remote or Pages authorization is configured in this workspace, so no public URL is claimed.
+
+Reports of a claimed feature without evidence should be treated as a documentation bug.

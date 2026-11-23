@@ -1,0 +1,19 @@
+---
+import { features } from '../data/maturity'
+import Badge from './Badge.astro'
+---
+<table>
+  <thead>
+    <tr><th>Area</th><th>Status</th><th>Notes</th><th>Evidence</th></tr>
+  </thead>
+  <tbody>
+    {features.map((feature) => (
+      <tr>
+        <td>{feature.area}</td>
+        <td><Badge status={feature.status} /></td>
+        <td>{feature.note}</td>
+        <td><code>{feature.evidence}</code></td>
+      </tr>
+    ))}
+  </tbody>
+</table>

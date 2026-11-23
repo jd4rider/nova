@@ -1,0 +1,67 @@
+---
+import SiteLayout from '../layouts/SiteLayout.astro'
+import { href } from '../lib/url'
+import { links } from '../data/site'
+---
+<SiteLayout title="Install" path="install" description="Build Nova and Nova Studio from source. No signed installers are published yet.">
+  <section class="page-hero">
+    <div class="wrap">
+      <span class="eyebrow"><span class="status-dot"></span> Source installation · macOS arm64 tested</span>
+      <h1>Install Nova.</h1>
+      <p>There are no published installers yet. Build the compiler and Studio from source. The website itself is static and never executes your code.</p>
+    </div>
+  </section>
+
+  <section class="section" style="padding-top: 24px;">
+    <div class="wrap grid-2" style="align-items: start;">
+      <div class="prose" style="max-width: none;">
+        <p class="notice danger"><strong>Release status:</strong> no signed or notarized binaries, no GitHub Release assets and no supported Windows/Linux package. Do not expect a download button to be a real release.</p>
+        <h2>1. Requirements</h2>
+        <ul>
+          <li>Rust stable (tested 1.96) and Cargo</li>
+          <li>Clang on <code>PATH</code> (tested Apple clang 21)</li>
+          <li>Node.js 22.23.4+ and npm for Studio/website</li>
+          <li>macOS arm64 is tested; Linux/Windows are unverified</li>
+        </ul>
+        <h2>2. Build the compiler</h2>
+        <pre><code>git clone https://github.com/jd4rider/nova.git
+cd nova
+cargo build --release -p nova-cli
+export PATH="$PWD/target/release:$PATH"
+nova doctor</code></pre>
+        <h2>3. Compile a program</h2>
+        <pre><code>nova new hello
+cd hello
+nova run
+nova test</code></pre>
+        <h2>4. Build Studio</h2>
+        <pre><code>cd ../editor
+npm install --cache /tmp/nova-npm-cache
+npm run typecheck
+npm run build
+NOVA_BIN="$PWD/../target/release/nova" npm run dev</code></pre>
+        <p>If npm blocks Electron's installer, run <code>node node_modules/electron/install.js</code>. Without <code>node-pty</code> the terminal reports pipe mode; FreeBuff requires a PTY.</p>
+        <h2>5. Verify</h2>
+        <pre><code>nova doctor</code></pre>
+        <p>Report its full output when asking for help. See <a href={href('getting-started/troubleshooting/')}>troubleshooting</a>.</p>
+      </div>
+      <aside class="card">
+        <div class="kicker">Platform matrix</div>
+        <table class="status-table">
+          <thead><tr><th>Platform</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr><td>macOS arm64</td><td><span class="badge tested">tested</span></td></tr>
+            <tr><td>macOS x64</td><td><span class="badge planned">untested</span></td></tr>
+            <tr><td>Windows x64</td><td><span class="badge planned">untested</span></td></tr>
+            <tr><td>Linux x64</td><td><span class="badge planned">untested</span></td></tr>
+            <tr><td>Signed installer</td><td><span class="badge planned">not published</span></td></tr>
+          </tbody>
+        </table>
+        <p class="section-intro" style="font-size: 13px; margin-top: 16px;">Checksums, signing and notarization are not claimed because no release credentials or verified artifacts exist.</p>
+        {links.releases ? <a class="button" href={links.releases} rel="noreferrer">GitHub Releases ↗</a> : <a class="button" href={href('releases')}>Release policy</a>}
+      </aside>
+    </div>
+  </section>
+
+  <section class="section"><div class="wrap"><div class="cta"><div><div class="kicker">Next</div><h2>Compile your first project.</h2><p>Start with the checked hello-world example and the project layout.</p></div><a class="button primary" href={href('getting-started/hello-world/')}>Get started →</a></div></div></section>
+</SiteLayout>

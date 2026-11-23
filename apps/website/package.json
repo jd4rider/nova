@@ -1,0 +1,31 @@
+{
+  "name": "nova-website",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.23.4"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check": "astro check",
+    "lint": "astro check",
+    "test:grammar": "node scripts/verify-grammar.mjs",
+    "test:site": "node scripts/verify-build.mjs",
+    "test:snippets": "node scripts/verify-snippets.mjs",
+    "test": "npm run test:grammar && npm run test:site && npm run test:snippets",
+    "verify": "npm run check && npm run build && npm run test"
+  },
+  "dependencies": {
+    "@astrojs/sitemap": "3.7.6",
+    "@astrojs/starlight": "0.43.1",
+    "astro": "7.4.13",
+    "shiki": "4.6.0"
+  },
+  "devDependencies": {
+    "@astrojs/check": "0.9.12",
+    "typescript": "6.0.3"
+  }
+}

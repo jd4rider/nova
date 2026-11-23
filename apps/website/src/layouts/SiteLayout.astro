@@ -1,0 +1,139 @@
+---
+import '../styles/site.css'
+import { href } from '../lib/url'
+import { links, siteDescription, siteName } from '../data/site'
+
+interface Props {
+  title?: string
+  description?: string
+  path?: string
+}
+const { title, description = siteDescription, path } = Astro.props
+const pageTitle = title ? `${title} — ${siteName}` : `${siteName} — a native language and IDE`
+const canonicalPath = path ?? Astro.url.pathname
+const canonical = new URL(href(canonicalPath.replace(import.meta.env.BASE_URL, '')), Astro.site)
+const ogImage = new URL(href('og.svg'), Astro.site)
+const current = Astro.url.pathname
+const nav = [
+  ['Language', 'language'],
+  ['Studio', 'studio'],
+  ['Docs', 'docs/'],
+  ['Blog', 'blog/'],
+  ['Roadmap', 'roadmap'],
+  ['Install', 'install']
+] as const
+const isCurrent = (target: string) => current === href(target) || (target !== '' && current.startsWith(href(target)))
+---
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{pageTitle}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+    <meta name="theme-color" content="#1d2021" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content={siteName} />
+    <meta property="og:title" content={pageTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={ogImage} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={pageTitle} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImage} />
+    <link rel="icon" href={href('favicon.svg')} type="image/svg+xml" />
+    <link rel="sitemap" href={href('sitemap-index.xml')} />
+    <meta name="generator" content={Astro.generator} />
+    <script is:inline>
+      try {
+        const stored = localStorage.getItem('nova-theme')
+        document.documentElement.dataset.theme =
+          stored || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+      } catch {}
+    </script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <div class="wrap header-inner">
+        <a class="brand" href={href('')} aria-label="Nova home">
+          <span class="brand-mark" aria-hidden="true">N</span>
+          <span>Nova</span>
+        </a>
+        <nav class="nav" aria-label="Main">
+          {nav.map(([label, target]) => (
+            <a href={href(target)} aria-current={isCurrent(target) ? 'page' : undefined}>{label}</a>
+          ))}
+        </nav>
+        <div class="header-actions">
+          <button class="icon-button" type="button" data-theme-toggle aria-label="Toggle color theme" title="Toggle color theme">
+            <span aria-hidden="true">◐</span>
+          </button>
+          <a class="button small ghost github" href={links.github} rel="noreferrer">GitHub <span aria-hidden="true">↗</span></a>
+          <details class="mobile-menu">
+            <summary aria-label="Open menu">Menu</summary>
+            <nav aria-label="Mobile">
+              {nav.map(([label, target]) => <a href={href(target)}>{label}</a>)}
+              <a href={links.github} rel="noreferrer">GitHub ↗</a>
+            </nav>
+          </details>
+        </div>
+      </div>
+    </header>
+
+    <main id="main">
+      <slot />
+    </main>
+
+    <footer class="site-footer">
+      <div class="wrap">
+        <div class="footer-grid">
+          <div>
+            <a class="brand" href={href('')}><span class="brand-mark" aria-hidden="true">N</span><span>Nova</span></a>
+            <p style="max-width: 300px; margin: 12px 0 0;">A native-compiled language and a keyboard-first desktop IDE. Early vertical slice; status is documented, not implied.</p>
+          </div>
+          <div>
+            <h3>Product</h3>
+            <a href={href('language')}>Language</a>
+            <a href={href('studio')}>Nova Studio</a>
+            <a href={href('install')}>Install</a>
+            <a href={href('docs/')}>Documentation</a>
+            <a href={href('blog/')}>Blog</a>
+            <a href={href('website/')}>Website guide</a>
+          </div>
+          <div>
+            <h3>Project</h3>
+            <a href={href('roadmap')}>Roadmap</a>
+            <a href={href('benchmarks')}>Benchmarks</a>
+            <a href={href('releases')}>Releases</a>
+            <a href={href('contribute')}>Contribute</a>
+          </div>
+          <div>
+            <h3>Trust</h3>
+            <a href={href('license')}>License</a>
+            <a href={href('security')}>Security</a>
+            <a href={href('community')}>Community</a>
+            <a href={href('status/')}>Feature status</a>
+          </div>
+        </div>
+        <div class="footer-bottom">
+          <span>© {new Date().getFullYear()} Nova contributors. Names are provisional; licensing is undecided.</span>
+          <span>Built with Rust 🦀, Astro and Starlight · No fabricated benchmarks or AI capabilities.</span>
+        </div>
+      </div>
+    </footer>
+
+    <script is:inline>
+      document.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-theme-toggle]')
+        if (!button) return
+        const root = document.documentElement
+        const next = root.dataset.theme === 'light' ? 'dark' : 'light'
+        root.dataset.theme = next
+        try { localStorage.setItem('nova-theme', next) } catch {}
+      })
+    </script>
+  </body>
+</html>

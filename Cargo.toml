@@ -1,0 +1,47 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/nova-diag",
+    "crates/nova-lexer",
+    "crates/nova-parser",
+    "crates/nova-sema",
+    "crates/nova-runtime",
+    "crates/nova-stdlib",
+    "crates/nova-codegen-llvm",
+    "crates/nova-fmt",
+    "crates/nova-pkg",
+    "crates/nova-lsp",
+    "crates/nova-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jd4rider/nova"
+rust-version = "1.80"
+
+[workspace.dependencies]
+nova-diag = { path = "crates/nova-diag" }
+nova-lexer = { path = "crates/nova-lexer" }
+nova-parser = { path = "crates/nova-parser" }
+nova-sema = { path = "crates/nova-sema" }
+nova-runtime = { path = "crates/nova-runtime" }
+nova-stdlib = { path = "crates/nova-stdlib" }
+nova-codegen-llvm = { path = "crates/nova-codegen-llvm" }
+nova-fmt = { path = "crates/nova-fmt" }
+nova-pkg = { path = "crates/nova-pkg" }
+nova-lsp = { path = "crates/nova-lsp" }
+
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+toml = "0.8"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+
+[profile.dev]
+debug = 1

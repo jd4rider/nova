@@ -1,0 +1,79 @@
+---
+import SiteLayout from '../layouts/SiteLayout.astro'
+import Badge from '../components/Badge.astro'
+import { href } from '../lib/url'
+import { highlightNova } from '../lib/highlight'
+import helloSource from '../../../../examples/hello/src/main.nova?raw'
+
+const code = await highlightNova(helloSource.replace(/\n$/, ''))
+const implemented = [
+  ['Bindings', 'let is immutable, var is mutable; locals infer their type'],
+  ['Types', 'Bool, Int (i64), Float (f64), Char, String, Unit'],
+  ['Aggregates', 'Structs, List<T>, Option<T>, Result<T, E>'],
+  ['Control flow', 'if/else, while, for over ranges and lists, break/continue'],
+  ['Patterns', 'Exhaustive Option/Result matching and destructuring bindings'],
+  ['Checks', 'Checked arithmetic, bounds checks, definite mutability, no implicit conversions']
+]
+const planned = [
+  ['Generics', 'Generic functions and type arguments'],
+  ['Enums & traits', 'Payload enums, impls, trait constraints'],
+  ['Closures', 'First-class functions and captures'],
+  ['Modules', 'User module graph and path imports'],
+  ['Memory', 'Deterministic destruction and reference counting'],
+  ['Concurrency', 'Tasks, channels, cancellation and safe sharing']
+]
+---
+<SiteLayout title="Language" path="language" description="Nova's implemented language subset, semantics and planned features.">
+  <section class="page-hero">
+    <div class="wrap">
+      <span class="eyebrow"><span class="status-dot"></span> Implemented subset · versioned documentation</span>
+      <h1>Small surface.<br /><span style="color: var(--yellow)">Explicit rules.</span></h1>
+      <p>Nova aims for Python-like readability without hidden conversions, implicit truthiness or null. The current compiler implements a deliberately bounded subset; everything else is labeled planned.</p>
+      <div class="hero-actions" style="margin-top: 26px;">
+        <a class="button primary" href={href('language/tour/')}>Read the tour</a>
+        <a class="button" href={href('language/reference/')}>Reference</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap grid-2" style="align-items: center;">
+      <div>
+        <div class="kicker">Syntax with intent</div>
+        <h2 style="font-size: clamp(28px, 3.6vw, 42px); margin-bottom: 12px;">Code you can explain to a reviewer.</h2>
+        <p class="section-intro">Immutable bindings by default. Types at boundaries. No implicit numeric narrowing. Matching is checked for exhaustiveness. Every runnable example on this site is compiled in CI when marked as checked.</p>
+        <ul class="proof" style="margin-top: 20px;">
+          <li>UTF-8 source and strings</li>
+          <li>Checked integer arithmetic</li>
+          <li>No implicit null or truthiness</li>
+          <li>Explicit Result and Option</li>
+        </ul>
+      </div>
+      <div class="code-card">
+        <div class="code-head"><span class="window-dot"></span><span class="window-dot"></span><span class="window-dot"></span><span class="code-file">examples/hello/src/main.nova</span></div>
+        <Fragment set:html={code} />
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head"><div><div class="kicker">Current surface</div><h2>Implemented and checked</h2></div><Badge status="tested" label="69 tests passing" /></div>
+      <div class="grid-3">
+        {implemented.map(([title, body]) => <article class="card"><h3>{title}</h3><p>{body}</p></article>)}
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head"><div><div class="kicker">No pretend syntax</div><h2>Planned, not executable</h2></div><Badge status="planned" label="planned" /></div>
+      <div class="grid-3">
+        {planned.map(([title, body]) => <article class="card"><h3>{title}</h3><p>{body}</p></article>)}
+      </div>
+      <p class="notice" style="margin-top: 18px;"><strong>The compiler rejects unsupported constructs</strong> or reports a diagnostic. If planned syntax appears to compile, treat it as a compiler bug, not a feature.</p>
+    </div>
+  </section>
+
+  <section class="section"><div class="wrap"><div class="cta"><div><div class="kicker">Read the normative subset</div><h2>Grammar, precedence and semantics.</h2><p>The reference distinguishes accepted rules from planned work.</p></div><a class="button primary" href={href('language/reference/')}>Open reference →</a></div></div></section>
+</SiteLayout>

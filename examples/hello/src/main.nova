@@ -1,0 +1,21 @@
+import std.io { println }
+
+struct User {
+    name: String
+    age: Int
+}
+
+fn describe(user: User) -> String {
+    return "${user.name} is ${user.age}"
+}
+
+fn main() {
+    let user = User { name: "Ada", age: 36 }
+    var total = 0
+    for i in 0..4 {
+        total += i
+    }
+    println("Hello, Nova!")
+    println(describe(user))
+    println(total)
+}

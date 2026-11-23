@@ -1,0 +1,6 @@
+---
+import type { Maturity } from '../data/maturity'
+interface Props { status: Maturity | 'done' | 'partial' | 'blocked'; label?: string }
+const { status, label = status } = Astro.props
+---
+<span class={`badge ${status}`}>{label}</span>

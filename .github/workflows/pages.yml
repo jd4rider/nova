@@ -1,0 +1,110 @@
+name: Website and GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Clang
+        run: sudo apt-get update && sudo apt-get install -y clang
+
+      - name: Build compiler for checked snippets
+        run: |
+          cargo build -p nova-cli
+          echo "NOVA_BIN=$GITHUB_WORKSPACE/target/debug/nova" >> "$GITHUB_ENV"
+
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.4
+          cache: npm
+          cache-dependency-path: apps/website/package-lock.json
+
+      - name: Install website dependencies
+        working-directory: apps/website
+        run: npm ci --no-audit --no-fund
+
+      - name: Astro check and lint
+        working-directory: apps/website
+        run: |
+          npm run check
+          npm run lint
+
+      - name: Resolve Pages base path
+        run: |
+          repo="${GITHUB_REPOSITORY#*/}"
+          if [[ "$repo" == *.github.io ]]; then
+            echo "BASE_PATH=/" >> "$GITHUB_ENV"
+          else
+            echo "BASE_PATH=/${repo}/" >> "$GITHUB_ENV"
+          fi
+          echo "SITE_URL=https://${GITHUB_REPOSITORY_OWNER}.github.io" >> "$GITHUB_ENV"
+          echo "PUBLIC_GITHUB_URL=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" >> "$GITHUB_ENV"
+
+      - name: Validate a project base path
+        working-directory: apps/website
+        env:
+          BASE_PATH: /nova/
+          SITE_URL: https://example.github.io
+        run: |
+          npm run build
+          npm run test:site
+
+      - name: Build production site at deployment base
+        working-directory: apps/website
+        run: npm run build
+
+      - name: Verify grammar, links, routes, search and snippets
+        working-directory: apps/website
+        run: |
+          npm run test:grammar
+          npm run test:site
+          npm run test:snippets
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/website/dist
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Report deployment URL
+        run: echo "Deployed to ${{ steps.deployment.outputs.page_url }}"
+
+# Action tags are used rather than unpinned branches. Before a production
+# release, review and pin these official actions to reviewed commit SHAs.

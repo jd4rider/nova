@@ -1,0 +1,27 @@
+---
+import SiteLayout from '../../layouts/SiteLayout.astro'
+import RustCrab from '../../components/RustCrab.astro'
+import { href } from '../../lib/url'
+---
+<SiteLayout title="Blog" path="blog" description="Notes from building Nova, a native-compiled language and IDE written in Rust.">
+  <section class="page-hero">
+    <div class="wrap">
+      <span class="eyebrow"><span class="status-dot"></span> Field notes</span>
+      <h1>Build logs from the<br /><span style="color: var(--yellow)">compiler basement.</span></h1>
+      <p>Short, evidence-first posts about the language, the Rust toolchain and the workbench. No roadmap fiction.</p>
+      <div class="rust-pill" style="margin-top: 22px;"><RustCrab /><span>Written while compiling Rust</span></div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <article class="card blog-card">
+        <div class="kicker">Launch note · November 2026</div>
+        <h2><a href={href('blog/building-nova-in-rust/')}>Nova is a native language with a Rust spine</a></h2>
+        <p class="section-intro">Why the compiler is written in Rust, what a real native pipeline buys us, and the honest list of what Nova still cannot do.</p>
+        <div class="meta">Rust · LLVM · Nova Studio · 9 min read</div>
+        <a class="button" href={href('blog/building-nova-in-rust/')}>Read the post <span aria-hidden="true">→</span></a>
+      </article>
+    </div>
+  </section>
+</SiteLayout>

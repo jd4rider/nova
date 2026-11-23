@@ -1,0 +1,55 @@
+---
+import SiteLayout from '../layouts/SiteLayout.astro'
+import { links } from '../data/site'
+---
+<SiteLayout title="Contribute" path="contribute" description="Contribute to Nova without overstating implementation status.">
+  <section class="page-hero">
+    <div class="wrap">
+      <span class="eyebrow">Evidence over adjectives</span>
+      <h1>Build the missing proof.</h1>
+      <p>Nova needs automated IDE/LSP coverage, language features, benchmarks and release engineering. It does not need placeholder screens or invented capabilities.</p>
+    </div>
+  </section>
+
+  <section class="section" style="padding-top: 20px;">
+    <div class="wrap grid-2" style="align-items: start;">
+      <div class="prose">
+        <h2>Start here</h2>
+        <pre><code>cargo fmt --check
+cargo test --workspace
+
+cd editor
+npm run typecheck
+npm run build
+
+cd ../apps/website
+npm install --cache /tmp/nova-npm-cache
+npm run check
+npm run build
+npm run test</code></pre>
+        <p>The website test compiles every <code>nova check</code> snippet and verifies internal links under the configured base path.</p>
+        <h2>Contribution rules</h2>
+        <ul>
+          <li>Preserve uncommitted work and working code.</li>
+          <li>Record consequential architecture decisions in <code>docs/adr</code>.</li>
+          <li>Do not mark planned features complete or present mock screenshots as shipped UI.</li>
+          <li>Add tests with language changes; update grammar and reference together.</li>
+          <li>Keep compiler and IDE contracts independent.</li>
+        </ul>
+        <a class="button primary" href={links.github} rel="noreferrer">Repository ↗</a>
+      </div>
+      <aside class="card">
+        <div class="kicker">Highest-impact work</div>
+        <h3>Current gaps</h3>
+        <ul class="prose" style="margin: 0; padding-left: 20px;">
+          <li>Playwright Electron smoke tests and real screenshots</li>
+          <li>Incremental LSP sync and cancellation</li>
+          <li>User modules, generics, enums, traits and closures</li>
+          <li>DAP through a real debugger backend</li>
+          <li>Benchmark suite with recorded hardware</li>
+          <li>Signed installers and verified Pages deployment</li>
+        </ul>
+      </aside>
+    </div>
+  </section>
+</SiteLayout>

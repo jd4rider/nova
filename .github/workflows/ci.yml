@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: sudo apt-get update && sudo apt-get install -y clang
+      - run: cargo fmt --check
+      - run: cargo test --workspace
+      - run: cargo run -p nova-cli -- doctor
+
+  editor:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: editor
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: editor/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run build
+
+  website:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y clang
+      - run: cargo build -p nova-cli
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.4
+          cache: npm
+          cache-dependency-path: apps/website/package-lock.json
+      - name: Install website dependencies
+        working-directory: apps/website
+        run: npm ci --no-audit --no-fund
+      - name: Astro check and lint
+        working-directory: apps/website
+        run: |
+          npm run check
+          npm run lint
+      - name: Build at root
+        working-directory: apps/website
+        run: npm run build
+      - name: Verify grammar, links and checked snippets
+        working-directory: apps/website
+        run: |
+          npm run test:grammar
+          npm run test:site
+          npm run test:snippets
+        env:
+          NOVA_BIN: ${{ github.workspace }}/target/debug/nova
+      - name: Build at project base
+        working-directory: apps/website
+        env:
+          BASE_PATH: /nova/
+          SITE_URL: https://example.github.io
+        run: |
+          npm run build
+          npm run test:site

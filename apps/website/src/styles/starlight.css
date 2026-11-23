@@ -1,0 +1,129 @@
+:root {
+  --sl-font: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --sl-font-mono: 'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace;
+  --sl-color-white: #fbf1c7;
+  --sl-color-gray-1: #ebdbb2;
+  --sl-color-gray-2: #d5c4a1;
+  --sl-color-gray-3: #a89984;
+  --sl-color-gray-4: #665c54;
+  --sl-color-gray-5: #3c3836;
+  --sl-color-gray-6: #32302f;
+  --sl-color-black: #282828;
+  --sl-color-bg: #282828;
+  --sl-color-bg-nav: #1d2021;
+  --sl-color-bg-sidebar: #32302f;
+  --sl-color-bg-inline-code: #3c3836;
+  --sl-color-text: #ebdbb2;
+  --sl-color-text-accent: #fabd2f;
+  --sl-color-text-invert: #282828;
+  --sl-color-hairline: #504945;
+  --sl-color-hairline-shade: #3c3836;
+  --sl-color-accent-low: #3c3836;
+  --sl-color-accent: #fabd2f;
+  --sl-color-accent-high: #fbf1c7;
+  --sl-color-blue-low: #32302f;
+  --sl-color-blue: #83a598;
+  --sl-color-blue-high: #c9e3e0;
+  --sl-color-green-low: #32302f;
+  --sl-color-green: #b8bb26;
+  --sl-color-green-high: #e7e9a2;
+  --sl-color-orange-low: #3c3836;
+  --sl-color-orange: #fe8019;
+  --sl-color-orange-high: #ffd5ad;
+  --sl-color-red-low: #3c3836;
+  --sl-color-red: #fb4934;
+  --sl-color-red-high: #ffc9c2;
+  --sl-color-purple-low: #3c3836;
+  --sl-color-purple: #d3869b;
+  --sl-color-purple-high: #f2cdd6;
+}
+
+:root[data-theme='light'] {
+  --sl-color-white: #282828;
+  --sl-color-gray-1: #3c3836;
+  --sl-color-gray-2: #504945;
+  --sl-color-gray-3: #665c54;
+  --sl-color-gray-4: #a89984;
+  --sl-color-gray-5: #d5c4a1;
+  --sl-color-gray-6: #ebdbb2;
+  --sl-color-black: #fbf1c7;
+  --sl-color-bg: #fbf1c7;
+  --sl-color-bg-nav: #f2e5bc;
+  --sl-color-bg-sidebar: #f2e5bc;
+  --sl-color-bg-inline-code: #ebdbb2;
+  --sl-color-text: #3c3836;
+  --sl-color-text-accent: #8f3f00;
+  --sl-color-text-invert: #fbf1c7;
+  --sl-color-hairline: #d5c4a1;
+  --sl-color-hairline-shade: #ebdbb2;
+  --sl-color-accent-low: #ebdbb2;
+  --sl-color-accent: #9d5b00;
+  --sl-color-accent-high: #4b2a00;
+}
+
+.site-title {
+  letter-spacing: 0.02em;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-family: var(--sl-font-mono);
+  border: 1px solid var(--sl-color-hairline);
+  color: var(--sl-color-gray-3);
+  white-space: nowrap;
+}
+.badge.tested, .badge.done { color: #b8bb26; border-color: #6d7020; }
+.badge.implemented { color: #83a598; border-color: #4f6e68; }
+.badge.experimental, .badge.partial { color: #fabd2f; border-color: #7c631c; }
+.badge.unavailable, .badge.blocked { color: #fb4934; border-color: #7c302a; }
+.badge.planned { color: #928374; }
+
+.timeline { display: grid; gap: 12px; margin: 18px 0 28px; }
+.timeline-item {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: start;
+  padding: 14px;
+  background: var(--sl-color-bg-sidebar);
+  border: 1px solid var(--sl-color-hairline);
+  border-radius: 10px;
+}
+.timeline-id {
+  width: 36px; height: 36px; display: grid; place-items: center;
+  border-radius: 8px; background: var(--sl-color-bg); color: var(--sl-color-accent);
+  font-family: var(--sl-font-mono); font-weight: 700;
+}
+.timeline-item h3 { margin: 0 0 3px !important; font-size: 15px; }
+.timeline-item p { margin: 0; color: var(--sl-color-gray-3); font-size: 13px; }
+
+.sl-markdown-content :is(h1, h2, h3) {
+  letter-spacing: -0.02em;
+}
+
+.sl-markdown-content code:not(:where(.not-content *)) {
+  border-radius: 0.25rem;
+}
+
+.sl-markdown-content table {
+  font-size: var(--sl-text-sm);
+}
+
+/* Expressive Code blocks: keep Gruvbox tokens, soften the frame. */
+.expressive-code .frame {
+  border-radius: 0.55rem;
+  box-shadow: 0 12px 40px rgb(0 0 0 / 22%);
+}
+
+.expressive-code .copy button {
+  border-radius: 0.3rem;
+}
+
+:root[data-theme='light'] .expressive-code {
+  --ec-codeBg: #f2e5bc;
+  --ec-codeFg: #3c3836;
+}

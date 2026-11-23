@@ -1,0 +1,52 @@
+---
+import SiteLayout from '../layouts/SiteLayout.astro'
+---
+<SiteLayout title="Benchmarks" path="benchmarks" description="Nova's benchmark methodology and the honest current absence of comparative performance results.">
+  <section class="page-hero">
+    <div class="wrap">
+      <span class="eyebrow">No comparative results yet</span>
+      <h1>Measure, then claim.</h1>
+      <p>Nova has no published Rust/Go/C++/Python benchmark comparison. This page states that plainly and defines the methodology that must be followed before any number appears in marketing.</p>
+    </div>
+  </section>
+
+  <section class="section" style="padding-top: 24px;">
+    <div class="wrap grid-2" style="align-items: start;">
+      <div class="prose">
+        <p class="notice danger"><strong>Do not cite this page as evidence of performance parity.</strong> The compiler is an early vertical slice using a new runtime and checked arithmetic. No representative suite exists.</p>
+        <h2>What is verified</h2>
+        <ul>
+          <li><code>cargo test --workspace</code>: 69 tests passing across lexer, parser, sema, formatter, package, LSP and native codegen.</li>
+          <li>Native executables are built through LLVM/Clang and executed in codegen tests.</li>
+          <li>Studio typecheck and production build pass.</li>
+        </ul>
+        <p>These are correctness/build facts, not throughput or latency measurements.</p>
+        <h2>Required methodology</h2>
+        <ol>
+          <li>Identical algorithms, input sizes, correctness checks and compiler flags across languages.</li>
+          <li>Release builds, documented compiler/runtime versions and hardware.</li>
+          <li>Warmups and at least 30 samples; report median, p95, peak RSS and binary size.</li>
+          <li>Separate compile time, process startup and steady-state throughput.</li>
+          <li>Publish losses and runtime/ARC costs, not only wins.</li>
+          <li>Label checked versus unchecked code; never compare them as equivalent.</li>
+        </ol>
+      </div>
+      <div class="card">
+        <div class="kicker">Planned suites</div>
+        <h3>Workloads, when implemented</h3>
+        <table class="status-table">
+          <thead><tr><th>Suite</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr><td>Integer loops</td><td><span class="badge planned">planned</span></td></tr>
+            <tr><td>Recursive calls</td><td><span class="badge planned">planned</span></td></tr>
+            <tr><td>Sorting</td><td><span class="badge planned">planned</span></td></tr>
+            <tr><td>String processing</td><td><span class="badge planned">planned</span></td></tr>
+            <tr><td>Hash maps</td><td><span class="badge planned">blocked on Map</span></td></tr>
+            <tr><td>JSON / file IO</td><td><span class="badge planned">planned</span></td></tr>
+            <tr><td>Concurrency</td><td><span class="badge planned">not implemented</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</SiteLayout>

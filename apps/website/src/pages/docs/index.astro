@@ -1,0 +1,82 @@
+---
+import SiteLayout from '../../layouts/SiteLayout.astro'
+import RustCrab from '../../components/RustCrab.astro'
+import { href } from '../../lib/url'
+---
+<SiteLayout title="Documentation" path="docs" description="Nova language, toolchain, Studio and project documentation in one place.">
+  <section class="page-hero">
+    <div class="wrap">
+      <span class="eyebrow"><span class="status-dot"></span> One place for the whole stack</span>
+      <h1>Documentation for the<br /><span style="color: var(--yellow)">language and the editor.</span></h1>
+      <p>Start with the compiler, learn the language, then open the workbench. Every page is written against the implemented repository, with limitations called out instead of hidden.</p>
+      <div class="hero-actions" style="margin-top: 26px;">
+        <a class="button primary" href={href('getting-started/installation/')}>Install the toolchain</a>
+        <a class="button" href={href('studio/overview/')}>Read the Studio guide</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head">
+        <div>
+          <div class="kicker">Choose a track</div>
+          <h2>Language, editor, toolchain.</h2>
+          <p class="section-intro">The docs are also available inside Nova Studio under the <strong>Docs</strong> tab. The public site remains the canonical version.</p>
+        </div>
+        <RustCrab class="docs-crab" />
+      </div>
+      <div class="grid-3">
+        <article class="card">
+          <div class="card-icon" aria-hidden="true">fn</div>
+          <h3>Language</h3>
+          <p>Types, functions, structs, control flow, pattern matching, memory and the standard library. Start with the tour, then use the reference.</p>
+          <div class="meta"><a href={href('language/tour/')}>Tour</a> · <a href={href('language/reference/')}>Reference</a> · <a href={href('stdlib/')}>Stdlib</a></div>
+        </article>
+        <article class="card">
+          <div class="card-icon" aria-hidden="true">▤</div>
+          <h3>Nova Studio</h3>
+          <p>The Electron workbench, keyboard shortcuts, Vim mode, FreeBuff boundary, visual effects and the real limitations of the current GUI.</p>
+          <div class="meta"><a href={href('studio/overview/')}>Overview</a> · <a href={href('studio/shortcuts/')}>Shortcuts</a> · <a href={href('studio/vim/')}>Vim</a></div>
+        </article>
+        <article class="card">
+          <div class="card-icon" aria-hidden="true">⌘</div>
+          <h3>Toolchain</h3>
+          <p>CLI commands, project manifests, package behavior and the Rust language server. Commands that are planned are labeled as planned.</p>
+          <div class="meta"><a href={href('toolchain/cli/')}>CLI</a> · <a href={href('toolchain/projects/')}>Projects</a> · <a href={href('toolchain/lsp/')}>LSP</a></div>
+        </article>
+        <article class="card">
+          <div class="card-icon" aria-hidden="true">IR</div>
+          <h3>Compiler internals</h3>
+          <p>Lexing, parsing, semantic analysis, typed IR, LLVM emission and the runtime model. Architecture decisions live in the repository ADRs.</p>
+          <div class="meta"><a href={href('internals/compiler/')}>Compiler</a> · <a href={href('internals/runtime/')}>Runtime</a> · <a href={href('status/')}>Status</a></div>
+        </article>
+        <article class="card">
+          <div class="card-icon" aria-hidden="true">◎</div>
+          <h3>Website and docs</h3>
+          <p>How this Astro/Starlight site is built, checked, based for GitHub Pages and kept honest about its deployment state.</p>
+          <div class="meta"><a href={href('website/')}>Website guide</a> · <a href={href('contributing/')}>Contributing</a></div>
+        </article>
+        <article class="card">
+          <div class="card-icon" aria-hidden="true">✦</div>
+          <h3>Field notes</h3>
+          <p>The launch post explains why Nova is written in Rust, what the compiler actually does today and where the project is deliberately incomplete.</p>
+          <div class="meta"><a href={href('blog/building-nova-in-rust/')}>Read the launch post</a></div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="cta">
+        <div>
+          <div class="kicker">Open the source</div>
+          <h2>Read it, build it, break it.</h2>
+          <p>The repository includes the compiler, CLI, LSP, Studio and this website. Start from the README and use the issue tracker for real gaps.</p>
+        </div>
+        <a class="button primary" href="https://github.com/jd4rider/nova" rel="noreferrer">GitHub repository ↗</a>
+      </div>
+    </div>
+  </section>
+</SiteLayout>

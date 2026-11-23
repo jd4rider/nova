@@ -1,0 +1,115 @@
+---
+import SiteLayout from '../layouts/SiteLayout.astro'
+import Badge from '../components/Badge.astro'
+import RustCrab from '../components/RustCrab.astro'
+import { href } from '../lib/url'
+import { highlightNova } from '../lib/highlight'
+import { features } from '../data/maturity'
+import helloSource from '../../../../examples/hello/src/main.nova?raw'
+
+const highlighted = await highlightNova(helloSource.replace(/\n$/, ''))
+const statusRows = features.slice(0, 6)
+---
+<SiteLayout path="">
+  <section class="hero">
+    <div class="wrap hero-grid">
+      <div>
+        <span class="eyebrow"><span class="status-dot"></span> Early vertical slice · macOS arm64</span>
+        <h1>Native speed.<br /><span class="accent">Readable code.</span></h1>
+        <p class="lede">
+          Nova is a statically typed language with Python-like ergonomics and a Rust toolchain that emits
+          real native executables. Predictable semantics, precise diagnostics, no hidden conversions.
+        </p>
+        <div class="hero-actions">
+          <a class="button primary" href={href('getting-started/installation/')}>Get started <span aria-hidden="true">→</span></a>
+          <a class="button" href={href('studio')}>Explore Nova Studio</a>
+        </div>
+        <ul class="proof">
+          <li>69 compiler tests passing</li>
+          <li>LLVM native backend</li>
+          <li>Static docs, no live server</li>
+        </ul>
+        <div class="rust-pill" style="margin-top: 20px;"><RustCrab /><span>Compiler + LSP written in Rust</span></div>
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span class="window-dot"></span><span class="window-dot"></span><span class="window-dot"></span>
+          <span class="code-file">examples/hello/src/main.nova</span>
+        </div>
+        <Fragment set:html={highlighted} />
+        <div class="code-out">
+          <span class="code-out-label">Actual output · nova run</span>
+          <pre>Hello, Nova!
+Ada is 36
+6</pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head">
+        <div>
+          <div class="kicker">Engineering posture</div>
+          <h2>Boring where it counts.</h2>
+          <p class="section-intro">The compiler is a real Rust pipeline, the backend is LLVM through the host Clang, and the IDE is a maintained Monaco workbench. Unfinished features are rejected or labeled, never simulated.</p>
+        </div>
+      </div>
+      <div class="grid-3">
+        <article class="card">
+          <div class="card-icon" aria-hidden="true">fn</div>
+          <h3>Explicit language</h3>
+          <p>Immutable <code>let</code>, mutable <code>var</code>, checked integer arithmetic, bounds checks, no implicit truthiness or null. Types are inferred locally, never guessed across the whole program.</p>
+          <div class="meta">Scalars · strings · lists · structs · Option · Result</div>
+        </article>
+        <article class="card">
+          <div class="card-icon" aria-hidden="true">IR</div>
+          <h3>Native pipeline</h3>
+          <p>Lexing, parsing, semantic checking, typed IR, textual LLVM IR and a small C runtime. The LLVM verifier runs; programs link with the platform toolchain.</p>
+          <div class="meta">cargo test --workspace · 69 passing</div>
+        </article>
+        <article class="card">
+          <div class="card-icon" aria-hidden="true">▤</div>
+          <h3>Studio, honestly</h3>
+          <p>Monaco, Gruvbox, LSP diagnostics and real build/run tasks in an Electron workbench. FreeBuff chat is disabled because the installed CLI exposes only an interactive terminal.</p>
+          <div class="meta">TypeScript strict · production build passes</div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap grid-2" style="align-items: start;">
+      <div>
+        <div class="kicker">Verified today</div>
+        <h2 style="font-size: clamp(28px, 3.6vw, 42px); margin-bottom: 12px;">Status before promises.</h2>
+        <p class="section-intro" style="margin-bottom: 22px;">Every row below is backed by tests or a recorded manual check. Planned syntax is documented as planned and is not shown as runnable.</p>
+        <a class="button" href={href('roadmap')}>Read the full roadmap <span aria-hidden="true">→</span></a>
+      </div>
+      <div class="card" style="padding: 8px 18px;">
+        <table class="status-table">
+          <thead><tr><th>Area</th><th>Status</th></tr></thead>
+          <tbody>
+            {statusRows.map((row) => (
+              <tr><td>{row.area}</td><td><Badge status={row.status} /></td></tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="cta">
+        <div>
+          <div class="kicker">Start with what works</div>
+          <h2>Install the toolchain, compile a native binary.</h2>
+          <p>Build from source today. Signed downloads and installers are not published yet. Read the <a href={href('blog/building-nova-in-rust/')}>launch note</a> for the full story.</p>
+        </div>
+        <a class="button primary" href={href('install')}>Install Nova <span aria-hidden="true">→</span></a>
+      </div>
+    </div>
+  </section>
+</SiteLayout>

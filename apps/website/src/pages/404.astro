@@ -1,0 +1,18 @@
+---
+import SiteLayout from '../layouts/SiteLayout.astro'
+import { href } from '../lib/url'
+---
+<SiteLayout title="Page not found" path="404">
+  <section class="page-hero">
+    <div class="wrap prose">
+      <span class="eyebrow">404 · no such route</span>
+      <h1>This page was not found.</h1>
+      <p>The link may be outdated, or the page may still be planned. The documentation and roadmap are the reliable source of truth.</p>
+      <div class="hero-actions" style="margin-top: 26px;">
+        <a class="button primary" href={href('')}>Back home</a>
+        <a class="button" href={href('getting-started/installation/')}>Documentation</a>
+        <a class="button" href={href('roadmap')}>Roadmap</a>
+      </div>
+    </div>
+  </section>
+</SiteLayout>

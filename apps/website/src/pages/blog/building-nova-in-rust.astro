@@ -1,0 +1,109 @@
+---
+import SiteLayout from '../../layouts/SiteLayout.astro'
+import RustCrab from '../../components/RustCrab.astro'
+import { href } from '../../lib/url'
+
+const example = `import std.io { println }
+
+struct User {
+    name: String
+    age: Int
+}
+
+fn describe(user: User) -> String {
+    return user.name
+}
+
+fn main() {
+    let user = User { name: "Ada", age: 36 }
+    var total = 0
+    for i in 0..3 {
+        total += i
+    }
+    println(describe(user))
+    println(total)
+}`
+---
+<SiteLayout title="Nova is a native language with a Rust spine" path="blog/building-nova-in-rust" description="Why Nova is built in Rust, what the native compiler pipeline does today and the honest limits of the current release.">
+  <article class="prose blog-post">
+    <header class="page-hero">
+      <span class="eyebrow"><span class="status-dot"></span> Launch note · November 2026</span>
+      <h1>Nova is a native language<br />with a <span style="color: var(--yellow)">Rust spine.</span></h1>
+      <p class="lede">Nova is not an interpreter with a pretty editor attached. It is a statically typed language whose Rust toolchain lexes, parses, checks and emits LLVM IR, then links a real executable. Here is what that means, and what it does not mean yet.</p>
+      <div class="rust-pill"><RustCrab /><span>Compiler, CLI and LSP written in Rust</span></div>
+    </header>
+
+    <section class="wrap">
+      <div class="section">
+        <h2>A language is a pipeline, not a syntax file</h2>
+        <p>It is easy to make a small language that prints a tree and call it done. Nova is built as a vertical slice through the whole toolchain:</p>
+        <ul>
+          <li><strong>Lexer and parser:</strong> UTF-8 identifiers, spans, comments, interpolation and useful recovery.</li>
+          <li><strong>Semantic analysis:</strong> name resolution, local inference, signatures, structs, <code>Option</code>/<code>Result</code> and exhaustiveness checks.</li>
+          <li><strong>Code generation:</strong> typed IR lowered to textual LLVM IR, verified by LLVM and linked with the host Clang.</li>
+          <li><strong>Runtime:</strong> a small C runtime for allocation, strings and lists, with checked arithmetic and bounds checks.</li>
+          <li><strong>Developer surface:</strong> a real CLI, formatter, language server and the Nova Studio desktop workbench.</li>
+        </ul>
+        <p>That chain is the point. A feature is not “implemented” because a parser accepts it; it has to survive type checking, native emission, linking and execution.</p>
+
+        <h2>Why Rust is the boring, correct choice</h2>
+        <p>The compiler is a long-lived process that reads untrusted source, builds large intermediate structures and has to fail without corrupting state. Rust gives us exhaustive matching over syntax nodes, ownership without a garbage collector, zero-cost abstractions and an ecosystem that treats command-line tools and language servers as first-class citizens.</p>
+        <p>It also makes the boundaries explicit. The workspace is split into focused crates rather than one heroic binary:</p>
+        <pre><code>crates/
+  nova-lexer      tokens and spans
+  nova-parser     recursive descent + Pratt parsing
+  nova-sema       name resolution and type checking
+  nova-ir         typed intermediate representation
+  nova-codegen-llvm  LLVM IR emission
+  nova-runtime    native runtime support
+  nova-cli        build, run, check, test, fmt, lsp
+  nova-lsp        stdio language server
+  nova-pkg        manifests and projects</code></pre>
+        <p>Rust is not a marketing sticker here. It is why the compiler can be tested in isolation and why the language server can reuse the same front end as the command-line compiler without a second implementation drifting out of sync.</p>
+
+        <h2>The first working vertical slice</h2>
+        <p>A Nova program can use immutable and mutable bindings, functions, structs, lists, strings, <code>Option</code>, <code>Result</code>, <code>match</code>, loops and ranges. This program compiles to a native binary and prints real output:</p>
+        <pre><code>{example}</code></pre>
+        <p>That is deliberately a slice, not a finished language. The current test suite covers the lexer, parser, semantic checker, native code generation and runtime. Run <code>cargo test --workspace</code> in the repository to see the current count and failures, rather than trusting a badge alone.</p>
+
+        <h2>Studio is part of the language, not a separate demo</h2>
+        <p>Nova Studio is an Electron workbench built around Monaco, React and strict TypeScript. It speaks to the same Rust LSP and runs the same CLI. Diagnostics, completion, hover, definition and formatting are not emulated in the renderer.</p>
+        <p>The workbench also owns the unglamorous parts: workspace-confined file operations, atomic saves with external-change checks, argv-based task execution, a terminal, Vim mode and a FreeBuff terminal. The FreeBuff boundary is explicit: the installed CLI exposes an interactive terminal, not a documented structured chat protocol, so Nova does not scrape it or pretend to have ghost text.</p>
+        <p>Recent work added a small, fully local visual-effects layer: a dock-style current-line lens, typing and scroll sparkles, and synthesized Web Audio feedback. It is off-switchable in settings, respects reduced motion and never captures editor input. It is a visual lens, not a per-line font-size change, so caret geometry stays stable.</p>
+
+        <h2>What “working” does not mean</h2>
+        <p>Nova is a functioning native language toolchain today, but it is not a complete mainstream language. The honest gaps:</p>
+        <ul>
+          <li>No generics, user enums with payloads, traits, methods or closures.</li>
+          <li>No user module graph beyond standard imports.</li>
+          <li>No async runtime, FFI, debug information or DAP adapter.</li>
+          <li>No package registry, signed installers or published release binaries.</li>
+          <li>No benchmark claim. Performance numbers require a harness and recorded hardware.</li>
+          <li>The GUI has typecheck/build coverage but not an automated end-to-end interaction suite.</li>
+          <li>macOS arm64 is the tested platform; Linux and Windows builds are not yet verified end to end.</li>
+        </ul>
+        <p>Those gaps are in the <a href={href('roadmap')}>roadmap</a> and feature status, not hidden in a launch post. The correct claim is narrow and strong: Nova is a real Rust-native compiler pipeline with a working editor and documented limits.</p>
+
+        <h2>Try it from source</h2>
+        <p>You need Rust, Cargo and a C linker. Node is only required for Studio and this website.</p>
+        <pre><code>git clone https://github.com/jd4rider/nova.git
+cd nova
+cargo build --workspace
+cargo test --workspace
+cargo run -p nova-cli -- new hello
+cd hello
+../target/debug/nova run</code></pre>
+        <p>Then open the editor with <code>NOVA_BIN=$PWD/target/debug/nova npm run dev</code> from <code>editor/</code>. The full setup, including the optional <code>node-pty</code> terminal and the FreeBuff limitation, is in the <a href={href('getting-started/installation/')}>installation guide</a>.</p>
+
+        <div class="cta" style="margin-top: 40px;">
+          <div>
+            <div class="kicker">The source is the claim</div>
+            <h2>Read the pipeline.</h2>
+            <p>Compiler, CLI, language server, IDE and documentation live in one repository.</p>
+          </div>
+          <a class="button primary" href="https://github.com/jd4rider/nova" rel="noreferrer">Open GitHub ↗</a>
+        </div>
+      </div>
+    </section>
+  </article>
+</SiteLayout>

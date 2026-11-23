@@ -1,0 +1,16 @@
+---
+import { milestones } from '../data/maturity'
+import Badge from './Badge.astro'
+---
+<div class="timeline">
+  {milestones.map((milestone) => (
+    <div class="timeline-item">
+      <div class="timeline-id">{milestone.id}</div>
+      <div>
+        <h3>{milestone.name}</h3>
+        <p>{milestone.note}</p>
+      </div>
+      <Badge status={milestone.status} />
+    </div>
+  ))}
+</div>

@@ -1,0 +1,54 @@
+(* Nova grammar — implemented subset. Newlines terminate statements. *)
+
+program        = { import | item } ;
+import         = "import", path, [ "{" , ident_list, "}" ] ;
+path           = ident, { ".", ident } ;
+item           = function | struct ;
+function       = "fn", ident, [ generic_params ], "(", [ params ], ")", [ "->", type ], block ;
+generic_params = "<", ident, { ",", ident }, ">" ;   (* parsed, not yet type-checked *)
+struct         = "struct", ident, "{", { field, newline }, "}" ;
+field          = ident, ":", type ;
+params         = param, { ",", param } ;
+param          = ident, ":", type ;
+type           = ident, [ "<", type, { ",", type }, ">" ] ;
+
+block          = "{", { statement }, "}" ;
+statement      = let_stmt | var_stmt | assign | expr_stmt | if_stmt | while_stmt
+               | for_stmt | return_stmt | break_stmt | continue_stmt | block ;
+let_stmt       = "let", ident, [ ":", type ], "=", expr ;
+var_stmt       = "var", ident, [ ":", type ], "=", expr ;
+assign         = lvalue, ( "=" | "+=" | "-=" | "*=" | "/=" | "%=" ), expr ;
+if_stmt        = "if", expr, block, [ "else", ( if_stmt | block ) ] ;  (* also expression *)
+while_stmt     = "while", expr, block ;
+for_stmt       = "for", ident, "in", expr, block ;
+return_stmt    = "return", [ expr ] ;
+break_stmt     = "break" ;
+continue_stmt  = "continue" ;
+expr_stmt      = expr ;
+
+expr           = match_expr | logic_or ;
+match_expr     = "match", expr, "{", { pattern, "=>", ( expr | block ) }, "}" ;
+logic_or       = logic_and, { "||", logic_and } ;
+logic_and      = equality, { "&&", equality } ;
+equality       = comparison, { ( "==" | "!=" ), comparison } ;
+comparison     = range, { ( "<" | "<=" | ">" | ">=" ), range } ;
+range          = additive, [ ( ".." | "..=" ), additive ] ;
+additive       = multiplicative, { ( "+" | "-" ), multiplicative } ;
+multiplicative = unary, { ( "*" | "/" | "%" ), unary } ;
+unary          = ( "-" | "!" ), unary | postfix ;
+postfix        = primary, { call | field | index | "?" } ;
+call           = "(", [ args ], ")" ;
+field          = ".", ident ;
+index          = "[", expr, "]" ;
+primary        = literal | ident | "(", expr, ")" | list | struct_literal | if_expr ;
+list           = "[", [ expr, { ",", expr } ], "]" ;
+struct_literal = type_path, "{", [ field_init, { ",", field_init } ], "}" ;
+field_init     = ident, ":", expr ;
+if_expr        = "if", expr, block, "else", ( if_expr | block ) ;
+
+pattern        = "_" | ident | "None" | "Some", "(", pattern, ")"
+               | "Ok", "(", pattern, ")" | "Err", "(", pattern, ")" ;
+literal        = int | float | string | char | "true" | "false" ;
+
+(* Precedence, low to high: || ; && ; == != ; < <= > >= ; .. ..= ;
+   + - ; * / % ; unary - ! ; postfix call/field/index/? ; primary. *)

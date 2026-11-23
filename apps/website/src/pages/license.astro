@@ -1,0 +1,30 @@
+---
+import SiteLayout from '../layouts/SiteLayout.astro'
+---
+<SiteLayout title="License" path="license" description="Nova project licensing status and third-party notices.">
+  <section class="page-hero">
+    <div class="wrap">
+      <span class="eyebrow">Legal status · not legal advice</span>
+      <h1>License undecided.</h1>
+      <p>The Nova project has not selected a public license. Do not redistribute this source tree or a build as if a license were granted.</p>
+    </div>
+  </section>
+
+  <section class="section" style="padding-top: 20px;">
+    <div class="wrap prose">
+      <p class="notice danger"><strong>No project LICENSE file is present.</strong> The editor package contains a placeholder package metadata license field, but that is not a project-wide grant. Choose a license with legal advice before publishing.</p>
+      <h2>Third-party software</h2>
+      <p>Nova depends on Rust crates, Electron, React, Monaco, xterm, monaco-vim, Astro, Starlight and their transitive dependencies. Each retains its own license. Lockfiles are committed:</p>
+      <ul>
+        <li><code>Cargo.lock</code></li>
+        <li><code>editor/package-lock.json</code></li>
+        <li><code>apps/website/package-lock.json</code></li>
+      </ul>
+      <p>Before distributing binaries, produce a complete dependency license inventory and include required notices. Electron and Chromium licenses must be shipped with the app. No audit has been completed.</p>
+      <h2>Name and trademark</h2>
+      <p>“Nova” and “Nova Studio” are working names. Search for conflicts and obtain legal review before a public release; no trademark claim is made.</p>
+      <h2>Assets</h2>
+      <p>Website illustrations are CSS/SVG generated for this project. No third-party screenshot or proprietary IDE asset is included.</p>
+    </div>
+  </section>
+</SiteLayout>

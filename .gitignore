@@ -1,0 +1,11 @@
+/target
+**/target/
+node_modules/
+editor/dist/
+editor/out/
+editor/release/
+apps/website/dist/
+apps/website/.astro/
+*.log
+.DS_Store
+*.nova.ll

@@ -1,0 +1,40 @@
+---
+import SiteLayout from '../layouts/SiteLayout.astro'
+import { links } from '../data/site'
+---
+<SiteLayout title="Releases" path="releases" description="Nova release policy and the current absence of published artifacts.">
+  <section class="page-hero">
+    <div class="wrap">
+      <span class="eyebrow">Development version</span>
+      <h1>No releases yet.</h1>
+      <p>There are no published Nova or Nova Studio binaries. Builds are source-only. No checksum, code-signing or notarization claim is made.</p>
+    </div>
+  </section>
+
+  <section class="section" style="padding-top: 20px;">
+    <div class="wrap grid-2" style="align-items: start;">
+      <div class="prose">
+        <h2>Current channel</h2>
+        <p><strong>Development</strong> — the repository is an uncommitted vertical slice in this workspace. Version numbers in manifests do not imply a release.</p>
+        <h2>What a real release requires</h2>
+        <ul>
+          <li>Reproducible build on a documented platform.</li>
+          <li>Installer produced by electron-builder (or the selected IDE stack) and smoke-tested as an installed app.</li>
+          <li>Checksums for every asset.</li>
+          <li>Code signing and notarization credentials, with verification output — or an explicit unsigned warning.</li>
+          <li>Matching compiler, LSP and Studio versions with mismatch errors.</li>
+          <li>Release notes listing known limitations.</li>
+        </ul>
+        <h2>Downloads</h2>
+        <p>{links.releases ? 'Release assets are configured for this deployment.' : 'No release URL is configured. This is not a dead download link; no release asset exists.'}</p>
+        {links.releases && <a class="button primary" href={links.releases} rel="noreferrer">GitHub Releases ↗</a>}
+      </div>
+      <aside class="card">
+        <div class="kicker">Version compatibility</div>
+        <h3>Planned policy</h3>
+        <p>Studio will pin a compiler/LSP protocol version and refuse to run incompatible tasks without a clear message. Today Studio calls the `nova` executable resolved from `NOVA_BIN` or `PATH`; `nova doctor` exposes the runtime ABI.</p>
+        <div class="meta">No update server or background execution exists.</div>
+      </aside>
+    </div>
+  </section>
+</SiteLayout>

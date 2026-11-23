@@ -1,0 +1,36 @@
+---
+import SiteLayout from '../layouts/SiteLayout.astro'
+import { links } from '../data/site'
+---
+<SiteLayout title="Community" path="community" description="Nova community links and the current absence of chat platforms.">
+  <section class="page-hero">
+    <div class="wrap">
+      <span class="eyebrow">No invented channels</span>
+      <h1>Find the project.</h1>
+      <p>The repository is the source of truth. No Discord, forum, mailing list or social account is claimed because none has been verified as official.</p>
+    </div>
+  </section>
+
+  <section class="section" style="padding-top: 20px;">
+    <div class="wrap grid-2">
+      <article class="card">
+        <div class="card-icon">↗</div>
+        <h3>GitHub</h3>
+        <p>Issues, discussions and release assets live in the repository when a public remote is configured. This deployment may use a placeholder GitHub URL until then.</p>
+        <div style="margin-top: 16px;"><a class="button" href={links.github} rel="noreferrer">Open GitHub ↗</a></div>
+      </article>
+      <article class="card">
+        <div class="card-icon">◆</div>
+        <h3>Contributor path</h3>
+        <p>Read the contributing guide, run the compiler and website checks, then pick an evidence gap. Keep changes reviewable and document limitations.</p>
+        <div style="margin-top: 16px;"><a class="button" href="../contribute/">Contributing →</a></div>
+      </article>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <p class="notice"><strong>Security reports:</strong> do not post secrets or exploits publicly. Use the repository's private advisory channel when available. See <a href="../security/">Security</a>.</p>
+    </div>
+  </section>
+</SiteLayout>

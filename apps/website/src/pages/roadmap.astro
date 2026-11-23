@@ -1,0 +1,38 @@
+---
+import SiteLayout from '../layouts/SiteLayout.astro'
+import FeatureTable from '../components/FeatureTable.astro'
+import MilestoneList from '../components/MilestoneList.astro'
+import { href } from '../lib/url'
+---
+<SiteLayout title="Roadmap" path="roadmap" description="Nova's evidence-backed feature status and milestone roadmap.">
+  <section class="page-hero">
+    <div class="wrap">
+      <span class="eyebrow">Living document · updated with evidence</span>
+      <h1>Roadmap, not theater.</h1>
+      <p>This matrix is generated from the same maturity manifest used by the documentation. Tested means automated tests pass; planned means it is not implemented.</p>
+    </div>
+  </section>
+
+  <section class="section" style="padding-top: 20px;">
+    <div class="wrap">
+      <h2 style="font-size: 28px; margin-bottom: 16px;">Milestones A–I</h2>
+      <MilestoneList />
+      <p class="notice"><strong>Milestone B is partial.</strong> Electron is retained with a scored decision, but Tauri and native Rust spikes were not built. Milestone I is blocked by the absence of a Git remote, Pages settings and deployment authorization in this workspace.</p>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head"><div><div class="kicker">Central status manifest</div><h2>Feature ledger</h2></div><a class="button" href={href('status/')}>Open status page</a></div>
+      <div class="card" style="padding: 8px 18px; overflow-x: auto;"><FeatureTable /></div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap grid-3">
+      <article class="card"><div class="card-icon">1</div><h3>Next: GUI proof</h3><p>Add Playwright Electron smoke coverage: open workspace, edit, save, diagnostics, build/run and terminal.</p><div class="meta">Milestone E/G</div></article>
+      <article class="card"><div class="card-icon">2</div><h3>Language depth</h3><p>Incremental LSP sync, user modules, generics, enums, traits and closures — each with tests and docs.</p><div class="meta">Milestone F/G</div></article>
+      <article class="card"><div class="card-icon">3</div><h3>Release evidence</h3><p>Benchmark harness, installers, signatures, checksums and a verified Pages deployment once credentials exist.</p><div class="meta">Milestone H/I</div></article>
+    </div>
+  </section>
+</SiteLayout>

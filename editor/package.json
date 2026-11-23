@@ -1,0 +1,69 @@
+{
+  "name": "nova-studio",
+  "version": "0.1.0",
+  "description": "Nova Studio — native IDE for the Nova programming language",
+  "main": "./out/main/index.js",
+  "private": true,
+  "license": "UNLICENSED",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "typecheck": "tsc --noEmit",
+    "start": "electron-vite preview",
+    "dist": "npm run build && electron-builder --dir",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:linux": "npm run build && electron-builder --linux"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "0.10.0",
+    "@xterm/xterm": "5.5.0",
+    "monaco-editor": "0.52.2",
+    "monaco-vim": "0.4.2",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.2",
+    "@types/react": "18.3.18",
+    "@types/react-dom": "18.3.5",
+    "@vitejs/plugin-react": "4.3.4",
+    "electron": "33.3.0",
+    "electron-builder": "25.1.8",
+    "electron-vite": "3.0.0",
+    "typescript": "5.7.2",
+    "vite": "6.0.7"
+  },
+  "optionalDependencies": {
+    "node-pty": "1.0.0"
+  },
+  "build": {
+    "appId": "dev.nova.studio",
+    "productName": "Nova Studio",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Development"
+    }
+  }
+}
