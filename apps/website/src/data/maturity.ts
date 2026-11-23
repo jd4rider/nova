@@ -19,7 +19,7 @@ export const features: Feature[] = [
   { area: 'User modules', status: 'experimental', note: 'Standard imports only; no user module graph', evidence: 'crates/nova-sema' },
   { area: 'Async, FFI, debug adapter', status: 'planned', note: 'No scheduler, C ABI or DAP yet', evidence: 'ROADMAP.md' },
   { area: 'FreeBuff structured chat/completion', status: 'unavailable', note: 'Installed 0.2.36 CLI is interactive-terminal-only', evidence: 'docs/adr/0002-freebuff-integration.md' },
-  { area: 'Public website and docs', status: 'implemented', note: 'Astro 7 + Starlight static site, base-path verified', evidence: 'apps/website' },
+  { area: 'Public website and docs', status: 'implemented', note: 'Astro 7 + Starlight site deployed at jd4rider.github.io/nova', evidence: 'GitHub Pages build/deploy run 45244354509 succeeded' },
   { area: 'Signed desktop releases', status: 'planned', note: 'No installers, signatures or releases published', evidence: 'ROADMAP.md' }
 ]
 
@@ -32,5 +32,5 @@ export const milestones = [
   { id: 'F', name: 'AI', status: 'partial', note: 'Honest FreeBuff terminal fallback; structured AI is unavailable.' },
   { id: 'G', name: 'Professional tooling', status: 'planned', note: 'DAP, test explorer, recovery and cross-platform evidence remain.' },
   { id: 'H', name: 'Ecosystem', status: 'partial', note: 'Versioned docs and tested snippets; benchmarks and releases remain.' },
-  { id: 'I', name: 'Publication', status: 'blocked', note: 'No Git remote or deployment authorization; Pages workflow prepared locally.' }
+  { id: 'I', name: 'Publication', status: 'done', note: 'Public repository created; Pages deployed and live routes verified at https://jd4rider.github.io/nova/.' }
 ] as const

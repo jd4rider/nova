@@ -37,7 +37,7 @@ Status means: **tested** = covered by automated tests and passing; **implemented
 | Package registry, publishing, checksums | planned | |
 | Benchmarks and performance claims | planned | No benchmark evidence; directive performance targets are aspirations only |
 | Astro 7 + Starlight public website and docs | tested | `npm run check`, production build, root/project-base link checks, grammar scopes, checked snippets |
-| GitHub Pages workflow | implemented | Workflow prepared; not deployed (no Git remote or Pages authorization) |
+| GitHub Pages workflow | implemented | Public repository and verified deployment at https://jd4rider.github.io/nova/ |
 
 ## Nova Studio
 
@@ -62,9 +62,9 @@ Status means: **tested** = covered by automated tests and passing; **implemented
 
 1. Add Playwright Electron smoke test: launch, open fixture workspace, assert diagnostics and build output.
 2. Run time-boxed Tauri 2 and native Rust spikes; update ADR 0001 with real measurements.
-3. Publish the website through GitHub Pages once a remote and authorization exist, then verify the public URL.
+3. Keep the live Pages deployment verified; add a custom domain and signed release artifacts only with explicit owner authorization.
 4. Implement LSP incremental document sync and cancellation.
-3. Implement user modules and path-based imports.
-4. Add generics and user enums, then traits.
-5. Add DWARF debug info and a DAP adapter only after verifying emitted information.
-6. Add benchmark harness with recorded hardware and honest comparisons.
+5. Implement user modules and path-based imports.
+6. Add generics and user enums, then traits.
+7. Add DWARF debug info and a DAP adapter only after verifying emitted information.
+8. Add benchmark harness with recorded hardware and honest comparisons.

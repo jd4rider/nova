@@ -28,7 +28,7 @@ BASE_PATH=/nova/ SITE_URL=https://example.github.io npm run test:site
 
 `.github/workflows/pages.yml` builds the compiler for checked snippets, installs the website with a frozen lockfile, runs Astro checks, validates a project base, builds at the repository base, uploads the static artifact and deploys it with the official GitHub Pages actions. The workflow derives `BASE_PATH` from the repository name and `SITE_URL` from the owner.
 
-The production site is expected at `https://jd4rider.github.io/nova/` once the Pages environment is enabled. Deployment status should be read from the Actions run, not inferred from a local build.
+The public repository is `https://github.com/jd4rider/nova` and Pages is configured to use GitHub Actions. The workflow deployed successfully to `https://jd4rider.github.io/nova/`; home, Docs, Blog, website guide and Pagefind routes were verified with HTTP 200 responses. Deployment status should still be read from the latest Actions run rather than inferred from a local build.
 
 ## Content rules
 
