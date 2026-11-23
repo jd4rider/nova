@@ -1,0 +1,232 @@
+---
+import SiteLayout from '../layouts/SiteLayout.astro'
+import RustCrab from '../components/RustCrab.astro'
+import { href } from '../lib/url'
+import { playgroundExamples } from '../data/playground'
+---
+<SiteLayout title="Playground" path="playground" description="Write Nova in the browser with the real Rust parser, type checker and formatter compiled to WebAssembly.">
+  <section class="page-hero playground-hero">
+    <div class="wrap">
+      <span class="eyebrow"><span class="status-dot"></span> Real Rust front end · WebAssembly · no server</span>
+      <h1>Write Nova.<br /><span style="color: var(--yellow)">Check it instantly.</span></h1>
+      <p>The playground runs the same lexer, parser, type checker and formatter as the native toolchain. Edit an example, press <kbd>Ctrl</kbd> + <kbd>Enter</kbd>, and explore real diagnostics.</p>
+      <div class="hero-actions" style="margin-top: 26px;">
+        <button class="button primary" id="playground-run" type="button" disabled>Check code <span aria-hidden="true">⌘↵</span></button>
+        <button class="button" id="playground-format" type="button" disabled>Format</button>
+        <a class="button" href={href('install')}>Install the compiler</a>
+      </div>
+      <div class="playground-badge"><RustCrab /><span>Parsed in Rust. Compiled to WASM. Runs in your tab.</span></div>
+    </div>
+  </section>
+
+  <section class="section" style="padding-top: 18px;">
+    <div class="wrap">
+      <div
+        id="playground"
+        class="playground-shell"
+        data-base={import.meta.env.BASE_URL}
+        data-examples={JSON.stringify(playgroundExamples)}
+      >
+        <div class="playground-toolbar">
+          <div class="playground-tabs" role="tablist" aria-label="Nova examples">
+            {playgroundExamples.map((example, index) => (
+              <button
+                type="button"
+                class:list={['playground-tab', { active: index === 0 }]}
+                data-example={example.id}
+                role="tab"
+                aria-selected={index === 0 ? 'true' : 'false'}
+                title={example.description}
+              >
+                {example.name}
+              </button>
+            ))}
+          </div>
+          <div class="playground-tools">
+            <span id="playground-wasm-status" class="playground-status" role="status">Loading Rust front end…</span>
+            <button class="button small" id="playground-share" type="button" disabled>Share</button>
+            <button class="button small" id="playground-reset" type="button">Reset</button>
+          </div>
+        </div>
+
+        <div class="playground-grid">
+          <div class="playground-editor-card">
+            <div class="playground-panel-head">
+              <span>src/main.nova</span>
+              <span>Nova syntax · WASM checker</span>
+            </div>
+            <div id="playground-editor" aria-label="Nova source editor"></div>
+          </div>
+          <aside class="playground-output" aria-live="polite">
+            <div class="playground-panel-head">
+              <span>Diagnostics</span>
+              <span id="playground-result-state">Waiting for the compiler</span>
+            </div>
+            <div id="playground-diagnostics" class="playground-diagnostics">
+              <div class="playground-loading">Loading the Rust front end…</div>
+            </div>
+            <div id="playground-stats" class="playground-stats"></div>
+            <p class="playground-hint">Ctrl/Cmd + Enter checks. Click a diagnostic to jump to its source. <strong>This playground checks and formats; native execution still uses <code>nova run</code>.</strong></p>
+          </aside>
+        </div>
+      </div>
+
+      <noscript>
+        <p class="notice danger"><strong>JavaScript is required for the playground.</strong> The compiler and editor run locally in your browser; no code is uploaded to a server.</p>
+      </noscript>
+
+      <div class="playground-notes">
+        <article class="card">
+          <div class="kicker">What is real</div>
+          <h3>One front end, two targets.</h3>
+          <p>The WASM build links the same <code>nova-lexer</code>, <code>nova-parser</code> and <code>nova-sema</code> crates used by the CLI and language server. Diagnostics, formatting and source positions are not mocked.</p>
+          <div class="meta">No network request contains your source</div>
+        </article>
+        <article class="card">
+          <div class="kicker">The boundary</div>
+          <h3>Check here. Build locally.</h3>
+          <p>LLVM emission, Clang linking and the native runtime are intentionally not in this WASM module. Use <code>nova run</code> or Nova Studio for actual execution.</p>
+          <div class="meta">Front-end only · not an interpreter</div>
+        </article>
+        <article class="card">
+          <div class="kicker">What comes next</div>
+          <h3>Language depth is tracked.</h3>
+          <p>User enums, classes/traits, file linking, HTTPS and a package ecosystem are not implemented yet. The <a href={href('status/')}>status page</a> and <a href={href('roadmap')}>roadmap</a> keep those gaps visible.</p>
+          <div class="meta">No placeholder libraries or fake runners</div>
+        </article>
+      </div>
+
+      <p class="notice" style="margin-top: 20px;"><strong>Try the typed edge cases.</strong> The <em>Find a diagnostic</em> example deliberately fails with <code>E0308</code>. The playground also formats your source with the real formatter; use <strong>Share</strong> to copy a URL carrying the code.</p>
+    </div>
+  </section>
+</SiteLayout>
+
+<script>
+  import { mountPlayground } from '../lib/playground'
+  mountPlayground()
+</script>
+
+<style is:global>
+  .playground-hero .wrap { max-width: var(--max); }
+  .playground-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 24px;
+    color: var(--muted);
+    font-size: 13px;
+    font-family: var(--mono);
+  }
+  .playground-badge .rust-crab { width: 34px; height: 30px; color: var(--orange); }
+  .playground-hero kbd {
+    border: 1px solid var(--line);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    padding: 1px 5px;
+    color: var(--fg);
+    font-family: var(--mono);
+    font-size: 0.8em;
+    background: var(--panel);
+  }
+  .playground-shell {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--panel);
+    box-shadow: var(--shadow);
+  }
+  .playground-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--line);
+    background: var(--bg-soft);
+    flex-wrap: wrap;
+  }
+  .playground-tabs, .playground-tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .playground-tab {
+    appearance: none;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--muted);
+    border-radius: 6px;
+    padding: 6px 9px;
+    cursor: pointer;
+    font-size: 12px;
+    font-family: var(--mono);
+  }
+  .playground-tab:hover { color: var(--fg); background: var(--panel); }
+  .playground-tab.active { color: var(--yellow); border-color: var(--line); background: var(--panel); }
+  .playground-status { color: var(--faint); font-family: var(--mono); font-size: 11px; white-space: nowrap; }
+  .playground-status[data-kind="ready"] { color: var(--green); }
+  .playground-status[data-kind="error"] { color: var(--red); }
+  .playground-tools .button { padding: 7px 10px; }
+  .playground-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 0.85fr); }
+  .playground-editor-card { min-width: 0; background: #1d2021; }
+  .playground-output { min-width: 0; border-left: 1px solid var(--line); background: var(--bg-soft); display: flex; flex-direction: column; min-height: 500px; }
+  .playground-panel-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+    color: var(--faint);
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+  .playground-panel-head span:last-child { color: var(--faint); text-align: right; }
+  .playground-editor-card .cm-editor { height: 500px; }
+  .playground-editor-card .cm-scroller { height: 500px; max-height: 500px; }
+  .playground-diagnostics { padding: 14px; display: grid; gap: 9px; align-content: start; overflow: auto; flex: 1; }
+  .playground-loading, .playground-empty { color: var(--muted); font-size: 13px; padding: 10px 0; }
+  .playground-empty { display: flex; align-items: flex-start; gap: 10px; }
+  .playground-empty strong { display: block; color: var(--fg); font-size: 14px; }
+  .playground-empty span:not(.playground-empty-mark) { color: var(--muted); font-size: 12px; }
+  .playground-empty-mark { color: var(--green); font-size: 22px; line-height: 1; }
+  .playground-empty.error { display: block; border-left: 3px solid var(--red); padding-left: 12px; }
+  .playground-empty.error strong { color: var(--red); }
+  .playground-empty.error span { display: block; margin-top: 4px; }
+  .playground-diagnostic {
+    display: grid;
+    gap: 4px;
+    width: 100%;
+    text-align: left;
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--red);
+    border-radius: 7px;
+    background: var(--panel);
+    padding: 9px 11px;
+    color: var(--fg);
+    cursor: pointer;
+    font: inherit;
+  }
+  .playground-diagnostic:hover { border-color: var(--muted); border-left-color: var(--red); }
+  .playground-diagnostic.warning { border-left-color: var(--yellow); }
+  .playground-diagnostic.note { border-left-color: var(--blue); }
+  .playground-diagnostic-head { display: flex; align-items: center; gap: 8px; }
+  .playground-diagnostic-code { color: var(--red); font-family: var(--mono); font-size: 11px; }
+  .playground-diagnostic.warning .playground-diagnostic-code { color: var(--yellow); }
+  .playground-diagnostic.note .playground-diagnostic-code { color: var(--blue); }
+  .playground-diagnostic-severity { color: var(--faint); font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .playground-diagnostic-location { margin-left: auto; color: var(--faint); font-family: var(--mono); font-size: 11px; }
+  .playground-diagnostic-message { color: var(--fg); font-size: 13px; line-height: 1.45; }
+  .playground-diagnostic-note { color: var(--muted); font-size: 11px; line-height: 1.4; }
+  .playground-stats { padding: 0 14px 12px; color: var(--faint); font-family: var(--mono); font-size: 11px; }
+  .playground-hint { margin: auto 14px 14px; color: var(--faint); font-size: 12px; line-height: 1.5; }
+  .playground-hint strong { color: var(--muted); }
+  .playground-hint code { color: var(--yellow); font-family: var(--mono); }
+  .playground-notes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 20px; }
+  @media (max-width: 900px) {
+    .playground-grid { grid-template-columns: 1fr; }
+    .playground-output { border-left: 0; border-top: 1px solid var(--line); min-height: auto; }
+    .playground-notes { grid-template-columns: 1fr; }
+    .playground-toolbar { align-items: flex-start; }
+  }
+  @media (max-width: 520px) {
+    .playground-tools { width: 100%; }
+    .playground-status { width: 100%; }
+    .playground-editor-card .cm-editor, .playground-editor-card .cm-scroller { height: 420px; max-height: 420px; }
+  }
+</style>

@@ -12,16 +12,23 @@
     "preview": "astro preview",
     "check": "astro check",
     "lint": "astro check",
+    "build:playground": "node scripts/build-playground.mjs",
     "test:grammar": "node scripts/verify-grammar.mjs",
+    "test:playground": "node scripts/verify-playground.mjs",
     "test:site": "node scripts/verify-build.mjs",
     "test:snippets": "node scripts/verify-snippets.mjs",
-    "test": "npm run test:grammar && npm run test:site && npm run test:snippets",
+    "test": "npm run test:grammar && npm run test:playground && npm run test:site && npm run test:snippets",
     "verify": "npm run check && npm run build && npm run test"
   },
   "dependencies": {
     "@astrojs/sitemap": "3.7.6",
     "@astrojs/starlight": "0.43.1",
+    "@codemirror/language": "6.13.1",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/view": "6.43.15",
+    "@lezer/highlight": "1.2.5",
     "astro": "7.4.13",
+    "codemirror": "6.0.2",
     "shiki": "4.6.0"
   },
   "devDependencies": {

@@ -16,6 +16,7 @@ crates/
   nova-fmt/           conservative formatter
   nova-pkg/           manifest and lockfile
   nova-lsp/           stdio language server
+  nova-wasm/          browser front end for the playground
   nova-cli/           unified command line
 ```
 
@@ -37,7 +38,7 @@ The backend deliberately emits definitions only, not duplicate `declare`/`define
 
 ## Testing
 
-`cargo test --workspace` currently runs **69 tests**, including native executables for hello world, structs, Option/match, lists and overflow traps. A race where concurrent codegen tests shared a nanosecond-named temporary directory was found and fixed with a process-local atomic counter; the suite was then run five consecutive times before this site was built.
+`cargo test --workspace` currently runs **72 tests**, including native executables for hello world, structs, Option/match, lists and overflow traps, plus the browser front-end ABI tests. A race where concurrent codegen tests shared a nanosecond-named temporary directory was found and fixed with a process-local atomic counter; the suite was then run five consecutive times before this site was built.
 
 The parser has malformed-input regression tests. IR validation relies on LLVM, not a custom verifier. Fuzzing, differential interpreter/native testing and sanitizer runs are planned.
 

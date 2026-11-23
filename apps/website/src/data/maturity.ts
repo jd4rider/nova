@@ -9,11 +9,12 @@ export interface Feature {
 
 export const features: Feature[] = [
   { area: 'Lexer, parser, spans and recovery', status: 'tested', note: 'UTF-8 identifiers, interpolation, error recovery', evidence: 'crates/nova-lexer, crates/nova-parser tests' },
-  { area: 'Type checker and native codegen', status: 'tested', note: 'Scalars, strings, lists, structs, Option/Result, match', evidence: 'cargo test --workspace: 69 tests' },
+  { area: 'Type checker and native codegen', status: 'tested', note: 'Scalars, strings, lists, structs, Option/Result, match', evidence: 'cargo test --workspace: 72 tests' },
   { area: 'Checked arithmetic and bounds', status: 'tested', note: 'Overflow and index failures abort with source locations', evidence: 'nova-codegen-llvm native tests' },
   { area: 'CLI, formatter, project manifest', status: 'tested', note: 'new/init/run/build/check/test/fmt/doctor/lsp/tree', evidence: 'crates/nova-cli, crates/nova-fmt, crates/nova-pkg' },
   { area: 'Language server', status: 'implemented', note: 'Diagnostics, completion, hover, definition, symbols, formatting', evidence: 'Manual CLI/LSP checks; no automated transcript suite yet' },
   { area: 'VS Code extension', status: 'implemented', note: 'Nova grammar and language client for diagnostics, completion, hover, definitions, symbols and formatting', evidence: 'Typecheck, VSIX package, code --install-extension and live nova lsp transcript; no Extension Host automation' },
+  { area: 'Browser playground', status: 'implemented', note: 'Real lexer, parser, type checker and formatter in WebAssembly; check/format only', evidence: 'WASM ABI tests, static route and examples; no native execution' },
   { area: 'Nova Studio workbench', status: 'implemented', note: 'Monaco, Gruvbox, explorer, tasks, terminal, Vim', evidence: 'TypeScript and production build pass; GUI interaction not automated' },
   { area: 'Visual effects and synthesized sound', status: 'experimental', note: 'Current-line lens, typing/scroll sparkles, Web Audio SFX, reduced-motion aware', evidence: 'Settings, menu and palette toggles; no automated GUI test yet' },
   { area: 'Generics, enums, traits, closures', status: 'planned', note: 'Unsupported syntax is rejected with diagnostics', evidence: 'ROADMAP.md' },

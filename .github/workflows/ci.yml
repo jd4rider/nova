@@ -64,6 +64,13 @@ jobs:
       - name: Install website dependencies
         working-directory: apps/website
         run: npm ci --no-audit --no-fund
+      - name: Add WebAssembly target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Build and verify playground front end
+        working-directory: apps/website
+        run: |
+          npm run build:playground
+          npm run test:playground
       - name: Astro check and lint
         working-directory: apps/website
         run: |
@@ -76,6 +83,7 @@ jobs:
         working-directory: apps/website
         run: |
           npm run test:grammar
+          npm run test:playground
           npm run test:site
           npm run test:snippets
         env:

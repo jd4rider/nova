@@ -7,7 +7,7 @@
 [![Rust](https://img.shields.io/badge/Rust-1.96-000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Status: working vertical slice](https://img.shields.io/badge/status-working%20vertical%20slice-fabd2f)](ROADMAP.md)
 
-[Website](https://jd4rider.github.io/nova/) · [Documentation](https://jd4rider.github.io/nova/docs/) · [Nova Studio](https://jd4rider.github.io/nova/studio/) · [VS Code extension](https://jd4rider.github.io/nova/toolchain/vscode/) · [Launch post](https://jd4rider.github.io/nova/blog/building-nova-in-rust/) · [Roadmap](ROADMAP.md) · [GitHub](https://github.com/jd4rider/nova)
+[Website](https://jd4rider.github.io/nova/) · [Playground](https://jd4rider.github.io/nova/playground/) · [Documentation](https://jd4rider.github.io/nova/docs/) · [Nova Studio](https://jd4rider.github.io/nova/studio/) · [VS Code extension](https://jd4rider.github.io/nova/toolchain/vscode/) · [Launch post](https://jd4rider.github.io/nova/blog/building-nova-in-rust/) · [Roadmap](ROADMAP.md) · [GitHub](https://github.com/jd4rider/nova)
 
 Nova is a **functioning native language toolchain** built in Rust: source is lexed, parsed, type-checked, lowered to LLVM IR and linked into a real executable. It is an early vertical slice — not a claim that the language is complete. The supported subset and every known gap are documented.
 
@@ -50,6 +50,10 @@ code --install-extension nova-language-0.1.0.vsix
 ```
 
 Download the [VSIX from the v0.1.0 release](https://github.com/jd4rider/nova/releases/download/v0.1.0/nova-language-0.1.0.vsix), or open **Extensions → … → Install from VSIX…** in VS Code. The extension requires VS Code 1.85+ and a `nova` binary for language-server features; set `nova.serverPath` if VS Code cannot find it. See [editors/vscode/README.md](editors/vscode/README.md).
+
+### Browser playground
+
+The [website playground](https://jd4rider.github.io/nova/playground/) runs the real lexer, parser, type checker and formatter in WebAssembly. It checks and formats source without uploading it, but it does **not** execute native programs. Use `nova run` for execution.
 
 ### Build from source
 
@@ -121,6 +125,7 @@ Ada (36)
 | CLI, formatter, manifests, project scaffolding | **Tested / implemented** | `nova --help`, integration tests |
 | Rust LSP over stdio | **Implemented** | Diagnostics, completion, hover, definition, symbols, formatting |
 | VS Code extension | **Implemented** | VSIX installs; shared grammar and live `nova lsp` transcript verified |
+| Browser playground | **Implemented** | Real front end compiled to WASM; valid/invalid ABI tests and static route verified |
 | Nova Studio desktop IDE | **Implemented** | Typecheck and production build pass; interaction not yet automated |
 | Current-line lens, sparkles, synthesized SFX | **Experimental** | Settings toggles, reduced-motion aware |
 | Public documentation and website | **Tested** | Astro check, build, link/base checks, grammar and snippet verification |
@@ -144,6 +149,7 @@ crates/
   nova-runtime        native support library
   nova-cli            build, run, check, test, fmt, lsp, tree
   nova-lsp            stdio language server
+  nova-wasm           browser front-end ABI
   nova-pkg            manifests, projects and lockfiles
   nova-fmt            conservative formatter
 ```
@@ -234,6 +240,7 @@ The website checks include real compiler invocations for documentation snippets.
 - No user module graph beyond standard imports.
 - Unsigned macOS/Windows installers and a macOS CLI archive are published; there are no signed/notarized builds, Intel/Linux installers, Windows CLI bundle or package registry.
 - The VS Code extension is a local, unsigned VSIX; it is not published to the VS Code Marketplace or Open VSX and has no automated Extension Host test.
+- The browser playground checks and formats only; native execution, HTTP, modules, user enums/classes and the planned library ecosystem remain unimplemented.
 - No benchmark claim; performance work needs a recorded harness.
 - No automated GUI interaction suite yet.
 - macOS arm64 is tested; Linux and Windows are not verified end to end.
@@ -245,6 +252,7 @@ See the [website status page](https://jd4rider.github.io/nova/status/) and [ROAD
 
 - [Install guide and checksums](INSTALL.md)
 - [VS Code extension](editors/vscode/README.md)
+- [Browser playground](https://jd4rider.github.io/nova/playground/)
 - [Homebrew tap](packaging/homebrew/README.md)
 - [Language reference](docs/language.md), [grammar](docs/grammar.ebnf), [memory model](docs/memory.md)
 - [Nova Studio guide](docs/ide.md)

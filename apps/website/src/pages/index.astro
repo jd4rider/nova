@@ -22,10 +22,11 @@ const statusRows = features.slice(0, 6)
         </p>
         <div class="hero-actions">
           <a class="button primary" href={href('getting-started/installation/')}>Get started <span aria-hidden="true">→</span></a>
+          <a class="button" href={href('playground')}>Try the playground</a>
           <a class="button" href={href('studio')}>Explore Nova Studio</a>
         </div>
         <ul class="proof">
-          <li>69 compiler tests passing</li>
+          <li>72 compiler tests passing</li>
           <li>LLVM native backend</li>
           <li>Static docs, no live server</li>
         </ul>
@@ -67,7 +68,7 @@ Ada is 36
           <div class="card-icon" aria-hidden="true">IR</div>
           <h3>Native pipeline</h3>
           <p>Lexing, parsing, semantic checking, typed IR, textual LLVM IR and a small C runtime. The LLVM verifier runs; programs link with the platform toolchain.</p>
-          <div class="meta">cargo test --workspace · 69 passing</div>
+          <div class="meta">cargo test --workspace · 72 passing</div>
         </article>
         <article class="card">
           <div class="card-icon" aria-hidden="true">▤</div>

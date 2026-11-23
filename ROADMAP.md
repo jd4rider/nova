@@ -34,6 +34,7 @@ Status means: **tested** = covered by automated tests and passing; **implemented
 | Formatter | implemented | Conservative indentation/whitespace; not a full pretty-printer |
 | LSP stdio JSON-RPC | tested manually | Full sync, diagnostics, completion, hover, definition, symbols, formatting |
 | VS Code extension | implemented | Shared TextMate grammar and language client; VSIX packaged and installed, live `nova lsp` transcript verified; no Extension Host automation |
+| Browser playground | implemented | Real lexer, parser, sema and formatter compiled to WASM; static route and ABI tests pass; check/format only |
 | LSP incremental sync, rename, references, semantic tokens, code actions, cancellation | planned | Not advertised |
 | Package registry, publishing, checksums | planned | |
 | Benchmarks and performance claims | planned | No benchmark evidence; directive performance targets are aspirations only |
@@ -73,3 +74,7 @@ Status means: **tested** = covered by automated tests and passing; **implemented
 6. Add generics and user enums, then traits.
 7. Add DWARF debug info and a DAP adapter only after verifying emitted information.
 8. Add benchmark harness with recorded hardware and honest comparisons.
+9. Implement user modules and file linking, then scaffold templates beyond the single binary project.
+10. Implement user enums, classes/traits, generics and methods with typed tests and codegen.
+11. Add `std.http` with HTTPS, package resolution and a documented security boundary.
+12. Build real Nova libraries and TUI/GUI/WASM framework packages only after modules, packaging and native/runtime abstractions exist.

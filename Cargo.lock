@@ -233,6 +233,18 @@ name = "nova-stdlib"
 version = "0.1.0"
 
 [[package]]
+name = "nova-wasm"
+version = "0.1.0"
+dependencies = [
+ "nova-diag",
+ "nova-fmt",
+ "nova-parser",
+ "nova-sema",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "once_cell_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

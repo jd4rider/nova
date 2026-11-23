@@ -17,6 +17,7 @@ const current = Astro.url.pathname
 const nav = [
   ['Language', 'language'],
   ['Studio', 'studio'],
+  ['Playground', 'playground'],
   ['Docs', 'docs/'],
   ['Blog', 'blog/'],
   ['Roadmap', 'roadmap'],
@@ -98,6 +99,7 @@ const isCurrent = (target: string) => current === href(target) || (target !== ''
             <h3>Product</h3>
             <a href={href('language')}>Language</a>
             <a href={href('studio')}>Nova Studio</a>
+            <a href={href('playground')}>Playground</a>
             <a href={href('toolchain/vscode/')}>VS Code extension</a>
             <a href={href('install')}>Install</a>
             <a href={href('docs/')}>Documentation</a>
