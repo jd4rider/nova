@@ -29,7 +29,7 @@ If Homebrew asks you to trust the tap: `brew trust jd4rider/tap`. Language only:
 brew install jd4rider/tap/nova
 ```
 
-The tap is [jd4rider/homebrew-tap](https://github.com/jd4rider/homebrew-tap). It currently targets macOS arm64.
+The tap is [jd4rider/homebrew-tap](https://github.com/jd4rider/homebrew-tap). It currently targets macOS arm64. The cask install was verified end to end: `nova 0.1.0` and `/Applications/Nova Studio.app`.
 
 ### Direct installers
 

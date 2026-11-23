@@ -10,7 +10,7 @@ This directory is the source for the public tap:
 brew install --cask jd4rider/tap/nova-studio
 ```
 
-The `nova-studio` cask depends on the `nova` formula, so Homebrew installs the compiler/CLI and the desktop app in the same operation.
+If Homebrew asks you to trust the tap: `brew trust jd4rider/tap`. The `nova-studio` cask depends on the `nova` formula, so Homebrew installs the compiler/CLI and the desktop app in the same operation. This was verified end to end on macOS arm64: `nova 0.1.0` plus `/Applications/Nova Studio.app`.
 
 ## Install the language alone
 

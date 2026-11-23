@@ -39,7 +39,7 @@ Status means: **tested** = covered by automated tests and passing; **implemented
 | Astro 7 + Starlight public website and docs | tested | `npm run check`, production build, root/project-base link checks, grammar scopes, checked snippets |
 | GitHub Pages workflow | implemented | Public repository and verified deployment at https://jd4rider.github.io/nova/ |
 | Unsigned desktop installers | implemented | v0.1.0 macOS arm64 DMG, Windows x64 NSIS EXE, macOS CLI archive and SHA-256 manifest |
-| Homebrew formula and Studio cask | implemented | `jd4rider/tap/nova`; cask depends on the language formula and installs both |
+| Homebrew formula and Studio cask | tested | `brew install --cask jd4rider/tap/nova-studio` installed CLI 0.1.0 and the app |
 | Signed desktop releases | planned | Unsigned installers exist; no Developer ID/notarization or Authenticode |
 
 ## Nova Studio

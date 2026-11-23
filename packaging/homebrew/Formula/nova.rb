@@ -10,7 +10,7 @@ class Nova < Formula
   depends_on macos: :big_sur
 
   def install
-    bin.install "nova-0.1.0-aarch64-apple-darwin/nova"
+    bin.install "nova"
   end
 
   def caveats

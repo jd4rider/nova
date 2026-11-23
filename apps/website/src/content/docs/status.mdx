@@ -19,8 +19,9 @@ import MilestoneList from '../../components/MilestoneList.astro'
 ## Verification snapshot
 
 - Compiler: `cargo test --workspace` — 69 tests, five consecutive clean runs after the temporary-directory race fix.
-- Editor: `npm run typecheck` and `npm run build` — pass. GUI interaction is not automated.
+- Editor: `npm run typecheck`, `npm run build` and DMG/NSIS packaging pass. The installed Homebrew app was not GUI-automated.
 - Website: `astro check`, production build, base-path/link verification and checked snippet compilation are CI gates.
 - Deployment: public repository [jd4rider/nova](https://github.com/jd4rider/nova); GitHub Pages build and deploy completed successfully. Live site: [jd4rider.github.io/nova](https://jd4rider.github.io/nova/).
+- Releases: [v0.1.0](https://github.com/jd4rider/nova/releases/tag/v0.1.0) has unsigned macOS DMG, Windows NSIS EXE and CLI archives. The Homebrew cask was installed end to end and installed both `nova 0.1.0` and `/Applications/Nova Studio.app`.
 
 Reports of a claimed feature without evidence should be treated as a documentation bug.

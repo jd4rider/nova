@@ -17,7 +17,7 @@ The public tap installs **Nova Studio and the `nova` language together**. The ca
 brew install --cask jd4rider/tap/nova-studio
 ```
 
-That single command installs:
+If Homebrew asks you to trust the tap, run `brew trust jd4rider/tap` first. That single command installs:
 
 - `/Applications/Nova Studio.app`
 - the `nova` CLI and compiler from the tap
@@ -43,7 +43,7 @@ brew install nova
 brew install --cask nova-studio
 ```
 
-The Homebrew CLI archive is currently macOS arm64. Nova requires `clang` to link native programs; install the Xcode Command Line Tools if needed:
+The Homebrew CLI archive is currently macOS arm64. This cask install was verified end to end on macOS arm64: it installed `nova 0.1.0`, and the app launched from `/Applications/Nova Studio.app`. Nova requires `clang` to link native programs; install the Xcode Command Line Tools if needed:
 
 ```sh
 xcode-select --install
