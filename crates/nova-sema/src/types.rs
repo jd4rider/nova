@@ -18,6 +18,8 @@ pub enum Type {
     Option(Box<Type>),
     Result(Box<Type>, Box<Type>),
     Struct(String),
+    /// Nominal user-defined enum. Values are a tag plus an optional payload.
+    Enum(String),
     /// Reserved for non-returning expressions; not yet produced by the checker.
     Never,
     Error,
@@ -91,6 +93,7 @@ impl fmt::Display for Type {
             Type::Option(inner) => write!(f, "Option<{inner}>"),
             Type::Result(ok, err) => write!(f, "Result<{ok}, {err}>"),
             Type::Struct(name) => write!(f, "{name}"),
+            Type::Enum(name) => write!(f, "{name}"),
             Type::Never => write!(f, "Never"),
             Type::Error => write!(f, "<error>"),
         }

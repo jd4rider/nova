@@ -12,7 +12,7 @@ const capabilities = [
   ['Vim mode', 'experimental'],
   ['Visual effects + synthesized sound', 'experimental'],
   ['Git, debugger, test explorer, split groups', 'planned'],
-  ['FreeBuff structured chat and inline AI', 'unavailable']
+  ['FreeBuff TUI and streaming chat', 'implemented']
 ] as const
 ---
 <SiteLayout title="Nova Studio" path="studio" description="The Nova Studio workbench, architecture, implemented features and verification limits.">
@@ -40,7 +40,7 @@ const capabilities = [
       <div class="grid-3">
         <article class="card"><div class="card-icon">⌘</div><h3>Keyboard-first</h3><p>Quick open, command palette, tasks, settings, status bar and a Vim mode built on monaco-vim. Partial Vim emulation is labeled as partial.</p><div class="meta">Cmd/Ctrl+P · Cmd/Ctrl+Shift+P</div></article>
         <article class="card"><div class="card-icon">LSP</div><h3>Native services</h3><p>The Rust language server runs as its own process over stdio. Builds invoke the real nova CLI with argv arrays and show actual output and exit codes.</p><div class="meta">No mocked compiler output</div></article>
-        <article class="card"><div class="card-icon">▣</div><h3>Deliberate AI boundary</h3><p>FreeBuff is available as a dedicated terminal only. The installed CLI has no documented structured chat protocol, so chat, agents and ghost text are disabled rather than faked.</p><div class="meta">See FreeBuff ADR</div></article>
+        <article class="card"><div class="card-icon">▣</div><h3>Two AI paths, no scraping</h3><p>The FreeBuff tab runs the real CLI in a PTY. The chat tab streams from Claude or any OpenAI-compatible endpoint, with keys encrypted by the OS credential store. FreeBuff 0.2.36 has no headless mode, so Studio does not pretend it does.</p><div class="meta">See FreeBuff ADR</div></article>
       </div>
     </div>
   </section>

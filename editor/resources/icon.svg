@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1b2233"/>
+      <stop offset="0.55" stop-color="#121726"/>
+      <stop offset="1" stop-color="#0b0e17"/>
+    </linearGradient>
+    <linearGradient id="star" x1="0.2" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.55" stop-color="#e9f7ff"/>
+      <stop offset="1" stop-color="#8fdcff"/>
+    </linearGradient>
+    <linearGradient id="orbit" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5ac8ff" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#8b6cff" stop-opacity="0.35"/>
+    </linearGradient>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="26" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect x="88" y="88" width="848" height="848" rx="196" fill="url(#tile)"/>
+  <rect x="88" y="88" width="848" height="848" rx="196" fill="none" stroke="#3a4a6b" stroke-opacity="0.55" stroke-width="4"/>
+
+  <ellipse cx="512" cy="512" rx="330" ry="150" transform="rotate(-24 512 512)" fill="none" stroke="url(#orbit)" stroke-width="9"/>
+  <circle cx="806" cy="352" r="22" fill="#6fd3ff"/>
+
+  <g filter="url(#glow)">
+    <path d="M512 176 L566 442 L822 512 L566 582 L512 848 L458 582 L202 512 L458 442 Z" fill="url(#star)"/>
+  </g>
+  <path d="M512 300 L540 472 L700 512 L540 552 L512 724 L484 552 L324 512 L484 472 Z" fill="#ffffff" fill-opacity="0.22"/>
+
+  <path d="M744 214 L758 258 L800 272 L758 286 L744 330 L730 286 L688 272 L730 258 Z" fill="#eaf8ff" fill-opacity="0.9"/>
+</svg>

@@ -193,6 +193,43 @@ int32_t nova_string_eq(nova_str a, nova_str b) {
     return memcmp(a.ptr, b.ptr, (size_t)a.len) == 0;
 }
 
+int32_t nova_string_contains(nova_str haystack, nova_str needle) {
+    if (needle.len == 0) return 1;
+    if (!haystack.ptr || !needle.ptr) return 0;
+    if (haystack.len < needle.len) return 0;
+    for (int64_t i = 0; i + needle.len <= haystack.len; i++) {
+        if (memcmp(haystack.ptr + i, needle.ptr, (size_t)needle.len) == 0) return 1;
+    }
+    return 0;
+}
+
+int32_t nova_string_starts_with(nova_str value, nova_str prefix) {
+    if (prefix.len == 0) return 1;
+    if (!value.ptr || !prefix.ptr || value.len < prefix.len) return 0;
+    return memcmp(value.ptr, prefix.ptr, (size_t)prefix.len) == 0;
+}
+
+int32_t nova_string_ends_with(nova_str value, nova_str suffix) {
+    if (suffix.len == 0) return 1;
+    if (!value.ptr || !suffix.ptr || value.len < suffix.len) return 0;
+    return memcmp(value.ptr + (value.len - suffix.len), suffix.ptr, (size_t)suffix.len) == 0;
+}
+
+/* Trims ASCII whitespace. UTF-8 bytes are copied verbatim, so multibyte text
+ * is never split by the trim itself. */
+static int nova_ascii_space(unsigned char c) {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == 0x0b || c == 0x0c;
+}
+
+nova_str nova_string_trim(nova_str value) {
+    int64_t start = 0;
+    int64_t end = value.len;
+    if (!value.ptr || value.len == 0) return nova_copy_str("", 0);
+    while (start < end && nova_ascii_space((unsigned char)value.ptr[start])) start++;
+    while (end > start && nova_ascii_space((unsigned char)value.ptr[end - 1])) end--;
+    return nova_copy_str(value.ptr + start, end - start);
+}
+
 nova_str nova_i64_to_string(int64_t v) {
     char buf[32];
     int n = snprintf(buf, sizeof(buf), "%lld", (long long)v);

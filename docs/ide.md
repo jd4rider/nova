@@ -11,7 +11,7 @@ NOVA_BIN=/absolute/path/to/nova npm run dev
 
 Or build: `npm run build` (outputs under `out/`). `npm run typecheck` is part of the build gate. The Electron binary is installed locally by `node_modules/electron/install.js` if npm blocked postinstall scripts.
 
-Open a folder containing `nova.toml`. Without a manifest, files open and syntax highlight but LSP startup and tasks are reported as unavailable.
+Open a folder containing `nova.toml`. Studio remembers the folder and reopens it on the next launch; if it was moved or deleted, startup continues without a workspace. Without a manifest, files open and syntax highlight but LSP startup and tasks are reported as unavailable.
 
 ## Shortcuts
 
@@ -20,6 +20,12 @@ Open a folder containing `nova.toml`. Without a manifest, files open and syntax 
 | Quick open | Cmd/Ctrl+P |
 | Command palette | Cmd/Ctrl+Shift+P |
 | Save | Cmd/Ctrl+S |
+| Save all | Cmd/Ctrl+Alt+S |
+| Close tab | Cmd/Ctrl+W |
+| Toggle sidebar | Cmd/Ctrl+B |
+| Explorer view | Cmd/Ctrl+Shift+E |
+| Search view | Cmd/Ctrl+Shift+F |
+| Go to line | Ctrl+G |
 | Toggle bottom panel | Cmd/Ctrl+` |
 | Quick open / palette navigation | Up/Down, Enter, Escape |
 
@@ -27,9 +33,9 @@ Menu commands cover open folder, save, build, run, check, test, format, new file
 
 ## Editor
 
-Monaco provides multi-cursor, rectangular selection, undo/redo, folding, bracket colorization, indentation guides, minimap, find/replace, and snippets through its standard keybindings. Nova LSP supplies diagnostics, completion, hover, definition and document formatting. Format-on-save is not enabled by default. External file changes are detected at save time: Nova asks before overwriting.
+Monaco provides multi-cursor, rectangular selection, undo/redo, folding, bracket colorization, indentation guides, minimap, find/replace, and snippets through its standard keybindings. Nova LSP supplies diagnostics, completion, hover, definition and document formatting. Format-on-save is not enabled by default. A recursive workspace watcher reports files created, changed or removed outside Studio: the explorer refreshes automatically, clean tabs reload from disk with the caret preserved, and buffers with unsaved edits are left alone. A save whose file changed underneath still asks before overwriting.
 
-One model is kept per `file://` URI; closing a tab disposes it. Supported highlighting currently centers on `.nova`; other files open as plain text. Markdown preview, split editor groups, drag-reordered tabs, breadcrumbs, inlay hints, and a test explorer are not implemented.
+One model is kept per `file://` URI; closing a tab disposes it. Supported highlighting currently centers on `.nova`; other files open as plain text. Markdown preview, split editor groups, drag-reordered tabs, inlay hints, and a test explorer are not implemented.
 
 ## Vim mode
 
@@ -52,6 +58,15 @@ Settings → **Visual effects & sound** contains independent toggles for animate
 - **Accessibility:** OS `prefers-reduced-motion` suppresses animated effects even when the setting is enabled. The setting remains stored so it can resume when that preference is removed.
 
 Monaco renders text as DOM, and the lens intentionally magnifies the line plate and gutter without reflowing glyphs. That keeps caret, selection and hit-test geometry stable; it is a visual lens, not a per-line font-size change. The visual layer is pointer-transparent and never captures editor input.
+
+## AI panel
+
+The right-hand panel has two tabs; toggle it with the ✦ activity-bar button, **View → Toggle AI Panel** or the command palette.
+
+- **Chat** streams from Anthropic Claude or any OpenAI-compatible endpoint (GitHub Models, OpenAI, OpenRouter, or a local Ollama/LM Studio server). Pick a preset or fill in model, base URL and key. Keys are encrypted with the OS credential store in the main process; the renderer never receives them and they are never written to the workspace. **Insert** applies a reply at the caret or replaces the selection, **Copy** copies it. The open file and any selection are attached only when you press Send with **attach** enabled. Streaming can be stopped.
+- **FreeBuff** embeds the real FreeBuff CLI in a PTY at the workspace root. FreeBuff 0.2.36 exposes an interactive TUI only (`--print` and `-p` are rejected), so Studio does not scrape its output or fabricate a headless protocol.
+
+There is no inline ghost text, agent edit review or OAuth login. GitHub Models uses a personal access token rather than a Copilot sign-in.
 
 ## Terminal and tasks
 

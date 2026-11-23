@@ -146,7 +146,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "nova-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "nova-codegen-llvm",
@@ -162,7 +162,7 @@ dependencies = [
 
 [[package]]
 name = "nova-codegen-llvm"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "nova-diag",
  "nova-parser",
@@ -172,25 +172,25 @@ dependencies = [
 
 [[package]]
 name = "nova-diag"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "nova-fmt"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "nova-lexer"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "nova-diag",
 ]
 
 [[package]]
 name = "nova-lsp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "nova-diag",
  "nova-fmt",
@@ -201,7 +201,7 @@ dependencies = [
 
 [[package]]
 name = "nova-parser"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "nova-diag",
  "nova-lexer",
@@ -209,7 +209,7 @@ dependencies = [
 
 [[package]]
 name = "nova-pkg"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "toml",
@@ -217,11 +217,11 @@ dependencies = [
 
 [[package]]
 name = "nova-runtime"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "nova-sema"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "nova-diag",
  "nova-lexer",
@@ -230,11 +230,11 @@ dependencies = [
 
 [[package]]
 name = "nova-stdlib"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "nova-wasm"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "nova-diag",
  "nova-fmt",

@@ -10,7 +10,7 @@ Nova Studio is a standalone Electron workbench using React, strict TypeScript, V
 ## Architecture
 
 - **Electron 33** with context isolation, sandboxing, no Node integration, CSP, blocked navigation and narrow preload IPC.
-- **Monaco** is the editor engine; Nova uses a Monarch grammar and a Gruvbox theme.
+- **Monaco** is the editor engine; Nova uses a Monarch grammar and ships a Visual Studio Code Dark+ theme by default, with Gruvbox alternatives.
 - **Main process** owns filesystem access, tasks, PTYs, search and the LSP subprocess. Renderer has no Node access.
 - **Rust LSP** is started per workspace and reused across open documents.
 - **Textual LLVM IR + host Clang** builds native binaries; Studio invokes the actual CLI, it does not simulate build output.
@@ -22,7 +22,10 @@ See the repository ADR `docs/adr/0001-ide-architecture.md` for the decision reco
 | Area | Status |
 |---|---|
 | Explorer, tabs, dirty state, save with external-change confirmation | Implemented |
-| Monaco, Nova syntax highlighting, Gruvbox Dark/Light/High Contrast | Implemented |
+| Reopens the last workspace on launch | Implemented; missing folders start without a workspace |
+| Live workspace watching: external creates/edits refresh the tree; clean tabs reload, dirty buffers are preserved | Implemented |
+| Tab actions, Save All, Go to Line, VS Code-style shortcuts | Implemented; no automated GUI interaction test |
+| Monaco, Nova syntax highlighting, Dark+ default with Gruvbox Dark/Light/High Contrast | Implemented |
 | LSP diagnostics, completion, hover, definition, formatting | Implemented |
 | Build / run / check / test tasks with real output | Implemented |
 | Problems, output, test panel, integrated terminal | Implemented; terminal is pipe-only without `node-pty` |
@@ -30,7 +33,7 @@ See the repository ADR `docs/adr/0001-ide-architecture.md` for the decision reco
 | Search, quick open, command palette, settings, Vim mode | Implemented |
 | Visual effects and synthesized sound | Experimental; settings toggles, no GUI automation yet |
 | Git panel, debugger, test explorer, split groups, multi-window | Planned |
-| FreeBuff structured chat/agent/inline completion | Unavailable; terminal fallback only |
+| AI panel | FreeBuff TUI plus streaming chat via Claude or any OpenAI-compatible endpoint; no inline completion or agent edits |
 
 ## Visual effects and sound
 
@@ -48,7 +51,7 @@ npm run build
 NOVA_BIN="$PWD/../target/debug/nova" npm run dev
 ```
 
-Without `node-pty`, the shell terminal reports **pipe mode**. FreeBuff requires a real TTY and will explain that it is unavailable.
+Without `node-pty`, the shell terminal reports **pipe mode**. FreeBuff requires a real TTY and will explain that it is unavailable. The AI panel's chat tab does not need a PTY: it streams from a provider you configure, using a key the main process encrypts with the OS credential store.
 
 ## Security boundaries
 

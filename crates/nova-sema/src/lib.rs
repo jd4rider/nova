@@ -80,6 +80,8 @@ struct Coverage {
     ok: bool,
     err: bool,
     literal: bool,
+    /// Covered variants of a user enum, by variant name.
+    variants: HashSet<String>,
 }
 
 #[derive(Default)]
@@ -89,6 +91,9 @@ struct Checker {
     structs: HashMap<String, StructDef>,
     struct_order: Vec<String>,
     struct_spans: HashMap<String, Span>,
+    enums: HashMap<String, crate::typed::EnumDef>,
+    enum_order: Vec<String>,
+    enum_spans: HashMap<String, Span>,
     aliases: HashMap<String, BuiltinFn>,
     diagnostics: Vec<Diagnostic>,
     current: Option<FnState>,
@@ -100,6 +105,7 @@ impl Checker {
         self.collect_imports(program);
         self.collect_struct_names(program);
         self.collect_struct_fields(program);
+        self.collect_enum_variants(program);
         self.detect_struct_cycles();
         self.collect_functions(program);
 
@@ -141,6 +147,11 @@ impl Checker {
                     .struct_order
                     .iter()
                     .filter_map(|n| self.structs.get(n).cloned())
+                    .collect(),
+                enums: self
+                    .enum_order
+                    .iter()
+                    .filter_map(|n| self.enums.get(n).cloned())
                     .collect(),
                 tests,
                 main,
@@ -251,16 +262,23 @@ impl Checker {
                     self.struct_order.push(decl.name.clone());
                 }
                 ast::Item::Enum(decl) => {
-                    self.diagnostics.push(
-                        Diagnostic::error(
+                    if self.structs.contains_key(&decl.name) || self.enums.contains_key(&decl.name) {
+                        self.diagnostics.push(Diagnostic::error(
                             "E0201",
-                            "user-defined enums are not implemented in this build",
+                            format!("duplicate type `{}`", decl.name),
                             decl.name_span,
-                        )
-                        .with_note(
-                            "`Option<T>` and `Result<T, E>` are built in; user enums are on the roadmap",
-                        ),
+                        ));
+                        continue;
+                    }
+                    self.enums.insert(
+                        decl.name.clone(),
+                        crate::typed::EnumDef {
+                            name: decl.name.clone(),
+                            variants: Vec::new(),
+                        },
                     );
+                    self.enum_spans.insert(decl.name.clone(), decl.name_span);
+                    self.enum_order.push(decl.name.clone());
                 }
                 _ => {}
             }
@@ -300,6 +318,91 @@ impl Checker {
                 },
             );
         }
+    }
+
+    fn collect_enum_variants(&mut self, program: &ast::Program) {
+        let mut owners: HashMap<String, String> = HashMap::new();
+        for item in &program.items {
+            let ast::Item::Enum(decl) = item else {
+                continue;
+            };
+            let mut variants = Vec::new();
+            let mut seen = HashSet::new();
+            for variant in &decl.variants {
+                if !seen.insert(variant.name.clone()) {
+                    self.diagnostics.push(Diagnostic::error(
+                        "E0201",
+                        format!("duplicate variant `{}`", variant.name),
+                        variant.name_span,
+                    ));
+                    continue;
+                }
+                if matches!(variant.name.as_str(), "Some" | "None" | "Ok" | "Err") {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "E0201",
+                            format!("`{}` is a reserved built-in variant name", variant.name),
+                            variant.name_span,
+                        )
+                        .with_note("rename the variant so it cannot be confused with Option/Result"),
+                    );
+                    continue;
+                }
+                if let Some(previous) = owners.insert(variant.name.clone(), decl.name.clone()) {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "E0201",
+                            format!(
+                                "variant `{}` is already declared by enum `{previous}`",
+                                variant.name
+                            ),
+                            variant.name_span,
+                        )
+                        .with_note("variant constructors are global in this build; give each one a unique name"),
+                    );
+                    continue;
+                }
+                let payload = variant.payload.as_ref().map(|ty| self.resolve_type(ty));
+                variants.push(crate::typed::EnumVariantDef {
+                    name: variant.name.clone(),
+                    payload,
+                });
+            }
+            self.enums.insert(
+                decl.name.clone(),
+                crate::typed::EnumDef {
+                    name: decl.name.clone(),
+                    variants,
+                },
+            );
+        }
+    }
+
+    fn lookup_variant(&self, name: &str) -> Option<(String, u32, Option<Type>)> {
+        for enum_name in &self.enum_order {
+            let Some(def) = self.enums.get(enum_name) else {
+                continue;
+            };
+            if let Some((index, variant)) = def
+                .variants
+                .iter()
+                .enumerate()
+                .find(|(_, variant)| variant.name == name)
+            {
+                return Some((def.name.clone(), index as u32, variant.payload.clone()));
+            }
+        }
+        None
+    }
+
+    fn enum_variant(&self, enum_name: &str, variant_name: &str) -> Option<(u32, Option<Type>)> {
+        let def = self.enums.get(enum_name)?;
+        let (index, variant) = def
+            .variants
+            .iter()
+            .enumerate()
+            .find(|(_, variant)| variant.name == variant_name)?;
+        Some((index as u32, variant.payload.clone()))
     }
 
     fn detect_struct_cycles(&mut self) {
@@ -532,15 +635,19 @@ impl Checker {
                         Type::result(self.resolve_type(&args[0]), self.resolve_type(&args[1]))
                     }
                     other => {
-                        if self.structs.contains_key(other) {
+                        if self.structs.contains_key(other) || self.enums.contains_key(other) {
                             if !args.is_empty() {
                                 self.diagnostics.push(Diagnostic::error(
                                     "E0202",
-                                    format!("struct `{other}` does not take type arguments"),
+                                    format!("type `{other}` does not take type arguments"),
                                     ty.span,
                                 ));
                             }
-                            Type::Struct(other.to_string())
+                            if self.enums.contains_key(other) {
+                                Type::Enum(other.to_string())
+                            } else {
+                                Type::Struct(other.to_string())
+                            }
                         } else {
                             self.diagnostics.push(
                                 Diagnostic::error(
@@ -1226,6 +1333,29 @@ impl Checker {
             ));
             return TExpr::new(TExprKind::Unit, Type::Error, span);
         }
+        if let Some((enum_name, tag, payload)) = self.lookup_variant(name) {
+            if let Some(payload_ty) = payload {
+                self.diagnostics.push(Diagnostic::error(
+                    "E0205",
+                    format!("`{name}` carries a `{payload_ty}` payload and requires an argument"),
+                    span,
+                ));
+                return TExpr::new(TExprKind::Unit, Type::Error, span);
+            }
+            let ty = Type::Enum(enum_name.clone());
+            return self.finish(
+                TExpr::new(
+                    TExprKind::EnumVariant {
+                        enum_name,
+                        tag,
+                        payload: None,
+                    },
+                    ty,
+                    span,
+                ),
+                expected,
+            );
+        }
         if self.funcs.contains_key(name) {
             self.diagnostics.push(
                 Diagnostic::error(
@@ -1377,6 +1507,10 @@ impl Checker {
             return self.check_constructor(name, args, span, expected);
         }
 
+        if let Some((enum_name, tag, payload)) = self.lookup_variant(name) {
+            return self.check_enum_variant(name, &enum_name, tag, payload, args, span, expected);
+        }
+
         for arg in args {
             if let Some(span) = arg.name_span {
                 self.diagnostics.push(
@@ -1469,6 +1603,80 @@ impl Checker {
             ),
             expected,
         )
+    }
+
+    fn check_enum_variant(
+        &mut self,
+        variant_name: &str,
+        enum_name: &str,
+        tag: u32,
+        payload: Option<Type>,
+        args: &[ast::Arg],
+        span: Span,
+        expected: Option<&Type>,
+    ) -> TExpr {
+        for arg in args {
+            if let Some(name_span) = arg.name_span {
+                self.diagnostics.push(Diagnostic::error(
+                    "E0208",
+                    "named arguments are not implemented in this build",
+                    name_span,
+                ));
+            }
+        }
+        let ty = Type::Enum(enum_name.to_string());
+        match payload {
+            None => {
+                self.diagnostics.push(Diagnostic::error(
+                    "E0205",
+                    format!("`{variant_name}` is a unit variant and does not take a payload"),
+                    span,
+                ));
+                for arg in args {
+                    self.check_expr(&arg.value, None);
+                }
+                TExpr::new(TExprKind::Unit, Type::Error, span)
+            }
+            Some(payload_ty) => {
+                if args.len() != 1 {
+                    self.diagnostics.push(Diagnostic::error(
+                        "E0208",
+                        format!(
+                            "`{variant_name}` expects 1 payload argument, found {}",
+                            args.len()
+                        ),
+                        span,
+                    ));
+                    for arg in args {
+                        self.check_expr(&arg.value, None);
+                    }
+                    return TExpr::new(TExprKind::Unit, Type::Error, span);
+                }
+                let value = self.check_expr(&args[0].value, Some(&payload_ty));
+                if value.ty != payload_ty && !value.ty.is_error() && !payload_ty.is_error() {
+                    self.diagnostics.push(Diagnostic::error(
+                        "E0308",
+                        format!(
+                            "argument to `{variant_name}` has type `{}`, expected `{payload_ty}`",
+                            value.ty
+                        ),
+                        value.span,
+                    ));
+                }
+                self.finish(
+                    TExpr::new(
+                        TExprKind::EnumVariant {
+                            enum_name: enum_name.to_string(),
+                            tag,
+                            payload: Some(Box::new(value)),
+                        },
+                        ty,
+                        span,
+                    ),
+                    expected,
+                )
+            }
+        }
     }
 
     fn check_constructor(
@@ -1855,6 +2063,42 @@ impl Checker {
                     );
                     self.finish(te, expected)
                 }
+                "contains" | "starts_with" | "ends_with" => {
+                    self.require_args(method, args, 1, span);
+                    let argument = args
+                        .first()
+                        .map(|a| self.check_expr(&a.value, Some(&Type::String)))
+                        .map(|e| vec![e])
+                        .unwrap_or_default();
+                    let builtin = match method {
+                        "contains" => BuiltinMethod::StringContains,
+                        "starts_with" => BuiltinMethod::StringStartsWith,
+                        _ => BuiltinMethod::StringEndsWith,
+                    };
+                    let te = TExpr::new(
+                        TExprKind::Method {
+                            receiver: Box::new(recv),
+                            method: builtin,
+                            args: argument,
+                        },
+                        Type::Bool,
+                        span,
+                    );
+                    self.finish(te, expected)
+                }
+                "trim" => {
+                    self.require_args(method, args, 0, span);
+                    let te = TExpr::new(
+                        TExprKind::Method {
+                            receiver: Box::new(recv),
+                            method: BuiltinMethod::StringTrim,
+                            args: Vec::new(),
+                        },
+                        Type::String,
+                        span,
+                    );
+                    self.finish(te, expected)
+                }
                 other => self.unknown_method(other, &recv_ty, method_span, span),
             },
             Type::Option(inner) => match method {
@@ -2212,6 +2456,25 @@ impl Checker {
                 TPattern::Wildcard
             }
             PatternKind::Bind(name) => {
+                if let Type::Enum(enum_name) = scrutinee {
+                    if let Some((tag, payload)) = self.enum_variant(enum_name, name) {
+                        if let Some(payload_ty) = payload {
+                            self.diagnostics.push(
+                                Diagnostic::error(
+                                    "E0311",
+                                    format!(
+                                        "`{name}` carries a `{payload_ty}` payload; write `{name}(value)`"
+                                    ),
+                                    pattern.span,
+                                )
+                                .with_note("use `_` as the payload pattern to ignore it"),
+                            );
+                            return TPattern::Wildcard;
+                        }
+                        coverage.variants.insert(name.clone());
+                        return TPattern::Enum { tag, payload: None };
+                    }
+                }
                 coverage.wildcard = true;
                 let id = self.add_local(name, scrutinee.clone(), false, false, pattern.span);
                 TPattern::Bind(id)
@@ -2293,6 +2556,40 @@ impl Checker {
                         TPattern::Wildcard
                     }
                 },
+                Type::Enum(enum_name) => {
+                    let found = self.enum_variant(enum_name, name);
+                    let Some((tag, payload_ty)) = found else {
+                        self.diagnostics.push(Diagnostic::error(
+                            "E0311",
+                            format!("`{name}` is not a variant of `{enum_name}`"),
+                            *name_span,
+                        ));
+                        return TPattern::Wildcard;
+                    };
+                    coverage.variants.insert(name.clone());
+                    match payload_ty {
+                        Some(payload_ty) => {
+                            let id = self.bind_payload(
+                                inner,
+                                &payload_ty,
+                                *name_span,
+                                pattern.span,
+                                name,
+                            );
+                            TPattern::Enum { tag, payload: id }
+                        }
+                        None => {
+                            if inner.is_some() {
+                                self.diagnostics.push(Diagnostic::error(
+                                    "E0311",
+                                    format!("`{name}` does not take a payload pattern"),
+                                    pattern.span,
+                                ));
+                            }
+                            TPattern::Enum { tag, payload: None }
+                        }
+                    }
+                }
                 Type::Error => TPattern::Wildcard,
                 other => {
                     self.diagnostics.push(
@@ -2386,6 +2683,35 @@ impl Checker {
                     missing.push("Err(_)");
                 }
                 missing
+            }
+            Type::Enum(name) => {
+                let Some(def) = self.enums.get(name) else {
+                    return;
+                };
+                let missing: Vec<String> = def
+                    .variants
+                    .iter()
+                    .filter(|variant| !coverage.variants.contains(&variant.name))
+                    .map(|variant| {
+                        if variant.payload.is_some() {
+                            format!("{}(_)", variant.name)
+                        } else {
+                            variant.name.clone()
+                        }
+                    })
+                    .collect();
+                if !missing.is_empty() {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "E0310",
+                            format!("non-exhaustive `match` on `{scrutinee}`"),
+                            span,
+                        )
+                        .with_note(format!("missing patterns: {}", missing.join(", ")))
+                        .with_note("add the missing pattern or a wildcard `_`"),
+                    );
+                }
+                return;
             }
             Type::Int | Type::Char | Type::String => {
                 vec!["_ (a wildcard or binding)"]

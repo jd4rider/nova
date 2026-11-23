@@ -29,15 +29,15 @@ If Homebrew asks you to trust the tap: `brew trust jd4rider/tap`. Language only:
 brew install jd4rider/tap/nova
 ```
 
-The tap is [jd4rider/homebrew-tap](https://github.com/jd4rider/homebrew-tap). It currently targets macOS arm64. The cask install was verified end to end: `nova 0.1.0` and `/Applications/Nova Studio.app`.
+The tap is [jd4rider/homebrew-tap](https://github.com/jd4rider/homebrew-tap). It currently targets macOS arm64 and still ships `nova 0.1.0`; the tap has not been bumped to 0.2.0 yet, so Homebrew installs the previous build.
 
 ### Direct installers
 
-- [Nova Studio v0.1.0 macOS arm64 DMG](https://github.com/jd4rider/nova/releases/download/v0.1.0/Nova-Studio-0.1.0-arm64.dmg) (114 MB)
-- [Nova Studio v0.1.0 Windows x64 NSIS EXE](https://github.com/jd4rider/nova/releases/download/v0.1.0/Nova-Studio-0.1.0-x64-setup.exe) (94 MB)
-- [macOS arm64 CLI archive](https://github.com/jd4rider/nova/releases/download/v0.1.0/nova-0.1.0-aarch64-apple-darwin.tar.gz)
-- [Nova Language VS Code extension](https://github.com/jd4rider/nova/releases/download/v0.1.0/nova-language-0.1.0.vsix) (309 KB)
-- [SHA-256 checksums](https://github.com/jd4rider/nova/releases/download/v0.1.0/SHA256SUMS)
+- [Nova Studio v0.2.0 macOS arm64 DMG](https://github.com/jd4rider/nova/releases/download/v0.2.0/Nova-Studio-0.2.0-arm64.dmg)
+- [Nova Studio v0.2.0 Windows x64 NSIS EXE](https://github.com/jd4rider/nova/releases/download/v0.2.0/Nova-Studio-0.2.0-x64-setup.exe)
+- [macOS arm64 CLI archive](https://github.com/jd4rider/nova/releases/download/v0.2.0/nova-0.2.0-aarch64-apple-darwin.tar.gz)
+- [Nova Language VS Code extension](https://github.com/jd4rider/nova/releases/download/v0.2.0/nova-language-0.2.0.vsix) (309 KB)
+- [SHA-256 checksums](https://github.com/jd4rider/nova/releases/download/v0.2.0/SHA256SUMS)
 
 These are **unsigned** preview builds. macOS may require right-click → Open; Windows SmartScreen may require More info → Run anyway. The DMG installs Studio only; the Windows installer does not bundle the CLI. The VSIX is also unsigned and is not published to the VS Code Marketplace. See [INSTALL.md](INSTALL.md) for every path.
 
@@ -46,10 +46,10 @@ These are **unsigned** preview builds. macOS may require right-click → Open; W
 Prefer your own editor? The Nova Language extension adds `.nova` syntax highlighting and launches the same Rust LSP through `nova lsp`:
 
 ```sh
-code --install-extension nova-language-0.1.0.vsix
+code --install-extension nova-language-0.2.0.vsix
 ```
 
-Download the [VSIX from the v0.1.0 release](https://github.com/jd4rider/nova/releases/download/v0.1.0/nova-language-0.1.0.vsix), or open **Extensions → … → Install from VSIX…** in VS Code. The extension requires VS Code 1.85+ and a `nova` binary for language-server features; set `nova.serverPath` if VS Code cannot find it. See [editors/vscode/README.md](editors/vscode/README.md).
+Download the [VSIX from the v0.2.0 release](https://github.com/jd4rider/nova/releases/download/v0.2.0/nova-language-0.2.0.vsix), or open **Extensions → … → Install from VSIX…** in VS Code. The extension requires VS Code 1.85+ and a `nova` binary for language-server features; set `nova.serverPath` if VS Code cannot find it. See [editors/vscode/README.md](editors/vscode/README.md).
 
 ### Browser playground
 
@@ -120,7 +120,7 @@ Ada (36)
 | Area | State | Evidence |
 |---|---|---|
 | Lexer, parser, spans, recovery, interpolation | **Tested** | `cargo test -p nova-lexer -p nova-parser` |
-| Type checking, structs, Option/Result, match | **Tested** | `cargo test --workspace` |
+| Type checking, structs, enums, Option/Result, match, string predicates | **Tested** | `cargo test --workspace` |
 | LLVM native codegen, checked arithmetic, bounds | **Tested** | Native codegen tests |
 | CLI, formatter, manifests, project scaffolding | **Tested / implemented** | `nova --help`, integration tests |
 | Rust LSP over stdio | **Implemented** | Diagnostics, completion, hover, definition, symbols, formatting |
@@ -168,14 +168,16 @@ NOVA_BIN="$PWD/../target/debug/nova" npm run dev
 
 Open a folder containing `nova.toml`. Studio provides:
 
-- Monaco editing with Nova syntax highlighting and Gruvbox Dark/Light/High Contrast.
+- Monaco editing with Nova syntax highlighting and a VS Code Dark+ theme by default; Gruvbox Dark/Light/High Contrast stay selectable.
 - LSP diagnostics, completion, hover, definition and formatting against the real Rust server.
-- Explorer, tabs, dirty state and external-change-aware saves.
+- Reopens the folder from your previous session on launch, or starts cleanly if it was moved or deleted.
+- Explorer with live workspace watching: files created or edited outside Studio refresh the tree, clean tabs reload from disk with the caret preserved, and dirty buffers are never overwritten.
+- Tab context menu (close, close others, close all, copy path, reveal), Save All, Go to Line and VS Code-style shortcuts.
 - Real **Build / Run / Check / Test** tasks using argv arrays and actual compiler output.
 - Problems, output, tests, terminal and a built-in **Docs** tab.
 - Ripgrep search, quick open, command palette, Vim mode and persisted settings.
 - Optional visual effects: a dock-style current-line lens, typing/scroll sparkles and synthesized Web Audio SFX. All are toggleable and respect reduced motion.
-- A dedicated FreeBuff terminal. Structured FreeBuff chat/agent/ghost text is deliberately disabled because the installed CLI exposes only an interactive TUI. See [docs/freebuff.md](docs/freebuff.md).
+- An AI panel with the real FreeBuff CLI in a PTY and streaming chat from Claude or any OpenAI-compatible endpoint. Keys are encrypted with the OS credential store and never reach the renderer. FreeBuff 0.2.36 has no headless mode, so it is embedded rather than scraped. See [docs/freebuff.md](docs/freebuff.md).
 
 The Electron renderer has no Node access: context isolation and sandbox are on, Node integration is off, CSP is applied, navigation is blocked, paths are confined to the workspace, and preload IPC is narrow. See [ADR 0006](docs/adr/0006-electron-security.md).
 
@@ -236,7 +238,7 @@ The website checks include real compiler invocations for documentation snippets.
 
 ## Limitations
 
-- No generics, user enums with payloads, traits, methods, closures, async, FFI or macros.
+- Enums support unit variants and one payload per variant, with exhaustive `match`; `String` supports `len`, `is_empty`, `to_string`, `contains`, `starts_with`, `ends_with` and `trim`. Still missing: generics, multiple payload fields per variant, traits, methods on user types, closures, async, FFI and macros.
 - No user module graph beyond standard imports.
 - Unsigned macOS/Windows installers and a macOS CLI archive are published; there are no signed/notarized builds, Intel/Linux installers, Windows CLI bundle or package registry.
 - The VS Code extension is a local, unsigned VSIX; it is not published to the VS Code Marketplace or Open VSX and has no automated Extension Host test.

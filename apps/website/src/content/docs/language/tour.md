@@ -93,8 +93,33 @@ fn main() {
 
 `print`, `println`, `eprintln`, `assert`, `assert_eq`, `panic`. Methods currently include list `push`, `len`, `get` and the operations exercised by the compiler tests. A comprehensive standard-library index is **planned**; the current module surface is minimal.
 
+## Enums
+
+```nova
+enum Shape {
+    Circle(Int)
+    Square(Int)
+    Empty
+}
+
+fn area(shape: Shape) -> Int {
+    match shape {
+        Circle(radius) => radius * radius * 3
+        Square(side) => side * side
+        Empty => 0
+    }
+}
+
+fn main() {
+    println(area(Circle(2)))
+    println(area(Empty))
+}
+```
+
+A variant takes zero or one payload. Constructors are global (`Circle(2)`, `Empty`), so variant names must be unique across enums; `Some`, `None`, `Ok` and `Err` are reserved. Match must cover every variant or end with `_`.
+
 ## Not implemented
 
-Generics, user enums with payloads, traits and impls, methods on user types, closures, tuples, maps, sets, arrays/slices, async, FFI, macros, named/default arguments, user modules and a package registry.
+Implemented on `String`: `len`, `is_empty`, `to_string`, `contains`, `starts_with`, `ends_with` and `trim`. Still planned: generics, variants with multiple payload fields, traits and impls, methods on user types, closures, tuples, maps, sets, arrays/slices, async, FFI, macros, named/default arguments, user modules and a package registry.
 
 These features are rejected with a diagnostic rather than silently compiled to something else. See [Status](../../status/) and the [reference](../reference/).

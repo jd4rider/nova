@@ -3,7 +3,7 @@ title: Install Nova
 description: Install Nova Studio and the Nova language with Homebrew, DMG, Windows EXE, VS Code extension or source.
 ---
 
-**Status: v0.1.0 preview.** macOS arm64 installers and the CLI archive have been built and smoke-tested locally. The Windows x64 NSIS installer was cross-built and structurally verified, but has not been launched on Windows. No artifact is signed or notarized.
+**Status: v0.2.0 preview.** macOS arm64 installers and the CLI archive have been built and smoke-tested locally. The Windows x64 NSIS installer was cross-built and structurally verified, but has not been launched on Windows. No artifact is signed or notarized.
 
 ## Homebrew: Studio + language
 
@@ -25,11 +25,11 @@ Nova invokes Clang to link native programs; install the Xcode Command Line Tools
 
 ## Direct installers
 
-- [Nova Studio macOS arm64 DMG](https://github.com/jd4rider/nova/releases/download/v0.1.0/Nova-Studio-0.1.0-arm64.dmg) — drag to Applications.
-- [Nova Studio Windows x64 EXE](https://github.com/jd4rider/nova/releases/download/v0.1.0/Nova-Studio-0.1.0-x64-setup.exe) — NSIS installer.
-- [macOS CLI archive](https://github.com/jd4rider/nova/releases/download/v0.1.0/nova-0.1.0-aarch64-apple-darwin.tar.gz).
-- [VS Code extension VSIX](https://github.com/jd4rider/nova/releases/download/v0.1.0/nova-language-0.1.0.vsix) — syntax highlighting and LSP client.
-- [SHA-256 checksums](https://github.com/jd4rider/nova/releases/download/v0.1.0/SHA256SUMS).
+- [Nova Studio macOS arm64 DMG](https://github.com/jd4rider/nova/releases/download/v0.2.0/Nova-Studio-0.2.0-arm64.dmg) — drag to Applications.
+- [Nova Studio Windows x64 EXE](https://github.com/jd4rider/nova/releases/download/v0.2.0/Nova-Studio-0.2.0-x64-setup.exe) — NSIS installer.
+- [macOS CLI archive](https://github.com/jd4rider/nova/releases/download/v0.2.0/nova-0.2.0-aarch64-apple-darwin.tar.gz).
+- [VS Code extension VSIX](https://github.com/jd4rider/nova/releases/download/v0.2.0/nova-language-0.2.0.vsix) — syntax highlighting and LSP client.
+- [SHA-256 checksums](https://github.com/jd4rider/nova/releases/download/v0.2.0/SHA256SUMS).
 
 The DMG installs Studio only. The Windows installer does not bundle the language. Use Homebrew or build the CLI from source. The apps are unsigned; macOS may require right-click → Open and Windows SmartScreen may require More info → Run anyway.
 
@@ -38,7 +38,7 @@ The DMG installs Studio only. The Windows installer does not bundle the language
 Prefer Visual Studio Code? Install the local VSIX instead of Studio:
 
 ```sh
-code --install-extension nova-language-0.1.0.vsix
+code --install-extension nova-language-0.2.0.vsix
 ```
 
 Or open **Extensions → … → Install from VSIX…**. The extension provides `.nova` syntax highlighting and, when the `nova` CLI is installed, diagnostics, completion, hover, definitions, symbols and formatting through `nova lsp`. It does not bundle the compiler.

@@ -33,6 +33,10 @@ pub const ABI_VERSION: u32 = 1;
 
 /// Runtime symbols emitted by codegen and provided by `runtime.c`.
 pub const RUNTIME_SYMBOLS: &[&str] = &[
+    "nova_string_contains",
+    "nova_string_starts_with",
+    "nova_string_ends_with",
+    "nova_string_trim",
     "nova_print_str",
     "nova_print_i64",
     "nova_print_f64",

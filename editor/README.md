@@ -59,21 +59,23 @@ Artifacts are written to `release/`. The Windows command disables native-module 
 
 ## Features
 
-- **Monaco editor** with Nova syntax highlighting and Gruvbox Dark, Light and High Contrast themes.
+- **Monaco editor** with Nova syntax highlighting. The UI and editor default to a Visual Studio Code Dark+ look, with Gruvbox Dark, Light and High Contrast still selectable.
 - **Rust LSP** diagnostics, completion, hover, go-to-definition, document symbols and formatting on unsaved buffers.
-- **Explorer and tabs** with dirty state and external-change-aware atomic saves.
+- **Remembered workspace**: the last opened folder is reopened at launch when it still exists; missing or moved folders fall back to an empty workbench.
+- **Explorer and tabs** with dirty state, a live recursive workspace watcher (external creates and edits refresh the tree; clean tabs reload, dirty buffers do not), and external-change-aware atomic saves.
+- **Tab actions**: context menu for close/close others/close all, copy path and reveal; Save All; Go to Line; VS Code-style shortcuts.
 - **Real tasks**: Build, Run, Check and Test invoke the configured `nova` CLI with argv arrays and show actual output and exit codes.
 - **Panels** for Problems, Output, Tests, Terminal and built-in **Docs**.
 - **Search** via ripgrep; quick open, command palette and keyboard-first navigation.
 - **Vim mode** via `monaco-vim` (partial emulation; see the docs).
 - **Visual effects**: current-line lens, typing/scroll sparkles and synthesized Web Audio SFX. Toggle animation and sound independently in Settings; effects respect OS reduced-motion.
-- **Dedicated FreeBuff terminal** with an explicit structured-AI boundary.
+- **AI panel** with two tabs: the real FreeBuff CLI in a PTY, and streaming chat from Claude or any OpenAI-compatible endpoint (GitHub Models, OpenAI, OpenRouter, local Ollama). Keys are encrypted with the OS credential store in the main process.
 
 ## Terminal and FreeBuff
 
 `node-pty` is an optional dependency. If its native module is unavailable, the terminal runs in **pipe mode** (no TTY), the status bar reports `pipe`, and FreeBuff’s interactive TUI cannot run. This is an honest limitation, not a simulated terminal.
 
-Structured FreeBuff chat, agents and inline ghost text are disabled because the installed CLI exposes only an interactive terminal. Nova does not scrape terminal output or automate authentication.
+FreeBuff 0.2.36 exposes an interactive TUI only: `--print` and `-p` are rejected and stdin just starts the TUI. Studio therefore embeds the real CLI rather than scraping its screen or inventing a headless protocol. Structured chat is a separate, opt-in provider path: Claude or any OpenAI-compatible endpoint, with the key supplied by the user and encrypted by the OS credential store. No Copilot/OAuth sign-in, inline ghost text or agent edit review exists yet.
 
 ## Security
 
@@ -83,6 +85,7 @@ Structured FreeBuff chat, agents and inline ghost text are disabled because the 
 - Narrow, validated preload IPC.
 - Filesystem access is workspace-confined after symlink resolution.
 - Tasks use argv arrays, not shell string concatenation.
+- AI keys are encrypted with the OS credential store in the main process; the renderer never receives them and they are never written to the workspace.
 
 See [`docs/adr/0006-electron-security.md`](../docs/adr/0006-electron-security.md). Workspace trust prompts and extension execution do not exist yet; do not treat the current model as a hostile-workspace sandbox.
 
@@ -92,6 +95,8 @@ See [`docs/adr/0006-electron-security.md`](../docs/adr/0006-electron-security.md
 - No Git panel, debugger/DAP, test explorer, split editor groups or multi-window.
 - Vim mode is partial, not Neovim.
 - macOS and Windows installers are published unsigned; no Developer ID/notarized or Authenticode build exists.
+- No automated tests cover the AI panel or a live provider call; adapters are exercised against a local SSE server and the app is checked by typecheck and build.
+- No Copilot/OAuth sign-in; GitHub Models works through a personal access token.
 - The Windows installer does not include the language, and its terminal is pipe-only.
 - Tauri 2 and native Rust alternatives were evaluated on paper but not prototyped; see ADR 0001.
 

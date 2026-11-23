@@ -5,17 +5,17 @@ description: Install Nova syntax highlighting and the Rust language server in Vi
 
 The **Nova Language** extension brings `.nova` editing to Visual Studio Code without Nova Studio. It provides TextMate syntax highlighting and a language client for the same Rust server used by Studio.
 
-**Status:** v0.1.0 local VSIX. TypeScript compilation, VSIX packaging and `code --install-extension` were verified. A direct `nova lsp` transcript (initialize, open buffer, diagnostic, shutdown) also passed. Automated Extension Host interaction tests are not included.
+**Status:** v0.2.0 local VSIX. TypeScript compilation, VSIX packaging and `code --install-extension` were verified. A direct `nova lsp` transcript (initialize, open buffer, diagnostic, shutdown) also passed. Automated Extension Host interaction tests are not included.
 
 ## Install the VSIX
 
-Download [`nova-language-0.1.0.vsix`](https://github.com/jd4rider/nova/releases/download/v0.1.0/nova-language-0.1.0.vsix), then either:
+Download [`nova-language-0.2.0.vsix`](https://github.com/jd4rider/nova/releases/download/v0.2.0/nova-language-0.2.0.vsix), then either:
 
 1. Open **Extensions**, use the `…` menu → **Install from VSIX…**, and select the file.
 2. Or install from a terminal:
 
 ```sh
-code --install-extension nova-language-0.1.0.vsix
+code --install-extension nova-language-0.2.0.vsix
 ```
 
 The extension ID is `jd4rider.nova-language`. It is **not published to the VS Code Marketplace or Open VSX yet**; the release VSIX is the supported binary install.
@@ -51,7 +51,7 @@ cd editors/vscode
 npm ci --no-audit --no-fund
 npm run typecheck
 npm run package
-code --install-extension nova-language-0.1.0.vsix
+code --install-extension nova-language-0.2.0.vsix
 ```
 
 The build copies the canonical grammar into `syntaxes/` before compiling. The VSIX is written in `editors/vscode/`.

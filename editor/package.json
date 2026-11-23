@@ -1,6 +1,6 @@
 {
   "name": "nova-studio",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Nova Studio — native IDE for the Nova programming language",
   "main": "./out/main/index.js",
   "private": true,
@@ -51,6 +51,7 @@
     ],
     "mac": {
       "category": "public.app-category.developer-tools",
+      "icon": "resources/icon.icns",
       "target": [
         {
           "target": "dmg",
@@ -67,6 +68,7 @@
       "title": "Nova Studio ${version}"
     },
     "win": {
+      "icon": "resources/icon.png",
       "target": [
         {
           "target": "nsis",
@@ -85,6 +87,7 @@
       "shortcutName": "Nova Studio"
     },
     "linux": {
+      "icon": "resources/icon.png",
       "target": [
         "AppImage"
       ],

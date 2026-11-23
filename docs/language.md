@@ -21,11 +21,23 @@ Functions require parameter and return types. Struct fields require types. `let`
 
 ## Types
 
-Implemented: `Bool`, `Int` (i64), `Float` (f64), `Char`, `String` (UTF-8), `Unit`, `List<T>`, `Option<T>`, `Result<T, E>`, and structs.
+Implemented: `Bool`, `Int` (i64), `Float` (f64), `Char`, `String` (UTF-8), `Unit`, `List<T>`, `Option<T>`, `Result<T, E>`, structs, and nominal user enums.
 
 `Option<T>` is `None` or `Some(value)`; `Result<T,E>` is `Ok(value)` or `Err(error)`. `?` propagates `None`/`Err` from the current function. Match must be exhaustive over these variants.
 
-Planned but rejected by the checker today: fixed-width integers, `USize`, `f32`, arrays/slices, tuples, `Map`, `Set`, generics, user enums, traits, methods, closures.
+```nova
+enum Shape {
+    Circle(Int)
+    Square(Int)
+    Empty
+}
+```
+
+A variant takes zero or one payload. Variant constructors are global in this build (`Circle(2)`, `Empty`), so variant names must be unique across enums, and `Some`, `None`, `Ok` and `Err` are reserved.
+
+Implemented `String` methods: `len`, `is_empty`, `to_string`, `contains`, `starts_with`, `ends_with` and `trim`. `List` has `len`, `is_empty`, `get` and `push`.
+
+Planned but rejected by the checker today: fixed-width integers, `USize`, `f32`, arrays/slices, tuples, `Map`, `Set`, generics, traits, methods on user types, closures, variants with multiple payload fields.
 
 ## Expressions and control flow
 
@@ -73,7 +85,7 @@ fn main() {
 }
 ```
 
-Only `_`, identifiers, `None`, `Some(...)`, `Ok(...)`, and `Err(...)` patterns exist. No literals, guards, or or-patterns yet.
+Patterns include `_`, identifiers, literals, `None`, `Some(...)`, `Ok(...)`, `Err(...)`, and user enum variants such as `Circle(radius)` or `Empty`. A bare identifier that names a unit variant is a variant pattern, not a new binding. No guards, or-patterns, or nested payload patterns yet.
 
 ## Limitations and semantics
 

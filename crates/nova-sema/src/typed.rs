@@ -14,6 +14,7 @@ use crate::types::Type;
 pub struct TypedProgram {
     pub functions: Vec<TypedFn>,
     pub structs: Vec<StructDef>,
+    pub enums: Vec<EnumDef>,
     pub tests: Vec<String>,
     pub main: Option<String>,
 }
@@ -28,6 +29,19 @@ pub struct StructDef {
 pub struct FieldDef {
     pub name: String,
     pub ty: Type,
+}
+
+#[derive(Clone, Debug)]
+pub struct EnumDef {
+    pub name: String,
+    pub variants: Vec<EnumVariantDef>,
+}
+
+#[derive(Clone, Debug)]
+pub struct EnumVariantDef {
+    pub name: String,
+    /// `None` for a unit variant; at most one payload value per variant.
+    pub payload: Option<Type>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -166,6 +180,12 @@ pub enum TExprKind {
         name: String,
         fields: Vec<(usize, TExpr)>,
     },
+    /// Construct a user enum variant. `tag` is the declaration index.
+    EnumVariant {
+        enum_name: String,
+        tag: u32,
+        payload: Option<Box<TExpr>>,
+    },
     If {
         cond: Box<TExpr>,
         then_block: TBlock,
@@ -228,6 +248,10 @@ pub enum BuiltinMethod {
     ListPush,
     StringLen,
     StringIsEmpty,
+    StringContains,
+    StringStartsWith,
+    StringEndsWith,
+    StringTrim,
     OptionIsSome,
     OptionIsNone,
     OptionUnwrapOr,
@@ -267,4 +291,9 @@ pub enum TPattern {
     None,
     Ok(Option<LocalId>),
     Err(Option<LocalId>),
+    /// User enum variant, identified by declaration tag.
+    Enum {
+        tag: u32,
+        payload: Option<LocalId>,
+    },
 }

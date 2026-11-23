@@ -10,11 +10,15 @@ Use **Cmd** on macOS and **Ctrl** on other platforms.
 | Open folder | `Cmd/Ctrl+O` |
 | New file | `Cmd/Ctrl+N` |
 | Save | `Cmd/Ctrl+S` |
+| Save all | `Cmd/Ctrl+Alt+S` |
+| Close tab | `Cmd/Ctrl+W` |
 | Quick open | `Cmd/Ctrl+P` |
 | Command palette | `Cmd/Ctrl+Shift+P` |
 | Find in files | `Cmd/Ctrl+Shift+F` |
 | Toggle sidebar | `Cmd/Ctrl+B` |
 | Toggle bottom panel | `Cmd/Ctrl+`` |
+| Explorer view | `Cmd/Ctrl+Shift+E` |
+| Go to line | `Ctrl+G` |
 | Build | `Cmd/Ctrl+Shift+B` |
 | Run | `F5` |
 | Format document | `Shift+Alt+F` |
@@ -33,7 +37,7 @@ Up/Down moves the selection; Enter opens or runs it; Escape closes. Quick open s
 
 ## Terminal
 
-The bottom panel has Shell and FreeBuff buttons. FreeBuff requires both the `freebuff` executable and a PTY. Without `node-pty`, the shell is clearly labeled pipe mode.
+The bottom panel has Shell and FreeBuff buttons. FreeBuff requires both the `freebuff` executable and a PTY. Without `node-pty`, the shell is clearly labeled pipe mode. The AI panel has its own FreeBuff tab that runs the same CLI, plus a chat tab that streams from Claude or an OpenAI-compatible endpoint.
 
 ## Caveat
 

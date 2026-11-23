@@ -1,10 +1,16 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { NovaApi } from '../shared/types'
+import type { AiStreamEvent, NovaApi } from '../shared/types'
 
 const api: NovaApi = {
   workspace: {
     choose: () => ipcRenderer.invoke('workspace:choose'),
-    root: () => ipcRenderer.invoke('workspace:root')
+    restore: () => ipcRenderer.invoke('workspace:restore'),
+    root: () => ipcRenderer.invoke('workspace:root'),
+    onChanged: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: { paths: string[] }) => callback(payload)
+      ipcRenderer.on('workspace:changed', listener)
+      return () => ipcRenderer.removeListener('workspace:changed', listener)
+    }
   },
   fs: {
     list: (dir) => ipcRenderer.invoke('fs:list', dir),
@@ -49,6 +55,17 @@ const api: NovaApi = {
       const listener = (_event: Electron.IpcRendererEvent, status: string) => callback(status)
       ipcRenderer.on('lsp:status', listener)
       return () => ipcRenderer.removeListener('lsp:status', listener)
+    }
+  },
+  ai: {
+    settings: () => ipcRenderer.invoke('ai:settings'),
+    configure: (patch) => ipcRenderer.invoke('ai:configure', patch),
+    send: (requestId, messages, context) => ipcRenderer.invoke('ai:send', requestId, messages, context),
+    cancel: (requestId) => ipcRenderer.invoke('ai:cancel', requestId),
+    onEvent: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: AiStreamEvent) => callback(payload)
+      ipcRenderer.on('ai:event', listener)
+      return () => ipcRenderer.removeListener('ai:event', listener)
     }
   },
   freebuff: {

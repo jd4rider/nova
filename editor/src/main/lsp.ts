@@ -24,7 +24,9 @@ export class LspClient {
     this.stop()
     const executable = novaExecutable()
     this.onStatus('starting')
-    const child = spawn(executable, ['lsp', '--stdio'], {
+    // `nova lsp` already speaks JSON-RPC over stdio; passing `--stdio` makes
+    // clap reject the command and the server exits before initialize.
+    const child = spawn(executable, ['lsp'], {
       cwd: root,
       env: process.env,
       stdio: ['pipe', 'pipe', 'pipe']

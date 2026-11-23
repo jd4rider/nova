@@ -15,7 +15,18 @@ import fsSync from 'node:fs'
 import path from 'node:path'
 import { LspClient } from './lsp'
 import { isNovaProject, novaExecutable } from './toolchain'
-import type { FileEntry, FreeBuffStatus, LspDiagnostic, TaskResult, TerminalInfo } from '../shared/types'
+import { isAbortError, streamChat } from './ai'
+import { configureAi, getAiSettings, resolveAiConfig } from './credentials'
+import type {
+  AiConfigurePatch,
+  AiContext,
+  AiMessage,
+  FileEntry,
+  FreeBuffStatus,
+  LspDiagnostic,
+  TaskResult,
+  TerminalInfo
+} from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
 let workspaceRoot: string | null = null
@@ -42,6 +53,7 @@ interface TerminalSession {
 
 const terminals = new Map<number, TerminalSession>()
 let terminalCounter = 1
+const aiRequests = new Map<string, AbortController>()
 
 function send(channel: string, payload: unknown): void {
   mainWindow?.webContents.send(channel, payload)
@@ -53,9 +65,46 @@ function guard(event: IpcMainInvokeEvent): void {
   }
 }
 
+function workspaceStateFile(): string {
+  return path.join(app.getPath('userData'), 'workspace.json')
+}
+
+async function readLastWorkspace(): Promise<string | null> {
+  try {
+    const state = JSON.parse(await fs.readFile(workspaceStateFile(), 'utf8')) as { root?: unknown }
+    return typeof state.root === 'string' && state.root.length > 0 ? state.root : null
+  } catch {
+    return null
+  }
+}
+
+async function rememberWorkspace(root: string): Promise<void> {
+  try {
+    await fs.mkdir(path.dirname(workspaceStateFile()), { recursive: true })
+    await fs.writeFile(workspaceStateFile(), JSON.stringify({ root }), 'utf8')
+  } catch {
+    // Best-effort: a read-only profile must not prevent opening the folder.
+  }
+}
+
+async function restoreWorkspace(): Promise<{ root: string; hasManifest: boolean } | null> {
+  const saved = await readLastWorkspace()
+  if (!saved) return null
+  try {
+    const stat = await fs.stat(saved)
+    if (!stat.isDirectory()) return null
+    await setWorkspace(saved)
+    return { root: saved, hasManifest: isNovaProject(saved) }
+  } catch {
+    return null
+  }
+}
+
 async function setWorkspace(root: string): Promise<void> {
   workspaceRoot = root
   workspaceReal = await fs.realpath(root)
+  startWatching(root)
+  await rememberWorkspace(root)
 }
 
 function ensureInside(candidate: string): string {
@@ -90,6 +139,44 @@ async function safeNew(candidate: string): Promise<string> {
 
 const IGNORED = new Set(['.git', 'node_modules', 'target', 'dist', 'out', 'release', '.DS_Store'])
 
+let workspaceWatcher: fsSync.FSWatcher | null = null
+let watcherTimer: ReturnType<typeof setTimeout> | null = null
+const watcherPaths = new Set<string>()
+
+function stopWatching(): void {
+  workspaceWatcher?.close()
+  workspaceWatcher = null
+  if (watcherTimer) clearTimeout(watcherTimer)
+  watcherTimer = null
+  watcherPaths.clear()
+}
+
+// Report coalesced filesystem changes so the renderer can refresh the explorer
+// and reload clean tabs. Watcher events are advisory: the renderer re-reads
+// each path and compares mtimes before touching an editor model.
+function startWatching(root: string): void {
+  stopWatching()
+  try {
+    workspaceWatcher = fsSync.watch(root, { recursive: true }, (_event, filename) => {
+      const relative = filename ? String(filename) : ''
+      if (relative && relative.split(/[\\/]/).some((part) => IGNORED.has(part))) return
+      if (relative) watcherPaths.add(path.join(root, relative))
+      if (watcherTimer) clearTimeout(watcherTimer)
+      watcherTimer = setTimeout(() => {
+        watcherTimer = null
+        const paths = [...watcherPaths]
+        watcherPaths.clear()
+        send('workspace:changed', { paths })
+      }, 120)
+    })
+    workspaceWatcher.on('error', () => stopWatching())
+  } catch {
+    // Recursive watching is unavailable on this platform; the explorer still
+    // has a manual refresh and editors re-read on tab activation.
+    workspaceWatcher = null
+  }
+}
+
 async function chooseWorkspace(): Promise<{ root: string; hasManifest: boolean } | null> {
   const result = await dialog.showOpenDialog({
     properties: ['openDirectory'],
@@ -103,25 +190,55 @@ async function chooseWorkspace(): Promise<{ root: string; hasManifest: boolean }
 }
 
 async function freebuffStatus(): Promise<FreeBuffStatus> {
-  return new Promise((resolve) => {
+  const version = await new Promise<string | null>((resolve) => {
     execFile('freebuff', ['--version'], { timeout: 3000 }, (error, stdout) => {
-      if (error) {
-        resolve({
-          available: false,
-          mode: 'terminal',
-          reason: 'FreeBuff CLI was not found on PATH. Install it or choose a dedicated terminal for another tool.'
-        })
-      } else {
-        resolve({
-          available: true,
-          version: stdout.trim(),
-          mode: 'terminal',
-          reason:
-            'Only the documented interactive CLI is available. Nova Studio provides a dedicated FreeBuff terminal; structured chat/agent streaming is disabled rather than scraping the TUI.'
-        })
-      }
+      resolve(error ? null : stdout.trim())
     })
   })
+  if (!version) {
+    return {
+      available: false,
+      mode: 'terminal',
+      headless: false,
+      reason: 'FreeBuff CLI was not found on PATH. Install it, or configure a chat provider in the AI panel.'
+    }
+  }
+  // Probe the documented surface instead of hard-coding a version's capabilities.
+  const help = await new Promise<string>((resolve) => {
+    execFile('freebuff', ['--help'], { timeout: 3000 }, (error, stdout) => {
+      resolve(error ? '' : stdout)
+    })
+  })
+  const headless = /--(print|json|headless)\b/.test(help)
+  return {
+    available: true,
+    version,
+    mode: 'terminal',
+    headless,
+    reason: headless
+      ? 'This FreeBuff CLI documents a non-interactive mode, but Nova Studio only embeds the real TUI today. The chat tab uses a provider key you supply.'
+      : 'This FreeBuff CLI exposes an interactive TUI only: no headless or JSON mode. Nova Studio embeds that real CLI instead of scraping it or inventing a chat protocol.'
+  }
+}
+
+function systemPrompt(context: AiContext | null): string {
+  const lines = [
+    'You are the coding assistant inside Nova Studio, a desktop IDE for the Nova programming language.',
+    'Nova is statically typed with a Rust front end, an LLVM backend and a clang link step.',
+    'Supported today: functions, structs, enums with unit variants or one payload per variant, exhaustive match, let/var, if, while, `for i in 0..n`, Option/Result, lists, string interpolation and std imports such as `import std.io { println }`.',
+    'Variant constructors are global (`Circle(2)`, `Empty`) and match patterns are `Circle(radius)`, `Empty` or `_`. Not supported: generics, traits, methods on user types, closures, async, macros and user modules beyond std imports. Say so instead of inventing syntax.',
+    'Prefer complete, compilable Nova and keep explanations short. Tag code blocks as nova.'
+  ]
+  if (!context) {
+    lines.push('No file is attached to this message.')
+    return lines.join('\n')
+  }
+  lines.push(`The user is editing ${context.path}.`)
+  if (context.selection) {
+    lines.push(`Selected code:\n\`\`\`nova\n${context.selection.slice(0, 12_000)}\n\`\`\``)
+  }
+  lines.push(`Current file contents:\n\`\`\`nova\n${context.content.slice(0, 60_000)}\n\`\`\``)
+  return lines.join('\n')
 }
 
 function createTerminal(cwd: string, cols: number, rows: number, command?: string): TerminalInfo {
@@ -292,6 +409,7 @@ function buildMenu(): void {
       submenu: [
         { label: 'Toggle Sidebar', accelerator: 'CmdOrCtrl+B', click: command('toggle-sidebar') },
         { label: 'Toggle Terminal', accelerator: 'CmdOrCtrl+`', click: command('toggle-terminal') },
+        { label: 'Toggle AI Panel', click: command('toggle-ai') },
         { label: 'Toggle Vim Mode', click: command('toggle-vim') },
         { label: 'Toggle Visual Effects', click: command('toggle-effects') },
         { label: 'Toggle Sound Effects', click: command('toggle-sound') },
@@ -337,14 +455,24 @@ function buildMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
+
 function createWindow(): void {
+  if (process.platform === 'darwin' && app.dock && !app.isPackaged) {
+    try {
+      app.dock.setIcon(path.join(app.getAppPath(), 'resources/icon.png'))
+    } catch {
+      // The dock icon is cosmetic; a missing file must not stop the window.
+    }
+  }
+
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 900,
     minHeight: 560,
-    backgroundColor: '#282828',
+    backgroundColor: '#1e1e1e',
     title: 'Nova Studio',
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 11 } } : {}),
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -368,6 +496,7 @@ function createWindow(): void {
 
 function registerIpc(): void {
   ipcMain.handle('workspace:choose', async () => chooseWorkspace())
+  ipcMain.handle('workspace:restore', async () => restoreWorkspace())
   ipcMain.handle('workspace:root', async () => workspaceRoot)
 
   ipcMain.handle('fs:list', async (event, dir: string): Promise<FileEntry[]> => {
@@ -523,10 +652,74 @@ function registerIpc(): void {
     return freebuffStatus()
   })
 
+  ipcMain.handle('ai:settings', async (event) => {
+    guard(event)
+    return getAiSettings()
+  })
+
+  ipcMain.handle('ai:configure', async (event, patch: AiConfigurePatch) => {
+    guard(event)
+    return configureAi(patch)
+  })
+
+  ipcMain.handle('ai:send', async (event, requestId: string, messages: AiMessage[], context: AiContext | null) => {
+    guard(event)
+    if (typeof requestId !== 'string' || !requestId || requestId.length > 100) {
+      throw new Error('invalid request id')
+    }
+    if (!Array.isArray(messages)) throw new Error('invalid message list')
+    const clean: AiMessage[] = messages
+      .slice(-24)
+      .map((message): AiMessage => ({
+        role: message?.role === 'assistant' ? 'assistant' : 'user',
+        content: String(message?.content ?? '').slice(0, 40_000)
+      }))
+      .filter((message) => message.content.trim().length > 0)
+    if (clean.length === 0) throw new Error('nothing to send')
+
+    aiRequests.get(requestId)?.abort()
+    const controller = new AbortController()
+    aiRequests.set(requestId, controller)
+    const safeContext: AiContext | null =
+      context && typeof context === 'object'
+        ? {
+            path: String(context.path ?? ''),
+            language: String(context.language ?? 'nova'),
+            content: String(context.content ?? ''),
+            selection: typeof context.selection === 'string' ? context.selection : undefined
+          }
+        : null
+
+    void (async () => {
+      try {
+        const config = resolveAiConfig()
+        send('ai:event', { requestId, type: 'start', model: config.model })
+        const result = await streamChat(config, systemPrompt(safeContext), clean, controller.signal, (text) =>
+          send('ai:event', { requestId, type: 'delta', text })
+        )
+        send('ai:event', { requestId, type: 'done', model: result.model })
+      } catch (error) {
+        send('ai:event', {
+          requestId,
+          type: 'error',
+          message: isAbortError(error) ? 'Stopped.' : (error as Error).message
+        })
+      } finally {
+        aiRequests.delete(requestId)
+      }
+    })()
+  })
+
+  ipcMain.handle('ai:cancel', async (event, requestId: string) => {
+    guard(event)
+    aiRequests.get(requestId)?.abort()
+    aiRequests.delete(requestId)
+  })
+
   ipcMain.handle('app:version', async () => app.getVersion())
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({
       responseHeaders: {
@@ -539,6 +732,7 @@ app.whenReady().then(() => {
   })
   registerIpc()
   buildMenu()
+  await restoreWorkspace()
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -548,5 +742,6 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   lspClient?.stop()
   for (const [, terminal] of terminals) terminal.kill()
+  for (const [, controller] of aiRequests) controller.abort()
   if (process.platform !== 'darwin') app.quit()
 })
