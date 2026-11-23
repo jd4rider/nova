@@ -11,3 +11,5 @@ apps/website/.astro/
 *.log
 .DS_Store
 *.nova.ll
+
+release-assets/

@@ -262,7 +262,8 @@ impl Checker {
                     self.struct_order.push(decl.name.clone());
                 }
                 ast::Item::Enum(decl) => {
-                    if self.structs.contains_key(&decl.name) || self.enums.contains_key(&decl.name) {
+                    if self.structs.contains_key(&decl.name) || self.enums.contains_key(&decl.name)
+                    {
                         self.diagnostics.push(Diagnostic::error(
                             "E0201",
                             format!("duplicate type `{}`", decl.name),
@@ -344,7 +345,9 @@ impl Checker {
                             format!("`{}` is a reserved built-in variant name", variant.name),
                             variant.name_span,
                         )
-                        .with_note("rename the variant so it cannot be confused with Option/Result"),
+                        .with_note(
+                            "rename the variant so it cannot be confused with Option/Result",
+                        ),
                     );
                     continue;
                 }

@@ -711,7 +711,7 @@ fn cmd_doctor() -> i32 {
         ),
         None => println!("FreeBuff: not found (Nova Studio shows an unavailable state)"),
     }
-    println!("Language server: `nova lsp --stdio`");
+    println!("Language server: `nova lsp`");
     println!("Formatter: `nova fmt --check`");
     println!(
         "FreeBuff integration: dedicated terminal only. The installed CLI exposes `--help`, `--version`, `--continue`, `--cwd` and `--trust-agents`; it has no documented JSON/headless chat protocol."

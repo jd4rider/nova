@@ -1033,13 +1033,8 @@ impl<'a> ModuleGen<'a> {
                     }
                     None => "null".into(),
                 };
-                let tagged = self.insert_value(
-                    "%nova.enum",
-                    "zeroinitializer",
-                    "i32",
-                    &tag.to_string(),
-                    0,
-                );
+                let tagged =
+                    self.insert_value("%nova.enum", "zeroinitializer", "i32", &tag.to_string(), 0);
                 let value = self.insert_value("%nova.enum", &tagged, "ptr", &raw, 1);
                 Val::new(Type::Enum(enum_name.clone()), value)
             }
