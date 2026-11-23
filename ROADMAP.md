@@ -33,6 +33,7 @@ Status means: **tested** = covered by automated tests and passing; **implemented
 | Project manifest, lockfile, local path dependencies | tested | No registry, workspaces, or semver registry resolution |
 | Formatter | implemented | Conservative indentation/whitespace; not a full pretty-printer |
 | LSP stdio JSON-RPC | tested manually | Full sync, diagnostics, completion, hover, definition, symbols, formatting |
+| VS Code extension | implemented | Shared TextMate grammar and language client; VSIX packaged and installed, live `nova lsp` transcript verified; no Extension Host automation |
 | LSP incremental sync, rename, references, semantic tokens, code actions, cancellation | planned | Not advertised |
 | Package registry, publishing, checksums | planned | |
 | Benchmarks and performance claims | planned | No benchmark evidence; directive performance targets are aspirations only |
@@ -40,6 +41,7 @@ Status means: **tested** = covered by automated tests and passing; **implemented
 | GitHub Pages workflow | implemented | Public repository and verified deployment at https://jd4rider.github.io/nova/ |
 | Unsigned desktop installers | implemented | v0.1.0 macOS arm64 DMG, Windows x64 NSIS EXE, macOS CLI archive and SHA-256 manifest |
 | Homebrew formula and Studio cask | tested | `brew install --cask jd4rider/tap/nova-studio` installed CLI 0.1.0 and the app |
+| VS Code Marketplace / Open VSX | planned | The 0.1.0 extension is a local VSIX only |
 | Signed desktop releases | planned | Unsigned installers exist; no Developer ID/notarization or Authenticode |
 
 ## Nova Studio

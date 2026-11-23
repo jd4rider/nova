@@ -4,6 +4,8 @@ node_modules/
 editor/dist/
 editor/out/
 editor/release/
+editors/vscode/out/
+editors/vscode/*.vsix
 apps/website/dist/
 apps/website/.astro/
 *.log

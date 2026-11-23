@@ -38,7 +38,7 @@ export default defineConfig({
         { label: 'Getting started', items: [{ slug: 'getting-started/installation' }, { slug: 'getting-started/hello-world' }, { slug: 'getting-started/first-project' }, { slug: 'getting-started/troubleshooting' }] },
         { label: 'Language', items: [{ slug: 'language/tour' }, { slug: 'language/reference' }, { slug: 'language/memory' }] },
         { label: 'Standard library', items: [{ slug: 'stdlib' }] },
-        { label: 'Toolchain', items: [{ slug: 'toolchain/cli' }, { slug: 'toolchain/projects' }, { slug: 'toolchain/lsp' }] },
+        { label: 'Toolchain', items: [{ slug: 'toolchain/cli' }, { slug: 'toolchain/projects' }, { slug: 'toolchain/lsp' }, { slug: 'toolchain/vscode' }] },
         { label: 'Nova Studio', items: [{ slug: 'studio/overview' }, { slug: 'studio/shortcuts' }, { slug: 'studio/vim' }, { slug: 'studio/freebuff' }] },
         { label: 'Internals', items: [{ slug: 'internals/compiler' }, { slug: 'internals/runtime' }] },
         { label: 'Project', items: [{ slug: 'status' }, { slug: 'contributing' }, { slug: 'cookbook' }, { slug: 'website' }] }

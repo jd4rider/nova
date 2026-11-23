@@ -52,6 +52,7 @@ const required = [
   'getting-started/hello-world/index.html',
   'language/tour/index.html',
   'studio/overview/index.html',
+  'toolchain/vscode/index.html',
   'status/index.html',
   'pagefind/pagefind.js',
   'sitemap-index.xml',

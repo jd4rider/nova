@@ -1,0 +1,92 @@
+{
+  "name": "nova-language",
+  "displayName": "Nova Language",
+  "description": "Nova language support: TextMate syntax highlighting and the Rust Nova language server.",
+  "version": "0.1.0",
+  "publisher": "jd4rider",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jd4rider/nova.git",
+    "directory": "editors/vscode"
+  },
+  "homepage": "https://jd4rider.github.io/nova/toolchain/vscode/",
+  "bugs": {
+    "url": "https://github.com/jd4rider/nova/issues"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "keywords": [
+    "nova",
+    "language-server",
+    "lsp",
+    "rust"
+  ],
+  "activationEvents": [
+    "onLanguage:nova",
+    "workspaceContains:nova.toml",
+    "onCommand:nova.restartServer"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "nova",
+        "aliases": [
+          "Nova",
+          "nova"
+        ],
+        "extensions": [
+          ".nova"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "nova",
+        "scopeName": "source.nova",
+        "path": "./syntaxes/nova.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "nova.restartServer",
+        "title": "Nova: Restart Language Server"
+      }
+    ],
+    "configuration": {
+      "title": "Nova",
+      "properties": {
+        "nova.serverPath": {
+          "type": "string",
+          "default": "nova",
+          "markdownDescription": "Path to the `nova` executable used to start `nova lsp`. Keep the default to use `nova` from `PATH`; set an absolute path when VS Code cannot see your shell's Homebrew or Cargo path.",
+          "scope": "machine-overridable"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "sync:grammar": "node scripts/sync-grammar.mjs",
+    "compile": "npm run sync:grammar && tsc -p ./",
+    "watch": "npm run sync:grammar && tsc -w -p ./",
+    "typecheck": "tsc --noEmit -p ./",
+    "vscode:prepublish": "npm run compile",
+    "package": "npm run compile && vsce package --out nova-language-0.1.0.vsix"
+  },
+  "dependencies": {
+    "vscode-languageclient": "9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "4.1.1",
+    "typescript": "5.9.3"
+  }
+}

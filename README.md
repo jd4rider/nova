@@ -1,13 +1,13 @@
 # 🦀 Nova
 
-**A statically typed programming language with a Rust compiler, an LLVM native backend, a language server and a desktop IDE.**
+**A statically typed programming language with a Rust compiler, an LLVM native backend, a language server, a desktop IDE and a VS Code extension.**
 
 [![CI](https://github.com/jd4rider/nova/actions/workflows/ci.yml/badge.svg)](https://github.com/jd4rider/nova/actions/workflows/ci.yml)
 [![Website and GitHub Pages](https://github.com/jd4rider/nova/actions/workflows/pages.yml/badge.svg)](https://github.com/jd4rider/nova/actions/workflows/pages.yml)
 [![Rust](https://img.shields.io/badge/Rust-1.96-000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Status: working vertical slice](https://img.shields.io/badge/status-working%20vertical%20slice-fabd2f)](ROADMAP.md)
 
-[Website](https://jd4rider.github.io/nova/) · [Documentation](https://jd4rider.github.io/nova/docs/) · [Nova Studio](https://jd4rider.github.io/nova/studio/) · [Launch post](https://jd4rider.github.io/nova/blog/building-nova-in-rust/) · [Roadmap](ROADMAP.md) · [GitHub](https://github.com/jd4rider/nova)
+[Website](https://jd4rider.github.io/nova/) · [Documentation](https://jd4rider.github.io/nova/docs/) · [Nova Studio](https://jd4rider.github.io/nova/studio/) · [VS Code extension](https://jd4rider.github.io/nova/toolchain/vscode/) · [Launch post](https://jd4rider.github.io/nova/blog/building-nova-in-rust/) · [Roadmap](ROADMAP.md) · [GitHub](https://github.com/jd4rider/nova)
 
 Nova is a **functioning native language toolchain** built in Rust: source is lexed, parsed, type-checked, lowered to LLVM IR and linked into a real executable. It is an early vertical slice — not a claim that the language is complete. The supported subset and every known gap are documented.
 
@@ -36,9 +36,20 @@ The tap is [jd4rider/homebrew-tap](https://github.com/jd4rider/homebrew-tap). It
 - [Nova Studio v0.1.0 macOS arm64 DMG](https://github.com/jd4rider/nova/releases/download/v0.1.0/Nova-Studio-0.1.0-arm64.dmg) (115 MB)
 - [Nova Studio v0.1.0 Windows x64 NSIS EXE](https://github.com/jd4rider/nova/releases/download/v0.1.0/Nova-Studio-0.1.0-x64-setup.exe) (94 MB)
 - [macOS arm64 CLI archive](https://github.com/jd4rider/nova/releases/download/v0.1.0/nova-0.1.0-aarch64-apple-darwin.tar.gz)
+- [Nova Language VS Code extension](https://github.com/jd4rider/nova/releases/download/v0.1.0/nova-language-0.1.0.vsix) (309 KB)
 - [SHA-256 checksums](https://github.com/jd4rider/nova/releases/download/v0.1.0/SHA256SUMS)
 
-These are **unsigned** preview builds. macOS may require right-click → Open; Windows SmartScreen may require More info → Run anyway. The DMG installs Studio only; the Windows installer does not bundle the CLI. See [INSTALL.md](INSTALL.md) for every path.
+These are **unsigned** preview builds. macOS may require right-click → Open; Windows SmartScreen may require More info → Run anyway. The DMG installs Studio only; the Windows installer does not bundle the CLI. The VSIX is also unsigned and is not published to the VS Code Marketplace. See [INSTALL.md](INSTALL.md) for every path.
+
+### VS Code extension
+
+Prefer your own editor? The Nova Language extension adds `.nova` syntax highlighting and launches the same Rust LSP through `nova lsp`:
+
+```sh
+code --install-extension nova-language-0.1.0.vsix
+```
+
+Download the [VSIX from the v0.1.0 release](https://github.com/jd4rider/nova/releases/download/v0.1.0/nova-language-0.1.0.vsix), or open **Extensions → … → Install from VSIX…** in VS Code. The extension requires VS Code 1.85+ and a `nova` binary for language-server features; set `nova.serverPath` if VS Code cannot find it. See [editors/vscode/README.md](editors/vscode/README.md).
 
 ### Build from source
 
@@ -109,6 +120,7 @@ Ada (36)
 | LLVM native codegen, checked arithmetic, bounds | **Tested** | Native codegen tests |
 | CLI, formatter, manifests, project scaffolding | **Tested / implemented** | `nova --help`, integration tests |
 | Rust LSP over stdio | **Implemented** | Diagnostics, completion, hover, definition, symbols, formatting |
+| VS Code extension | **Implemented** | VSIX installs; shared grammar and live `nova lsp` transcript verified |
 | Nova Studio desktop IDE | **Implemented** | Typecheck and production build pass; interaction not yet automated |
 | Current-line lens, sparkles, synthesized SFX | **Experimental** | Settings toggles, reduced-motion aware |
 | Public documentation and website | **Tested** | Astro check, build, link/base checks, grammar and snippet verification |
@@ -161,6 +173,8 @@ Open a folder containing `nova.toml`. Studio provides:
 
 The Electron renderer has no Node access: context isolation and sandbox are on, Node integration is off, CSP is applied, navigation is blocked, paths are confined to the workspace, and preload IPC is narrow. See [ADR 0006](docs/adr/0006-electron-security.md).
 
+Prefer VS Code? The [Nova Language extension](editors/vscode/README.md) provides syntax highlighting and the same Rust LSP without the Studio shell. It is distributed as a local VSIX, not through the Marketplace.
+
 `node-pty` is optional. Without it the terminal reports **pipe mode** and FreeBuff cannot run its TUI; that limitation is shown, not hidden.
 
 ## Website and documentation
@@ -188,6 +202,7 @@ The Pages workflow is [`.github/workflows/pages.yml`](.github/workflows/pages.ym
 ```text
 crates/            Rust compiler, CLI, formatter, LSP and package model
 editor/            Electron + React + Monaco desktop IDE
+editors/vscode/    VS Code syntax highlighting + LSP client
 apps/website/      Astro/Starlight site, docs and blog
 examples/          Runnable Nova programs
 grammar/           Shared TextMate grammar for the site
@@ -218,6 +233,7 @@ The website checks include real compiler invocations for documentation snippets.
 - No generics, user enums with payloads, traits, methods, closures, async, FFI or macros.
 - No user module graph beyond standard imports.
 - Unsigned macOS/Windows installers and a macOS CLI archive are published; there are no signed/notarized builds, Intel/Linux installers, Windows CLI bundle or package registry.
+- The VS Code extension is a local, unsigned VSIX; it is not published to the VS Code Marketplace or Open VSX and has no automated Extension Host test.
 - No benchmark claim; performance work needs a recorded harness.
 - No automated GUI interaction suite yet.
 - macOS arm64 is tested; Linux and Windows are not verified end to end.
@@ -228,6 +244,7 @@ See the [website status page](https://jd4rider.github.io/nova/status/) and [ROAD
 ## Documentation
 
 - [Install guide and checksums](INSTALL.md)
+- [VS Code extension](editors/vscode/README.md)
 - [Homebrew tap](packaging/homebrew/README.md)
 - [Language reference](docs/language.md), [grammar](docs/grammar.ebnf), [memory model](docs/memory.md)
 - [Nova Studio guide](docs/ide.md)

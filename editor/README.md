@@ -26,6 +26,10 @@ The cask depends on the `jd4rider/tap/nova` formula, so the compiler/CLI is inst
 
 The installers are unsigned. The DMG installs Studio only; install the CLI separately with Homebrew. Windows Studio does not bundle the CLI and runs the terminal in pipe mode.
 
+### Prefer VS Code?
+
+Install the [Nova Language extension](../editors/vscode/README.md) for `.nova` syntax highlighting and the same Rust LSP without Studio. The extension is a local VSIX, not a Marketplace listing.
+
 ## Run from source
 
 Prerequisites: Node 20+ (tested with Node 26 locally and Node 22 in CI) and a built `nova` binary.

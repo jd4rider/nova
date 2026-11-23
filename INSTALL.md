@@ -1,10 +1,11 @@
 # Install Nova and Nova Studio
 
-Nova currently ships **unsigned macOS arm64** and **unsigned Windows x64** preview installers. No Intel Mac, Linux desktop or signed/notarized package is published yet.
+Nova currently ships **unsigned macOS arm64** and **unsigned Windows x64** preview installers, a macOS CLI archive and a VS Code extension. No Intel Mac, Linux desktop or signed/notarized package is published yet.
 
 - [Homebrew: Studio + language](#homebrew-studio--language)
 - [macOS DMG](#macos-dmg)
 - [Windows EXE](#windows-exe)
+- [VS Code extension](#vs-code-extension)
 - [Install from source](#install-from-source)
 - [Verify a download](#verify-a-download)
 - [Uninstall](#uninstall)
@@ -75,6 +76,38 @@ Run the NSIS installer and choose an install directory. It creates Start Menu an
 
 Windows Studio is built without the optional native `node-pty` module. The terminal therefore runs in pipe mode, and FreeBuff’s TUI cannot run. The language/CLI is **not bundled** in the Windows installer yet; build it from source below.
 
+## VS Code extension
+
+The **Nova Language** extension adds `.nova` syntax highlighting and the Rust language server to VS Code without requiring Nova Studio. It is a local VSIX, not a Marketplace listing.
+
+**[Download nova-language-0.1.0.vsix](https://github.com/jd4rider/nova/releases/download/v0.1.0/nova-language-0.1.0.vsix)** (309 KB)
+
+Install it from the terminal or with **Extensions → … → Install from VSIX…**:
+
+```sh
+code --install-extension nova-language-0.1.0.vsix
+```
+
+The extension ID is `jd4rider.nova-language`. Syntax highlighting works without the compiler. Diagnostics, completion, hover, definitions, symbols and formatting require the `nova` CLI so the extension can launch `nova lsp`:
+
+```sh
+brew install jd4rider/tap/nova
+```
+
+If VS Code was launched from the GUI and cannot see your Homebrew or Cargo path, set **Nova: Server Path** (`nova.serverPath`) to the absolute binary path. The extension has a **Nova: Restart Language Server** command.
+
+### Build the extension from source
+
+```sh
+cd editors/vscode
+npm ci --no-audit --no-fund
+npm run typecheck
+npm run package
+code --install-extension nova-language-0.1.0.vsix
+```
+
+The language server uses full-document synchronization and single-file indexing. The extension does not bundle the compiler, debugger, test runner or AI features. It is not published to the VS Code Marketplace or Open VSX, and automated Extension Host interaction tests are not included yet. See [`editors/vscode/README.md`](editors/vscode/README.md) for details.
+
 ## Install from source
 
 Requirements:
@@ -139,6 +172,7 @@ Current preview hashes:
 6c0deeabb5b719b2ca51dfad46508959a3b585ce75b50f47729f30fb9b4cb589  Nova-Studio-0.1.0-arm64.dmg
 72db666b7db6d41ea1ffae6e6cd91e27d658bfbf4e4d97c3896a76fa01dec0b4  Nova-Studio-0.1.0-x64-setup.exe
 03ad1c66644b90837ce5b44fb9fbb375ae7164d4be28851d041bdea0f367c067  nova-0.1.0-aarch64-apple-darwin.tar.gz
+4ac85913627459c5dc9a10dcfbd40f09487cf59ed9069a521e3204cd13f4381a  nova-language-0.1.0.vsix
 ```
 
 The Windows executable and macOS app are **not Authenticode/Developer ID signed**. Do not treat checksums as a substitute for code signing.
@@ -152,6 +186,9 @@ brew uninstall nova
 
 # Direct DMG
 rm -rf "/Applications/Nova Studio.app"
+
+# VS Code extension
+code --uninstall-extension jd4rider.nova-language
 ```
 
 Zap Homebrew-managed preferences with `brew uninstall --zap --cask nova-studio`.
@@ -160,4 +197,5 @@ Zap Homebrew-managed preferences with `brew uninstall --zap --cask nova-studio`.
 
 - [Getting started](https://jd4rider.github.io/nova/getting-started/installation/)
 - [Nova Studio guide](https://jd4rider.github.io/nova/studio/overview/)
+- [VS Code extension](https://jd4rider.github.io/nova/toolchain/vscode/)
 - [Status and limitations](https://jd4rider.github.io/nova/status/)

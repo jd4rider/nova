@@ -7,16 +7,18 @@ const release = 'v0.1.0'
 const dmg = `https://github.com/jd4rider/nova/releases/download/${release}/Nova-Studio-0.1.0-arm64.dmg`
 const exe = `https://github.com/jd4rider/nova/releases/download/${release}/Nova-Studio-0.1.0-x64-setup.exe`
 const cli = `https://github.com/jd4rider/nova/releases/download/${release}/nova-0.1.0-aarch64-apple-darwin.tar.gz`
+const vsix = `https://github.com/jd4rider/nova/releases/download/${release}/nova-language-0.1.0.vsix`
 const sums = `https://github.com/jd4rider/nova/releases/download/${release}/SHA256SUMS`
 ---
-<SiteLayout title="Install" path="install" description="Install Nova Studio and the Nova language with Homebrew, macOS DMG, Windows EXE or from source.">
+<SiteLayout title="Install" path="install" description="Install Nova Studio and the Nova language with Homebrew, macOS DMG, Windows EXE, VS Code extension or from source.">
   <section class="page-hero">
     <div class="wrap">
       <span class="eyebrow"><span class="status-dot"></span> v0.1.0 preview · unsigned installers</span>
       <h1>Install Nova.</h1>
-      <p>Get the native Rust language and Nova Studio together with one Homebrew command, use a direct installer, or build the whole toolchain from source.</p>
+      <p>Get the native Rust language and Nova Studio together with one Homebrew command, use a direct installer, install the VS Code extension, or build the whole toolchain from source.</p>
       <div class="hero-actions" style="margin-top: 26px;">
         <a class="button primary" href="#homebrew">Install with Homebrew</a>
+        <a class="button" href="#vscode">VS Code extension</a>
         <a class="button" href={href('getting-started/installation/')}>Read the detailed guide</a>
       </div>
     </div>
@@ -88,6 +90,38 @@ open -a "Nova Studio"</code></pre>
         </article>
       </div>
       <p class="notice danger" style="margin-top: 20px;"><strong>Unsigned preview:</strong> the app is not Developer ID signed or notarized and the EXE is not Authenticode signed. macOS may require right-click → Open; Windows SmartScreen may require <strong>More info → Run anyway</strong>. Checksums are published, but checksums are not code signing.</p>
+    </div>
+  </section>
+
+  <section class="section" id="vscode">
+    <div class="wrap grid-2" style="align-items: start;">
+      <div class="prose" style="max-width: none;">
+        <div class="kicker">Use your own editor</div>
+        <h2>Nova in VS Code.</h2>
+        <p>The <strong>Nova Language</strong> extension adds <code>.nova</code> syntax highlighting and launches the same Rust language server as Studio. It does not require the Studio app.</p>
+        <pre><code>code --install-extension nova-language-0.1.0.vsix</code></pre>
+        <p>Download the VSIX and use the terminal command above, or open <strong>Extensions → … → Install from VSIX…</strong> in VS Code.</p>
+        <a class="button primary" href={vsix} rel="noreferrer">Download VSIX ↓</a>
+        <p style="margin-top: 18px;">Syntax highlighting works without the compiler. For diagnostics, completion, hover, definitions, symbols and formatting, install the <code>nova</code> CLI with Homebrew and make sure VS Code can find it:</p>
+        <pre><code>brew install jd4rider/tap/nova
+nova --version</code></pre>
+        <p>If VS Code was launched from the GUI and cannot see your shell PATH, set <code>nova.serverPath</code> to the absolute binary path. The extension has a <strong>Nova: Restart Language Server</strong> command and writes failures to <strong>Output → Nova Language Server</strong>.</p>
+      </div>
+      <aside class="card">
+        <div class="kicker">Extension status</div>
+        <table class="status-table">
+          <tbody>
+            <tr><td>Syntax</td><td>Shared TextMate grammar for <code>.nova</code></td></tr>
+            <tr><td>LSP</td><td>Diagnostics, completion, hover, definitions, symbols, formatting</td></tr>
+            <tr><td>Distribution</td><td><span class="badge implemented">local VSIX</span></td></tr>
+            <tr><td>Marketplace</td><td><span class="badge planned">not published</span></td></tr>
+            <tr><td>Tested with</td><td>VS Code 1.143.1 on macOS arm64</td></tr>
+          </tbody>
+        </table>
+        <p class="section-intro" style="font-size: 13px; margin-top: 16px;">The extension is platform-independent, but the language server needs a built <code>nova</code> binary. The published prebuilt CLI is macOS arm64; other platforms build from source.</p>
+        <p class="section-intro" style="font-size: 13px;">The server currently uses full-document sync and single-file indexing. No debugger, task runner or Extension Host automation is included yet.</p>
+        <a class="button" href={href('toolchain/vscode/')}>Extension documentation →</a>
+      </aside>
     </div>
   </section>
 

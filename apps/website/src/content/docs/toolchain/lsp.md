@@ -6,8 +6,10 @@ description: The implemented stdio LSP surface and its advertised capabilities.
 Nova ships a Rust language server using stdio JSON-RPC. Start it with:
 
 ```sh
-nova lsp --stdio
+nova lsp
 ```
+
+The server always uses stdio; `nova lsp` takes no extra flag.
 
 ## Implemented
 
@@ -30,4 +32,4 @@ Incremental document synchronization, cancellation, rename, references, semantic
 
 The server is tested through manual CLI checks and unit coverage of its position mapping, not an automated JSON-RPC transcript suite. A server restart or malformed input should not crash the IDE; report a reproducible transcript if it does.
 
-Nova Studio uses the same server. Other editors can connect to the stdio process independently of the IDE.
+Nova Studio uses the same server. The [Nova Language VS Code extension](../vscode/) launches the same `nova lsp` process and is the supported non-Studio editor integration. Other editors can connect to the stdio process independently of the IDE.

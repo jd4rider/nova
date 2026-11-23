@@ -19,7 +19,7 @@ The binary is `nova`. Build it with `cargo build --release -p nova-cli` or run `
 | `nova clean` | Remove generated artifacts. |
 | `nova tree` | Print the project structure. |
 | `nova repl` | Interactive evaluation labeled as interpreter-backed; not the native backend. |
-| `nova lsp --stdio` | Start the Rust language server on stdio. |
+| `nova lsp` | Start the Rust language server on stdio. |
 | `nova doctor` | Report toolchain, runtime ABI, LSP, FreeBuff and platform status. |
 
 Unsupported roadmap commands (`bench`, `lint`, `doc`, `add`, `remove`, `update`) exit with status 2 and an explicit message. They are not silently ignored.

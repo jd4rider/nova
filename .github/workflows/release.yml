@@ -31,6 +31,14 @@ jobs:
         working-directory: editor
         run: npm ci --no-audit --no-fund
 
+      - name: Install VS Code extension dependencies
+        working-directory: editors/vscode
+        run: npm ci --no-audit --no-fund
+
+      - name: Package VS Code extension
+        working-directory: editors/vscode
+        run: npm run package
+
       - name: Build macOS and Windows installers
         working-directory: editor
         env:
@@ -51,6 +59,9 @@ jobs:
           cp "editor/release/Nova-Studio-${version}-arm64.dmg" release-assets/
           cp "editor/release/Nova-Studio-${version}-arm64.zip" release-assets/
           cp "editor/release/Nova-Studio-${version}-x64-setup.exe" release-assets/
+          vsix="$(find editors/vscode -maxdepth 1 -name 'nova-language-*.vsix' -print -quit)"
+          test -n "$vsix"
+          cp "$vsix" release-assets/
           git archive --format=tar.gz --prefix="nova-${version}/" \
             -o "release-assets/nova-${version}-source.tar.gz" HEAD
           cd release-assets
