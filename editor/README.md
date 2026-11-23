@@ -8,6 +8,24 @@ Nova Studio is an Electron + React + strict TypeScript application. It is part o
 - Language and compiler: <https://github.com/jd4rider/nova>
 - Architecture decision: [`docs/adr/0001-ide-architecture.md`](../docs/adr/0001-ide-architecture.md)
 
+## Install
+
+### Homebrew (macOS arm64)
+
+```sh
+brew install --cask jd4rider/tap/nova-studio
+```
+
+The cask depends on the `jd4rider/tap/nova` formula, so the compiler/CLI is installed alongside Studio. This is the recommended path.
+
+### Direct installers
+
+- [macOS arm64 DMG](https://github.com/jd4rider/nova/releases/download/v0.1.0/Nova-Studio-0.1.0-arm64.dmg)
+- [Windows x64 NSIS EXE](https://github.com/jd4rider/nova/releases/download/v0.1.0/Nova-Studio-0.1.0-x64-setup.exe)
+- [Checksums](https://github.com/jd4rider/nova/releases/download/v0.1.0/SHA256SUMS)
+
+The installers are unsigned. The DMG installs Studio only; install the CLI separately with Homebrew. Windows Studio does not bundle the CLI and runs the terminal in pipe mode.
+
 ## Run from source
 
 Prerequisites: Node 20+ (tested with Node 26 locally and Node 22 in CI) and a built `nova` binary.
@@ -22,13 +40,18 @@ NOVA_BIN="$PWD/../target/debug/nova" npm run dev
 
 If npm has a root-owned cache, use `npm ci --cache /tmp/nova-npm-cache`. Electron's postinstall may be blocked by npm policy; run `node node_modules/electron/install.js` if the runtime is missing.
 
-Production checks:
+Production and installer checks:
 
 ```sh
 npm run typecheck
 npm run build
 npm start        # preview the built app if the Electron runtime is installed
+
+CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist:mac
+npm run dist:win
 ```
+
+Artifacts are written to `release/`. The Windows command disables native-module rebuild and executable signing so it can cross-build without `node-pty`; the installer and app are unsigned.
 
 ## Features
 
@@ -64,7 +87,8 @@ See [`docs/adr/0006-electron-security.md`](../docs/adr/0006-electron-security.md
 - No automated Electron end-to-end interaction suite yet.
 - No Git panel, debugger/DAP, test explorer, split editor groups or multi-window.
 - Vim mode is partial, not Neovim.
-- No installers or signing are published.
+- macOS and Windows installers are published unsigned; no Developer ID/notarized or Authenticode build exists.
+- The Windows installer does not include the language, and its terminal is pipe-only.
 - Tauri 2 and native Rust alternatives were evaluated on paper but not prototyped; see ADR 0001.
 
 ## License

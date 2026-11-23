@@ -11,7 +11,36 @@
 
 Nova is a **functioning native language toolchain** built in Rust: source is lexed, parsed, type-checked, lowered to LLVM IR and linked into a real executable. It is an early vertical slice — not a claim that the language is complete. The supported subset and every known gap are documented.
 
-## Try it
+## Install
+
+### Homebrew: Studio + language together
+
+The macOS cask depends on the language formula, so one command installs both:
+
+```sh
+brew install --cask jd4rider/tap/nova-studio
+nova --version
+open -a "Nova Studio"
+```
+
+If Homebrew asks you to trust the tap: `brew trust jd4rider/tap`. Language only:
+
+```sh
+brew install jd4rider/tap/nova
+```
+
+The tap is [jd4rider/homebrew-tap](https://github.com/jd4rider/homebrew-tap). It currently targets macOS arm64.
+
+### Direct installers
+
+- [Nova Studio v0.1.0 macOS arm64 DMG](https://github.com/jd4rider/nova/releases/download/v0.1.0/Nova-Studio-0.1.0-arm64.dmg) (115 MB)
+- [Nova Studio v0.1.0 Windows x64 NSIS EXE](https://github.com/jd4rider/nova/releases/download/v0.1.0/Nova-Studio-0.1.0-x64-setup.exe) (94 MB)
+- [macOS arm64 CLI archive](https://github.com/jd4rider/nova/releases/download/v0.1.0/nova-0.1.0-aarch64-apple-darwin.tar.gz)
+- [SHA-256 checksums](https://github.com/jd4rider/nova/releases/download/v0.1.0/SHA256SUMS)
+
+These are **unsigned** preview builds. macOS may require right-click → Open; Windows SmartScreen may require More info → Run anyway. The DMG installs Studio only; the Windows installer does not bundle the CLI. See [INSTALL.md](INSTALL.md) for every path.
+
+### Build from source
 
 Requirements: Rust 1.96+, Cargo, and a C compiler/linker (`clang`). Node 20+ is only needed for Nova Studio and the website.
 
@@ -83,8 +112,9 @@ Ada (36)
 | Nova Studio desktop IDE | **Implemented** | Typecheck and production build pass; interaction not yet automated |
 | Current-line lens, sparkles, synthesized SFX | **Experimental** | Settings toggles, reduced-motion aware |
 | Public documentation and website | **Tested** | Astro check, build, link/base checks, grammar and snippet verification |
+| Unsigned desktop installers | **Published** | macOS DMG, Windows NSIS EXE, macOS CLI archive, checksums |
+| Signed/notarized releases | **Planned** | No Developer ID, notarization or Authenticode |
 | Generics, traits, closures, async, DAP | **Planned** | Explicitly rejected or absent |
-| Signed installers and release binaries | **Not published** | Source build only |
 
 The full matrix is in [ROADMAP.md](ROADMAP.md).
 
@@ -109,6 +139,8 @@ crates/
 Nova emits textual LLVM IR and invokes the host `clang`, so no system LLVM development package is required. See [ADR 0003](docs/adr/0003-llvm-backend.md).
 
 ## Nova Studio
+
+Install with Homebrew (`brew install --cask jd4rider/tap/nova-studio`) or build locally:
 
 ```sh
 cd editor
@@ -185,7 +217,7 @@ The website checks include real compiler invocations for documentation snippets.
 
 - No generics, user enums with payloads, traits, methods, closures, async, FFI or macros.
 - No user module graph beyond standard imports.
-- No package registry, signed binaries, installers or published releases.
+- Unsigned macOS/Windows installers and a macOS CLI archive are published; there are no signed/notarized builds, Intel/Linux installers, Windows CLI bundle or package registry.
 - No benchmark claim; performance work needs a recorded harness.
 - No automated GUI interaction suite yet.
 - macOS arm64 is tested; Linux and Windows are not verified end to end.
@@ -195,6 +227,8 @@ See the [website status page](https://jd4rider.github.io/nova/status/) and [ROAD
 
 ## Documentation
 
+- [Install guide and checksums](INSTALL.md)
+- [Homebrew tap](packaging/homebrew/README.md)
 - [Language reference](docs/language.md), [grammar](docs/grammar.ebnf), [memory model](docs/memory.md)
 - [Nova Studio guide](docs/ide.md)
 - [IDE architecture decision](docs/adr/0001-ide-architecture.md)

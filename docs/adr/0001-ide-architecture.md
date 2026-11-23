@@ -24,7 +24,7 @@ The hard gates are licensing, reliable text editing (including IME/composition),
 - Source build output (`editor/out`): **8.9 MB**.
 - Electron runtime directory: **253 MB** after installing the official v33.3.0 darwin-arm64 archive.
 - `editor/node_modules`: **451 MB** (development dependency tree, not an installer).
-- Installed app/DMG size: not measured because no installer was produced in this review.
+- Installer size: macOS arm64 DMG **115 MB**; zipped app **111 MB**; Windows x64 NSIS installer **94 MB**. All are unsigned.
 - Cold/warm startup p50/p95, typing-to-paint, scrolling, 1 MB/10 MB file open and completion latency: **not measured**.
 - Studio launch logged a missing `node-pty` native module; the app continued because PTY is optional, but the terminal is pipe-only until that module is built. FreeBuff terminal requires a PTY.
 

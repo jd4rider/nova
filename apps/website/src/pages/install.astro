@@ -2,63 +2,129 @@
 import SiteLayout from '../layouts/SiteLayout.astro'
 import { href } from '../lib/url'
 import { links } from '../data/site'
+
+const release = 'v0.1.0'
+const dmg = `https://github.com/jd4rider/nova/releases/download/${release}/Nova-Studio-0.1.0-arm64.dmg`
+const exe = `https://github.com/jd4rider/nova/releases/download/${release}/Nova-Studio-0.1.0-x64-setup.exe`
+const cli = `https://github.com/jd4rider/nova/releases/download/${release}/nova-0.1.0-aarch64-apple-darwin.tar.gz`
+const sums = `https://github.com/jd4rider/nova/releases/download/${release}/SHA256SUMS`
 ---
-<SiteLayout title="Install" path="install" description="Build Nova and Nova Studio from source. No signed installers are published yet.">
+<SiteLayout title="Install" path="install" description="Install Nova Studio and the Nova language with Homebrew, macOS DMG, Windows EXE or from source.">
   <section class="page-hero">
     <div class="wrap">
-      <span class="eyebrow"><span class="status-dot"></span> Source installation · macOS arm64 tested</span>
+      <span class="eyebrow"><span class="status-dot"></span> v0.1.0 preview · unsigned installers</span>
       <h1>Install Nova.</h1>
-      <p>There are no published installers yet. Build the compiler and Studio from source. The website itself is static and never executes your code.</p>
+      <p>Get the native Rust language and Nova Studio together with one Homebrew command, use a direct installer, or build the whole toolchain from source.</p>
+      <div class="hero-actions" style="margin-top: 26px;">
+        <a class="button primary" href="#homebrew">Install with Homebrew</a>
+        <a class="button" href={href('getting-started/installation/')}>Read the detailed guide</a>
+      </div>
     </div>
   </section>
 
-  <section class="section" style="padding-top: 24px;">
+  <section class="section" id="homebrew" style="padding-top: 18px;">
     <div class="wrap grid-2" style="align-items: start;">
       <div class="prose" style="max-width: none;">
-        <p class="notice danger"><strong>Release status:</strong> no signed or notarized binaries, no GitHub Release assets and no supported Windows/Linux package. Do not expect a download button to be a real release.</p>
-        <h2>1. Requirements</h2>
-        <ul>
-          <li>Rust stable (tested 1.96) and Cargo</li>
-          <li>Clang on <code>PATH</code> (tested Apple clang 21)</li>
-          <li>Node.js 22.23.4+ and npm for Studio/website</li>
-          <li>macOS arm64 is tested; Linux/Windows are unverified</li>
-        </ul>
-        <h2>2. Build the compiler</h2>
+        <div class="kicker">Recommended · macOS arm64</div>
+        <h2>Studio and language, together.</h2>
+        <p>The public Homebrew tap installs both the <code>nova</code> compiler/CLI and Nova Studio. The Studio cask declares the language formula as a dependency, so one command gets both.</p>
+        <pre><code>brew install --cask jd4rider/tap/nova-studio
+nova --version
+open -a "Nova Studio"</code></pre>
+        <p>If Homebrew asks you to trust the tap:</p>
+        <pre><code>brew trust jd4rider/tap</code></pre>
+        <p>Language only:</p>
+        <pre><code>brew install jd4rider/tap/nova</code></pre>
+        <p>Nova links native programs with the host Clang. Install the Xcode Command Line Tools if needed:</p>
+        <pre><code>xcode-select --install</code></pre>
+      </div>
+      <aside class="card">
+        <div class="kicker">What the cask installs</div>
+        <table class="status-table">
+          <tbody>
+            <tr><td>Nova language</td><td><code>nova</code> CLI + compiler from the tap</td></tr>
+            <tr><td>Nova Studio</td><td><code>/Applications/Nova Studio.app</code></td></tr>
+            <tr><td>Architecture</td><td>macOS arm64</td></tr>
+            <tr><td>Signing</td><td><span class="badge planned">unsigned</span></td></tr>
+            <tr><td>Updates</td><td>Manual <code>brew upgrade</code> / new DMG</td></tr>
+          </tbody>
+        </table>
+        <p class="section-intro" style="font-size: 13px; margin-top: 16px;">The cask does not bypass Gatekeeper. If macOS blocks first launch, right-click → Open, or clear quarantine for the app only.</p>
+      </aside>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head">
+        <div>
+          <div class="kicker">Direct installers</div>
+          <h2>DMG and NSIS EXE.</h2>
+          <p class="section-intro">These are real artifacts built from the tagged source by electron-builder. They are preview-quality and unsigned.</p>
+        </div>
+        <a class="button" href={sums} rel="noreferrer">SHA-256 checksums ↗</a>
+      </div>
+      <div class="grid-3">
+        <article class="card">
+          <div class="card-icon" aria-hidden="true">⌘</div>
+          <h3>macOS arm64 DMG</h3>
+          <p>Nova Studio 0.1.0, 115 MB. Drag the app to Applications. The DMG installs Studio only; install the language with Homebrew or source.</p>
+          <a class="button primary" href={dmg} rel="noreferrer">Download DMG ↓</a>
+          <div class="meta">Apple silicon · unsigned</div>
+        </article>
+        <article class="card">
+          <div class="card-icon" aria-hidden="true">⊞</div>
+          <h3>Windows x64 EXE</h3>
+          <p>Nova Studio 0.1.0 NSIS installer, 94 MB. Assisted installer with Start Menu and desktop shortcuts. The CLI is not bundled.</p>
+          <a class="button primary" href={exe} rel="noreferrer">Download EXE ↓</a>
+          <div class="meta">Windows x64 · unsigned · pipe terminal</div>
+        </article>
+        <article class="card">
+          <div class="card-icon" aria-hidden="true">fn</div>
+          <h3>macOS CLI archive</h3>
+          <p>Standalone <code>nova</code> 0.1.0 binary for Apple silicon, with a README and no installer. Verify with the release checksums.</p>
+          <a class="button" href={cli} rel="noreferrer">Download CLI ↓</a>
+          <div class="meta">macOS arm64 · 852 KB</div>
+        </article>
+      </div>
+      <p class="notice danger" style="margin-top: 20px;"><strong>Unsigned preview:</strong> the app is not Developer ID signed or notarized and the EXE is not Authenticode signed. macOS may require right-click → Open; Windows SmartScreen may require <strong>More info → Run anyway</strong>. Checksums are published, but checksums are not code signing.</p>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap grid-2" style="align-items: start;">
+      <div class="prose" style="max-width: none;">
+        <div class="kicker">Build from source</div>
+        <h2>No binaries required.</h2>
+        <p>You need Rust 1.96+, Cargo and Clang. Node 20+ is only needed for Studio or the website.</p>
         <pre><code>git clone https://github.com/jd4rider/nova.git
 cd nova
 cargo build --release -p nova-cli
 export PATH="$PWD/target/release:$PATH"
+nova --version
 nova doctor</code></pre>
-        <h2>3. Compile a program</h2>
+        <p>Build a program and Studio:</p>
         <pre><code>nova new hello
 cd hello
 nova run
-nova test</code></pre>
-        <h2>4. Build Studio</h2>
-        <pre><code>cd ../editor
-npm install --cache /tmp/nova-npm-cache
-npm run typecheck
-npm run build
+cd ../editor
+npm ci --no-audit --no-fund
 NOVA_BIN="$PWD/../target/release/nova" npm run dev</code></pre>
-        <p>If npm blocks Electron's installer, run <code>node node_modules/electron/install.js</code>. Without <code>node-pty</code> the terminal reports pipe mode; FreeBuff requires a PTY.</p>
-        <h2>5. Verify</h2>
-        <pre><code>nova doctor</code></pre>
-        <p>Report its full output when asking for help. See <a href={href('getting-started/troubleshooting/')}>troubleshooting</a>.</p>
       </div>
       <aside class="card">
         <div class="kicker">Platform matrix</div>
         <table class="status-table">
-          <thead><tr><th>Platform</th><th>Status</th></tr></thead>
+          <thead><tr><th>Platform</th><th>Installer</th><th>Status</th></tr></thead>
           <tbody>
-            <tr><td>macOS arm64</td><td><span class="badge tested">tested</span></td></tr>
-            <tr><td>macOS x64</td><td><span class="badge planned">untested</span></td></tr>
-            <tr><td>Windows x64</td><td><span class="badge planned">untested</span></td></tr>
-            <tr><td>Linux x64</td><td><span class="badge planned">untested</span></td></tr>
-            <tr><td>Signed installer</td><td><span class="badge planned">not published</span></td></tr>
+            <tr><td>macOS arm64</td><td>DMG / brew</td><td><span class="badge tested">built + mounted</span></td></tr>
+            <tr><td>Windows x64</td><td>NSIS EXE</td><td><span class="badge implemented">built</span></td></tr>
+            <tr><td>macOS arm64</td><td>CLI archive</td><td><span class="badge tested">smoke-tested</span></td></tr>
+            <tr><td>macOS x64</td><td>source only</td><td><span class="badge planned">no prebuilt</span></td></tr>
+            <tr><td>Linux</td><td>source only</td><td><span class="badge planned">no prebuilt</span></td></tr>
           </tbody>
         </table>
-        <p class="section-intro" style="font-size: 13px; margin-top: 16px;">Checksums, signing and notarization are not claimed because no release credentials or verified artifacts exist.</p>
-        {links.releases ? <a class="button" href={links.releases} rel="noreferrer">GitHub Releases ↗</a> : <a class="button" href={href('releases')}>Release policy</a>}
+        <p class="section-intro" style="font-size: 13px; margin-top: 16px;">Windows Studio was cross-built and structurally verified; it has not been launched on a Windows host. No Intel/Linux installer is published.</p>
+        <a class="button" href={links.releases} rel="noreferrer">All release assets ↗</a>
       </aside>
     </div>
   </section>

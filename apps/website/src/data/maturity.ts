@@ -20,7 +20,9 @@ export const features: Feature[] = [
   { area: 'Async, FFI, debug adapter', status: 'planned', note: 'No scheduler, C ABI or DAP yet', evidence: 'ROADMAP.md' },
   { area: 'FreeBuff structured chat/completion', status: 'unavailable', note: 'Installed 0.2.36 CLI is interactive-terminal-only', evidence: 'docs/adr/0002-freebuff-integration.md' },
   { area: 'Public website and docs', status: 'implemented', note: 'Astro 7 + Starlight site deployed at jd4rider.github.io/nova', evidence: 'GitHub Pages build/deploy run 45244354509 succeeded' },
-  { area: 'Signed desktop releases', status: 'planned', note: 'No installers, signatures or releases published', evidence: 'ROADMAP.md' }
+  { area: 'Unsigned desktop installers', status: 'implemented', note: 'macOS DMG, Windows NSIS EXE, macOS CLI archive and checksums', evidence: 'v0.1.0 release assets; DMG mounted and CLI smoke-tested' },
+  { area: 'Homebrew Studio + language', status: 'implemented', note: 'Studio cask depends on jd4rider/tap/nova and installs both', evidence: 'brew info/dry-run verified dependency resolution' },
+  { area: 'Signed desktop releases', status: 'planned', note: 'Unsigned installers exist; no Developer ID/notarization or Authenticode', evidence: 'ROADMAP.md' }
 ]
 
 export const milestones = [

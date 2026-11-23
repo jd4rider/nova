@@ -5,14 +5,15 @@
   "main": "./out/main/index.js",
   "private": true,
   "license": "UNLICENSED",
+  "author": "Jonathan Forrider",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit",
     "start": "electron-vite preview",
     "dist": "npm run build && electron-builder --dir",
-    "dist:mac": "npm run build && electron-builder --mac",
-    "dist:win": "npm run build && electron-builder --win",
+    "dist:mac": "npm run build && electron-builder --mac dmg zip --arm64 --publish never",
+    "dist:win": "npm run build && electron-builder --win nsis --x64 --publish never --config.npmRebuild=false --config.win.signAndEditExecutable=false",
     "dist:linux": "npm run build && electron-builder --linux"
   },
   "dependencies": {
@@ -50,14 +51,37 @@
     "mac": {
       "category": "public.app-category.developer-tools",
       "target": [
-        "dmg",
-        "zip"
-      ]
+        {
+          "target": "dmg",
+          "arch": ["arm64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["arm64"]
+        }
+      ],
+      "artifactName": "Nova-Studio-${version}-${arch}.${ext}"
+    },
+    "dmg": {
+      "title": "Nova Studio ${version}"
     },
     "win": {
       "target": [
-        "nsis"
-      ]
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "artifactName": "Nova-Studio-${version}-${arch}-setup.${ext}",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Nova Studio"
     },
     "linux": {
       "target": [
