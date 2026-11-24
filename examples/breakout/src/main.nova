@@ -31,22 +31,24 @@ fn update(model: Model, event: bubble.Event) -> (Model, bubble.Cmd) {
 }
 
 fn key(model: Model, code: Int) -> (Model, bubble.Cmd) {
+    // Every game key schedules a tick: a plain Idle would make the runtime wait
+    // for the next key, so the simulation would never step after input.
     if code == 97 || code == 104 {
-        return (move(model.game, model.target - 60), bubble.Cmd.IdleCmd)
+        return (move(model.game, model.target - 60), bubble.Cmd.AfterCmd(16))
     }
     if code == 100 || code == 108 {
-        return (move(model.game, model.target + 60), bubble.Cmd.IdleCmd)
+        return (move(model.game, model.target + 60), bubble.Cmd.AfterCmd(16))
     }
     if code == 32 {
         if model.game.status == 0 {
-            return (move(launch(model.game), model.target), bubble.Cmd.IdleCmd)
+            return (move(launch(model.game), model.target), bubble.Cmd.AfterCmd(16))
         }
         if model.game.status == 2 || model.game.status == 3 {
-            return (move(launch(new_game()), 400), bubble.Cmd.IdleCmd)
+            return (move(launch(new_game()), 400), bubble.Cmd.AfterCmd(16))
         }
     }
     if code == 114 {
-        return (move(new_game(), 400), bubble.Cmd.IdleCmd)
+        return (move(new_game(), 400), bubble.Cmd.AfterCmd(16))
     }
     if code == 113 || code == 27 {
         return (model, bubble.Cmd.QuitCmd)

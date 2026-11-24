@@ -15,6 +15,15 @@ cd examples/breakout
 
 `a`/`d` move the paddle, `space` launches the ball, `r` starts over, `q` or `Esc` quits. It runs in the alternate screen with a 16 ms tick.
 
+## Install on macOS
+
+```sh
+cd examples/breakout
+./install-macos.sh
+```
+
+This builds the game, renders the icon from `icon.html` with headless Chrome, assembles `dist/Breakout.app` and copies it to `/Applications`. Double-clicking the icon opens Terminal running the game. The app is unsigned, so the first launch may need right-click → Open.
+
 ## The engine
 
 The simulation is a pure function. No globals, no callbacks, no allocation beyond the brick list:

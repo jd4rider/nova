@@ -8,6 +8,7 @@ editors/vscode/out/
 editors/vscode/*.vsix
 apps/website/dist/
 apps/website/.astro/
+examples/breakout/dist/
 *.log
 .DS_Store
 *.nova.ll

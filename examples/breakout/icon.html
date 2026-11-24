@@ -1,0 +1,38 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      html, body { margin: 0; width: 1024px; height: 1024px; background: #070b08; }
+      .icon {
+        box-sizing: border-box;
+        width: 1024px;
+        height: 1024px;
+        padding: 96px;
+        display: grid;
+        align-content: center;
+        gap: 34px;
+        background: radial-gradient(circle at 30% 20%, #16301f 0%, #0b0f0c 55%, #070b08 100%);
+        border: 10px solid #1d3a28;
+        border-radius: 190px;
+      }
+      .row { display: flex; gap: 22px; justify-content: center; }
+      .brick { width: 150px; height: 48px; border-radius: 8px; background: #7dffb0; box-shadow: 0 0 18px rgba(125, 255, 176, .35); }
+      .brick.gold { background: #ffd479; box-shadow: 0 0 18px rgba(255, 212, 121, .35); }
+      .brick.dim { background: #2a5c3b; box-shadow: none; }
+      .field { position: relative; height: 190px; }
+      .ball { position: absolute; left: 470px; top: 70px; width: 84px; height: 84px; border-radius: 50%; background: #ffd479; box-shadow: 0 0 28px rgba(255, 212, 121, .55); }
+      .paddle { position: absolute; left: 352px; top: 154px; width: 320px; height: 28px; border-radius: 14px; background: #7dffb0; box-shadow: 0 0 22px rgba(125, 255, 176, .45); }
+      .name { text-align: center; font: 700 92px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em; color: #c8f7d4; }
+      .name span { color: #ffd479; }
+    </style>
+  </head>
+  <body>
+    <div class="icon">
+      <div class="row"><div class="brick"></div><div class="brick gold"></div><div class="brick"></div><div class="brick dim"></div><div class="brick"></div></div>
+      <div class="row"><div class="brick dim"></div><div class="brick"></div><div class="brick gold"></div><div class="brick"></div><div class="brick dim"></div></div>
+      <div class="field"><div class="ball"></div><div class="paddle"></div></div>
+      <div class="name">NOVA <span>BREAKOUT</span></div>
+    </div>
+  </body>
+</html>
