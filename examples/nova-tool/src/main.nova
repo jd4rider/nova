@@ -7,6 +7,9 @@ import "../../../libraries/nova-boxes/src/boxes.nova"
 import "../../../libraries/nova-parser/src/parser.nova"
 import "../../../libraries/nova-parser/src/expr.nova"
 import "../../../libraries/nova-check/src/check.nova"
+import "../../../libraries/nova-boxes/src/semver.nova"
+import "../../../libraries/nova-boxes/src/resolve.nova"
+import "../../../libraries/nova-boxes/src/report.nova"
 
 // nova-tool: the phase-1 self-hosted toolchain, in Nova.
 //
@@ -81,6 +84,33 @@ fn main() {
             for message in diags {
                 println(message)
             }
+        }
+        return
+    }
+
+    if mode == "box-semver" {
+        for line in source.split("\n") {
+            let parts = line.split("|")
+            if parts.len() >= 2 {
+                let version = sv_parse(parts[0].trim())
+                println("${parts[0].trim()} ${parts[1].trim()} ${sv_satisfies(version, parts[1])}")
+            }
+        }
+        return
+    }
+
+    if mode == "box-resolve" || mode == "box-tree" || mode == "box-lock" || mode == "box-metadata" {
+        let manifest = bx_parse_manifest(source)
+        let result = rs_resolve(source, rs_dirname(path))
+        if mode == "box-resolve" || mode == "box-tree" {
+            println(rp_tree(manifest, result))
+        } else if mode == "box-lock" {
+            println(rp_lock(manifest, result))
+        } else {
+            println(rp_metadata(manifest, result))
+        }
+        for message in result.errors {
+            println("error: ${message}")
         }
         return
     }

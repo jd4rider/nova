@@ -1,0 +1,279 @@
+// SemVer for Nova Boxes, in Nova.
+//
+// Parses `1.2.3`, `1.2.3-beta.1` and requirements (`^1.2.3`, `~1.2`, `>=1.0.0`,
+// `1.*`, exact) and answers whether a version satisfies one requirement.
+
+struct BoxVersion {
+    major: Int,
+    minor: Int,
+    patch: Int,
+    pre: String,
+    ok: Bool,
+}
+
+fn sv_digit(c: String) -> Int {
+    let chars = "0123456789".chars()
+    var i = 0
+    while i < chars.len() {
+        if chars[i] == c {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+fn sv_number(text: String) -> Int {
+    if text.len() == 0 {
+        return -1
+    }
+    let chars = text.chars()
+    var value = 0
+    var i = 0
+    while i < chars.len() {
+        let digit = sv_digit(chars[i])
+        if digit < 0 {
+            return -1
+        }
+        value = value * 10 + digit
+        i = i + 1
+    }
+    return value
+}
+
+fn sv_bad() -> BoxVersion {
+    return BoxVersion { major: 0, minor: 0, patch: 0, pre: "", ok: false }
+}
+
+fn sv_parse(text: String) -> BoxVersion {
+    let trimmed = text.trim()
+    if trimmed.len() == 0 {
+        return sv_bad()
+    }
+    let plus = trimmed.split("+")
+    let dash = plus[0].split("-")
+    var pre = ""
+    if dash.len() > 1 {
+        pre = dash[1]
+    }
+    let parts = dash[0].split(".")
+    if parts.len() > 3 {
+        return sv_bad()
+    }
+    let major = sv_number(parts[0])
+    if major < 0 {
+        return sv_bad()
+    }
+    var minor = 0
+    var patch = 0
+    if parts.len() > 1 {
+        minor = sv_number(parts[1])
+        if minor < 0 {
+            return sv_bad()
+        }
+    }
+    if parts.len() > 2 {
+        patch = sv_number(parts[2])
+        if patch < 0 {
+            return sv_bad()
+        }
+    }
+    return BoxVersion { major: major, minor: minor, patch: patch, pre: pre, ok: true }
+}
+
+fn sv_text(version: BoxVersion) -> String {
+    var out = "${version.major}.${version.minor}.${version.patch}"
+    if version.pre.len() > 0 {
+        out = out + "-" + version.pre
+    }
+    return out
+}
+
+fn sv_cmp_text(a: String, b: String) -> Int {
+    let left = a.chars()
+    let right = b.chars()
+    var i = 0
+    while i < left.len() && i < right.len() {
+        let la = sv_digit(left[i])
+        let rb = sv_digit(right[i])
+        if la >= 0 && rb >= 0 {
+            if la != rb {
+                if la < rb {
+                    return -1
+                }
+                return 1
+            }
+        } else {
+            if left[i] != right[i] {
+                var less = false
+                for check in "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-".chars() {
+                    if check == left[i] {
+                        less = true
+                    }
+                    if check == right[i] {
+                        return 1
+                    }
+                }
+                if less {
+                    return -1
+                }
+                return 1
+            }
+        }
+        i = i + 1
+    }
+    if left.len() == right.len() {
+        return 0
+    }
+    if left.len() < right.len() {
+        return -1
+    }
+    return 1
+}
+
+fn sv_cmp(a: BoxVersion, b: BoxVersion) -> Int {
+    if a.major != b.major {
+        if a.major < b.major {
+            return -1
+        }
+        return 1
+    }
+    if a.minor != b.minor {
+        if a.minor < b.minor {
+            return -1
+        }
+        return 1
+    }
+    if a.patch != b.patch {
+        if a.patch < b.patch {
+            return -1
+        }
+        return 1
+    }
+    if a.pre.len() == 0 && b.pre.len() == 0 {
+        return 0
+    }
+    if a.pre.len() == 0 {
+        return 1
+    }
+    if b.pre.len() == 0 {
+        return -1
+    }
+    return sv_cmp_text(a.pre, b.pre)
+}
+
+fn sv_op(text: String) -> String {
+    if text.starts_with(">=") {
+        return ">="
+    }
+    if text.starts_with("<=") {
+        return "<="
+    }
+    if text.starts_with("^") {
+        return "^"
+    }
+    if text.starts_with("~") {
+        return "~"
+    }
+    if text.starts_with(">") {
+        return ">"
+    }
+    if text.starts_with("<") {
+        return "<"
+    }
+    if text.starts_with("=") {
+        return "="
+    }
+    return ""
+}
+
+fn sv_satisfies(version: BoxVersion, requirement: String) -> Bool {
+    if !version.ok {
+        return false
+    }
+    let text = requirement.trim()
+    if text.len() == 0 || text == "*" {
+        return true
+    }
+    let op = sv_op(text)
+    var body = text
+    if op.len() > 0 {
+        let chars = text.chars()
+        var i = op.len()
+        var rest = ""
+        while i < chars.len() {
+            rest = rest + chars[i]
+            i = i + 1
+        }
+        body = rest.trim()
+    }
+    if body == "*" || body == "x" || body == "X" {
+        return true
+    }
+    // `1.*` and `1.2.*` match by prefix.
+    let star = body.split(".*")
+    if star.len() > 1 {
+        let base = sv_parse(star[0])
+        if !base.ok {
+            return false
+        }
+        if version.major != base.major {
+            return false
+        }
+        if star[0].split(".").len() > 1 {
+            return version.minor == base.minor
+        }
+        return true
+    }
+    let base = sv_parse(body)
+    if !base.ok {
+        return false
+    }
+    if version.pre.len() > 0 && base.pre.len() == 0 {
+        return false
+    }
+    let order = sv_cmp(version, base)
+    if op == ">=" {
+        return order >= 0
+    }
+    if op == "<=" {
+        return order <= 0
+    }
+    if op == ">" {
+        return order > 0
+    }
+    if op == "<" {
+        return order < 0
+    }
+    if op == "=" {
+        return order == 0
+    }
+    if op == "~" {
+        return version.major == base.major && version.minor == base.minor && order >= 0
+    }
+    // Caret and bare versions: compatible with the base.
+    if base.major > 0 {
+        return version.major == base.major && order >= 0
+    }
+    if base.minor > 0 {
+        return version.major == 0 && version.minor == base.minor && order >= 0
+    }
+    return version.major == 0 && version.minor == 0 && version.patch == base.patch
+}
+
+// Resolves which of `candidates` (already parsed) best satisfies `requirement`.
+fn sv_best(candidates: List<BoxVersion>, requirement: String) -> Int {
+    var best = -1
+    var i = 0
+    while i < candidates.len() {
+        if sv_satisfies(candidates[i], requirement) {
+            if best < 0 {
+                best = i
+            } else if sv_cmp(candidates[i], candidates[best]) > 0 {
+                best = i
+            }
+        }
+        i = i + 1
+    }
+    return best
+}

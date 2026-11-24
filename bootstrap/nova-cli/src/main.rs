@@ -84,6 +84,12 @@ enum Commands {
     Repl,
     /// Print the project dependency tree
     Tree,
+    /// Nova Boxes package commands
+    Box {
+        action: String,
+        #[arg(trailing_var_arg = true)]
+        args: Vec<String>,
+    },
     /// Add a dependency (not implemented)
     Add { package: String },
     /// Remove a dependency (not implemented)
@@ -134,6 +140,7 @@ fn real_main() -> i32 {
         },
         Commands::Repl => cmd_repl(),
         Commands::Tree => cmd_tree(),
+        Commands::Box { action, args } => cmd_box(&action, &args),
         Commands::Add { package } => unsupported(&format!("nova add {package}")),
         Commands::Remove { package } => unsupported(&format!("nova remove {package}")),
         Commands::Update => unsupported("nova update"),
@@ -831,6 +838,98 @@ fn cmd_fmt(check: bool, paths: &[PathBuf]) -> i32 {
         EXIT_ERROR
     } else {
         EXIT_OK
+    }
+}
+
+fn box_project_root() -> Result<PathBuf, i32> {
+    let cwd = std::env::current_dir().map_err(|error| {
+        eprintln!("nova box: could not read current directory: {error}");
+        EXIT_ERROR
+    })?;
+    let mut current = Some(cwd.as_path());
+    while let Some(dir) = current {
+        if dir.join("Box.toml").is_file() || dir.join("nova.toml").is_file() {
+            return Ok(dir.to_path_buf());
+        }
+        current = dir.parent();
+    }
+    eprintln!("nova box: no Box.toml or nova.toml found in this directory or its parents");
+    Err(EXIT_ERROR)
+}
+
+/// Package operations run through the Nova implementation in `nova-tool`.
+/// Actions that are not implemented report unsupported instead of pretending.
+fn cmd_box(action: &str, args: &[String]) -> i32 {
+    if !args.is_empty() {
+        eprintln!("nova box {action}: arguments are not supported yet");
+        return EXIT_UNSUPPORTED;
+    }
+    let tool_mode = match action {
+        "tree" | "resolve" => "box-resolve",
+        "lock" => "box-lock",
+        "metadata" => "box-metadata",
+        "check" => "box-resolve",
+        _ => {
+            eprintln!(
+                "nova box: `{action}` is not implemented yet; available: tree, check, lock, metadata, resolve"
+            );
+            return EXIT_UNSUPPORTED;
+        }
+    };
+    let root = match box_project_root() {
+        Ok(root) => root,
+        Err(code) => return code,
+    };
+    let manifest = if root.join("Box.toml").is_file() {
+        root.join("Box.toml")
+    } else {
+        root.join("nova.toml")
+    };
+    let tool = match nova_tool_path() {
+        Some(tool) => tool,
+        None => {
+            eprintln!("nova box: nova-tool not found; build it with `nova build` in examples/nova-tool or set NOVA_TOOL_BIN");
+            return EXIT_ERROR;
+        }
+    };
+    let output = match Command::new(&tool)
+        .env("NOVA_TOOL", tool_mode)
+        .env("NOVA_TOOL_PATH", &manifest)
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => {
+            eprintln!("nova box: could not run {}: {error}", tool.display());
+            return EXIT_ERROR;
+        }
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+    if action == "lock" {
+        let path = root.join("Box.lock");
+        if let Err(error) = fs::write(&path, text.as_bytes()) {
+            eprintln!("nova box: could not write {}: {error}", path.display());
+            return EXIT_ERROR;
+        }
+        println!("Wrote {}", path.display());
+        if !output.status.success() {
+            eprint!("{}", String::from_utf8_lossy(&output.stderr));
+            return EXIT_ERROR;
+        }
+        return EXIT_OK;
+    }
+    print!("{text}");
+    eprint!("{}", String::from_utf8_lossy(&output.stderr));
+    if action == "check" {
+        if text.contains("error:") {
+            return EXIT_ERROR;
+        }
+        println!("Boxes check passed: {}", manifest.display());
+        return EXIT_OK;
+    }
+    if output.status.success() {
+        EXIT_OK
+    } else {
+        EXIT_ERROR
     }
 }
 

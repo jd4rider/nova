@@ -1,0 +1,6 @@
+[package]
+name = "util"
+version = "1.0.0"
+
+[dependencies]
+math = { path = "../math", version = "~0.2.0" }

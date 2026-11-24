@@ -1,0 +1,170 @@
+// Local dependency resolution for Nova Boxes.
+//
+// Walks path dependencies depth-first, checks that each manifest agrees with
+// the requirement that pulled it in, detects cycles and returns a stable list
+// that feeds `Box.lock`, `nova box tree` and metadata.
+
+import "../../nova-gui/src/gui.nova"
+import "./boxes.nova"
+import "./semver.nova"
+
+struct ResolvedBox {
+    name: String,
+    version: String,
+    path: String,
+    depth: Int,
+}
+
+struct ResolveResult {
+    boxes: List<ResolvedBox>,
+    errors: List<String>,
+}
+
+fn rs_normalize(path: String) -> String {
+    let parts = path.split("/")
+    var resolved: List<String> = []
+    for part in parts {
+        if part == ".." {
+            if resolved.len() > 0 {
+                var keep: List<String> = []
+                var i = 0
+                while i + 1 < resolved.len() {
+                    keep.push(resolved[i])
+                    i = i + 1
+                }
+                resolved = keep
+            }
+        } else if part != "" && part != "." {
+            resolved.push(part)
+        }
+    }
+    var out = ""
+    if path.starts_with("/") {
+        out = "/"
+    }
+    var i = 0
+    while i < resolved.len() {
+        if i > 0 {
+            out = out + "/"
+        }
+        out = out + resolved[i]
+        i = i + 1
+    }
+    if out.len() == 0 {
+        return "/"
+    }
+    return out
+}
+
+fn rs_dirname(path: String) -> String {
+    let parts = path.split("/")
+    var out = ""
+    var i = 0
+    while i + 1 < parts.len() {
+        if i > 0 {
+            out = out + "/"
+        }
+        out = out + parts[i]
+        i = i + 1
+    }
+    return rs_normalize(out)
+}
+
+fn rs_join(base: String, child: String) -> String {
+    if base.len() == 0 {
+        return child
+    }
+    if base.ends_with("/") {
+        return rs_normalize(base + child)
+    }
+    return rs_normalize(base + "/" + child)
+}
+
+fn rs_has_path(paths: List<String>, path: String) -> Bool {
+    for existing in paths {
+        if existing == path {
+            return true
+        }
+    }
+    return false
+}
+
+fn rs_has_box(boxes: List<ResolvedBox>, path: String) -> Bool {
+    for existing in boxes {
+        if existing.path == path {
+            return true
+        }
+    }
+    return false
+}
+
+fn rs_walk(manifest: BoxManifest, root: String, depth: Int, stack: List<String>) -> ResolveResult {
+    var boxes: List<ResolvedBox> = []
+    var errors: List<String> = []
+    for dep in manifest.deps {
+        if dep.path.len() == 0 {
+            errors.push(
+                "${manifest.name}: dependency `${dep.name}` is registry-only; this build resolves path dependencies"
+            )
+        } else {
+            let path = rs_join(root, dep.path)
+            if rs_has_path(stack, path) {
+                errors.push("cycle: ${manifest.name} -> ${dep.name} (${path})")
+            } else {
+                var source = gui.read(rs_join(path, "Box.toml"))
+                if source.len() == 0 {
+                    source = gui.read(rs_join(path, "nova.toml"))
+                }
+                if source.len() == 0 {
+                    errors.push("${manifest.name}: cannot read manifest for `${dep.name}` at ${path}")
+                } else {
+                    let child = bx_parse_manifest(source)
+                    if child.name != dep.name {
+                        errors.push(
+                            "${manifest.name}: dependency `${dep.name}` declares itself `${child.name}`"
+                        )
+                    }
+                    if dep.version.len() > 0 {
+                        if !sv_satisfies(sv_parse(child.version), dep.version) {
+                            errors.push(
+                                "${manifest.name}: `${dep.name}` ${child.version} does not satisfy `${dep.version}`"
+                            )
+                        }
+                    }
+                    if !bx_manifest_ok(child) {
+                        errors.push("${dep.name}: manifest at ${path} is invalid")
+                    }
+                    if !rs_has_box(boxes, path) {
+                        boxes.push(
+                            ResolvedBox {
+                                name: child.name,
+                                version: child.version,
+                                path: path,
+                                depth: depth,
+                            }
+                        )
+                        var next = stack
+                        next.push(path)
+                        let nested = rs_walk(child, path, depth + 1, next)
+                        for box in nested.boxes {
+                            if !rs_has_box(boxes, box.path) {
+                                boxes.push(box)
+                            }
+                        }
+                        for message in nested.errors {
+                            errors.push(message)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return ResolveResult { boxes: boxes, errors: errors }
+}
+
+fn rs_resolve(source: String, root: String) -> ResolveResult {
+    let manifest = bx_parse_manifest(source)
+    var stack: List<String> = []
+    stack.push(root)
+    return rs_walk(manifest, root, 1, stack)
+}
