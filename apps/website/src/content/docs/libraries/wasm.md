@@ -3,7 +3,7 @@ title: Nova Wasm
 description: A component framework and documentation site written in Nova, compiled to WebAssembly and rendered in the browser.
 ---
 
-**Status: experimental.** Nova Wasm is a source library in `libraries/nova-wasm` and a compiler target (`NOVA_TARGET=wasm32`). The target runs; the framework is deliberately minimal. See [the live site](../../../wasm/) for the documentation and Bible reader it renders.
+**Status: experimental.** Nova Wasm is a source library in `libraries/nova-wasm` and a compiler target (`NOVA_TARGET=wasm32`). The target runs; the framework is deliberately minimal. See [the live site](https://jd4rider.github.io/nova/wasm/) for the documentation and Bible reader it renders.
 
 ## The model
 
