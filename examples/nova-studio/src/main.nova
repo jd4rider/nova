@@ -246,84 +246,224 @@ fn code_to_text(code: Int) -> String {
 }
 
 // ---------- syntax ----------
+// Dark+ scopes: comments green, strings orange, numbers pale green, keywords
+// blue, control flow purple, types teal, function names yellow.
 
-fn is_control(word: String) -> Bool {
-    return word == "if" || word == "else" || word == "while" || word == "for" || word == "return" || word == "match"
+fn comment_color() -> Int {
+    return gui.rgb(106, 153, 85)
 }
 
-fn is_keyword(word: String) -> Bool {
-    return word == "fn" || word == "let" || word == "var" || word == "struct" || word == "enum" || word == "impl" ||
-        word == "import" || word == "as" || word == "extern" || word == "true" || word == "false" || word == "mut" ||
-        word == "self" || word == "trait" || word == "pub" || word == "const"
+fn string_color() -> Int {
+    return gui.rgb(206, 145, 120)
+}
+
+fn number_color() -> Int {
+    return gui.rgb(181, 206, 168)
+}
+
+fn keyword_color() -> Int {
+    return gui.rgb(86, 156, 214)
+}
+
+fn control_color() -> Int {
+    return gui.rgb(197, 134, 192)
+}
+
+fn type_color() -> Int {
+    return gui.rgb(78, 201, 176)
+}
+
+fn func_color() -> Int {
+    return gui.rgb(220, 220, 170)
+}
+
+fn is_control(word: String) -> Bool {
+    return word == "if" || word == "else" || word == "while" || word == "for" || word == "return" ||
+        word == "match" || word == "loop" || word == "break" || word == "continue" ||
+        word == "in" || word == "import" || word == "as" || word == "use" || word == "where"
+}
+
+fn is_decl(word: String) -> Bool {
+    return word == "fn" || word == "let" || word == "var" || word == "struct" || word == "enum" ||
+        word == "impl" || word == "trait" || word == "pub" || word == "const" || word == "extern" ||
+        word == "mut" || word == "self" || word == "true" || word == "false" || word == "static"
+}
+
+fn is_upper_char(ch: String) -> Bool {
+    return "ABCDEFGHIJKLMNOPQRSTUVWXYZ".contains(ch)
 }
 
 fn is_type(word: String) -> Bool {
-    return word == "Int" || word == "String" || word == "Bool" || word == "Float" || word == "Char" ||
-        word == "Unit" || word == "List" || word == "Map" || word == "Option" || word == "Result"
+    if word.len() == 0 {
+        return false
+    }
+    if is_upper_char(word.graphemes()[0]) {
+        return true
+    }
+    return word == "int" || word == "string" || word == "bool" || word == "float"
 }
 
-fn word_color(word: String, theme: gui.Theme) -> Int {
-    if is_control(word) {
-        return theme.purple
+// True when the identifier that ends at `from` is followed by a call.
+fn call_follows(chars: List<String>, from: Int) -> Bool {
+    var j = from
+    while j < chars.len() && chars[j] == " " {
+        j = j + 1
     }
-    if is_keyword(word) {
-        return theme.blue
+    if j < chars.len() {
+        return chars[j] == "("
     }
-    if is_type(word) {
-        return theme.aqua
-    }
-    return theme.fg
+    return false
 }
 
-// Draws one line with Dark+ colours and returns the x after the last glyph.
-fn draw_code(x0: Int, y: Int, text: String, size: Int, theme: gui.Theme) -> Int {
+// Block-comment state at a line, so a /* opened above the viewport still
+// colours the visible lines.
+fn block_before(lines: List<String>, upto: Int) -> Bool {
+    var block = false
+    var i = 0
+    while i < upto && i < lines.len() {
+        let chars = lines[i].graphemes()
+        var j = 0
+        while j < chars.len() {
+            if block {
+                if chars[j] == "*" && j + 1 < chars.len() && chars[j + 1] == "/" {
+                    block = false
+                    j = j + 2
+                } else {
+                    j = j + 1
+                }
+            } else {
+                if chars[j] == "/" && j + 1 < chars.len() && chars[j + 1] == "/" {
+                    j = chars.len()
+                } else {
+                    if chars[j] == "/" && j + 1 < chars.len() && chars[j + 1] == "*" {
+                        block = true
+                        j = j + 2
+                    } else {
+                        if chars[j] == "\"" {
+                            var k = j + 1
+                            var closed = false
+                            while k < chars.len() && !closed {
+                                if chars[k] == "\\" && k + 1 < chars.len() {
+                                    k = k + 2
+                                } else {
+                                    if chars[k] == "\"" {
+                                        closed = true
+                                        k = k + 1
+                                    } else {
+                                        k = k + 1
+                                    }
+                                }
+                            }
+                            j = k
+                        } else {
+                            j = j + 1
+                        }
+                    }
+                }
+            }
+        }
+        i = i + 1
+    }
+    return block
+}
+
+struct Lex {
+    block: Bool,
+    x: Int,
+}
+
+// Draws one line with Dark+ colours. Returns the block-comment state after the
+// line so multi-line comments stay green below the opener.
+fn draw_code(x0: Int, y: Int, text: String, size: Int, theme: gui.Theme, in_block: Bool) -> Lex {
     let chars = text.graphemes()
     let count = chars.len()
     var x = x0
     var i = 0
+    var block = in_block
+    var previous = ""
     while i < count {
         let ch = chars[i]
         var token = ""
         var color = theme.fg
-        var done = false
-        if ch == "/" && i + 1 < count && chars[i + 1] == "/" {
-            token = slice_chars(chars, i, count)
-            color = gui.rgb(106, 153, 85)
-            i = count
-            done = true
-        }
-        if !done && ch == "\"" {
-            var j = i + 1
+        var handled = false
+        if block {
+            var j = i
             var closed = false
             while j < count && !closed {
-                if chars[j] == "\"" {
-                    j = j + 1
+                if chars[j] == "*" && j + 1 < count && chars[j + 1] == "/" {
+                    j = j + 2
                     closed = true
                 } else {
                     j = j + 1
                 }
             }
             token = slice_chars(chars, i, j)
-            color = theme.orange
+            color = comment_color()
             i = j
-            done = true
+            block = !closed
+            handled = true
         }
-        if !done && is_digit(ch) {
+        if !handled && ch == "/" && i + 1 < count && chars[i + 1] == "/" {
+            token = slice_chars(chars, i, count)
+            color = comment_color()
+            i = count
+            handled = true
+        }
+        if !handled && ch == "/" && i + 1 < count && chars[i + 1] == "*" {
+            var j = i + 2
+            var closed = false
+            while j < count && !closed {
+                if chars[j] == "*" && j + 1 < count && chars[j + 1] == "/" {
+                    j = j + 2
+                    closed = true
+                } else {
+                    j = j + 1
+                }
+            }
+            token = slice_chars(chars, i, j)
+            color = comment_color()
+            i = j
+            block = !closed
+            handled = true
+        }
+        if !handled && (ch == "\"" || ch == "'") {
+            let quote = ch
+            var j = i + 1
+            var closed = false
+            while j < count && !closed {
+                if chars[j] == "\\" && j + 1 < count {
+                    j = j + 2
+                } else {
+                    if chars[j] == quote {
+                        closed = true
+                        j = j + 1
+                    } else {
+                        j = j + 1
+                    }
+                }
+            }
+            token = slice_chars(chars, i, j)
+            color = string_color()
+            i = j
+            handled = true
+        }
+        if !handled && is_digit(ch) {
             var j = i
             var go = true
             while j < count && go {
-                if is_digit(chars[j]) || chars[j] == "." {
+                let c = chars[j]
+                if is_digit(c) || c == "." || c == "_" || c == "x" || c == "b" || c == "f" {
                     j = j + 1
                 } else {
                     go = false
                 }
             }
             token = slice_chars(chars, i, j)
-            color = gui.rgb(181, 206, 168)
+            color = number_color()
             i = j
-            done = true
+            handled = true
         }
-        if !done && is_ident_start(ch) {
+        if !handled && is_ident_start(ch) {
             var j = i
             var go = true
             while j < count && go {
@@ -334,34 +474,35 @@ fn draw_code(x0: Int, y: Int, text: String, size: Int, theme: gui.Theme) -> Int 
                 }
             }
             token = slice_chars(chars, i, j)
-            color = word_color(token, theme)
-            i = j
-            done = true
-        }
-        if !done {
-            var j = i
-            var go = true
-            while j < count && go {
-                let c = chars[j]
-                if is_ident_part(c) || c == "\"" || c == "/" {
-                    go = false
+            color = theme.fg
+            if is_control(token) {
+                color = control_color()
+            } else {
+                if is_decl(token) {
+                    color = keyword_color()
                 } else {
-                    j = j + 1
+                    if is_type(token) {
+                        color = type_color()
+                    } else {
+                        if previous == "fn" || call_follows(chars, j) {
+                            color = func_color()
+                        }
+                    }
                 }
             }
-            if j == i {
-                j = i + 1
-            }
-            token = slice_chars(chars, i, j)
-            color = theme.fg
             i = j
+            handled = true
         }
-        if token.len() > 0 {
-            gui.mono(x, y, token, size, color)
-            x = x + gui.mono_width(token, size)
+        if !handled {
+            token = ch
+            color = theme.fg
+            i = i + 1
         }
+        previous = token
+        gui.mono(x, y, token, size, color)
+        x = x + gui.mono_width(token, size)
     }
-    return x
+    return Lex { block: block, x: x }
 }
 
 // ---------- model ----------
@@ -381,12 +522,21 @@ struct Tab {
     cursor_line: Int,
     cursor_col: Int,
     scroll: Int,
+    undo: List<String>,
 }
 
 struct Command {
     id: String,
     label: String,
     hint: String,
+}
+
+// A plugin is a manifest in <workspace>/plugins: id, label and the shell
+// command it runs. The studio lists it in the palette and streams its output.
+struct Plugin {
+    id: String,
+    label: String,
+    command: String,
 }
 
 struct Row {
@@ -418,6 +568,14 @@ struct App {
     files: List<String>,
     mouse_x: Int,
     mouse_y: Int,
+    vim: Bool,
+    mode: String,
+    yank: String,
+    pending: String,
+    anchor: Int,
+    anim: Int,
+    minimap: Bool,
+    plugins: List<Plugin>,
 }
 
 // ---------- workspace ----------
@@ -476,6 +634,66 @@ fn collect_files(root: String, depth: Int) -> List<String> {
     return out
 }
 
+fn open_workspace(app: App, path: String) -> App {
+    var app = app
+    if !gui.is_dir(path) {
+        app.status = "Not a folder: " + path
+        return app
+    }
+    var none: List<String> = []
+    app.root = path
+    app.expanded = none
+    app.nodes = build_nodes(path, 0, none)
+    app.files = []
+    app.tree_scroll = 0
+    app.status = "Opened " + basename(path)
+    app.overlay = ""
+    app.plugins = load_plugins(path)
+    return app
+}
+
+fn manifest_value(text: String, key: String) -> String {
+    for line in split_lines(text) {
+        let trimmed = line.trim()
+        if trimmed.starts_with(key + "=") {
+            let chars = trimmed.graphemes()
+            return slice_chars(chars, key.len() + 1, chars.len()).trim()
+        }
+    }
+    return ""
+}
+
+// Plugins are manifests in <workspace>/plugins/*.plugin:
+//   id=format
+//   label=Format document
+//   command=nova fmt src/main.nova
+fn load_plugins(root: String) -> List<Plugin> {
+    var out: List<Plugin> = []
+    let entries = split_lines(gui.list(root + "/plugins"))
+    var i = 0
+    while i < entries.len() {
+        let chars = entries[i].graphemes()
+        if chars.len() > 2 && chars[0] == "f" {
+            let name = slice_chars(chars, 2, chars.len())
+            if ext_of(name) == "plugin" {
+                let text = gui.read(root + "/plugins/" + name)
+                let id = manifest_value(text, "id")
+                let label = manifest_value(text, "label")
+                let command = manifest_value(text, "command")
+                if id.len() > 0 && command.len() > 0 {
+                    var shown = label
+                    if shown.len() == 0 {
+                        shown = id
+                    }
+                    out.push(Plugin { id: id, label: shown, command: command })
+                }
+            }
+        }
+        i = i + 1
+    }
+    return out
+}
+
 fn project_name(root: String) -> String {
     let text = gui.read(root + "/nova.toml")
     if text.len() == 0 {
@@ -508,7 +726,8 @@ fn project_name(root: String) -> String {
 
 fn active_tab(app: App) -> Tab {
     if app.active < 0 || app.active >= app.tabs.len() {
-        return Tab { path: "", name: "", lines: [""], dirty: false, cursor_line: 0, cursor_col: 0, scroll: 0 }
+        var no_undo: List<String> = []
+        return Tab { path: "", name: "", lines: [""], dirty: false, cursor_line: 0, cursor_col: 0, scroll: 0, undo: no_undo }
     }
     return app.tabs[app.active]
 }
@@ -528,6 +747,7 @@ fn open_file(app: App, path: String) -> App {
     }
     let text = gui.read(path)
     var tabs = app.tabs
+    var no_undo: List<String> = []
     tabs.push(Tab {
         path: path,
         name: basename(path),
@@ -536,6 +756,7 @@ fn open_file(app: App, path: String) -> App {
         cursor_line: 0,
         cursor_col: 0,
         scroll: 0,
+        undo: no_undo,
     })
     app.tabs = tabs
     app.active = tabs.len() - 1
@@ -607,6 +828,7 @@ fn edit_insert(app: App, value: String) -> App {
     if app.active < 0 {
         return app
     }
+    app = snapshot(app)
     var tab = app.tabs[app.active]
     let chars = tab.lines[tab.cursor_line].graphemes()
     let col = gui.clamp(tab.cursor_col, 0, chars.len())
@@ -625,6 +847,7 @@ fn edit_newline(app: App) -> App {
     if app.active < 0 {
         return app
     }
+    app = snapshot(app)
     var tab = app.tabs[app.active]
     let chars = tab.lines[tab.cursor_line].graphemes()
     let col = gui.clamp(tab.cursor_col, 0, chars.len())
@@ -644,6 +867,7 @@ fn edit_backspace(app: App) -> App {
     if app.active < 0 {
         return app
     }
+    app = snapshot(app)
     var tab = app.tabs[app.active]
     if tab.cursor_col > 0 {
         let chars = tab.lines[tab.cursor_line].graphemes()
@@ -673,6 +897,7 @@ fn edit_delete(app: App) -> App {
     if app.active < 0 {
         return app
     }
+    app = snapshot(app)
     var tab = app.tabs[app.active]
     let chars = tab.lines[tab.cursor_line].graphemes()
     let col = gui.clamp(tab.cursor_col, 0, chars.len())
@@ -864,6 +1089,10 @@ fn commands() -> List<Command> {
     list.push(Command { id: "panel", label: "Toggle bottom panel", hint: "⌘`" })
     list.push(Command { id: "docs", label: "Open documentation", hint: "" })
     list.push(Command { id: "settings", label: "Settings", hint: "⌘," })
+    list.push(Command { id: "openfile", label: "File: Open File…", hint: "⌘O" })
+    list.push(Command { id: "openfolder", label: "File: Open Folder…", hint: "⇧⌘O" })
+    list.push(Command { id: "vim", label: "Toggle Vim mode", hint: "" })
+    list.push(Command { id: "minimap", label: "Toggle minimap", hint: "" })
     list.push(Command { id: "about", label: "About Nova Studio", hint: "" })
     list.push(Command { id: "quit", label: "Quit", hint: "⌘Q" })
     return list
@@ -876,6 +1105,12 @@ fn rows(app: App) -> List<Row> {
         for command in commands() {
             if query.len() == 0 || command.label.lower().contains(query) {
                 list.push(Row { key: command.id, label: command.label, hint: command.hint })
+            }
+        }
+        for plugin in app.plugins {
+            let label = "Plugin: " + plugin.label
+            if query.len() == 0 || label.lower().contains(query) {
+                list.push(Row { key: "plugin:" + plugin.id, label: label, hint: "plugin" })
             }
         }
     } else {
@@ -959,11 +1194,194 @@ fn run_command(app: App, id: String) -> App {
         next.overlay = "about"
         return next
     }
+    if id == "openfile" {
+        let picked = gui.pick_file()
+        if picked.len() > 0 {
+            return open_file(next, picked)
+        }
+        return next
+    }
+    if id == "openfolder" {
+        let picked = gui.pick_folder()
+        if picked.len() > 0 {
+            return open_workspace(next, picked)
+        }
+        return next
+    }
+    if id == "vim" {
+        next.vim = !next.vim
+        if next.vim {
+            next.mode = "normal"
+        } else {
+            next.mode = "insert"
+        }
+        var state = "off"
+        if next.vim {
+            state = "on"
+        }
+        next.status = "Vim " + state
+        return next
+    }
+    if id == "minimap" {
+        next.minimap = !next.minimap
+        return next
+    }
+    if id.starts_with("plugin:") {
+        let key = id.replace("plugin:", "")
+        var i = 0
+        while i < next.plugins.len() {
+            let plugin = next.plugins[i]
+            if plugin.id == key {
+                next.status = "Running " + plugin.label
+                gui.begin()
+                draw(next)
+                gui.present()
+                let output = gui.run(plugin.command, next.root)
+                let status = gui.exit_status()
+                var text = "$ " + plugin.command + "\n"
+                text = text + with_trailing_newline(output)
+                text = text + "\nexit " + "${status}"
+                next.output = text
+                next.panel = true
+                next.bottom = "output"
+                next.status = plugin.label + " exited " + "${status}"
+                return next
+            }
+            i = i + 1
+        }
+        next.status = "No such plugin: " + key
+        return next
+    }
     if id == "quit" {
         next.quit = true
         return next
     }
     return next
+}
+
+// ---------- icons ----------
+// Material-style icons drawn from line segments: nova-gui has no icon font, and
+// vector shapes stay sharp at every size and theme.
+
+// Eight segments read as a circle at icon sizes without trigonometry.
+fn ring(cx: Int, cy: Int, r: Int, color: Int) {
+    let s = r * 7 / 10
+    let xs: List<Int> = [cx + r, cx + s, cx, cx - s, cx - r, cx - s, cx, cx + s]
+    let ys: List<Int> = [cy, cy + s, cy + r, cy + s, cy, cy - s, cy - r, cy - s]
+    var i = 0
+    while i < 8 {
+        let next = (i + 1) % 8
+        gui.line(xs[i], ys[i], xs[next], ys[next], color)
+        i = i + 1
+    }
+}
+
+fn icon(name: String, x: Int, y: Int, size: Int, color: Int) {
+    if name == "files" {
+        gui.stroke(x + 3, y + 1, size - 6, size - 2, color)
+        gui.line(x + size - 9, y + 1, x + size - 9, y + 6, color)
+        gui.line(x + size - 9, y + 1, x + size - 4, y + 6, color)
+        gui.line(x + 6, y + 9, x + size - 8, y + 9, color)
+        gui.line(x + 6, y + size - 5, x + size - 8, y + size - 5, color)
+    }
+    if name == "search" {
+        ring(x + size / 2 - 2, y + size / 2 - 2, size / 3, color)
+        gui.line(x + size - 7, y + size - 7, x + size - 2, y + size - 2, color)
+    }
+    if name == "git" {
+        ring(x + 4, y + 4, 2, color)
+        ring(x + size - 5, y + 7, 2, color)
+        ring(x + 4, y + size - 5, 2, color)
+        gui.line(x + 4, y + 6, x + 4, y + size - 7, color)
+        gui.line(x + 5, y + 9, x + size - 6, y + 8, color)
+    }
+    if name == "extensions" {
+        gui.stroke(x + 2, y + 2, 7, 7, color)
+        gui.stroke(x + size - 9, y + 2, 7, 7, color)
+        gui.stroke(x + 2, y + size - 9, 7, 7, color)
+        gui.stroke(x + size - 9, y + size - 9, 7, 7, color)
+    }
+    if name == "settings" {
+        ring(x + size / 2, y + size / 2, size / 3, color)
+        gui.line(x + size / 2, y, x + size / 2, y + 3, color)
+        gui.line(x + size / 2, y + size - 3, x + size / 2, y + size, color)
+        gui.line(x, y + size / 2, x + 3, y + size / 2, color)
+        gui.line(x + size - 3, y + size / 2, x + size, y + size / 2, color)
+    }
+    if name == "sidebar" {
+        gui.stroke(x + 2, y + 3, size - 4, size - 6, color)
+        gui.line(x + 8, y + 3, x + 8, y + size - 3, color)
+    }
+    if name == "panel" {
+        gui.stroke(x + 2, y + 3, size - 4, size - 6, color)
+        gui.line(x + 2, y + size - 7, x + size - 2, y + size - 7, color)
+    }
+    if name == "close" {
+        gui.line(x + 4, y + 4, x + size - 4, y + size - 4, color)
+        gui.line(x + size - 4, y + 4, x + 4, y + size - 4, color)
+    }
+}
+
+fn ext_of(name: String) -> String {
+    let chars = name.graphemes()
+    var i = chars.len() - 1
+    var found = -1
+    while i >= 0 {
+        if chars[i] == "." {
+            found = i
+            i = -1
+        } else {
+            i = i - 1
+        }
+    }
+    if found < 0 {
+        return ""
+    }
+    return slice_chars(chars, found + 1, chars.len())
+}
+
+// Tones from the Material icon theme, so file types read the same as before.
+fn file_color(name: String) -> Int {
+    let ext = ext_of(name)
+    if ext == "toml" {
+        return gui.rgb(156, 102, 75)
+    }
+    if ext == "lock" {
+        return gui.rgb(109, 128, 134)
+    }
+    if ext == "nova" {
+        return gui.rgb(81, 154, 186)
+    }
+    if ext == "md" {
+        return gui.rgb(81, 154, 186)
+    }
+    if ext == "sh" {
+        return gui.rgb(137, 224, 81)
+    }
+    if ext == "json" {
+        return gui.rgb(203, 203, 65)
+    }
+    if ext == "html" || ext == "css" || ext == "astro" {
+        return gui.rgb(227, 121, 57)
+    }
+    return gui.rgb(144, 164, 174)
+}
+
+fn draw_file_icon(x: Int, y: Int, name: String) {
+    let color = file_color(name)
+    gui.rect(x, y, 11, 14, color)
+    gui.rect(x + 8, y, 3, 3, gui.rgb(30, 30, 30))
+    gui.rect(x + 2, y + 6, 7, 1, gui.rgb(30, 30, 30))
+    gui.rect(x + 2, y + 9, 5, 1, gui.rgb(30, 30, 30))
+}
+
+fn draw_folder_icon(x: Int, y: Int, open: Bool) {
+    let color = gui.rgb(232, 163, 61)
+    gui.rect(x, y, 6, 3, color)
+    gui.rect(x, y + 3, 14, 10, color)
+    if open {
+        gui.rect(x + 1, y + 5, 12, 1, gui.rgb(30, 30, 30))
+    }
 }
 
 // ---------- drawing ----------
@@ -1026,7 +1444,7 @@ fn draw_title(app: App, w: Int) {
         }
     }
     gui.text(pill_x + 26, 9, label, 12, theme.muted)
-    let buttons: List<String> = ["▤", "◫", "⚙"]
+    let buttons: List<String> = ["sidebar", "panel", "settings"]
     var bx = w - 104
     var bi = 0
     while bi < 3 {
@@ -1035,7 +1453,7 @@ fn draw_title(app: App, w: Int) {
             gui.round_rect(bx, 5, 26, 26, 5, theme.elevated)
             bcolor = theme.fg_bright
         }
-        gui.text(bx + 4, 8, buttons[bi], 15, bcolor)
+        icon(buttons[bi], bx + 5, 10, 16, bcolor)
         bx = bx + 30
         bi = bi + 1
     }
@@ -1047,19 +1465,10 @@ fn draw_activity(app: App, h: Int) {
     let bottom = h - status_height()
     gui.rect(0, top, activity_width(), bottom - top, theme.bg_hard)
     gui.line(activity_width() - 1, top, activity_width() - 1, bottom, theme.border)
+    let names: List<String> = ["files", "search", "git", "settings"]
     var i = 0
     while i < 4 {
         let y = top + 4 + i * 46
-        var glyph = "▤"
-        if i == 1 {
-            glyph = "⌕"
-        }
-        if i == 2 {
-            glyph = "✦"
-        }
-        if i == 3 {
-            glyph = "⚙"
-        }
         let hovered = hovering(app, 0, y, activity_width(), 46)
         if hovered {
             gui.rect(0, y, activity_width(), 46, theme.elevated)
@@ -1072,7 +1481,7 @@ fn draw_activity(app: App, h: Int) {
         if hovered && i != 0 {
             color = theme.fg_bright
         }
-        gui.text(16, y + 13, glyph, 18, color)
+        icon(names[i], 13, y + 14, 18, color)
         i = i + 1
     }
 }
@@ -1114,15 +1523,18 @@ fn draw_sidebar(app: App, h: Int) {
         if selected || hovered {
             color = theme.fg_bright
         }
+        let icon_x = x + indent + 13
         if node.is_dir {
             var chevron = "▸"
             if list_has(app.expanded, node.path) {
                 chevron = "▾"
             }
             gui.text(x + indent, ry + 5, chevron, 11, theme.fg)
-            gui.text(x + indent + 15, ry + 4, node.name, 12, color)
+            draw_folder_icon(icon_x, ry + 5, list_has(app.expanded, node.path))
+            gui.text(icon_x + 20, ry + 4, node.name, 12, color)
         } else {
-            gui.text(x + indent + 15, ry + 4, node.name, 12, color)
+            draw_file_icon(icon_x, ry + 4, node.name)
+            gui.text(icon_x + 20, ry + 4, node.name, 12, color)
         }
         i = i + 1
         row = row + 1
@@ -1181,6 +1593,13 @@ fn draw_crumbs(app: App, x: Int, y: Int, w: Int) {
         gui.text(x + 12, y + 4, basename(app.root), 11, theme.muted)
         gui.text(x + 12 + gui.text_width(basename(app.root), 11) + 4, y + 4, "›", 11, theme.faint)
         gui.text(x + 12 + gui.text_width(basename(app.root), 11) + 16, y + 4, path, 11, theme.fg)
+        let symbol_tab = app.tabs[app.active]
+        let span = fn_range(symbol_tab.lines, symbol_tab.cursor_line)
+        if span.len() == 2 {
+            let symbol_x = x + 12 + gui.text_width(basename(app.root), 11) + 16 + gui.text_width(path, 11) + 10
+            gui.text(symbol_x, y + 4, "›", 11, theme.faint)
+            gui.text(symbol_x + 11, y + 4, fn_name(symbol_tab.lines, span[0]) + "()", 11, theme.muted)
+        }
     }
 }
 
@@ -1210,6 +1629,189 @@ fn draw_welcome(app: App, x: Int, y: Int, w: Int, h: Int) {
     gui.text(left, top + 24 + rows_list.len() * 24 + 16, "The compiler, engine and this window are all Nova.", 12, theme.muted)
 }
 
+fn leading_spaces(text: String) -> Int {
+    let chars = text.graphemes()
+    var i = 0
+    while i < chars.len() && chars[i] == " " {
+        i = i + 1
+    }
+    return i
+}
+
+// The fn that contains `line`, as [start, end], or an empty list.
+fn fn_range(lines: List<String>, line: Int) -> List<Int> {
+    var cursor = line
+    var found = -1
+    while cursor >= 0 {
+        let text = lines[cursor].trim()
+        if text.starts_with("fn ") {
+            found = cursor
+            cursor = -1
+        } else {
+            cursor = cursor - 1
+        }
+    }
+    if found < 0 {
+        var empty: List<Int> = []
+        return empty
+    }
+    var depth = 0
+    var end = found
+    var i = found
+    while i < lines.len() {
+        let chars = lines[i].graphemes()
+        var j = 0
+        while j < chars.len() {
+            if chars[j] == "{" {
+                depth = depth + 1
+            }
+            if chars[j] == "}" {
+                depth = depth - 1
+            }
+            j = j + 1
+        }
+        if depth <= 0 && i > found {
+            end = i
+            i = lines.len()
+        } else {
+            i = i + 1
+        }
+    }
+    var out: List<Int> = []
+    out.push(found)
+    out.push(end)
+    return out
+}
+
+fn fn_name(lines: List<String>, start: Int) -> String {
+    let text = lines[start].trim()
+    let chars = text.graphemes()
+    var i = 3
+    var name = ""
+    while i < chars.len() && chars[i] != "(" {
+        name = name + chars[i]
+        i = i + 1
+    }
+    return name.trim()
+}
+
+fn bracket_pair(ch: String) -> String {
+    if ch == "(" {
+        return ")"
+    }
+    if ch == "[" {
+        return "]"
+    }
+    if ch == "{" {
+        return "}"
+    }
+    if ch == ")" {
+        return "("
+    }
+    if ch == "]" {
+        return "["
+    }
+    if ch == "}" {
+        return "{"
+    }
+    return ""
+}
+
+// Partner of the bracket under the caret on the same line, or -1.
+fn bracket_partner(line: String, col: Int) -> Int {
+    let chars = line.graphemes()
+    if col < 0 || col >= chars.len() {
+        return -1
+    }
+    let ch = chars[col]
+    let pair = bracket_pair(ch)
+    if pair.len() == 0 {
+        return -1
+    }
+    let forward = ch == "(" || ch == "[" || ch == "{"
+    var depth = 0
+    var i = col
+    while i >= 0 && i < chars.len() {
+        if chars[i] == ch {
+            depth = depth + 1
+        }
+        if chars[i] == pair {
+            depth = depth - 1
+            if depth == 0 {
+                return i
+            }
+        }
+        if forward {
+            i = i + 1
+        } else {
+            i = i - 1
+        }
+    }
+    return -1
+}
+
+// Caret firework: a handful of motes that fade out over a few frames.
+fn draw_sparks(app: App, x: Int, y: Int) {
+    if app.anim <= 0 {
+        return
+    }
+    let tones: List<Int> = [gui.rgb(120, 200, 255), gui.rgb(255, 220, 120), gui.rgb(160, 255, 190)]
+    var i = 0
+    while i < 6 {
+        let dx = ((app.anim * 5 + i * 7) % 15) - 7
+        let dy = ((app.anim * 3 + i * 5) % 11) - 5
+        gui.rect_alpha(x + dx, y + dy - (18 - app.anim), 2, 2, tones[i % 3], app.anim * 12)
+        i = i + 1
+    }
+}
+
+fn draw_minimap(app: App, x: Int, y: Int, w: Int, h: Int) {
+    let theme = app.theme
+    if w <= 0 || app.tabs.len() == 0 || app.active < 0 {
+        return
+    }
+    let tab = app.tabs[app.active]
+    let total = tab.lines.len()
+    if total <= 0 {
+        return
+    }
+    gui.rect(x, y, w, h, theme.bg_hard)
+    gui.line(x, y, x, y + h, theme.border)
+    gui.clip(x, y, w, h)
+    var stride = 1
+    if total > h {
+        stride = total / h + 1
+    }
+    var i = 0
+    while i < total {
+        if i % stride == 0 {
+            let text = tab.lines[i]
+            let indent = leading_spaces(text)
+            let len = text.graphemes().len() - indent
+            var bar = len * 3 / 2
+            if bar > w - 12 {
+                bar = w - 12
+            }
+            if bar > 1 {
+                var color = theme.faint
+                if i == tab.cursor_line {
+                    color = theme.link
+                }
+                gui.rect(x + 6 + indent * 2 / 3, y + i * h / total, bar, 2, color)
+            }
+        }
+        i = i + 1
+    }
+    let visible = h / line_height(app.size)
+    let top_row = tab.scroll * h / total
+    var view = visible * h / total
+    if view < 8 {
+        view = 8
+    }
+    gui.rect_alpha(x + w - 4, y + top_row, 3, view, theme.fg, 45)
+    gui.clip_reset()
+}
+
 fn draw_editor(app: App, x: Int, y: Int, w: Int, h: Int) {
     let theme = app.theme
     if app.tabs.len() == 0 || app.active < 0 {
@@ -1220,14 +1822,48 @@ fn draw_editor(app: App, x: Int, y: Int, w: Int, h: Int) {
     let size = app.size
     let lh = line_height(size)
     let rows_visible = h / lh
-    gui.clip(x, y, w, h)
+    var minimap = 0
+    if app.minimap {
+        minimap = 68
+    }
+    let text_w = w - minimap
+    let adv = gui.mono_width(" ", size)
+    let span = fn_range(tab.lines, tab.cursor_line)
+    gui.clip(x, y, text_w, h)
+    // The whole function the caret sits in, marked along the left edge.
+    if span.len() == 2 {
+        let start_row = span[0] - tab.scroll
+        let end_row = span[1] - tab.scroll
+        let top = y + start_row * lh
+        var height = (end_row - start_row + 1) * lh
+        if height < lh {
+            height = lh
+        }
+        gui.rect_alpha(x, top, 3, height, theme.accent, 120)
+    }
+    var block = block_before(tab.lines, tab.scroll)
     var row = 0
     while row < rows_visible {
         let index = tab.scroll + row
         if index < tab.lines.len() {
             let ly = y + row * lh
-            if index == tab.cursor_line {
-                gui.rect(x, ly, w, lh, theme.elevated)
+            let text = tab.lines[index]
+            var marked = index == tab.cursor_line
+            if app.vim && app.mode == "visual" {
+                let low = gui.min(app.anchor, tab.cursor_line)
+                let high = gui.max(app.anchor, tab.cursor_line)
+                if index >= low && index <= high {
+                    marked = true
+                }
+            }
+            if marked {
+                gui.rect(x, ly, text_w, lh, theme.elevated)
+            }
+            let indent = leading_spaces(text)
+            var guide = 4
+            while guide <= indent {
+                gui.rect_alpha(x + gutter_width() + guide * adv, ly, 1, lh, theme.border_strong, 90)
+                guide = guide + 4
             }
             let number = "${index + 1}"
             let number_width = gui.mono_width(number, size)
@@ -1236,17 +1872,53 @@ fn draw_editor(app: App, x: Int, y: Int, w: Int, h: Int) {
                 number_color = theme.link
             }
             gui.mono(x + gutter_width() - 12 - number_width, ly + 3, number, size, number_color)
-            draw_code(x + gutter_width(), ly + 3, tab.lines[index], size, theme)
+            let trimmed = text.trim()
+            if trimmed.starts_with("fn ") || trimmed.starts_with("struct ") || trimmed.starts_with("impl ") || trimmed.starts_with("enum ") {
+                gui.rect(x + gutter_width() - 30, ly + 8, 4, 4, theme.faint)
+            }
+            let lex = draw_code(x + gutter_width(), ly + 3, text, size, theme, block)
+            block = lex.block
         }
         row = row + 1
     }
-    // Caret
-    let chars = tab.lines[tab.cursor_line].graphemes()
-    let prefix = slice_chars(chars, 0, gui.clamp(tab.cursor_col, 0, chars.len()))
+    // Bracket pair under the caret.
+    if tab.cursor_line >= tab.scroll && tab.cursor_line < tab.scroll + rows_visible {
+        let line = tab.lines[tab.cursor_line]
+        let chars = line.graphemes()
+        var at = tab.cursor_col
+        if at >= chars.len() {
+            at = chars.len() - 1
+        }
+        if at >= 0 && at < chars.len() {
+            let partner = bracket_partner(line, at)
+            if partner >= 0 {
+                let ly = y + (tab.cursor_line - tab.scroll) * lh
+                gui.stroke(x + gutter_width() + at * adv - 1, ly + 1, adv + 2, lh - 2, theme.border_strong)
+                gui.stroke(x + gutter_width() + partner * adv - 1, ly + 1, adv + 2, lh - 2, theme.border_strong)
+            }
+        }
+    }
+    let line_chars = tab.lines[tab.cursor_line].graphemes()
+    let prefix = slice_chars(line_chars, 0, gui.clamp(tab.cursor_col, 0, line_chars.len()))
     let caret_x = x + gutter_width() + gui.mono_width(prefix, size)
     let caret_y = y + (tab.cursor_line - tab.scroll) * lh + 3
-    gui.rect(caret_x, caret_y, 2, size + 3, theme.fg_bright)
+    var typing = true
+    if app.vim && app.mode != "insert" {
+        typing = false
+    }
+    if typing {
+        gui.rect(caret_x, caret_y, 2, size + 3, theme.fg_bright)
+    } else {
+        let under = slice_chars(line_chars, gui.clamp(tab.cursor_col, 0, line_chars.len()), gui.clamp(tab.cursor_col + 1, 0, line_chars.len()))
+        var cell = gui.mono_width(under, size)
+        if cell < 7 {
+            cell = 7
+        }
+        gui.rect_alpha(caret_x, caret_y, cell, size + 3, theme.fg_bright, 120)
+    }
+    draw_sparks(app, caret_x + 2, caret_y)
     gui.clip_reset()
+    draw_minimap(app, x + text_w, y, minimap, h)
 }
 
 fn draw_main(app: App, w: Int, h: Int) {
@@ -1361,10 +2033,25 @@ fn draw_status(app: App, w: Int, h: Int) {
     let y = h - status_height()
     gui.rect(0, y, w, status_height(), theme.status)
     gui.text(10, y + 5, "◈ nova-studio", 11, gui.white())
-    gui.text(118, y + 5, basename(app.root), 11, gui.white())
+    var left = 118
+    if app.vim {
+        var mode_text = "NORMAL"
+        if app.mode == "insert" {
+            mode_text = "INSERT"
+        }
+        if app.mode == "visual" {
+            mode_text = "VISUAL"
+        }
+        let badge = gui.text_width(mode_text, 10) + 12
+        gui.rect(left, y + 2, badge, 15, gui.rgb(0, 88, 150))
+        gui.text(left + 6, y + 4, mode_text, 10, gui.white())
+        left = left + badge + 10
+    }
+    gui.text(left, y + 5, basename(app.root), 11, gui.white())
     if app.status.len() > 0 {
-        gui.text(260, y + 5, app.status, 11, gui.white())
-        gui.text(259, y + 5, "·", 11, gui.white())
+        let sx = left + gui.text_width(basename(app.root), 11) + 12
+        gui.text(sx, y + 5, "·", 11, gui.white())
+        gui.text(sx + 10, y + 5, app.status, 11, gui.white())
     }
     var cursor = "Ln 1, Col 1"
     if app.active >= 0 && app.tabs.len() > 0 {
@@ -1456,8 +2143,8 @@ fn draw_settings(app: App, w: Int) {
     let card = 520
     let x = (w - card) / 2
     let y = 90
-    gui.rect(x, y, card, 300, theme.panel)
-    gui.stroke(x, y, card, 300, theme.border_strong)
+    gui.rect(x, y, card, 372, theme.panel)
+    gui.stroke(x, y, card, 372, theme.border_strong)
     gui.text(x + 24, y + 22, "Settings", 18, theme.fg_bright)
     gui.line(x + 24, y + 56, x + card - 24, y + 56, theme.border_strong)
     gui.text(x + 24, y + 70, "THEME", 11, theme.muted)
@@ -1475,17 +2162,460 @@ fn draw_settings(app: App, w: Int) {
     gui.rect(x + 100, y + 160, 32, 30, theme.bg)
     gui.stroke(x + 100, y + 160, 32, 30, theme.border_strong)
     gui.text(x + 110, y + 168, "+", 13, theme.fg)
+    gui.text(x + 24, y + 204, "EDITOR", 11, theme.muted)
+    gui.rect(x + 24, y + 224, 140, 32, theme.bg)
+    gui.stroke(x + 24, y + 224, 140, 32, theme.border_strong)
+    var vim_label = "Vim: off"
+    if app.vim {
+        vim_label = "Vim: on"
+    }
+    gui.text(x + 36, y + 233, vim_label, 12, theme.fg_bright)
+    gui.rect(x + 176, y + 224, 140, 32, theme.bg)
+    gui.stroke(x + 176, y + 224, 140, 32, theme.border_strong)
+    var map_label = "Minimap: off"
+    if app.minimap {
+        map_label = "Minimap: on"
+    }
+    gui.text(x + 188, y + 233, map_label, 12, theme.fg_bright)
     let notes: List<String> = [
-        "Themes and font size apply immediately.",
+        "Themes, font size, Vim mode and the minimap apply immediately.",
         "Settings are not persisted between launches yet.",
         "",
         "Esc closes this panel",
     ]
     var i = 0
     while i < notes.len() {
-        gui.text(x + 24, y + 210 + i * 18, notes[i], 11, theme.muted)
+        gui.text(x + 24, y + 272 + i * 18, notes[i], 11, theme.muted)
         i = i + 1
     }
+}
+
+// ---------- undo ----------
+
+// Snapshots the buffer before a change; the editor keeps the last 80 states.
+fn snapshot(app: App) -> App {
+    var app = app
+    if app.active < 0 || app.tabs.len() == 0 {
+        return app
+    }
+    var tab = app.tabs[app.active]
+    var undo = tab.undo
+    undo.push(join_lines(tab.lines))
+    if undo.len() > 80 {
+        var kept: List<String> = []
+        var i = undo.len() - 60
+        while i < undo.len() {
+            kept.push(undo[i])
+            i = i + 1
+        }
+        undo = kept
+    }
+    tab.undo = undo
+    app.tabs[app.active] = tab
+    return app
+}
+
+fn undo(app: App) -> App {
+    var app = app
+    if app.active < 0 || app.tabs.len() == 0 {
+        app.status = "Nothing to undo"
+        return app
+    }
+    var tab = app.tabs[app.active]
+    if tab.undo.len() == 0 {
+        app.status = "Nothing to undo"
+        return app
+    }
+    let last = tab.undo[tab.undo.len() - 1]
+    var kept: List<String> = []
+    var i = 0
+    while i + 1 < tab.undo.len() {
+        kept.push(tab.undo[i])
+        i = i + 1
+    }
+    tab.lines = split_lines(last)
+    tab.undo = kept
+    tab.dirty = true
+    tab.cursor_line = gui.clamp(tab.cursor_line, 0, tab.lines.len() - 1)
+    tab.cursor_col = gui.clamp(tab.cursor_col, 0, tab.lines[tab.cursor_line].graphemes().len())
+    app.tabs[app.active] = tab
+    app.status = "Undo"
+    return app
+}
+
+// ---------- vim ----------
+
+fn vim_goto(app: App, line: Int) -> App {
+    var app = app
+    if app.active < 0 {
+        return app
+    }
+    var tab = app.tabs[app.active]
+    var target = line
+    if target < 0 {
+        target = tab.lines.len() - 1
+    }
+    tab.cursor_line = gui.clamp(target, 0, tab.lines.len() - 1)
+    tab.cursor_col = leading_spaces(tab.lines[tab.cursor_line])
+    tab = tab_scrolled(tab)
+    app.tabs[app.active] = tab
+    return app
+}
+
+// w and b: hop to the next or previous run of identifier characters.
+fn vim_word(app: App, dir: Int) -> App {
+    var app = app
+    if app.active < 0 {
+        return app
+    }
+    var tab = app.tabs[app.active]
+    let chars = tab.lines[tab.cursor_line].graphemes()
+    var col = tab.cursor_col
+    if dir > 0 {
+        col = col + 1
+        var skipping = true
+        while col < chars.len() && skipping {
+            if is_ident_part(chars[col]) {
+                skipping = false
+            } else {
+                col = col + 1
+            }
+        }
+        var running = true
+        while col < chars.len() && running {
+            if is_ident_part(chars[col]) {
+                col = col + 1
+            } else {
+                running = false
+            }
+        }
+    } else {
+        if col > 0 {
+            col = col - 1
+        }
+        var backing = true
+        while col > 0 && backing {
+            if is_ident_part(chars[col]) {
+                backing = false
+            } else {
+                col = col - 1
+            }
+        }
+        var head = true
+        while col > 0 && head {
+            if is_ident_part(chars[col - 1]) {
+                col = col - 1
+            } else {
+                head = false
+            }
+        }
+    }
+    tab.cursor_col = gui.clamp(col, 0, chars.len())
+    app.tabs[app.active] = tab
+    return app
+}
+
+// e: end of the run under the caret.
+fn vim_word_end(app: App) -> App {
+    var app = app
+    if app.active < 0 {
+        return app
+    }
+    var tab = app.tabs[app.active]
+    let chars = tab.lines[tab.cursor_line].graphemes()
+    var col = tab.cursor_col
+    var started = true
+    while col < chars.len() && started {
+        if is_ident_part(chars[col]) {
+            started = false
+        } else {
+            col = col + 1
+        }
+    }
+    var running = true
+    while col < chars.len() && running {
+        if is_ident_part(chars[col]) {
+            col = col + 1
+        } else {
+            running = false
+        }
+    }
+    if col > 0 && col <= chars.len() {
+        col = col - 1
+    }
+    tab.cursor_col = gui.clamp(col, 0, chars.len())
+    app.tabs[app.active] = tab
+    return app
+}
+
+fn vim_delete_line(app: App) -> App {
+    var app = app
+    if app.active < 0 {
+        return app
+    }
+    var tab = app.tabs[app.active]
+    app.yank = tab.lines[tab.cursor_line]
+    app = snapshot(app)
+    tab = app.tabs[app.active]
+    if tab.lines.len() == 1 {
+        tab.lines = [""]
+    } else {
+        tab.lines = remove_line(tab.lines, tab.cursor_line)
+        tab.cursor_line = gui.clamp(tab.cursor_line, 0, tab.lines.len() - 1)
+    }
+    tab.cursor_col = leading_spaces(tab.lines[tab.cursor_line])
+    tab.dirty = true
+    app.tabs[app.active] = tab
+    app.status = "1 line deleted"
+    return app
+}
+
+fn vim_yank_line(app: App) -> App {
+    var app = app
+    if app.active < 0 {
+        return app
+    }
+    app.yank = app.tabs[app.active].lines[app.tabs[app.active].cursor_line]
+    app.status = "1 line yanked"
+    return app
+}
+
+fn vim_paste(app: App) -> App {
+    var app = app
+    if app.active < 0 || app.yank.len() == 0 {
+        return app
+    }
+    app = snapshot(app)
+    var tab = app.tabs[app.active]
+    tab.lines = insert_line(tab.lines, tab.cursor_line + 1, app.yank)
+    tab.cursor_line = tab.cursor_line + 1
+    tab.cursor_col = leading_spaces(tab.lines[tab.cursor_line])
+    tab.dirty = true
+    app.tabs[app.active] = tab
+    app.status = "pasted"
+    return app
+}
+
+fn vim_insert(app: App, kind: String) -> App {
+    var app = app
+    if app.active < 0 {
+        return app
+    }
+    var tab = app.tabs[app.active]
+    if kind == "a" {
+        tab.cursor_col = gui.clamp(tab.cursor_col + 1, 0, tab.lines[tab.cursor_line].graphemes().len())
+    }
+    if kind == "I" {
+        tab.cursor_col = leading_spaces(tab.lines[tab.cursor_line])
+    }
+    if kind == "A" {
+        tab.cursor_col = tab.lines[tab.cursor_line].graphemes().len()
+    }
+    if kind == "o" {
+        app.tabs[app.active] = tab
+        app = snapshot(app)
+        var fresh = app.tabs[app.active]
+        fresh.lines = insert_line(fresh.lines, fresh.cursor_line + 1, "")
+        fresh.cursor_line = fresh.cursor_line + 1
+        fresh.cursor_col = 0
+        fresh.dirty = true
+        app.tabs[app.active] = fresh
+        app.mode = "insert"
+        return app
+    }
+    if kind == "O" {
+        app.tabs[app.active] = tab
+        app = snapshot(app)
+        var above = app.tabs[app.active]
+        above.lines = insert_line(above.lines, above.cursor_line, "")
+        above.cursor_col = 0
+        above.dirty = true
+        app.tabs[app.active] = above
+        app.mode = "insert"
+        return app
+    }
+    app.tabs[app.active] = tab
+    app.mode = "insert"
+    return app
+}
+
+fn vim_visual_op(app: App, kind: String) -> App {
+    var app = app
+    if app.active < 0 {
+        return app
+    }
+    var tab = app.tabs[app.active]
+    let low = gui.min(app.anchor, tab.cursor_line)
+    let high = gui.max(app.anchor, tab.cursor_line)
+    var collected = ""
+    var i = low
+    while i <= high && i < tab.lines.len() {
+        collected = collected + tab.lines[i] + "\n"
+        i = i + 1
+    }
+    if kind == "y" {
+        app.yank = collected
+        app.mode = "normal"
+        app.status = "visual yank"
+        return app
+    }
+    app.yank = collected
+    app = snapshot(app)
+    tab = app.tabs[app.active]
+    var kept: List<String> = []
+    var row = 0
+    while row < tab.lines.len() {
+        if row < low || row > high {
+            kept.push(tab.lines[row])
+        }
+        row = row + 1
+    }
+    if kept.len() == 0 {
+        kept = [""]
+    }
+    tab.lines = kept
+    tab.cursor_line = gui.clamp(low, 0, kept.len() - 1)
+    tab.cursor_col = leading_spaces(kept[tab.cursor_line])
+    tab.dirty = true
+    app.tabs[app.active] = tab
+    app.mode = "normal"
+    app.status = "visual delete"
+    return app
+}
+
+fn vim_key(app: App, code: Int) -> App {
+    var app = app
+    let pending = app.pending
+    app.pending = ""
+    if pending == "g" {
+        if code == 103 {
+            return vim_goto(app, 0)
+        }
+        return app
+    }
+    if pending == "d" {
+        if code == 100 {
+            return vim_delete_line(app)
+        }
+        return app
+    }
+    if pending == "y" {
+        if code == 121 {
+            return vim_yank_line(app)
+        }
+        return app
+    }
+    if app.mode == "visual" {
+        if code == 100 {
+            return vim_visual_op(app, "d")
+        }
+        if code == 121 {
+            return vim_visual_op(app, "y")
+        }
+        if code == 27 {
+            app.mode = "normal"
+            return app
+        }
+    }
+    if code == gui.key_escape() {
+        app.mode = "normal"
+        app.pending = ""
+        return app
+    }
+    if code == gui.key_up() {
+        return edit_move(app, -1, 0)
+    }
+    if code == gui.key_down() {
+        return edit_move(app, 1, 0)
+    }
+    if code == gui.key_left() {
+        return edit_move(app, 0, -1)
+    }
+    if code == gui.key_right() {
+        return edit_move(app, 0, 1)
+    }
+    if code == gui.key_home() {
+        return edit_home(app)
+    }
+    if code == gui.key_end() {
+        return edit_end(app)
+    }
+    if code == 104 {
+        return edit_move(app, 0, -1)
+    }
+    if code == 106 {
+        return edit_move(app, 1, 0)
+    }
+    if code == 107 {
+        return edit_move(app, -1, 0)
+    }
+    if code == 108 {
+        return edit_move(app, 0, 1)
+    }
+    if code == 48 {
+        return edit_home(app)
+    }
+    if code == 36 || code == 52 {
+        return edit_end(app)
+    }
+    if code == 119 {
+        return vim_word(app, 1)
+    }
+    if code == 98 {
+        return vim_word(app, -1)
+    }
+    if code == 101 {
+        return vim_word_end(app)
+    }
+    if code == 103 {
+        app.pending = "g"
+        return app
+    }
+    if code == 71 {
+        return vim_goto(app, -1)
+    }
+    if code == 120 {
+        app = snapshot(app)
+        return edit_delete(app)
+    }
+    if code == 100 {
+        app.pending = "d"
+        return app
+    }
+    if code == 121 {
+        app.pending = "y"
+        return app
+    }
+    if code == 117 {
+        return undo(app)
+    }
+    if code == 105 {
+        return vim_insert(app, "i")
+    }
+    if code == 97 {
+        return vim_insert(app, "a")
+    }
+    if code == 73 {
+        return vim_insert(app, "I")
+    }
+    if code == 65 {
+        return vim_insert(app, "A")
+    }
+    if code == 111 {
+        return vim_insert(app, "o")
+    }
+    if code == 79 {
+        return vim_insert(app, "O")
+    }
+    if code == 112 {
+        return vim_paste(app)
+    }
+    if code == 118 {
+        app.mode = "visual"
+        app.anchor = active_tab(app).cursor_line
+        return app
+    }
+    return app
 }
 
 // ---------- input ----------
@@ -1605,6 +2735,42 @@ fn key(app: App, code: Int, mods: Int) -> App {
             app.quit = true
             return app
         }
+        if code == 111 {
+            if shift {
+                let picked = gui.pick_folder()
+                if picked.len() > 0 {
+                    return open_workspace(app, picked)
+                }
+                return app
+            }
+            let picked = gui.pick_file()
+            if picked.len() > 0 {
+                return open_file(app, picked)
+            }
+            return app
+        }
+        // Editor zoom, like ⌘+ / ⌘- / ⌘0 in VS Code.
+        if code == 61 || code == 43 || code == 69 {
+            app.size = gui.clamp(app.size + 1, 10, 22)
+            return app
+        }
+        if code == 45 || code == 78 {
+            app.size = gui.clamp(app.size - 1, 10, 22)
+            return app
+        }
+        if code == 48 {
+            app.size = 13
+            return app
+        }
+        return app
+    }
+    // Vim: normal and visual modes own the keyboard; insert mode is the plain
+    // editor and Esc drops back out of it.
+    if app.vim && app.mode != "insert" {
+        return vim_key(app, code)
+    }
+    if app.vim && app.mode == "insert" && code == gui.key_escape() {
+        app.mode = "normal"
         return app
     }
     if app.active >= 0 && app.tabs.len() > 0 {
@@ -1795,6 +2961,7 @@ fn click(app: App, mx: Int, my: Int) -> App {
     if app.sidebar && mx < activity_width() + sidebar_width() {
         if my < title_height() + 35 && mx > activity_width() + sidebar_width() - 40 {
             app.nodes = build_nodes(app.root, 0, app.expanded)
+    app.plugins = load_plugins(app.root)
             return app
         }
         let start_y = title_height() + 62
@@ -1928,6 +3095,19 @@ fn overlay_click(app: App, mx: Int, my: Int, w: Int, h: Int) -> App {
             }
             return app
         }
+        if mx > x + 24 && mx < x + 164 && my > y + 224 && my < y + 256 {
+            app.vim = !app.vim
+            if app.vim {
+                app.mode = "normal"
+            } else {
+                app.mode = "insert"
+            }
+            return app
+        }
+        if mx > x + 176 && mx < x + 316 && my > y + 224 && my < y + 256 {
+            app.minimap = !app.minimap
+            return app
+        }
         return app
     }
     if app.overlay == "about" {
@@ -2001,6 +3181,14 @@ fn main() {
         files: [],
         mouse_x: -1,
         mouse_y: -1,
+        vim: true,
+        mode: "normal",
+        yank: "",
+        pending: "",
+        anchor: 0,
+        anim: 0,
+        minimap: true,
+        plugins: [],
     }
     app.nodes = build_nodes(app.root, 0, app.expanded)
     if capture.len() > 0 && app.nodes.len() > 0 {
@@ -2034,9 +3222,17 @@ fn main() {
             // committing and macOS shows the app as unresponsive.
             gui.pump()
             gui.sleep(8)
+            // Keep repainting while the caret sparks are alive.
+            if app.anim > 0 {
+                app.anim = app.anim - 1
+                dirty = true
+            }
         } else {
             let previous = app
             app = handle(app, event)
+            if event.kind == gui.event_key() {
+                app.anim = 18
+            }
             // A mouse move only changes the picture when it changes what is
             // highlighted; redrawing on every move made hover feel sluggish.
             if event.kind == gui.event_mouse_move() {

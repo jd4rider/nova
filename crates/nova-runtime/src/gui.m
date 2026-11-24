@@ -1173,6 +1173,31 @@ nova_str nova_fs_cwd(void) {
     return result;
 }
 
+/* Native open panel: mode 0 picks a file, mode 1 picks a folder. The panel
+ * runs its own modal loop, which is safe here because the app's loop is the
+ * main thread and nothing holds state across the call. */
+nova_str nova_gui_panel(int64_t mode) {
+    @autoreleasepool {
+        if (!NSApp) return nova_gui_empty();
+        NSOpenPanel *panel = [NSOpenPanel openPanel];
+        [panel setCanChooseFiles:mode == 0];
+        [panel setCanChooseDirectories:mode == 1];
+        [panel setAllowsMultipleSelection:NO];
+        [panel setCanCreateDirectories:YES];
+        [panel setTitle:(mode == 1 ? @"Open Folder" : @"Open File")];
+        if ([panel runModal] != NSModalResponseOK) return nova_gui_empty();
+        NSURL *url = [[panel URLs] firstObject];
+        if (!url || ![url path]) return nova_gui_empty();
+        const char *utf8 = [[url path] UTF8String];
+        size_t len = strlen(utf8);
+        char *copy = (char *)malloc(len + 1);
+        if (!copy) return nova_gui_empty();
+        memcpy(copy, utf8, len + 1);
+        nova_str result = {copy, (int64_t)len};
+        return result;
+    }
+}
+
 nova_str nova_env(nova_str name) {
     char *key = nova_gui_cstr(name);
     if (!key) return nova_gui_empty();

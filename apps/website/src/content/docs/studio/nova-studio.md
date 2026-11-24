@@ -24,7 +24,7 @@ NOVA_STUDIO_ROOT="$(cd ../.. && pwd)" \
 | `NOVA_STUDIO_SHOT` | Writes the first frame to a PNG and exits. Used for verification. |
 | `NOVA_STUDIO_TASK` | Runs `build`, `check` or `test` at launch. Used for verification. |
 
-There is no folder picker yet, so the workspace is chosen by `NOVA_STUDIO_ROOT`. Point `NOVA_BIN` at a freshly built compiler: a stale `nova` on `PATH` will produce real compiler errors in the output panel.
+`⌘O` opens a file and `⇧⌘O` opens a folder through the native macOS panel, so the workspace comes from the picker when `NOVA_STUDIO_ROOT` is unset. Point `NOVA_BIN` at a freshly built compiler: a stale `nova` on `PATH` will produce real compiler errors in the output panel.
 
 ## Install as an application
 
@@ -57,7 +57,10 @@ The bundle is unsigned. A locally built app is not quarantined, but copying it t
 - **Layout and palette.** The same 35px title bar with a centred command pill, 48px activity bar, 300px explorer, 35px tabs, 22px breadcrumbs, 240px bottom panel and 22px status bar. The same Dark+ colours, byte for byte from `styles.css`, plus Gruvbox as an alternative.
 - **Explorer.** Real directory listing of the workspace, directories first, lazy expansion, click to open a file, active file highlighted.
 - **Tabs.** Dirty state, close button, active-tab accent, per-tab scroll and caret position.
-- **Editor.** Line numbers, current-line highlight, Dark+ syntax highlighting for Nova (comments, strings, numbers, keywords, control flow, types), a steady caret, and click-to-place. Arrow keys, Home/End, Page keys, Backspace/Delete, Enter and Tab (four spaces) edit the buffer.
+- **Editor.** Line numbers, current-line highlight, indent guides, bracket-pair matching under the caret, a gutter marker on declarations, the enclosing `fn` marked along the left edge and named in the breadcrumb, and a minimap down the right edge. Syntax highlighting follows Dark+ scopes: block and line comments, strings with escapes, numbers, declarations, control flow, types and function names.
+- **Vim mode.** On by default and toggled from Settings or the palette. NORMAL, INSERT and VISUAL, with `h j k l`, `w b e`, `0 $`, `gg G`, `x`, `dd`, `yy`, `p`, `u`, `i a I A o O`, `v`. The status bar shows the mode and NORMAL draws a block caret.
+- **Zoom and effects.** `⌘+`/`⌘-`/`⌘0` resize the editor; typing throws a short-lived spark trail at the caret.
+- **Icons.** Material-style file and folder icons, coloured by type, and vector activity-bar icons, all drawn with line primitives because nova-gui ships no icon font.
 - **Save.** `⌘S` writes the buffer and clears the dirty dot; `⇧⌘S` saves every dirty tab.
 - **Go to file.** `⌘P` lists every file in the workspace (skipping `target`, `node_modules`, `dist`, `out`, `release`) and filters as you type.
 - **Command palette.** `⇧⌘P` with the same commands the Electron menu exposes, including Build, Run, Check, toggle sidebar and panel, documentation, settings and quit.
@@ -75,17 +78,19 @@ These are gaps, not hidden behaviour:
 - **No integrated terminal.** Run launches Terminal instead of embedding a PTY.
 - **No AI panel.** No Copilot, no FreeBuff chat, no diff review. The host cannot stream a network response.
 - **No search across files.** Quick open and the palette exist; workspace search does not.
-- **No Vim mode, visual effects or synthesized sound.**
-- **No selection, multi-cursor, find/replace, undo/redo or folding.** The editor is a caret and a buffer; an undo stack is the obvious next step.
+- **No selection, multi-cursor, find/replace or code folding.** Undo exists (80 snapshots per buffer) and Vim's linewise visual mode covers coarse selection, but there is no mouse selection or `⌘F`.
 - **Unclosed dirty tabs are discarded** on close instead of prompting.
 - **Settings are not persisted** between launches.
+- **Plugin contributions are commands only.** See [Plugins](../plugins/) for the manifest format and its limits.
 - **Closing with ⌘Q leaves the window state unsaved**; there is no session restore.
 
 ## Shortcuts
 
 | Action | Shortcut |
 |---|---|
+| Open file / folder | `⌘O` / `⇧⌘O` |
 | Save / Save all | `⌘S` / `⇧⌘S` |
+| Zoom in / out / reset | `⌘+` / `⌘-` / `⌘0` |
 | Build / Check | `⌘B` / `⇧⌘B` |
 | Build and run in Terminal | `⌘R` |
 | Close tab | `⌘W` |

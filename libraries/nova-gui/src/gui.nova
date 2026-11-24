@@ -73,6 +73,7 @@ extern "C" fn nova_fs_write(path: String, data: String) -> Int
 extern "C" fn nova_fs_exists(path: String) -> Int
 extern "C" fn nova_fs_is_dir(path: String) -> Int
 extern "C" fn nova_fs_list(path: String) -> String
+extern "C" fn nova_gui_panel(mode: Int) -> String
 extern "C" fn nova_fs_cwd() -> String
 extern "C" fn nova_env(name: String) -> String
 extern "C" fn nova_process_run(command: String, cwd: String) -> String
@@ -476,6 +477,16 @@ fn list(path: String) -> String {
 
 fn cwd() -> String {
     return nova_fs_cwd()
+}
+
+// Opens the native macOS picker and returns the chosen path, or "" when the
+// user cancels. mode 0 selects files, mode 1 selects folders.
+fn pick_file() -> String {
+    return nova_gui_panel(0)
+}
+
+fn pick_folder() -> String {
+    return nova_gui_panel(1)
 }
 
 fn env(name: String) -> String {

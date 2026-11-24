@@ -1,0 +1,3 @@
+id=format
+label=Format workspace (nova fmt)
+command=nova fmt
