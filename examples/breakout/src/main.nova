@@ -71,7 +71,7 @@ fn brick_line(game: Game, row: Int) -> String {
 }
 
 fn ball_at(game: Game) -> String {
-    var column = game.ball_x / 10
+    var column = ball_px_x(game) / 10
     if column < 0 {
         column = 0
     }
@@ -97,7 +97,7 @@ fn view(model: Model) -> String {
     var out = tui.clear()
     out = out + "  NOVA BREAKOUT   score " + "${game.score}" + "   lives " + "${game.lives}" + "   bricks " + "${bricks_left(game)}" + "\n"
     out = out + "  a/d move · space launch · r restart · q quit\n\n"
-    let ball_line = game.ball_y / 38
+    let ball_line = ball_px_y(game) / 38
     var line = 0
     while line < 14 {
         if line == 13 {

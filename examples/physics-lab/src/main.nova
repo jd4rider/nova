@@ -55,8 +55,8 @@ fn main() {
     var steps = 0
     var escapes = 0
     while steps < 4000 && game.status == 1 {
-        game = step(game, game.ball_x)
-        if game.ball_x < 0 || game.ball_x > field_width() || game.ball_y < 0 {
+        game = step(game, ball_px_x(game))
+        if ball_px_x(game) < 0 || ball_px_x(game) > field_width() || ball_px_y(game) < 0 {
             escapes = escapes + 1
         }
         steps = steps + 1

@@ -94,9 +94,30 @@ cd examples/physics-lab
 sh tests/physics.sh
 ```
 
+## The windowed game
+
+`examples/breakout-gui` is the same engine drawn by `nova-gui` in a real window:
+a 900×700 canvas, a playfield panel, six brick colours by row, a glowing ball
+and an accent paddle, with score, rally, speed and lives in the header.
+
+```sh
+cd examples/breakout-gui
+../../target/debug/nova build
+./target/nova/breakout-gui          # or: ./install-macos.sh for Nova Breakout.app
+```
+
+`←`/`→` or `A`/`D` move the paddle, the mouse aims it, `space` launches (or
+retries), `R` restarts, `⌘Q` quits. `NOVA_BREAKOUT_SHOT=/tmp/frame.png` renders
+one simulated frame and exits, which is how the visual tests check it.
+
+The engine stayed renderer-agnostic: bricks expose a palette *index*
+(`brick_colour(row)`), geometry is exposed in pixels (`brick_x`, `brick_y`,
+`paddle_y`, `ball_px_x`, `ball_px_y`), and the terminal demo and the window
+read the same state.
+
 ## Rendering
 
-The demo uses the [Nova TUI](../tui/) runtime: a model of `Game` plus a paddle target, key events, a tick that calls `step`, and a view that maps the engine's coordinates onto terminal rows and columns (bricks as blocks, the ball as `●`, the paddle as `▬`). Terminal width is not simulated exactly; the mapping is proportional.
+The terminal demo uses the [Nova TUI](../tui/) runtime: a model of `Game` plus a paddle target, key events, a tick that calls `step`, and a view that maps the engine's coordinates onto terminal rows and columns (bricks as blocks, the ball as `●`, the paddle as `▬`). Terminal width is not simulated exactly; the mapping is proportional.
 
 ## Limits
 

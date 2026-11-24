@@ -1,0 +1,259 @@
+import std.io { println }
+import "../../../libraries/nova-gui/src/gui.nova" as gui
+import "../../../libraries/nova-game/src/engine.nova"
+
+// Nova Breakout, drawn by nova-gui. The engine owns the simulation; this file
+// owns input and pixels. One frame is one 16 ms tick, so physics is fixed-step.
+
+fn window_w() -> Int {
+    return 900
+}
+
+fn window_h() -> Int {
+    return 700
+}
+
+fn field_x() -> Int {
+    return 50
+}
+
+fn field_y() -> Int {
+    return 112
+}
+
+struct App {
+    game: Game,
+    target: Int,
+    quit: Bool,
+}
+
+fn restart(app: App) -> App {
+    return App { game: new_game(), target: 400, quit: false }
+}
+
+fn quit(app: App) -> App {
+    return App { game: app.game, target: app.target, quit: true }
+}
+
+fn with_target(app: App, target: Int) -> App {
+    var next = target
+    if next < 50 {
+        next = 50
+    }
+    if next > field_width() - 50 {
+        next = field_width() - 50
+    }
+    return App { game: app.game, target: next, quit: app.quit }
+}
+
+fn key(app: App, code: Int, mods: Int) -> App {
+    let command = mods % 2 == 1
+    if command && code == 113 {
+        return quit(app)
+    }
+    if code == gui.key_escape() {
+        return quit(app)
+    }
+    if code == 32 {
+        if app.game.status == 0 {
+            return App { game: launch(app.game), target: app.target, quit: app.quit }
+        }
+        if app.game.status == 2 || app.game.status == 3 {
+            return restart(app)
+        }
+    }
+    if code == 114 {
+        return restart(app)
+    }
+    if code == 97 || code == gui.key_left() {
+        return with_target(app, app.target - 36)
+    }
+    if code == 100 || code == gui.key_right() {
+        return with_target(app, app.target + 36)
+    }
+    if code == gui.key_home() {
+        return with_target(app, 50)
+    }
+    if code == gui.key_end() {
+        return with_target(app, field_width() - 50)
+    }
+    return app
+}
+
+fn handle(app: App, event: gui.Event) -> App {
+    if event.kind == gui.event_key() {
+        return key(app, event.code, event.mods)
+    }
+    if event.kind == gui.event_close() {
+        return quit(app)
+    }
+    if event.kind == gui.event_mouse_move() || event.kind == gui.event_drag() {
+        return with_target(app, event.x - field_x())
+    }
+    if event.kind == gui.event_mouse_down() {
+        if gui.inside(field_x() - 20, field_y() - 20, field_width() + 40, field_height() + 80, event.x, event.y) {
+            if app.game.status == 0 {
+                return App { game: launch(app.game), target: app.target, quit: app.quit }
+            }
+            if app.game.status == 2 || app.game.status == 3 {
+                return restart(app)
+            }
+        }
+    }
+    return app
+}
+
+fn brick_color(row: Int, theme: gui.Theme) -> Int {
+    let index = brick_colour(row)
+    if index == 0 {
+        return theme.red
+    }
+    if index == 1 {
+        return theme.orange
+    }
+    if index == 2 {
+        return theme.yellow
+    }
+    if index == 3 {
+        return theme.green
+    }
+    if index == 4 {
+        return theme.aqua
+    }
+    return theme.purple
+}
+
+fn centered(y: Int, value: String, size: Int, color: Int) {
+    let width = gui.text_width(value, size)
+    gui.text((window_w() - width) / 2, y, value, size, color)
+}
+
+fn draw_bricks(game: Game, theme: gui.Theme) {
+    var row = 0
+    while row < brick_rows() {
+        var column = 0
+        while column < brick_cols() {
+            let index = row * brick_cols() + column
+            if game.bricks[index] == 1 {
+                let x = field_x() + brick_x(column)
+                let y = field_y() + brick_y(row)
+                let color = brick_color(row, theme)
+                gui.round_rect(x, y + 4, brick_w(), brick_h(), 6, theme.bg_hard)
+                gui.round_rect(x, y, brick_w(), brick_h(), 6, color)
+                gui.rect_alpha(x + 5, y + 3, brick_w() - 10, 5, gui.white(), 55)
+                gui.rect_alpha(x + 5, y + brick_h() - 6, brick_w() - 10, 3, theme.bg, 70)
+            }
+            column = column + 1
+        }
+        row = row + 1
+    }
+}
+
+fn draw_ball(game: Game, theme: gui.Theme) {
+    let bx = field_x() + ball_px_x(game)
+    let by = field_y() + ball_px_y(game)
+    let radius = ball_size() / 2
+    gui.rect_alpha(bx - radius - 9, by - radius - 9, radius * 2 + 18, radius * 2 + 18, theme.accent, 60)
+    gui.round_rect(bx - radius - 2, by - radius - 2, radius * 2 + 4, radius * 2 + 4, radius + 2, gui.rgb(220, 240, 255))
+    gui.round_rect(bx - radius, by - radius, radius * 2, radius * 2, radius, gui.white())
+}
+
+fn draw_paddle(game: Game, theme: gui.Theme) {
+    let px = field_x() + game.paddle - paddle_width() / 2
+    let py = field_y() + paddle_y()
+    gui.round_rect(px, py + 4, paddle_width(), paddle_height(), 9, theme.bg_hard)
+    gui.round_rect(px, py, paddle_width(), paddle_height(), 9, theme.accent)
+    gui.rect_alpha(px + 8, py + 3, paddle_width() - 16, 4, gui.white(), 110)
+}
+
+fn draw_game(app: App) {
+    let theme = gui.dark()
+    let game = app.game
+    gui.clear(theme.bg)
+
+    gui.text(24, 26, "NOVA", 20, theme.fg_bright)
+    gui.text(24 + gui.text_width("NOVA", 20) + 10, 26, "BREAKOUT", 20, theme.accent)
+    gui.text(24, 58, "a game engine demo — physics, colour, fixed step", 11, theme.faint)
+
+    let score_text = "score ${game.score}   rally ${game.rally}   ${ball_px_speed(game)} px/tick"
+    gui.text(window_w() - 24 - gui.text_width(score_text, 13), 30, score_text, 13, theme.fg)
+
+    var hearts = ""
+    var heart = 0
+    while heart < game.lives {
+        hearts = hearts + "♥ "
+        heart = heart + 1
+    }
+    gui.text(window_w() - 24 - gui.text_width(hearts, 13), 54, hearts, 13, theme.red)
+
+    gui.round_rect(field_x() - 14, field_y() - 14, field_width() + 28, field_height() + 28, 12, theme.panel)
+    gui.stroke(field_x() - 14, field_y() - 14, field_width() + 28, field_height() + 28, theme.border_strong)
+
+    draw_bricks(game, theme)
+    draw_paddle(game, theme)
+    draw_ball(game, theme)
+
+    if game.status == 0 {
+        centered(field_y() + field_height() / 2 - 20, "SPACE OR CLICK TO LAUNCH", 18, theme.fg_bright)
+        centered(field_y() + field_height() / 2 + 10, "the paddle steers the ball", 12, theme.muted)
+    }
+    if game.status == 2 {
+        centered(field_y() + field_height() / 2 - 20, "CLEARED!", 26, theme.green)
+        centered(field_y() + field_height() / 2 + 16, "space plays again", 12, theme.muted)
+    }
+    if game.status == 3 {
+        centered(field_y() + field_height() / 2 - 20, "GAME OVER", 26, theme.red)
+        centered(field_y() + field_height() / 2 + 16, "space retries", 12, theme.muted)
+    }
+
+    let hint = "← → or A D move   ·   mouse aims   ·   space launch   ·   R restart   ·   ⌘Q quit"
+    gui.text((window_w() - gui.text_width(hint, 11)) / 2, window_h() - 34, hint, 11, theme.faint)
+}
+
+fn simulate(ticks: Int, follow: Bool) -> App {
+    var app = App { game: launch(new_game()), target: 400, quit: false }
+    var i = 0
+    while i < ticks {
+        var target = app.target
+        if follow {
+            target = ball_px_x(app.game)
+        }
+        app = App { game: step(app.game, target), target: target, quit: app.quit }
+        i = i + 1
+    }
+    return app
+}
+
+fn main() {
+    let shot = gui.env("NOVA_BREAKOUT_SHOT")
+    if shot.len() > 0 {
+        var app = simulate(260, true)
+        if gui.open("Nova Breakout", window_w(), window_h()) {
+            gui.begin()
+            draw_game(app)
+            gui.present()
+            let saved = gui.save_png(shot)
+            println("breakout-gui: saved=${saved} bricks=${bricks_left(app.game)} score=${app.game.score}")
+            gui.close()
+        }
+        return
+    }
+    if !gui.open("Nova Breakout", window_w(), window_h()) {
+        println("breakout-gui: could not open a window")
+        return
+    }
+    var app = App { game: new_game(), target: 400, quit: false }
+    while !app.quit && gui.is_open() {
+        var event = gui.next_event()
+        while event.kind != gui.event_none() {
+            app = handle(app, event)
+            event = gui.next_event()
+        }
+        app = App { game: step(app.game, app.target), target: app.target, quit: app.quit }
+        gui.begin()
+        draw_game(app)
+        gui.present()
+        gui.sleep(16)
+    }
+    gui.close()
+}

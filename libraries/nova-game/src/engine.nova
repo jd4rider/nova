@@ -1,9 +1,9 @@
 // Nova Game Engine: Breakout on top of the swept-AABB physics core.
 //
 // The engine is pure: `step(game, paddle_target)` takes a Game and returns the
-// next Game. Collision goes through `physics.nova`, so the ball cannot tunnel
-// through a brick at speed and the paddle steers by contact offset. Rendering
-// and input belong to the host shell.
+// next Game. It knows nothing about rendering: colours are palette *indices*,
+// geometry is exposed in pixels, and the ball keeps millipixel precision so a
+// rally does not drift or quantise into a vertical lock.
 
 import "physics.nova"
 
@@ -13,8 +13,10 @@ struct Game {
     vx: Int,
     vy: Int,
     paddle: Int,
+    paddle_v: Int,
     lives: Int,
     score: Int,
+    rally: Int,
     status: Int,
     bricks: List<Int>,
 }
@@ -47,8 +49,51 @@ fn paddle_width() -> Int {
     return 120
 }
 
+fn paddle_height() -> Int {
+    return 18
+}
+
 fn paddle_y() -> Int {
     return 466
+}
+
+// Geometry the renderers share. Bricks are 70x24 with an 8px gutter.
+fn brick_x(column: Int) -> Int {
+    return 30 + column * 78
+}
+
+fn brick_y(row: Int) -> Int {
+    return 60 + row * 30
+}
+
+fn brick_w() -> Int {
+    return 70
+}
+
+fn brick_h() -> Int {
+    return 24
+}
+
+// Palette index for a row: the renderer maps 0..5 to its own hues, so the
+// engine stays free of the GUI library.
+fn brick_colour(row: Int) -> Int {
+    var index = row
+    if index < 0 {
+        index = 0
+    }
+    return index % 6
+}
+
+fn ball_px_x(game: Game) -> Int {
+    return ph_px(game.ball_x)
+}
+
+fn ball_px_y(game: Game) -> Int {
+    return ph_px(game.ball_y)
+}
+
+fn ball_px_speed(game: Game) -> Int {
+    return ph_px(game.vx)
 }
 
 fn new_game() -> Game {
@@ -59,33 +104,37 @@ fn new_game() -> Game {
         index = index + 1
     }
     return Game {
-        ball_x: 400,
-        ball_y: 440,
-        vx: 4,
-        vy: -5,
+        ball_x: 400000,
+        ball_y: 440000,
+        vx: 4000,
+        vy: -5000,
         paddle: 400,
+        paddle_v: 0,
         lives: 3,
         score: 0,
+        rally: 0,
         status: 0,
         bricks: bricks,
     }
 }
 
 fn launch(game: Game) -> Game {
-    if game.status == 0 {
-        return Game {
-            ball_x: game.ball_x,
-            ball_y: game.ball_y,
-            vx: 4,
-            vy: -5,
-            paddle: game.paddle,
-            lives: game.lives,
-            score: game.score,
-            status: 1,
-            bricks: game.bricks,
-        }
+    if game.status != 0 {
+        return game
     }
-    return game
+    return Game {
+        ball_x: game.ball_x,
+        ball_y: game.ball_y,
+        vx: 4000,
+        vy: -5000,
+        paddle: game.paddle,
+        paddle_v: 0,
+        lives: game.lives,
+        score: game.score,
+        rally: 0,
+        status: 1,
+        bricks: game.bricks,
+    }
 }
 
 fn bricks_left(game: Game) -> Int {
@@ -105,15 +154,25 @@ fn with_paddle(game: Game, paddle: Int) -> Game {
         vx: game.vx,
         vy: game.vy,
         paddle: paddle,
+        paddle_v: game.paddle_v,
         lives: game.lives,
         score: game.score,
+        rally: game.rally,
         status: game.status,
         bricks: game.bricks,
     }
 }
 
-fn brick_box(column: Int, row: Int) -> Body {
-    return ph_solid_box(30 + column * 78, 60 + row * 30, 70, 24)
+fn brick_body(column: Int, row: Int) -> Body {
+    return ph_solid_box(brick_x(column), brick_y(row), brick_w(), brick_h())
+}
+
+fn paddle_body(game: Game) -> Body {
+    return ph_solid_box(game.paddle - paddle_width() / 2, paddle_y(), paddle_width(), paddle_height())
+}
+
+fn ball_body(game: Game) -> Body {
+    return ph_with_velocity(ph_body(0, 0, ball_size(), ball_size()), game.vx, game.vy)
 }
 
 // Top, left and right walls. The bottom is open: falling out costs a life.
@@ -133,15 +192,18 @@ fn step(game: Game, target: Int) -> Game {
     if paddle > field_width() - 50 {
         paddle = field_width() - 50
     }
+    let paddle_v = paddle - game.paddle
     if game.status == 0 {
         return Game {
-            ball_x: paddle,
-            ball_y: 440,
+            ball_x: paddle * 1000,
+            ball_y: 440000,
             vx: 0,
             vy: 0,
             paddle: paddle,
+            paddle_v: paddle_v,
             lives: game.lives,
             score: game.score,
+            rally: game.rally,
             status: 0,
             bricks: game.bricks,
         }
@@ -150,11 +212,8 @@ fn step(game: Game, target: Int) -> Game {
         return with_paddle(game, paddle)
     }
 
-    var ball = ph_with_velocity(
-        ph_body(game.ball_x, game.ball_y, ball_size(), ball_size()),
-        game.vx * 1000,
-        game.vy * 1000
-    )
+    var ball = ph_body(ph_px(game.ball_x), ph_px(game.ball_y), ball_size(), ball_size())
+    ball = ph_with_velocity(ball, game.vx, game.vy)
 
     // Earliest contact wins: walls, then bricks, then the paddle.
     var kind = 0
@@ -179,7 +238,7 @@ fn step(game: Game, target: Int) -> Game {
         while column < brick_cols() {
             let index = row * brick_cols() + column
             if bricks[index] == 1 {
-                let when = ph_sweep(ball, brick_box(column, row))
+                let when = ph_sweep(ball, brick_body(column, row))
                 if when < best {
                     best = when
                     hit = index
@@ -191,11 +250,10 @@ fn step(game: Game, target: Int) -> Game {
         row = row + 1
     }
 
-    // Only a descending ball hits the paddle: sweeping while it climbs would
+    // Only a descending ball hits the paddle; sweeping while it climbs would
     // pin it to the paddle at time zero and it would never leave.
-    let paddle_box = ph_solid_box(paddle - paddle_width() / 2, paddle_y(), paddle_width(), 18)
     if game.vy > 0 {
-        let paddle_when = ph_sweep(ball, paddle_box)
+        let paddle_when = ph_sweep(ball, paddle_body(game))
         if paddle_when < best {
             best = paddle_when
             kind = 3
@@ -203,57 +261,82 @@ fn step(game: Game, target: Int) -> Game {
     }
 
     var score = game.score
+    var rally = game.rally
     if kind == 0 {
         ball = ph_advance(ball)
     } else if kind == 1 {
         ball = ph_resolve(ball, walls[hit])
     } else if kind == 3 {
-        ball = ph_bounce_paddle(ball, paddle_box, 9)
+        ball = ph_bounce_paddle(ball, paddle_body(game), 9)
+        // Kinematic paddle: where the ball meets the paddle and how fast the
+        // paddle is moving both steer it.
+        var spin = ball.vx + paddle_v * 700
+        if spin > 9500 {
+            spin = 9500
+        }
+        if spin < -9500 {
+            spin = -9500
+        }
+        ball = ph_with_velocity(ball, spin, ball.vy)
+        if ball.vy > -3000 {
+            ball = ph_with_velocity(ball, ball.vx, -4000)
+        }
+        rally = 0
     } else {
-        ball = ph_resolve(ball, brick_box(hit % brick_cols(), hit / brick_cols()))
+        ball = ph_resolve(ball, brick_body(hit % brick_cols(), hit / brick_cols()))
         bricks[hit] = 0
         score = score + 10
+        rally = rally + 1
+        // Every brick adds pace, capped so the ball stays catchable.
+        var factor = 100 + rally * 2
+        if factor > 150 {
+            factor = 150
+        }
+        ball = ph_with_velocity(ball, ball.vx * factor / 100, ball.vy * factor / 100)
     }
 
-    ball = ph_clamp(ball, 8, 8, field_width() - 8, field_height() + 40)
-
-    var bx = ph_px(ball.x)
-    var by = ph_px(ball.y)
-    var vx = ph_px(ball.vx)
-    var vy = ph_px(ball.vy)
-    if vy == 0 {
-        vy = -4
-    }
-    if vx == 0 {
-        vx = 3
-    }
+    ball = ph_clamp(ball, 8, 8, field_width() - 8, field_height() + 60)
+    ball = ph_speed_clamp(ball, 14000)
 
     var lives = game.lives
     var status = 1
+    let by = ph_px(ball.y)
     if by > field_height() {
         lives = lives - 1
+        rally = 0
         if lives <= 0 {
             status = 3
         } else {
             status = 0
         }
-        bx = paddle
-        by = 440
-        vx = 0
-        vy = 0
+        return Game {
+            ball_x: paddle * 1000,
+            ball_y: 440000,
+            vx: 0,
+            vy: 0,
+            paddle: paddle,
+            paddle_v: paddle_v,
+            lives: lives,
+            score: score,
+            rally: 0,
+            status: status,
+            bricks: bricks,
+        }
     }
     if score >= brick_count() * 10 {
         status = 2
     }
 
     return Game {
-        ball_x: bx,
-        ball_y: by,
-        vx: vx,
-        vy: vy,
+        ball_x: ball.x,
+        ball_y: ball.y,
+        vx: ball.vx,
+        vy: ball.vy,
         paddle: paddle,
+        paddle_v: paddle_v,
         lives: lives,
         score: score,
+        rally: rally,
         status: status,
         bricks: bricks,
     }
