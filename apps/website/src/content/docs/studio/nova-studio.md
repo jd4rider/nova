@@ -26,6 +26,32 @@ NOVA_STUDIO_ROOT="$(cd ../.. && pwd)" \
 
 There is no folder picker yet, so the workspace is chosen by `NOVA_STUDIO_ROOT`. Point `NOVA_BIN` at a freshly built compiler: a stale `nova` on `PATH` will produce real compiler errors in the output panel.
 
+## Install as an application
+
+```sh
+cd examples/nova-studio
+./install-macos.sh
+```
+
+This builds the workbench, renders the icon from `icon.html` with headless Chrome, assembles `Nova Studio (Nova).app` under `dist/`, copies it to `/Applications` (or `~/Applications` when that is not writable) and writes a `nova-studio` launcher to `~/.local/bin`.
+
+The bundle name carries the `(Nova)` suffix so it sits next to the Electron app instead of replacing it. Install over the Electron one with:
+
+```sh
+APP_NAME="Nova Studio" ./install-macos.sh
+```
+
+Double-clicking the icon opens the workbench on the folder the app was installed from — the installer bakes that path into the bundle, along with the compiler it was built against. `NOVA_STUDIO_ROOT` and `NOVA_BIN` still win when set.
+
+The `nova-studio` command opens whatever folder you run it from, which is the convenient way to use it on a project outside this repository:
+
+```sh
+cd ~/code/my-project
+nova-studio
+```
+
+The bundle is unsigned. A locally built app is not quarantined, but copying it to another machine will require right-click → Open the first time.
+
 ## What matches the Electron Studio
 
 - **Layout and palette.** The same 35px title bar with a centred command pill, 48px activity bar, 300px explorer, 35px tabs, 22px breadcrumbs, 240px bottom panel and 22px status bar. The same Dark+ colours, byte for byte from `styles.css`, plus Gruvbox as an alternative.
