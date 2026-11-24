@@ -136,13 +136,15 @@ fn lx_is_space(c: String) -> Bool {
 }
 
 fn lx_slice(chars: List<String>, start: Int, stop: Int) -> String {
-    var out = ""
+    // Collect, then join once: per-character concatenation is quadratic and
+    // falls over on a large string or comment.
+    var parts: List<String> = []
     var i = start
     while i < stop && i < chars.len() {
-        out = out + chars[i]
+        parts.push(chars[i])
         i = i + 1
     }
-    return out
+    return parts.join("")
 }
 
 fn lx_two(text: String) -> Bool {

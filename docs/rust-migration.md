@@ -75,8 +75,8 @@ The Nova implementations exist and are exercised by `examples/nova-tool`:
 
 | Piece | Nova file | State |
 |---|---|---|
-| Formatter | `libraries/nova-fmt/src/fmt.nova` | formats every corpus file, idempotent |
-| Lexer | `libraries/nova-lexer/src/lexer.nova` | OK on normal files; segfaults on the 5,139-line studio file (open) |
+| Formatter | `libraries/nova-fmt/src/fmt.nova` | formats every corpus file, idempotent; `nova fmt` and the LSP run it through `nova-tool` |
+| Lexer | `libraries/nova-lexer/src/lexer.nova` | tokenizes the full 5,139-line studio file and the large-input corpus |
 | Diagnostics | `libraries/nova-diag/src/diag.nova` | renders severity, location and caret |
 | Packages (**Nova Boxes**) | `libraries/nova-boxes/src/boxes.nova` | `box.toml`, `boxes.lock`, dependency and import graphs |
 
@@ -90,7 +90,17 @@ Language gaps found while porting and fixed in the toolchain (sema + LLVM codege
 `nova_string_join` takes the list by pointer, matching `nova_list_push`; passing a
 24-byte list by value produced a garbage length and crashed.
 
-Test state: `sh examples/nova-tool/tests/toolchain.sh` → **passed 94, failed 1**
-(the lexer case above). No Rust crate has been deleted yet: the bootstrap
+The lexer crash on large files was not a lexer bug: codegen emitted each `alloca`
+at its use site, so a declaration inside a loop grew the stack on every
+iteration until it overflowed. Allocas are now collected per function and spliced
+into the entry block, which fixes large inputs for every Nova program.
+
+`nova fmt` and the LSP format through `nova-tool`, so there is one formatter
+implementation, in Nova. The `nova-fmt` crate survives only because `nova-wasm`
+(the browser playground) cannot spawn a process; removing it needs Nova wasm
+exports for a formatter entry point.
+
+Test state: `sh examples/nova-tool/tests/toolchain.sh` → **passed 95, failed 0**
+(including formatting the studio source). No Rust crate has been deleted yet: the bootstrap
 compiler (parser, sema, codegen, CLI, LSP) is still Rust, and phases 2–4 of this
 document are what removes it.

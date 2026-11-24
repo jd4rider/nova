@@ -151,7 +151,6 @@ dependencies = [
  "clap",
  "nova-codegen-llvm",
  "nova-diag",
- "nova-fmt",
  "nova-lsp",
  "nova-parser",
  "nova-pkg",
@@ -193,7 +192,6 @@ name = "nova-lsp"
 version = "0.2.0"
 dependencies = [
  "nova-diag",
- "nova-fmt",
  "nova-parser",
  "nova-sema",
  "serde_json",
@@ -227,10 +225,6 @@ dependencies = [
  "nova-lexer",
  "nova-parser",
 ]
-
-[[package]]
-name = "nova-stdlib"
-version = "0.2.0"
 
 [[package]]
 name = "nova-wasm"

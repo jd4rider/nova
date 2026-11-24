@@ -6,7 +6,9 @@
 //! code actions, references, inlay hints, workspace indexing and cancellation.
 
 use std::collections::HashMap;
+use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
+use std::process::Command;
 
 use nova_diag::{Diagnostic, LineIndex, Severity, Span};
 use nova_parser::ast::{self, Item, TypeExpr, TypeExprKind};
@@ -100,6 +102,53 @@ fn send(value: &Value) -> io::Result<()> {
     let mut lock = stdout.lock();
     write!(lock, "Content-Length: {}\r\n\r\n{}", body.len(), body)?;
     lock.flush()
+}
+
+// Formatting is done by the Nova formatter (`libraries/nova-fmt`), compiled to
+// `nova-tool`. The server only pipes the buffer through it.
+fn nova_tool_path() -> Option<std::path::PathBuf> {
+    if let Ok(explicit) = std::env::var("NOVA_TOOL_BIN") {
+        let path = std::path::PathBuf::from(explicit);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let sibling = dir.join("nova-tool");
+            if sibling.is_file() {
+                return Some(sibling);
+            }
+        }
+    }
+    let dev = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/nova-tool/target/nova/nova-tool");
+    if dev.is_file() {
+        return Some(dev);
+    }
+    None
+}
+
+fn format_with_tool(source: &str) -> Option<String> {
+    let tool = nova_tool_path()?;
+    let dir = std::env::temp_dir();
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let stamp = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let input = dir.join(format!("nova-lsp-{}-{stamp}.nova", std::process::id()));
+    let output = dir.join(format!("nova-lsp-{}-{stamp}.fmt", std::process::id()));
+    fs::write(&input, source).ok()?;
+    let status = Command::new(&tool)
+        .env("NOVA_TOOL", "fmt")
+        .env("NOVA_TOOL_PATH", &input)
+        .env("NOVA_TOOL_OUT", &output)
+        .output();
+    let formatted = match status {
+        Ok(status) if status.status.success() => fs::read_to_string(&output).ok(),
+        _ => None,
+    };
+    let _ = fs::remove_file(&input);
+    let _ = fs::remove_file(&output);
+    formatted
 }
 
 fn result_response(id: &Value, result: Value) -> Value {
@@ -246,7 +295,16 @@ impl Server {
                 let Some(doc) = self.document_for(params) else {
                     return result_response(id, json!([]));
                 };
-                let formatted = nova_fmt::format_source(&doc.text);
+                let formatted = match format_with_tool(&doc.text) {
+                    Some(formatted) => formatted,
+                    None => {
+                        return error_response(
+                            id.clone(),
+                            -32603,
+                            "nova-tool formatter is not available",
+                        )
+                    }
+                };
                 if formatted == doc.text {
                     return result_response(id, json!([]));
                 }
@@ -777,9 +835,10 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires the Nova formatter built as nova-tool"]
     fn formatting_uses_formatter() {
         let source = "fn main() {\nlet x = 1\n}\n";
-        let formatted = nova_fmt::format_source(source);
+        let formatted = format_with_tool(source).expect("nova-tool formatter");
         assert!(formatted.contains("    let x = 1"));
     }
 

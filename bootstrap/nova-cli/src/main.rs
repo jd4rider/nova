@@ -691,6 +691,30 @@ fn cmd_test(filter: Option<&str>) -> i32 {
     }
 }
 
+// The formatter lives in Nova (`libraries/nova-fmt`); this only feeds files to
+// the compiled tool so there is no second formatting implementation.
+fn nova_tool_path() -> Option<PathBuf> {
+    if let Ok(explicit) = std::env::var("NOVA_TOOL_BIN") {
+        let path = PathBuf::from(explicit);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let sibling = dir.join("nova-tool");
+            if sibling.is_file() {
+                return Some(sibling);
+            }
+        }
+    }
+    let dev = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/nova-tool/target/nova/nova-tool");
+    if dev.is_file() {
+        return Some(dev);
+    }
+    None
+}
+
 fn cmd_fmt(check: bool, paths: &[PathBuf]) -> i32 {
     let mut files = Vec::new();
     if paths.is_empty() {
@@ -717,6 +741,15 @@ fn cmd_fmt(check: bool, paths: &[PathBuf]) -> i32 {
     }
     let mut changed = Vec::new();
     let mut errors = 0usize;
+    let tool = match nova_tool_path() {
+        Some(tool) => tool,
+        None => {
+            eprintln!(
+                "nova fmt: nova-tool not found; build it with `nova build` in examples/nova-tool or set NOVA_TOOL_BIN"
+            );
+            return EXIT_ERROR;
+        }
+    };
     for path in &files {
         let source = match fs::read_to_string(path) {
             Ok(source) => source,
@@ -726,24 +759,58 @@ fn cmd_fmt(check: bool, paths: &[PathBuf]) -> i32 {
                 continue;
             }
         };
-        let formatted = nova_fmt::format_source(&source);
+        let temporary = path.with_file_name(format!(
+            ".{}.nova-tmp",
+            path.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("source")
+        ));
+        let run = Command::new(&tool)
+            .env("NOVA_TOOL", "fmt")
+            .env("NOVA_TOOL_PATH", path)
+            .env("NOVA_TOOL_OUT", &temporary)
+            .output();
+        let output = match run {
+            Ok(output) => output,
+            Err(error) => {
+                eprintln!("nova fmt: could not run {}: {error}", tool.display());
+                errors += 1;
+                break;
+            }
+        };
+        if !output.status.success() {
+            eprintln!(
+                "nova fmt: formatter failed for {}: {}",
+                path.display(),
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+            errors += 1;
+            let _ = fs::remove_file(&temporary);
+            continue;
+        }
+        let formatted = match fs::read_to_string(&temporary) {
+            Ok(formatted) => formatted,
+            Err(error) => {
+                eprintln!(
+                    "nova fmt: formatter produced no output for {}: {error}",
+                    path.display()
+                );
+                errors += 1;
+                let _ = fs::remove_file(&temporary);
+                continue;
+            }
+        };
         if formatted == source {
+            let _ = fs::remove_file(&temporary);
             continue;
         }
         changed.push(path.clone());
-        if !check {
-            let temporary = path.with_file_name(format!(
-                ".{}.nova-tmp",
-                path.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("source")
-            ));
-            if let Err(error) =
-                fs::write(&temporary, &formatted).and_then(|_| fs::rename(&temporary, path))
-            {
-                eprintln!("nova fmt: could not write {}: {error}", path.display());
-                errors += 1;
-            }
+        if check {
+            let _ = fs::remove_file(&temporary);
+        } else if let Err(error) = fs::rename(&temporary, path) {
+            eprintln!("nova fmt: could not write {}: {error}", path.display());
+            errors += 1;
+            let _ = fs::remove_file(&temporary);
         }
     }
     if check {

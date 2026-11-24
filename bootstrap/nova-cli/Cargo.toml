@@ -11,7 +11,6 @@ path = "src/main.rs"
 [dependencies]
 nova-codegen-llvm = { workspace = true }
 nova-diag = { workspace = true }
-nova-fmt = { workspace = true }
 nova-lsp = { workspace = true }
 nova-parser = { workspace = true }
 nova-pkg = { workspace = true }

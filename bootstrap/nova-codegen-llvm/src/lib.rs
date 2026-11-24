@@ -432,6 +432,10 @@ struct ModuleGen<'a> {
     loop_stack: Vec<(String, String)>,
     fn_ret: Type,
     trait_vtables: HashMap<(String, String), String>,
+    // Allocas are collected here and spliced into the function's entry block.
+    // Emitting them where they appear would grow the stack on every loop
+    // iteration, which overflows on large inputs.
+    pending_allocas: String,
 }
 
 impl<'a> ModuleGen<'a> {
@@ -466,6 +470,7 @@ impl<'a> ModuleGen<'a> {
             loop_stack: Vec::new(),
             fn_ret: Type::Unit,
             trait_vtables: HashMap::new(),
+            pending_allocas: String::new(),
         }
     }
 
@@ -552,6 +557,8 @@ impl<'a> ModuleGen<'a> {
             self.llvm_ty(&entry_ret)
         };
         self.out.push_str("define i32 @main() {\n");
+        self.pending_allocas.clear();
+        let main_alloca_at = self.out.len();
         if ret_llvm == "void" {
             self.out
                 .push_str(&format!("  call void @{entry_symbol}(ptr null)\n"));
@@ -562,6 +569,7 @@ impl<'a> ModuleGen<'a> {
             ));
         }
         self.out.push_str("  ret i32 0\n}\n");
+        self.flush_allocas(main_alloca_at);
 
         Ok(self.out)
     }
@@ -611,8 +619,16 @@ impl<'a> ModuleGen<'a> {
 
     fn alloca(&mut self, llvm_ty: &str) -> String {
         let slot = self.fresh();
-        self.emit(format!("{slot} = alloca {llvm_ty}"));
+        self.pending_allocas
+            .push_str(&format!("  {slot} = alloca {llvm_ty}\n"));
         slot
+    }
+
+    fn flush_allocas(&mut self, at: usize) {
+        let allocas = std::mem::take(&mut self.pending_allocas);
+        if !allocas.is_empty() {
+            self.out.insert_str(at, &allocas);
+        }
     }
 
     fn alloca_ty(&mut self, ty: &Type) -> String {
@@ -846,6 +862,8 @@ impl<'a> ModuleGen<'a> {
                     "define {ret_llvm} @{thunk}({}) {{\n",
                     params.join(", ")
                 ));
+                self.pending_allocas.clear();
+                let thunk_alloca_at = self.out.len();
                 let self_value = self.fresh();
                 self.out
                     .push_str(&format!("  {self_value} = load {ty_llvm}, ptr %self_ptr\n"));
@@ -865,6 +883,7 @@ impl<'a> ModuleGen<'a> {
                         "  {value} = call {ret_llvm} @{symbol}({args})\n  ret {ret_llvm} {value}\n}}\n\n"
                     ));
                 }
+                self.flush_allocas(thunk_alloca_at);
                 thunks.push(thunk);
             }
             let vtable = format!("nova_vtable_{impl_index}");
@@ -915,6 +934,8 @@ impl<'a> ModuleGen<'a> {
             "define {ret_llvm} @{symbol}({}) {{\n",
             params.join(", ")
         ));
+        self.pending_allocas.clear();
+        let fn_alloca_at = self.out.len();
 
         for local in &f.locals {
             let ty = self.llvm_ty(&local.ty);
@@ -976,6 +997,7 @@ impl<'a> ModuleGen<'a> {
             }
         }
         self.out.push_str("}\n\n");
+        self.flush_allocas(fn_alloca_at);
     }
 
     fn gen_block(&mut self, block: &TBlock) -> Option<Val> {
