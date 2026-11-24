@@ -130,7 +130,27 @@ fn main() {
     let extra = multiball(launch(level_game(0, 0, 3)))
     failures = failures + report(ball_count(extra) > 1, "multiball spawns extra balls")
 
-    let total = 20
+    failures = failures + report(bricks_left(clear_board(level_game(0, 0, 3))) == 0, "clear_board empties the grid")
+
+    var pair = scene_new(0)
+    pair = scene_spawn(pair, "a", "orb", 380, 300, 18, 18, 0, false, 100)
+    pair = scene_spawn(pair, "b", "orb", 430, 300, 18, 18, 1, false, 100)
+    pair = scene_set_velocity(pair, 1, 8, 0)
+    pair = scene_set_velocity(pair, 2, -8, 0)
+    var pair_ticks = 0
+    while pair_ticks < 80 {
+        pair = scene_tick(pair)
+        pair_ticks = pair_ticks + 1
+    }
+    let dx = pair.xs[0] - pair.xs[1]
+    var gap = dx
+    if gap < 0 {
+        gap = -gap
+    }
+    failures = failures + report(gap >= 18, "dynamic bodies separate instead of overlapping")
+    failures = failures + report(pair.vxs[0] < 0 && pair.vxs[1] > 0, "collision exchanges velocity")
+
+    let total = 22
     println("")
     println("passed " + "${total - failures}" + ", failed " + "${failures}")
     if failures > 0 {

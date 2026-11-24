@@ -20,7 +20,8 @@ the swept-AABB core, then clamps to the field. Verified by the physics lab.
 - Spawn/despawn by id with a free list, not list compaction, so references stay
   valid for a frame.
 - Shipped since: `scene_despawn`/`scene_alive`, per-entity restitution, a
-  200-body soak check, and `render.nova` + `examples/scene-gui` for pixels.
+  200-body soak check, `render.nova`, dynamic-vs-dynamic collisions, and
+  `examples/scene-gui` as an editor with selection, drag and an inspector.
 
 ## Phase 1 — Editor
 

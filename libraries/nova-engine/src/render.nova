@@ -28,6 +28,19 @@ fn palette(index: Int, theme: gui.Theme) -> Int {
     return theme.purple
 }
 
+fn draw_scene_selected(scene: Scene, ox: Int, oy: Int, theme: gui.Theme, selected: Int) {
+    draw_scene(scene, ox, oy, theme)
+    let index = scene_index(scene, selected)
+    if index >= 0 {
+        let w = scene.hws[index] * 2
+        let h = scene.hhs[index] * 2
+        let x = ox + scene.xs[index] - scene.hws[index]
+        let y = oy + scene.ys[index] - scene.hhs[index]
+        gui.stroke(x - 4, y - 4, w + 8, h + 8, gui.white())
+        gui.stroke(x - 5, y - 5, w + 10, h + 10, theme.accent)
+    }
+}
+
 fn draw_scene(scene: Scene, ox: Int, oy: Int, theme: gui.Theme) {
     var i = 0
     while i < scene_count(scene) {

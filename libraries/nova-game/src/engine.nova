@@ -353,6 +353,35 @@ fn next_level(game: Game) -> Game {
     return level_game(level, score, lives)
 }
 
+// Sets the board to cleared without touching score or lives: used by tests and
+// by the app's transition frame.
+fn clear_board(game: Game) -> Game {
+    var bricks = game.bricks
+    var i = 0
+    while i < bricks.len() {
+        bricks[i] = 0
+        i = i + 1
+    }
+    return Game {
+        balls: game.balls,
+        paddle: game.paddle,
+        paddle_v: game.paddle_v,
+        paddle_hits: game.paddle_hits,
+        lives: game.lives,
+        score: game.score,
+        rally: game.rally,
+        status: 2,
+        level: game.level,
+        bricks: bricks,
+        caps_x: game.caps_x,
+        caps_y: game.caps_y,
+        caps_kind: game.caps_kind,
+        caps_alive: false,
+        wide: game.wide,
+        slow: game.slow,
+    }
+}
+
 fn bricks_left(game: Game) -> Int {
     var alive = 0
     for brick in game.bricks {

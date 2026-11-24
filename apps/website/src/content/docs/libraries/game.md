@@ -183,3 +183,17 @@ For keyboard steering the app tracks key-up, not key repeat: while an arrow or
 A/D is held it slides `target` by 20 px each tick and the engine's easing turns
 that into constant motion; release stops it. macOS's delayed first repeat never
 enters the picture, so holding glides the same way the mouse does.
+
+## Attract mode and level transitions
+
+The menu runs a real demo game behind the title: each menu tick feeds the
+engine's own `step` with `ball_px_x` as the target, so the attract loop uses the
+same physics and renderer as play. Clearing or losing the demo quietly starts a
+new one.
+
+When a board is cleared the app holds `status == 2` for `transition_ticks()`
+(150 ticks, ~2.4 s) and draws a vertical wipe band sweeping the field. The tick
+that ends the wipe calls `next_level`, so the hand-off is deterministic and a
+screenshot taken mid-wipe is reproducible. Space still advances immediately.
+`clear_board(game)` exists so tests and the transition frame can produce a
+cleared grid without simulating a rally.

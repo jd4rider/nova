@@ -163,6 +163,61 @@ fn scene_alive(scene: Scene, id: Int) -> Bool {
     return scene_index(scene, id) >= 0
 }
 
+fn scene_set_position(scene: Scene, id: Int, x: Int, y: Int) -> Scene {
+    let index = scene_index(scene, id)
+    if index < 0 {
+        return scene
+    }
+    var xs = scene.xs
+    var ys = scene.ys
+    xs[index] = x
+    ys[index] = y
+    return scene
+}
+
+fn scene_set_solid(scene: Scene, id: Int, solid: Bool) -> Scene {
+    let index = scene_index(scene, id)
+    if index < 0 {
+        return scene
+    }
+    var solids = scene.solids
+    solids[index] = solid
+    return scene
+}
+
+fn scene_set_gravity(scene: Scene, gravity: Int) -> Scene {
+    return Scene {
+        ids: scene.ids,
+        names: scene.names,
+        tags: scene.tags,
+        xs: scene.xs,
+        ys: scene.ys,
+        vxs: scene.vxs,
+        vys: scene.vys,
+        hws: scene.hws,
+        hhs: scene.hhs,
+        colours: scene.colours,
+        solids: scene.solids,
+        bounces: scene.bounces,
+        gravity: gravity,
+        next_id: scene.next_id,
+    }
+}
+
+fn abs_i(v: Int) -> Int {
+    if v < 0 {
+        return -v
+    }
+    return v
+}
+
+fn smaller(a: Int, b: Int) -> Int {
+    if a < b {
+        return a
+    }
+    return b
+}
+
 fn scene_index(scene: Scene, id: Int) -> Int {
     var i = 0
     while i < scene.ids.len() {
@@ -264,6 +319,115 @@ fn scene_tick(scene: Scene) -> Scene {
             vys[i] = body.vy
         }
         i = i + 1
+    }
+
+    // Dynamic vs dynamic: separate along the shallower axis, then exchange the
+    // normal velocity with the pair's restitution (equal masses). One pass per
+    // tick is enough at the speeds the scene uses; swept tests still handle
+    // anything moving fast enough to matter.
+    var pa = 0
+    while pa < ids.len() {
+        if !solids[pa] {
+            var pb = pa + 1
+            while pb < ids.len() {
+                if !solids[pb] {
+                    let dx = xs[pb] - xs[pa]
+                    let overlap_x = hws[pa] + hws[pb] - abs_i(dx)
+                    if overlap_x > 0 {
+                        let dy = ys[pb] - ys[pa]
+                        let overlap_y = hhs[pa] + hhs[pb] - abs_i(dy)
+                        if overlap_y > 0 {
+                            let bounce = smaller(bounces[pa], bounces[pb])
+                            if overlap_x < overlap_y {
+                                var push = overlap_x / 2 + 1
+                                if dx < 0 {
+                                    push = -push
+                                }
+                                xs[pa] = xs[pa] - push
+                                xs[pb] = xs[pb] + push
+                                let va = vxs[pa]
+                                let vb = vxs[pb]
+                                vxs[pa] = (va * (100 - bounce) + vb * (100 + bounce)) / 200
+                                vxs[pb] = (vb * (100 - bounce) + va * (100 + bounce)) / 200
+                            } else {
+                                var push = overlap_y / 2 + 1
+                                if dy < 0 {
+                                    push = -push
+                                }
+                                ys[pa] = ys[pa] - push
+                                ys[pb] = ys[pb] + push
+                                let va = vys[pa]
+                                let vb = vys[pb]
+                                vys[pa] = (va * (100 - bounce) + vb * (100 + bounce)) / 200
+                                vys[pb] = (vb * (100 - bounce) + va * (100 + bounce)) / 200
+                            }
+                        }
+                    }
+                }
+                pb = pb + 1
+            }
+        }
+        pa = pa + 1
+    }
+
+    // Keep speeds inside the range where a single pair pass is reliable, then
+    // push anything that the separation pass nudged into a solid back out. A
+    // body that is inside a wall has already lost its sweep, so this is the
+    // only place that can rescue it.
+    var c = 0
+    while c < ids.len() {
+        if !solids[c] {
+            if vxs[c] > 24 {
+                vxs[c] = 24
+            }
+            if vxs[c] < -24 {
+                vxs[c] = -24
+            }
+            if vys[c] > 24 {
+                vys[c] = 24
+            }
+            if vys[c] < -24 {
+                vys[c] = -24
+            }
+            if xs[c] < 0 {
+                xs[c] = 0
+            }
+            if xs[c] > 800 {
+                xs[c] = 800
+            }
+            if ys[c] < 0 {
+                ys[c] = 0
+            }
+            if ys[c] > 600 {
+                ys[c] = 600
+            }
+            var body = ph_with_velocity(ph_body(xs[c], ys[c], hws[c] * 2, hhs[c] * 2), vxs[c], vys[c])
+            body = ph_with_bounce(body, bounces[c])
+            var stuck = -1
+            var k = 0
+            while k < ids.len() {
+                if solids[k] {
+                    // Plain AABB overlap: ph_sweep reports touching as entry 0,
+                    // which would fire on every resting contact.
+                    if abs_i(xs[c] - xs[k]) < hws[c] + hws[k] && abs_i(ys[c] - ys[k]) < hhs[c] + hhs[k] {
+                        stuck = k
+                    }
+                }
+                k = k + 1
+            }
+            if stuck >= 0 {
+                let wall = ph_solid_box(xs[stuck] - hws[stuck], ys[stuck] - hhs[stuck], hws[stuck] * 2, hhs[stuck] * 2)
+                body = ph_resolve(body, wall)
+                if body.x < 0 || body.x > 800000 {
+                    body = ph_with_velocity(ph_body(400, 260, hws[c] * 2, hhs[c] * 2), 0, 0)
+                }
+                xs[c] = ph_px(body.x)
+                ys[c] = ph_px(body.y)
+                vxs[c] = body.vx
+                vys[c] = body.vy
+            }
+        }
+        c = c + 1
     }
     return scene
 }

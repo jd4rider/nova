@@ -1,16 +1,18 @@
 import std.io { println }
 import "../../../libraries/nova-gui/src/gui.nova" as gui
+import "../../../libraries/nova-engine/src/scene.nova"
 import "../../../libraries/nova-engine/src/render.nova"
 
-// A playground for Engine Phase 0: orbs with per-body restitution bounce inside
-// a box, drawn by the scene renderer. Click drops another orb, space resets.
+// Scene playground + editor. The left side is the live scene; the right side is
+// an inspector for the selected entity. Click to select, drag to move, arrows
+// to nudge, backspace to delete, S to toggle solid, G for gravity.
 
 fn window_w() -> Int {
-    return 900
+    return 1200
 }
 
 fn window_h() -> Int {
-    return 700
+    return 760
 }
 
 fn field_x() -> Int {
@@ -29,16 +31,39 @@ fn orb_count() -> Int {
     return 140
 }
 
-struct App {
-    scene: Scene,
-    quit: Bool,
-    clicks: Int,
+fn panel_x() -> Int {
+    return 876
 }
 
-fn box() -> Scene {
-    // Zero gravity keeps the box alive: this demo is about restitution and
-    // readability, not about everything settling into one line.
-    var scene = scene_new(0)
+fn panel_y() -> Int {
+    return 112
+}
+
+fn panel_w() -> Int {
+    return 280
+}
+
+fn panel_h() -> Int {
+    return 520
+}
+
+struct App {
+    scene: Scene,
+    selected: Int,
+    dragging: Bool,
+    quit: Bool,
+    dropped: Int,
+}
+
+fn absv(v: Int) -> Int {
+    if v < 0 {
+        return -v
+    }
+    return v
+}
+
+fn box(gravity: Int) -> Scene {
+    var scene = scene_new(gravity)
     scene = scene_spawn(scene, "ceiling", "solid", 400, 8, 800, 16, 0, true, 0)
     scene = scene_spawn(scene, "floor", "solid", 400, 510, 800, 20, 0, true, 0)
     scene = scene_spawn(scene, "left", "solid", 8, 260, 16, 520, 0, true, 0)
@@ -46,22 +71,84 @@ fn box() -> Scene {
     return scene
 }
 
-// Deterministic spread: the first frame is the same every launch, which keeps
-// screenshots and bug reports comparable.
-fn populated() -> Scene {
-    var scene = box()
+// Deterministic spread: the same first frame every launch keeps screenshots
+// comparable. Velocities are small enough that dynamic pairs cannot tunnel.
+fn populated(gravity: Int) -> Scene {
+    var scene = box(gravity)
     var i = 0
     while i < orb_count() {
         let x = 60 + i % 12 * 58
         let y = 80 + i / 12 * 26
-        let vx = i * 37 % 41 * 22 - 440
-        let vy = i * 53 % 31 * 17 - 255
-        scene = scene_spawn(scene, "orb", "orb", x, y, orb_size(), orb_size(), i % 6, false, 96)
-        let index = scene_count(scene) - 1
-        scene = scene_set_velocity(scene, scene.ids[index], vx, vy)
+        let vx = i * 37 % 21 - 10
+        let vy = i * 53 % 15 - 7
+        scene = scene_spawn(scene, "orb", "orb", x, y, orb_size(), orb_size(), i % 6, false, 90)
+        let id = scene.ids[scene_count(scene) - 1]
+        scene = scene_set_velocity(scene, id, vx, vy)
         i = i + 1
     }
     return scene
+}
+
+fn hit_test(scene: Scene, x: Int, y: Int) -> Int {
+    var i = scene_count(scene) - 1
+    while i >= 0 {
+        if absv(x - scene.xs[i]) <= scene.hws[i] && absv(y - scene.ys[i]) <= scene.hhs[i] {
+            return scene.ids[i]
+        }
+        i = i - 1
+    }
+    return 0
+}
+
+fn select(app: App, id: Int) -> App {
+    return App { scene: app.scene, selected: id, dragging: false, quit: false, dropped: app.dropped }
+}
+
+fn row(y: Int, label: String, value: String, theme: gui.Theme) {
+    gui.text(panel_x() + 18, y, label, 11, theme.faint)
+    gui.text(panel_x() + 108, y, value, 12, theme.fg)
+}
+
+fn inspector(app: App, theme: gui.Theme) {
+    gui.round_rect(panel_x(), panel_y(), panel_w(), panel_h(), 10, theme.panel)
+    gui.stroke(panel_x(), panel_y(), panel_w(), panel_h(), theme.border_strong)
+    gui.text(panel_x() + 18, panel_y() + 16, "INSPECTOR", 12, theme.fg_bright)
+    gui.text(panel_x() + 18, panel_y() + 36, "${scene_count(app.scene)} entities", 11, theme.faint)
+
+    let index = scene_index(app.scene, app.selected)
+    if index < 0 {
+        gui.text(panel_x() + 18, panel_y() + 74, "click an entity", 13, theme.muted)
+        gui.text(panel_x() + 18, panel_y() + 96, "to inspect and drag it", 11, theme.faint)
+    } else {
+        var y = panel_y() + 74
+        row(y, "id", "${app.scene.ids[index]}", theme)
+        y = y + 24
+        row(y, "name", app.scene.names[index], theme)
+        y = y + 24
+        row(y, "tag", app.scene.tags[index], theme)
+        y = y + 24
+        row(y, "position", "${app.scene.xs[index]}, ${app.scene.ys[index]}", theme)
+        y = y + 24
+        row(y, "velocity", "${app.scene.vxs[index]}, ${app.scene.vys[index]}", theme)
+        y = y + 24
+        row(y, "size", "${app.scene.hws[index] * 2} × ${app.scene.hhs[index] * 2}", theme)
+        y = y + 24
+        row(y, "restitution", "${app.scene.bounces[index]}%", theme)
+        y = y + 24
+        var solid = "dynamic"
+        if app.scene.solids[index] {
+            solid = "solid"
+        }
+        row(y, "body", solid, theme)
+        y = y + 40
+        gui.text(panel_x() + 18, y, "drag to move · arrows nudge", 10, theme.faint)
+        y = y + 18
+        gui.text(panel_x() + 18, y, "S solid · backspace delete", 10, theme.faint)
+    }
+
+    let gravity = "gravity ${app.scene.gravity}"
+    gui.text(panel_x() + 18, panel_y() + panel_h() - 30, gravity, 11, theme.muted)
+    gui.text(panel_x() + panel_w() - 18 - gui.text_width("G toggles", 10), panel_y() + panel_h() - 30, "G toggles", 10, theme.faint)
 }
 
 fn draw(app: App) {
@@ -69,29 +156,109 @@ fn draw(app: App) {
     gui.clear(theme.bg)
     gui.text(24, 26, "NOVA", 20, theme.fg_bright)
     gui.text(24 + gui.text_width("NOVA", 20) + 10, 26, "PHYSICS", 20, theme.accent)
-    gui.text(24, 56, "engine phase 0 · scene · restitution · fixed step", 11, theme.faint)
+    gui.text(24, 56, "engine phase 0 · scene · collisions · editor", 11, theme.faint)
 
-    let count_text = "${scene_count(app.scene)} entities   gravity ${app.scene.gravity}   ${app.clicks} dropped"
-    gui.text(window_w() - 24 - gui.text_width(count_text, 13), 30, count_text, 13, theme.fg)
+    var title = "edit mode"
+    if app.selected > 0 {
+        title = "selected #${app.selected}"
+    }
+    gui.text(window_w() - 24 - gui.text_width(title, 13), 30, title, 13, theme.fg)
 
-    gui.round_rect(field_x() - 14, field_y() - 14, 800 + 28, 520 + 28, 12, theme.panel)
-    gui.stroke(field_x() - 14, field_y() - 14, 800 + 28, 520 + 28, theme.border_strong)
-    draw_scene(app.scene, field_x(), field_y(), theme)
+    gui.round_rect(field_x() - 14, field_y() - 14, 828, 548, 12, theme.panel)
+    gui.stroke(field_x() - 14, field_y() - 14, 828, 548, theme.border_strong)
+    draw_scene_selected(app.scene, field_x(), field_y(), theme, app.selected)
 
-    let hint = "click drops an orb   ·   space resets   ·   R resets   ·   ⌘Q quits"
+    inspector(app, theme)
+
+    let hint = "click selects · drag moves · arrows nudge · S solid · backspace delete · N new crate · G gravity · R reset · ⌘Q quit"
     gui.text((window_w() - gui.text_width(hint, 11)) / 2, window_h() - 34, hint, 11, theme.faint)
 }
 
 fn key(app: App, code: Int, mods: Int) -> App {
     let command = mods % 2 == 1
     if command && code == 113 {
-        return App { scene: app.scene, quit: true, clicks: app.clicks }
+        return App { scene: app.scene, selected: app.selected, dragging: false, quit: true, dropped: app.dropped }
     }
     if code == gui.key_escape() {
-        return App { scene: app.scene, quit: true, clicks: app.clicks }
+        return App { scene: app.scene, selected: app.selected, dragging: false, quit: true, dropped: app.dropped }
     }
-    if code == 32 || code == 114 {
-        return App { scene: populated(), quit: false, clicks: 0 }
+    if code == 114 {
+        return App { scene: populated(0), selected: 0, dragging: false, quit: false, dropped: 0 }
+    }
+    if code == gui.key_tab() {
+        if scene_count(app.scene) == 0 {
+            return app
+        }
+        let current = scene_index(app.scene, app.selected)
+        var next = current + 1
+        if next >= scene_count(app.scene) {
+            next = 0
+        }
+        return select(app, app.scene.ids[next])
+    }
+    if code == gui.key_backspace() || code == gui.key_delete() {
+        let scene = scene_despawn(app.scene, app.selected)
+        return App { scene: scene, selected: 0, dragging: false, quit: false, dropped: app.dropped }
+    }
+    if code == 103 {
+        var gravity = 0
+        if app.scene.gravity == 0 {
+            gravity = 30
+        }
+        let scene = scene_set_gravity(app.scene, gravity)
+        return App { scene: scene, selected: app.selected, dragging: false, quit: false, dropped: app.dropped }
+    }
+    if code == 115 {
+        let index = scene_index(app.scene, app.selected)
+        if index >= 0 {
+            var solid = true
+            if app.scene.solids[index] {
+                solid = false
+            }
+            let scene = scene_set_solid(app.scene, app.selected, solid)
+            return App { scene: scene, selected: app.selected, dragging: false, quit: false, dropped: app.dropped }
+        }
+    }
+    if code == 110 {
+        var scene = scene_spawn(app.scene, "crate", "crate", 400, 220, 26, 26, app.dropped % 6, false, 30)
+        let id = scene.ids[scene_count(scene) - 1]
+        scene = scene_set_velocity(scene, id, 0, 0)
+        return App { scene: scene, selected: id, dragging: false, quit: false, dropped: app.dropped + 1 }
+    }
+    var dx = 0
+    var dy = 0
+    if code == gui.key_left() {
+        dx = -6
+    }
+    if code == gui.key_right() {
+        dx = 6
+    }
+    if code == gui.key_up() {
+        dy = -6
+    }
+    if code == gui.key_down() {
+        dy = 6
+    }
+    if dx != 0 || dy != 0 {
+        let index = scene_index(app.scene, app.selected)
+        if index >= 0 {
+            var x = app.scene.xs[index] + dx
+            var y = app.scene.ys[index] + dy
+            if x < 20 {
+                x = 20
+            }
+            if x > 780 {
+                x = 780
+            }
+            if y < 20 {
+                y = 20
+            }
+            if y > 490 {
+                y = 490
+            }
+            let scene = scene_set_position(app.scene, app.selected, x, y)
+            return App { scene: scene, selected: app.selected, dragging: false, quit: false, dropped: app.dropped }
+        }
     }
     return app
 }
@@ -101,26 +268,46 @@ fn handle(app: App, event: gui.Event) -> App {
         return key(app, event.code, event.mods)
     }
     if event.kind == gui.event_close() {
-        return App { scene: app.scene, quit: true, clicks: app.clicks }
+        return App { scene: app.scene, selected: app.selected, dragging: false, quit: true, dropped: app.dropped }
     }
     if event.kind == gui.event_mouse_down() {
-        var x = event.x - field_x()
-        var y = event.y - field_y()
-        if x < 24 {
-            x = 24
+        let x = event.x - field_x()
+        let y = event.y - field_y()
+        if x >= 0 && x <= 800 && y >= 0 && y <= 520 {
+            let id = hit_test(app.scene, x, y)
+            if id > 0 {
+                var out = select(app, id)
+                out = App { scene: out.scene, selected: id, dragging: true, quit: false, dropped: app.dropped }
+                return out
+            }
+            return select(app, 0)
         }
-        if x > 776 {
-            x = 776
+        return select(app, 0)
+    }
+    if event.kind == gui.event_drag() {
+        if app.dragging && app.selected > 0 {
+            var x = event.x - field_x()
+            var y = event.y - field_y()
+            if x < 20 {
+                x = 20
+            }
+            if x > 780 {
+                x = 780
+            }
+            if y < 20 {
+                y = 20
+            }
+            if y > 490 {
+                y = 490
+            }
+            var scene = scene_set_position(app.scene, app.selected, x, y)
+            scene = scene_set_velocity(scene, app.selected, 0, 0)
+            return App { scene: scene, selected: app.selected, dragging: true, quit: false, dropped: app.dropped }
         }
-        if y < 30 {
-            y = 30
-        }
-        if y > 480 {
-            y = 480
-        }
-        var scene = scene_spawn(app.scene, "orb", "orb", x, y, orb_size(), orb_size(), app.clicks % 6, false, 82)
-        scene = scene_set_velocity(scene, scene.ids[scene_count(scene) - 1], app.clicks % 9 * 90 - 360, app.clicks % 7 * 80 - 240)
-        return App { scene: scene, quit: false, clicks: app.clicks + 1 }
+        return app
+    }
+    if event.kind == gui.event_mouse_up() {
+        return App { scene: app.scene, selected: app.selected, dragging: false, quit: false, dropped: app.dropped }
     }
     return app
 }
@@ -128,19 +315,23 @@ fn handle(app: App, event: gui.Event) -> App {
 fn main() {
     let shot = gui.env("NOVA_SCENE_SHOT")
     if shot.len() > 0 {
-        var scene = populated()
+        var gravity = 0
+        if gui.env("NOVA_SCENE_GRAVITY").len() > 0 {
+            gravity = 30
+        }
+        var scene = populated(gravity)
         var i = 0
-        while i < 220 {
+        while i < 240 {
             scene = scene_tick(scene)
             i = i + 1
         }
-        let app = App { scene: scene, quit: false, clicks: 0 }
+        let app = App { scene: scene, selected: 20, dragging: false, quit: false, dropped: 0 }
         if gui.open("Nova Physics", window_w(), window_h()) {
             gui.begin()
             draw(app)
             gui.present()
             let saved = gui.save_png(shot)
-            println("scene-gui: saved=${saved} entities=${scene_count(app.scene)}")
+            println("scene-gui: saved=${saved} entities=${scene_count(app.scene)} gravity=${app.scene.gravity}")
             gui.close()
         }
         return
@@ -149,15 +340,20 @@ fn main() {
         println("scene-gui: could not open a window")
         return
     }
-    var app = App { scene: populated(), quit: false, clicks: 0 }
+    var app = App { scene: populated(0), selected: 0, dragging: false, quit: false, dropped: 0 }
     while !app.quit && gui.is_open() {
         var event = gui.next_event()
         while event.kind != gui.event_none() {
             app = handle(app, event)
             event = gui.next_event()
         }
-        let next = App { scene: scene_tick(app.scene), quit: app.quit, clicks: app.clicks }
-        app = next
+        app = App {
+            scene: scene_tick(app.scene),
+            selected: app.selected,
+            dragging: app.dragging,
+            quit: app.quit,
+            dropped: app.dropped,
+        }
         gui.begin()
         draw(app)
         gui.present()
