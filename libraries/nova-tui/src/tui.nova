@@ -1,0 +1,283 @@
+// nova-tui — a small, dependency-free terminal UI toolkit for Nova.
+//
+// Everything here is ordinary Nova plus two scalar C calls for sleeping and
+// flushing stdout. Rendering is plain ANSI text, so the output is just a string
+// that any terminal (or a test harness) can inspect.
+//
+// The library deliberately does not claim raw-mode input, Unicode display
+// width, or Windows support. See the website page at /libraries/tui/.
+
+extern "C" fn usleep(usec: Int) -> Unit
+extern "C" fn fflush(stream: Int) -> Int
+
+struct Style {
+    fg: Int
+    bg: Int
+    bold: Bool
+    dim: Bool
+}
+
+struct Theme {
+    accent: Style
+    muted: Style
+    text: Style
+    success: Style
+    warning: Style
+    danger: Style
+}
+
+struct Row {
+    cells: List<String>
+}
+
+struct Panel {
+    title: String
+    lines: List<String>
+    width: Int
+    border: Style
+    title_style: Style
+    body: Style
+}
+
+struct Table {
+    headers: List<String>
+    rows: List<Row>
+    widths: List<Int>
+    header: Style
+    cell: Style
+    border: Style
+}
+
+struct Progress {
+    label: String
+    value: Int
+    total: Int
+    width: Int
+    filled: Style
+    empty: Style
+    label_style: Style
+}
+
+// ---------- strings and styling ----------
+
+fn style(fg: Int, bg: Int, bold: Bool, dim: Bool) -> Style {
+    return Style { fg: fg, bg: bg, bold: bold, dim: dim }
+}
+
+fn theme() -> Theme {
+    return Theme { accent: style(81, -1, true, false), muted: style(244, -1, false, false), text: style(252, -1, false, false), success: style(114, -1, true, false), warning: style(221, -1, true, false), danger: style(203, -1, true, false) }
+}
+
+fn paint(style: Style, text: String) -> String {
+    var prefix = ""
+    if style.bold {
+        prefix = prefix + "\u{1b}[1m"
+    }
+    if style.dim {
+        prefix = prefix + "\u{1b}[2m"
+    }
+    if style.fg >= 0 {
+        prefix = prefix + "\u{1b}[38;5;${style.fg}m"
+    }
+    if style.bg >= 0 {
+        prefix = prefix + "\u{1b}[48;5;${style.bg}m"
+    }
+    if prefix.len() == 0 {
+        return text
+    }
+    return prefix + text + "\u{1b}[0m"
+}
+
+fn repeat(text: String, count: Int) -> String {
+    var out = ""
+    var i = 0
+    while i < count {
+        out = out + text
+        i += 1
+    }
+    return out
+}
+
+fn pad(text: String, width: Int) -> String {
+    if text.len() >= width {
+        return text
+    }
+    return text + repeat(" ", width - text.len())
+}
+
+fn badge(label: String, fill: Style) -> String {
+    return paint(fill, " " + label + " ")
+}
+
+fn rule(label: String, width: Int, color: Style) -> String {
+    if label.len() == 0 {
+        return paint(color, repeat("─", width))
+    }
+    if label.len() + 4 >= width {
+        return paint(color, repeat("─", width))
+    }
+    return paint(color, "── " + label + " " + repeat("─", width - label.len() - 4))
+}
+
+// ---------- terminal control ----------
+
+fn clear() -> String {
+    return "\u{1b}[2J\u{1b}[H"
+}
+
+fn home() -> String {
+    return "\u{1b}[H"
+}
+
+fn hide_cursor() -> String {
+    return "\u{1b}[?25l"
+}
+
+fn show_cursor() -> String {
+    return "\u{1b}[?25h"
+}
+
+fn enter_alternate() -> String {
+    return "\u{1b}[?1049h"
+}
+
+fn leave_alternate() -> String {
+    return "\u{1b}[?1049l"
+}
+
+fn move_to(row: Int, column: Int) -> String {
+    return "\u{1b}[${row};${column}H"
+}
+
+fn sleep_ms(milliseconds: Int) {
+    usleep(milliseconds * 1000)
+}
+
+fn flush() {
+    fflush(0)
+}
+
+// ---------- components ----------
+
+fn panel(title: String, lines: List<String>, width: Int, colors: Theme) -> Panel {
+    return Panel { title: title, lines: lines, width: width, border: colors.muted, title_style: colors.accent, body: colors.text }
+}
+
+impl Panel {
+    fn render(self) -> String {
+        let inner = self.width - 4;
+        let fill = self.width - 5 - self.title.len();
+        var out = paint(self.border, "╭─ ");
+        out = out + paint(self.title_style, self.title);
+        out = out + paint(self.border, " " + repeat("─", fill) + "╮");
+        out = out + "\n";
+        for line in self.lines {
+            out = out + paint(self.border, "│ ");
+            out = out + paint(self.body, pad(line, inner));
+            out = out + paint(self.border, " │");
+            out = out + "\n";
+        }
+        out = out + paint(self.border, "╰" + repeat("─", self.width - 2) + "╯");
+        return out;
+    }
+}
+
+fn list_panel(title: String, items: List<String>, selected: Int, width: Int, colors: Theme) -> Panel {
+    var lines: List<String> = []
+    var i = 0
+    for item in items {
+        if i == selected {
+            lines.push("> " + item)
+        } else {
+            lines.push("  " + item)
+        }
+        i += 1
+    }
+    return panel(title, lines, width, colors)
+}
+
+fn row(cells: List<String>) -> Row {
+    return Row { cells: cells }
+}
+
+fn table(headers: List<String>, rows: List<Row>, widths: List<Int>, colors: Theme) -> Table {
+    return Table { headers: headers, rows: rows, widths: widths, header: colors.accent, cell: colors.text, border: colors.muted }
+}
+
+impl Table {
+    fn render(self) -> String {
+        var total = 0;
+        for width in self.widths {
+            total += width + 2;
+        }
+        var out = paint(self.border, repeat("─", total)) + "\n";
+        var header_line = "";
+        var column = 0;
+        for header in self.headers {
+            header_line = header_line + pad(header, self.widths[column]) + "  ";
+            column += 1;
+        }
+        out = out + paint(self.header, header_line) + "\n";
+        out = out + paint(self.border, repeat("─", total)) + "\n";
+        for item in self.rows {
+            var line = "";
+            var index = 0;
+            for cell in item.cells {
+                line = line + pad(cell, self.widths[index]) + "  ";
+                index += 1;
+            }
+            out = out + paint(self.cell, line) + "\n";
+        }
+        out = out + paint(self.border, repeat("─", total));
+        return out;
+    }
+}
+
+fn progress(label: String, value: Int, total: Int, width: Int, colors: Theme) -> Progress {
+    return Progress { label: label, value: value, total: total, width: width, filled: colors.success, empty: colors.muted, label_style: colors.text }
+}
+
+fn render_progress(value: Progress) -> String {
+    var filled = 0
+    if value.total > 0 {
+        filled = value.value * value.width / value.total
+    }
+    if filled < 0 {
+        filled = 0
+    }
+    if filled > value.width {
+        filled = value.width
+    }
+    var percent = 0
+    if value.total > 0 {
+        percent = value.value * 100 / value.total
+    }
+    let bar = paint(value.filled, repeat("█", filled))
+    let rest = paint(value.empty, repeat("░", value.width - filled))
+    return paint(value.label_style, pad(value.label, 14)) + bar + rest + " " + "${percent}%"
+}
+
+impl Progress {
+    fn render(self) -> String {
+        return render_progress(self)
+    }
+}
+
+fn spinner_frame(index: Int) -> String {
+    let frames: List<String> = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    if index < 0 {
+        return frames[0]
+    }
+    return frames[index % frames.len()]
+}
+
+fn spinner_line(label: String, index: Int, colors: Theme) -> String {
+    return paint(colors.accent, spinner_frame(index)) + " " + paint(colors.muted, label)
+}
+
+fn banner(title: String, subtitle: String, width: Int, colors: Theme) -> String {
+    var out = paint(colors.accent, "  ✦ " + title) + "\n"
+    out = out + paint(colors.muted, "    " + subtitle) + "\n"
+    out = out + rule("", width, colors.muted)
+    return out
+}

@@ -35,4 +35,4 @@ npm run test:playground
 
 The WASM build intentionally excludes native code generation. It does not execute programs, perform I/O, handle HTTPS, link user files or expose a package registry. Those require compiler and runtime work that is tracked on the [status page](../../status/) and [roadmap](../../roadmap/).
 
-The example gallery currently demonstrates functions, structs, lists, loops, `Option`, `Result`, matching and a deliberate type error. User enums, classes/traits, generics, modules and the planned TUI/GUI/WASM libraries are not implemented yet.
+The example gallery currently demonstrates functions, structs, lists, loops, `Option`, `Result`, matching and a deliberate type error. The checker also accepts user enums, `impl` methods, tuples, arrays/slices, capturing closures, generic functions/types/methods, static traits, map/set types, path imports, async syntax, FFI declarations and expression/statement macros. The [TUI library](../../libraries/tui/) is an experimental source-imported library; real concurrency and GUI/WASM application libraries are not implemented.

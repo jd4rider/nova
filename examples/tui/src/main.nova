@@ -1,0 +1,60 @@
+import std.io { print, println }
+import "../../../libraries/nova-tui/src/tui.nova" as tui
+
+fn dashboard(colors: Theme) -> String {
+    var out = tui.banner(
+        "NOVA TUI",
+        "a Charm-style terminal toolkit written in Nova",
+        62,
+        colors
+    )
+    out = out + "\n"
+
+    var features: List<String> = [
+        "bordered panels and titles",
+        "colored 256-color text",
+        "tables, badges and rules",
+        "progress bars and spinners",
+        "alternate-screen helpers",
+        "no runtime dependencies"
+    ]
+    out = out + tui.list_panel("RENDERED IN NOVA", features, 0, 62, colors).render()
+    out = out + "\n\n"
+
+    let headers: List<String> = ["component", "status", "shape"]
+    var rows: List<Row> = []
+    rows.push(row(["Panel", "ready", "width-aware"]))
+    rows.push(row(["Table", "ready", "list<row>"]))
+    rows.push(row(["Progress", "ready", "integer math"]))
+    rows.push(row(["Spinner", "ready", "10 frames"]))
+    out = out + tui.table(headers, rows, [14, 10, 18], colors).render()
+    out = out + "\n\n"
+
+    out = out + tui.progress("native build", 100, 100, 34, colors).render() + "\n"
+    out = out + tui.progress("docs coverage", 80, 100, 34, colors).render() + "\n"
+    out = out + tui.progress("raw input", 0, 100, 34, colors).render() + "\n\n"
+
+    out = out + "  " + tui.badge("TESTED", colors.success)
+    out = out + " " + tui.badge("EXPERIMENTAL", colors.warning)
+    out = out + "  " + tui.paint(colors.muted, "ANSI 256 · UTF-8 box drawing") + "\n"
+    return out
+}
+
+fn main() {
+    let colors = tui.theme()
+    print(tui.hide_cursor())
+    print(tui.clear())
+
+    var frame = 0
+    while frame < 12 {
+        print("\r  " + tui.spinner_line("compiling dashboard...", frame, colors))
+        tui.flush()
+        tui.sleep_ms(70)
+        frame += 1
+    }
+    print("\r" + tui.repeat(" ", 48) + "\r")
+
+    println(dashboard(colors))
+    println("  " + tui.paint(colors.muted, "Press Ctrl-C to exit; keyboard events are not implemented."))
+    print(tui.show_cursor())
+}
