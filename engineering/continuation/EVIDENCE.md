@@ -66,7 +66,7 @@ Previously recorded: `sh examples/nova-tool/tests/boxes.sh` → passed 64, faile
 
 ## Commit history
 
-- SSA mutable/immutable codegen checkpoint — see branch HEAD.
+- `0fa226f` — SSA immutable bindings and performance gate.
 - `e9d9e4a` — native codegen path in Nova, durable continuation state.
 - `47302b6` — AST-based semantic checker in Nova.
 - `983fd6a` — full-corpus AST parser regression gate.

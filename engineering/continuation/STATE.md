@@ -4,7 +4,8 @@ Updated: 2026-11-24
 Master directive: owner-supplied (2026-11-24); requirements tracked in
 `engineering/continuation/ROADMAP.md` and `TASKS.md`.
 Repository / branch: `nova` / `selfhost/pure-nova`
-HEAD: `e9d9e4a` (native codegen checkpoint).
+HEAD: `0fa226f` (SSA codegen + performance-gate checkpoint; later commits
+may add continuation records only).
 Working tree: clean for the self-hosting files; pre-existing unrelated
 `editor/` and playground changes are still untouched.
 
