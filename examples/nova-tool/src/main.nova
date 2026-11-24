@@ -9,6 +9,7 @@ import "../../../libraries/nova-parser/src/expr.nova"
 import "../../../libraries/nova-parser/src/ast.nova"
 import "../../../libraries/nova-check/src/check.nova"
 import "../../../libraries/nova-check/src/sema.nova"
+import "../../../libraries/nova-codegen/src/llvm.nova"
 import "../../../libraries/nova-boxes/src/semver.nova"
 import "../../../libraries/nova-boxes/src/resolve.nova"
 import "../../../libraries/nova-boxes/src/report.nova"
@@ -181,6 +182,16 @@ fn main() {
             for message in diags {
                 println(message)
             }
+        }
+        return
+    }
+
+    if mode == "emit-ir" {
+        let result = cg_compile(source)
+        if result.error.len() > 0 {
+            println("error: " + result.error)
+        } else {
+            println(result.ir)
         }
         return
     }
