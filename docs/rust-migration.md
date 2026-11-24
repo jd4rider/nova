@@ -76,7 +76,7 @@ The Nova implementations exist and are exercised by `examples/nova-tool`:
 | Piece | Nova file | State |
 |---|---|---|
 | Formatter | `libraries/nova-fmt/src/fmt.nova` | formats every corpus file, idempotent; `nova fmt`, the LSP and the wasm playground all run this implementation |
-| Parser | `libraries/nova-parser/src/parser.nova`, `expr.nova` | items, parameters and statement nesting, plus a Pratt expression parser rendering prefix trees |
+| Parser | `libraries/nova-parser/src/parser.nova`, `expr.nova`, `ast.nova` | item/statement nesting and a Pratt expression parser; `ast.nova` is the phase-2 AST arena: functions, parameters, blocks, let/var/return/expression statements, calls, member access, indexing and binary/unary expressions |
 | Semantic checks | `libraries/nova-check/src/check.nova` | declaration-level: duplicate items, duplicate parameters, unknown type names |
 | Lexer | `libraries/nova-lexer/src/lexer.nova` | tokenizes the full 5,139-line studio file and the large-input corpus |
 | Diagnostics | `libraries/nova-diag/src/diag.nova` | renders severity, location and caret |
@@ -105,12 +105,19 @@ additions, `nova_input_ptr`/`nova_input_set` to hand source in and the existing
 output buffer to read the result back, plus value-ABI shims for `chars`, `split`,
 `join` and the trim family.
 
-Phase-2 suites: `tests/expr.sh` (expression trees), `tests/sema.sh`
-(declaration checks), and `apps/website/scripts/test-playground-format.mjs`
-(the browser formatter wasm, output and idempotence).
+Phase-2 suites: `tests/expr.sh` (expression trees), `tests/parser.sh`
+(item structure plus the AST slice), `tests/sema.sh` (declaration checks), and
+`apps/website/scripts/test-playground-format.mjs` (the browser formatter wasm,
+output and idempotence).
+
+The AST is intentionally smaller than the bootstrap grammar today: `if`,
+`while`, `for`, `match`, `struct`, `enum`, `impl`, generics and closures still
+fail with a located `unsupported item` error instead of being approximated.
+Closing that gap, then porting sema, is the rest of phase 2–3.
 
 Test state: `sh examples/nova-tool/tests/toolchain.sh` → **passed 117, failed 0**
-(including formatting the studio source), and `sh examples/nova-tool/tests/boxes.sh`
+(including formatting the studio source), `sh examples/nova-tool/tests/parser.sh`
+→ **passed 8, failed 0**, and `sh examples/nova-tool/tests/boxes.sh`
 → **passed 64, failed 0**. No Rust crate has been deleted yet: the bootstrap
 compiler (lexer, parser, sema, codegen, CLI, LSP) is still Rust, and phases 2–4
 of this document are what removes it. `nova fmt` runs the Nova formatter, and

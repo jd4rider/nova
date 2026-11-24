@@ -6,6 +6,7 @@ import "../../../libraries/nova-diag/src/diag.nova"
 import "../../../libraries/nova-boxes/src/boxes.nova"
 import "../../../libraries/nova-parser/src/parser.nova"
 import "../../../libraries/nova-parser/src/expr.nova"
+import "../../../libraries/nova-parser/src/ast.nova"
 import "../../../libraries/nova-check/src/check.nova"
 import "../../../libraries/nova-boxes/src/semver.nova"
 import "../../../libraries/nova-boxes/src/resolve.nova"
@@ -89,6 +90,16 @@ fn main() {
             }
         } else {
             println(lock)
+        }
+        return
+    }
+
+    if mode == "ast-dump" {
+        let ast = a_parse(source)
+        if ast.error.len() > 0 {
+            println("error: " + ast.error)
+        } else {
+            println(a_render(ast, ast.nodes.len() - 1))
         }
         return
     }
