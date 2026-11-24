@@ -985,6 +985,20 @@ fn draw(app: App) {
     }
 }
 
+// Immediate-mode hit testing for hover feedback: the pointer is only ever the
+// last mouse-move the host reported, so this is a pure function of the model.
+fn hovering(app: App, x: Int, y: Int, w: Int, h: Int) -> Bool {
+    let mx = app.mouse_x
+    let my = app.mouse_y
+    if mx < x || my < y {
+        return false
+    }
+    if mx >= x + w || my >= y + h {
+        return false
+    }
+    return true
+}
+
 fn draw_title(app: App, w: Int) {
     let theme = app.theme
     gui.rect(0, 0, w, title_height(), theme.bg_hard)
@@ -997,7 +1011,11 @@ fn draw_title(app: App, w: Int) {
         pill = 220
     }
     let pill_x = (w - pill) / 2
-    gui.round_rect(pill_x, 6, pill, 24, 6, gui.rgb(36, 36, 36))
+    var pill_bg = gui.rgb(36, 36, 36)
+    if hovering(app, pill_x, 6, pill, 24) {
+        pill_bg = theme.elevated
+    }
+    gui.round_rect(pill_x, 6, pill, 24, 6, pill_bg)
     gui.stroke(pill_x, 6, pill, 24, theme.border_strong)
     gui.text(pill_x + 11, 10, "✦", 11, gui.rgb(90, 200, 255))
     var label = "Nova Studio"
@@ -1008,9 +1026,19 @@ fn draw_title(app: App, w: Int) {
         }
     }
     gui.text(pill_x + 26, 9, label, 12, theme.muted)
-    gui.text(w - 100, 8, "▤", 15, theme.muted)
-    gui.text(w - 70, 8, "◫", 15, theme.muted)
-    gui.text(w - 40, 8, "⚙", 15, theme.muted)
+    let buttons: List<String> = ["▤", "◫", "⚙"]
+    var bx = w - 104
+    var bi = 0
+    while bi < 3 {
+        var bcolor = theme.muted
+        if hovering(app, bx, 5, 26, 26) {
+            gui.round_rect(bx, 5, 26, 26, 5, theme.elevated)
+            bcolor = theme.fg_bright
+        }
+        gui.text(bx + 4, 8, buttons[bi], 15, bcolor)
+        bx = bx + 30
+        bi = bi + 1
+    }
 }
 
 fn draw_activity(app: App, h: Int) {
@@ -1032,10 +1060,17 @@ fn draw_activity(app: App, h: Int) {
         if i == 3 {
             glyph = "⚙"
         }
+        let hovered = hovering(app, 0, y, activity_width(), 46)
+        if hovered {
+            gui.rect(0, y, activity_width(), 46, theme.elevated)
+        }
         var color = theme.muted
         if i == 0 {
             color = theme.fg_bright
             gui.rect(0, y, 2, 46, theme.fg_bright)
+        }
+        if hovered && i != 0 {
+            color = theme.fg_bright
         }
         gui.text(16, y + 13, glyph, 18, color)
         i = i + 1
@@ -1050,7 +1085,11 @@ fn draw_sidebar(app: App, h: Int) {
     gui.rect(x, top, sidebar_width(), bottom - top, theme.panel)
     gui.line(x + sidebar_width() - 1, top, x + sidebar_width() - 1, bottom, theme.border)
     gui.text(x + 20, top + 11, "EXPLORER", 11, theme.fg)
-    gui.text(x + sidebar_width() - 28, top + 8, "↻", 14, theme.muted)
+    var refresh = theme.muted
+    if hovering(app, x + sidebar_width() - 34, top + 4, 30, 26) {
+        refresh = theme.fg_bright
+    }
+    gui.text(x + sidebar_width() - 28, top + 8, "↻", 14, refresh)
     gui.text(x + 14, top + 40, basename(app.root), 12, theme.fg_bright)
     let start_y = top + 62
     gui.clip(x, start_y, sidebar_width() - 1, bottom - start_y)
@@ -1063,12 +1102,16 @@ fn draw_sidebar(app: App, h: Int) {
         if app.active >= 0 && app.tabs.len() > 0 && app.tabs[app.active].path == node.path {
             selected = true
         }
+        let hovered = hovering(app, x, ry, sidebar_width() - 1, row_height())
+        if hovered && !selected {
+            gui.rect(x, ry, sidebar_width() - 1, row_height(), theme.elevated)
+        }
         if selected {
             gui.rect(x, ry, sidebar_width() - 1, row_height(), theme.selection)
         }
         let indent = 12 + node.depth * 12
         var color = theme.fg
-        if selected {
+        if selected || hovered {
             color = theme.fg_bright
         }
         if node.is_dir {
@@ -1107,7 +1150,11 @@ fn draw_tabs(app: App, x: Int, y: Int, w: Int) {
             gui.rect(tx, y, width, tabs_height(), theme.bg)
             gui.rect(tx, y, width, 1, theme.accent)
         } else {
-            gui.rect(tx, y, width, tabs_height(), gui.rgb(45, 45, 45))
+            var tab_bg = gui.rgb(45, 45, 45)
+            if hovering(app, tx, y, width, tabs_height()) {
+                tab_bg = gui.rgb(58, 58, 58)
+            }
+            gui.rect(tx, y, width, tabs_height(), tab_bg)
         }
         gui.line(tx + width - 1, y, tx + width - 1, y + tabs_height(), theme.border)
         var color = gui.rgb(150, 150, 150)
@@ -1265,6 +1312,10 @@ fn draw_panel(app: App, x: Int, y: Int, w: Int, h: Int) {
             color = theme.fg_bright
             gui.rect(tx - 10, y, gui.text_width(labels[i], 11) + 20, 35, theme.bg)
             gui.rect(tx - 10, y, gui.text_width(labels[i], 11) + 20, 1, theme.accent)
+        } else {
+            if hovering(app, tx - 10, y, gui.text_width(labels[i], 11) + 20, 35) {
+                color = theme.fg_bright
+            }
         }
         gui.text(tx, y + 12, labels[i], 11, color)
         tx = tx + gui.text_width(labels[i], 11) + 40
@@ -1910,8 +1961,8 @@ fn main() {
         quit: false,
         tree_scroll: 0,
         files: [],
-        mouse_x: 0,
-        mouse_y: 0,
+        mouse_x: -1,
+        mouse_y: -1,
     }
     app.nodes = build_nodes(app.root, 0, app.expanded)
     if capture.len() > 0 && app.nodes.len() > 0 {

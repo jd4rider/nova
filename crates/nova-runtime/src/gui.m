@@ -121,6 +121,10 @@ static void nova_gui_trace(const char *format, ...) {
 static void nova_gui_activate_window(void) {
     if (!nova_window) return;
     [nova_window makeKeyAndOrderFront:nil];
+    /* makeKeyAndOrderFront only raises the window within its own app when the
+     * app is not yet active, so another app's full-size window can stay on top
+     * and hide the whole UI. This raises it above every normal window. */
+    [nova_window orderFrontRegardless];
     [nova_window makeKeyWindow];
     if (nova_view) {
         BOOL made = [nova_window makeFirstResponder:nova_view];
@@ -246,10 +250,12 @@ static int64_t nova_gui_modifiers(NSEventModifierFlags flags) {
     nova_gui_trace("mouseDown point=%.0f,%.0f frame=%dx%d viewH=%.0f key=%d active=%d",
                    point.x, point.y, (int)nova_w, (int)nova_h, self.bounds.size.height,
                    (int)nova_window.isKeyWindow, (int)NSApp.isActive);
-    /* The window draws its own title strip and hides the system one, so the
-     * top few pixels stand in for the title bar and drag the window. */
-    if (point.y < 12) {
+    /* The window hides the system title bar and draws its own 35px strip, so
+     * dragging there has to be done by hand. The traffic lights own the top
+     * left corner and get their clicks from the window server, not from here. */
+    if (point.y < 35 && !(point.x < 76 && point.y < 28)) {
         [nova_window performWindowDragWithEvent:event];
+        return;
     }
 }
 
@@ -618,6 +624,9 @@ int64_t nova_gui_open(nova_str title, int64_t width, int64_t height) {
         [NSApp setDelegate:nova_delegate];
 
         [nova_window center];
+        /* Tracking areas report motion only when the window asks for it; without
+         * this the app cannot highlight anything under the pointer. */
+        [nova_window setAcceptsMouseMovedEvents:YES];
         [nova_window makeKeyAndOrderFront:nil];
         [nova_window makeFirstResponder:nova_view];
         nova_gui_activate_window();
@@ -805,6 +814,7 @@ void nova_gui_pump(void) {
         startup_ticks--;
         if (![NSApp isActive] && nova_window) {
             [NSApp activateIgnoringOtherApps:YES];
+            [nova_window orderFrontRegardless];
         }
     }
     @autoreleasepool {
