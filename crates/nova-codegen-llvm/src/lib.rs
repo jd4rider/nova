@@ -2377,6 +2377,23 @@ impl<'a> ModuleGen<'a> {
                 let result = self.load(&option_llvm, &option_slot);
                 Val::new(ret_ty.clone(), result)
             }
+            BuiltinMethod::StringJoin => {
+                let Some(separator) = args.first() else {
+                    return self.unit();
+                };
+                let separator = self.gen_expr(separator);
+                let slot = self.alloca("%nova.list");
+                self.store("%nova.list", &recv.repr, &slot);
+                let result = self.call_value(
+                    "%nova.string",
+                    "nova_string_join",
+                    &[
+                        ("ptr".into(), slot),
+                        ("%nova.string".into(), separator.repr),
+                    ],
+                );
+                Val::new(Type::String, result)
+            }
             BuiltinMethod::ListPush => self.unit(),
             BuiltinMethod::MapLen | BuiltinMethod::SetLen => {
                 let map_slot = self.alloca("%nova.map");
@@ -2550,6 +2567,36 @@ impl<'a> ModuleGen<'a> {
                     &[("%nova.string".into(), recv.repr.clone())],
                 );
                 Val::new(Type::String, result)
+            }
+            BuiltinMethod::StringTrimStart | BuiltinMethod::StringTrimEnd => {
+                let symbol = if method == BuiltinMethod::StringTrimStart {
+                    "nova_string_trim_start"
+                } else {
+                    "nova_string_trim_end"
+                };
+                let result = self.call_value(
+                    "%nova.string",
+                    symbol,
+                    &[("%nova.string".into(), recv.repr.clone())],
+                );
+                Val::new(Type::String, result)
+            }
+            BuiltinMethod::StringSplit => {
+                let Some(separator) = args.first() else {
+                    return self.unit();
+                };
+                let separator = self.gen_expr(separator);
+                let slot = self.alloca("%nova.list");
+                self.call_void(
+                    "nova_string_split",
+                    &[
+                        ("%nova.string".into(), recv.repr.clone()),
+                        ("%nova.string".into(), separator.repr),
+                        ("ptr".into(), slot.clone()),
+                    ],
+                );
+                let result = self.load("%nova.list", &slot);
+                Val::new(ret_ty.clone(), result)
             }
             BuiltinMethod::StringDisplayWidth => {
                 let result = self.call_value(
@@ -3370,6 +3417,10 @@ declare i32 @nova_string_contains(%nova.string, %nova.string)
 declare i32 @nova_string_starts_with(%nova.string, %nova.string)
 declare i32 @nova_string_ends_with(%nova.string, %nova.string)
 declare %nova.string @nova_string_trim(%nova.string)
+declare %nova.string @nova_string_trim_start(%nova.string)
+declare %nova.string @nova_string_trim_end(%nova.string)
+declare void @nova_string_split(%nova.string, %nova.string, ptr)
+declare %nova.string @nova_string_join(ptr, %nova.string)
 declare i64 @nova_string_display_width(%nova.string)
 declare %nova.string @nova_string_clip(%nova.string, i64)
 declare void @nova_string_wrap(%nova.string, i64, ptr)

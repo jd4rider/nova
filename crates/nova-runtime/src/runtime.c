@@ -1772,3 +1772,73 @@ void *nova_map_get(nova_map *map, void *key) {
 int64_t nova_map_len(nova_map *map) {
     return map->len;
 }
+
+nova_str nova_string_trim_start(nova_str value) {
+    if (!value.ptr || value.len == 0) return nova_copy_str("", 0);
+    int64_t start = 0;
+    while (start < value.len && nova_ascii_space((unsigned char)value.ptr[start])) start++;
+    return nova_copy_str(value.ptr + start, value.len - start);
+}
+
+nova_str nova_string_trim_end(nova_str value) {
+    if (!value.ptr || value.len == 0) return nova_copy_str("", 0);
+    int64_t end = value.len;
+    while (end > 0 && nova_ascii_space((unsigned char)value.ptr[end - 1])) end--;
+    return nova_copy_str(value.ptr, end);
+}
+
+/* Splits on a byte separator, always producing at least one element, the same
+ * way split works in every language a Nova program is likely to emulate. */
+void nova_string_split(nova_str value, nova_str separator, nova_list *result) {
+    result->data = NULL;
+    result->len = 0;
+    result->cap = 0;
+    if (!value.ptr) {
+        nova_wrap_push(result, nova_copy_str("", 0));
+        return;
+    }
+    if (separator.len <= 0) {
+        nova_wrap_push(result, nova_copy_str(value.ptr, value.len));
+        return;
+    }
+    int64_t start = 0;
+    int64_t i = 0;
+    while (i + separator.len <= value.len) {
+        if (memcmp(value.ptr + i, separator.ptr, (size_t)separator.len) == 0) {
+            nova_wrap_push(result, nova_copy_str(value.ptr + start, i - start));
+            i += separator.len;
+            start = i;
+        } else {
+            i++;
+        }
+    }
+    nova_wrap_push(result, nova_copy_str(value.ptr + start, value.len - start));
+}
+
+/* Joins a List<String> with a separator, sizing the buffer once. */
+nova_str nova_string_join(nova_list *list_ptr, nova_str separator) {
+    if (!list_ptr) return nova_copy_str("", 0);
+    nova_list list = *list_ptr;
+    int64_t count = list.len;
+    if (count <= 0 || !list.data) return nova_copy_str("", 0);
+    nova_str *items = (nova_str *)list.data;
+    int64_t total = separator.len * (count - 1);
+    for (int64_t i = 0; i < count; i++) total += items[i].len;
+    char *buffer = (char *)nova_alloc(total + 1);
+    if (!buffer) nova_die_oom();
+    int64_t at = 0;
+    for (int64_t i = 0; i < count; i++) {
+        if (i > 0 && separator.len > 0) {
+            memcpy(buffer + at, separator.ptr, (size_t)separator.len);
+            at += separator.len;
+        }
+        if (items[i].len > 0 && items[i].ptr) {
+            memcpy(buffer + at, items[i].ptr, (size_t)items[i].len);
+            at += items[i].len;
+        }
+    }
+    buffer[at] = '\0';
+    nova_str out = nova_copy_str(buffer, at);
+    free(buffer);
+    return out;
+}

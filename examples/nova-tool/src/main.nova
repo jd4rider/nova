@@ -1,0 +1,89 @@
+import std.io { println }
+import "../../../libraries/nova-gui/src/gui.nova" as gui
+import "../../../libraries/nova-fmt/src/fmt.nova"
+import "../../../libraries/nova-lexer/src/lexer.nova"
+import "../../../libraries/nova-diag/src/diag.nova"
+import "../../../libraries/nova-boxes/src/boxes.nova"
+
+// nova-tool: the phase-1 self-hosted toolchain, in Nova.
+//
+// Set NOVA_TOOL to fmt | check | lex | diag | box | lock | imports and
+// NOVA_TOOL_PATH to the file to inspect. `fmt` writes to NOVA_TOOL_OUT when it
+// is set, which is how the corpus test checks idempotence.
+
+fn main() {
+    let mode = gui.env("NOVA_TOOL")
+    let path = gui.env("NOVA_TOOL_PATH")
+    if path.len() == 0 {
+        println("nova-tool: set NOVA_TOOL_PATH")
+        return
+    }
+    let source = gui.read(path)
+    if source.len() == 0 && !gui.exists(path) {
+        println("nova-tool: cannot read ${path}")
+        return
+    }
+
+    if mode == "fmt" {
+        let out = fmt_source(source)
+        let target = gui.env("NOVA_TOOL_OUT")
+        if target.len() > 0 {
+            if gui.write(target, out) {
+                println("formatted ${path} -> ${target}")
+            } else {
+                println("nova-tool: could not write ${target}")
+            }
+        } else {
+            println(out)
+        }
+        return
+    }
+
+    if mode == "check" {
+        if fmt_is_formatted(source) {
+            println("FORMATTED ${path}")
+        } else {
+            println("UNFORMATTED ${path}")
+        }
+        return
+    }
+
+    if mode == "lex" {
+        let tokens = lx_lex(source)
+        var count = tokens.len()
+        if count > 0 {
+            count = count - 1
+        }
+        println("tokens=${count} keywords=${lx_count(tokens, lx_keyword())} idents=${lx_count(tokens, lx_ident())} strings=${lx_count(tokens, lx_string())} comments=${lx_count(tokens, lx_comment())}")
+        return
+    }
+
+    if mode == "diag" {
+        let d = diag_error("E0001", "unexpected token", 10, 14)
+        println(diag_render(source, d))
+        return
+    }
+
+    if mode == "box" {
+        let manifest = bx_parse_manifest(source)
+        println("name=${manifest.name} version=${manifest.version} bin=${manifest.bin} deps=${manifest.deps.len()} ok=${bx_manifest_ok(manifest)}")
+        for dep in manifest.deps {
+            println("  ${dep.name} path=${dep.path} version=${dep.version}")
+        }
+        return
+    }
+
+    if mode == "lock" {
+        println(bx_lock(bx_parse_manifest(source)))
+        return
+    }
+
+    if mode == "imports" {
+        for dep in bx_imports(source) {
+            println(dep)
+        }
+        return
+    }
+
+    println("nova-tool: unknown mode ${mode}")
+}

@@ -62,3 +62,29 @@ lines and a compiler must be *exactly* as permissive as its predecessor. Phase 4
 is gated on LLVM bindings, which is the one place where C is not optional.
 Nothing here is blocked on language features — only on time and on keeping the
 test corpus green at every step.
+
+## Phase 1 status (in progress)
+
+The Nova implementations exist and are exercised by `examples/nova-tool`:
+
+| Piece | Nova file | State |
+|---|---|---|
+| Formatter | `libraries/nova-fmt/src/fmt.nova` | formats every corpus file, idempotent |
+| Lexer | `libraries/nova-lexer/src/lexer.nova` | OK on normal files; segfaults on the 5,139-line studio file (open) |
+| Diagnostics | `libraries/nova-diag/src/diag.nova` | renders severity, location and caret |
+| Packages (**Nova Boxes**) | `libraries/nova-boxes/src/boxes.nova` | `box.toml`, `boxes.lock`, dependency and import graphs |
+
+Language gaps found while porting and fixed in the toolchain (sema + LLVM codegen
++ C runtime), because they belong in Nova rather than in workarounds:
+
+- `String.split(separator) -> List<String>`
+- `List<String>.join(separator) -> String`
+- `String.trim_start()` and `String.trim_end()`
+
+`nova_string_join` takes the list by pointer, matching `nova_list_push`; passing a
+24-byte list by value produced a garbage length and crashed.
+
+Test state: `sh examples/nova-tool/tests/toolchain.sh` → **passed 94, failed 1**
+(the lexer case above). No Rust crate has been deleted yet: the bootstrap
+compiler (parser, sema, codegen, CLI, LSP) is still Rust, and phases 2–4 of this
+document are what removes it.

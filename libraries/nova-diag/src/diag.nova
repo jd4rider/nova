@@ -1,0 +1,124 @@
+// Diagnostics in Nova: a span, a severity, and a rendered snippet with a caret.
+//
+// The renderer is intentionally small. It answers the two questions a compiler
+// error has to answer without a language server: where, and what does the line
+// look like with the span marked.
+
+struct Span {
+    start: Int,
+    end: Int,
+}
+
+struct Diagnostic {
+    severity: Int,
+    code: String,
+    message: String,
+    start: Int,
+    end: Int,
+}
+
+fn diag_error(code: String, message: String, start: Int, end: Int) -> Diagnostic {
+    return Diagnostic {
+        severity: 1,
+        code: code,
+        message: message,
+        start: start,
+        end: end,
+    }
+}
+
+fn diag_warning(code: String, message: String, start: Int, end: Int) -> Diagnostic {
+    return Diagnostic {
+        severity: 2,
+        code: code,
+        message: message,
+        start: start,
+        end: end,
+    }
+}
+
+fn diag_severity_name(severity: Int) -> String {
+    if severity == 1 {
+        return "error"
+    }
+    if severity == 2 {
+        return "warning"
+    }
+    return "note"
+}
+
+fn diag_line_col(source: String, offset: Int) -> (Int, Int) {
+    let chars = source.chars()
+    var line = 1
+    var column = 1
+    var i = 0
+    while i < offset && i < chars.len() {
+        if chars[i] == "\n" {
+            line = line + 1
+            column = 1
+        } else {
+            column = column + 1
+        }
+        i = i + 1
+    }
+    return (line, column)
+}
+
+fn diag_line_text(source: String, wanted: Int) -> String {
+    let chars = source.chars()
+    var line = 1
+    var start = 0
+    var i = 0
+    while i <= chars.len() {
+        if i == chars.len() || chars[i] == "\n" {
+            if line == wanted {
+                var out = ""
+                var k = start
+                while k < i {
+                    out = out + chars[k]
+                    k = k + 1
+                }
+                return out
+            }
+            line = line + 1
+            start = i + 1
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+fn diag_render(source: String, d: Diagnostic) -> String {
+    let place = diag_line_col(source, d.start)
+    let line = place.0
+    let column = place.1
+    let text = diag_line_text(source, line)
+    let number = "${line}"
+    var pad = ""
+    var p = 0
+    while p < number.len() {
+        pad = pad + " "
+        p = p + 1
+    }
+    var underline = ""
+    var u = 0
+    while u < column - 1 {
+        underline = underline + " "
+        u = u + 1
+    }
+    var width = d.end - d.start
+    if width < 1 {
+        width = 1
+    }
+    var marks = 0
+    while marks < width {
+        underline = underline + "^"
+        marks = marks + 1
+    }
+    var out = "${diag_severity_name(d.severity)}[${d.code}]: ${d.message}\n"
+    out = out + " --> ${line}:${column}\n"
+    out = out + "${pad} |\n"
+    out = out + "${number} | ${text}\n"
+    out = out + "${pad} | ${underline}\n"
+    return out
+}

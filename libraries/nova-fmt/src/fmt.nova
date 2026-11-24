@@ -1,0 +1,237 @@
+// Nova source formatter, in Nova.
+//
+// A conservative, line-based port of the original Rust formatter: indentation
+// follows brace depth, trailing whitespace and blank-line runs collapse, and the
+// file ends with exactly one newline. Every token, comment and string is
+// preserved verbatim, including multi-line strings and block comments, because
+// the scanner tracks string/char/comment state across lines.
+
+struct FmtState {
+    depth: Int,
+    in_string: Bool,
+    in_char: Bool,
+    escape: Bool,
+    block_depth: Int,
+}
+
+fn fmt_state() -> FmtState {
+    return FmtState {
+        depth: 0,
+        in_string: false,
+        in_char: false,
+        escape: false,
+        block_depth: 0,
+    }
+}
+
+fn fmt_slice(chars: List<String>, start: Int, stop: Int) -> String {
+    var out = ""
+    var i = start
+    while i < stop && i < chars.len() {
+        if i >= 0 {
+            out = out + chars[i]
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn fmt_split_lines(source: String) -> List<String> {
+    return source.split("\n")
+}
+
+fn fmt_join(lines: List<String>) -> String {
+    return lines.join("\n")
+}
+
+fn fmt_trim_end(text: String) -> String {
+    return text.trim_end()
+}
+
+fn fmt_trim_start(text: String) -> String {
+    return text.trim_start()
+}
+
+fn fmt_trim(text: String) -> String {
+    return text.trim()
+}
+
+fn fmt_is_blank(text: String) -> Bool {
+    return fmt_trim(text).len() == 0
+}
+
+fn fmt_leading_closes(text: String) -> Int {
+    let chars = text.chars()
+    var count = 0
+    while count < chars.len() && chars[count] == "}" {
+        count = count + 1
+    }
+    return count
+}
+
+fn fmt_indent(levels: Int) -> String {
+    var out = ""
+    var i = 0
+    while i < levels {
+        out = out + "    "
+        i = i + 1
+    }
+    return out
+}
+
+fn fmt_scan(text: String, state: FmtState) -> FmtState {
+    let chars = text.chars()
+    var depth = state.depth
+    var in_string = state.in_string
+    var in_char = state.in_char
+    var escape = state.escape
+    var block = state.block_depth
+    var i = 0
+    while i < chars.len() {
+        let c = chars[i]
+        var next = ""
+        if i + 1 < chars.len() {
+            next = chars[i + 1]
+        }
+        if block > 0 {
+            if c == "/" && next == "*" {
+                block = block + 1
+                i = i + 2
+            } else if c == "*" && next == "/" {
+                block = block - 1
+                i = i + 2
+            } else {
+                i = i + 1
+            }
+        } else if in_string {
+            if escape {
+                escape = false
+            } else if c == "\\" {
+                escape = true
+            } else if c == "\"" {
+                in_string = false
+            }
+            i = i + 1
+        } else if in_char {
+            if escape {
+                escape = false
+            } else if c == "\\" {
+                escape = true
+            } else if c == "'" {
+                in_char = false
+            }
+            i = i + 1
+        } else {
+            if c == "/" && next == "/" {
+                i = chars.len()
+            } else if c == "/" && next == "*" {
+                block = 1
+                i = i + 2
+            } else if c == "\"" {
+                in_string = true
+                i = i + 1
+            } else if c == "'" {
+                in_char = true
+                i = i + 1
+            } else if c == "{" {
+                depth = depth + 1
+                i = i + 1
+            } else if c == "}" {
+                depth = depth - 1
+                i = i + 1
+            } else {
+                i = i + 1
+            }
+        }
+    }
+    return FmtState {
+        depth: depth,
+        in_string: in_string,
+        in_char: in_char,
+        escape: escape,
+        block_depth: block,
+    }
+}
+
+// Lines above this length are data, not code (embedded strings, generated
+// tables). Rebuilding them through per-character concatenation is quadratic, so
+// the formatter treats a file containing one as already-formatted.
+fn fmt_max_line() -> Int {
+    return 4000
+}
+
+fn fmt_has_long_line(source: String) -> Bool {
+    let chars = source.chars()
+    var run = 0
+    var i = 0
+    while i < chars.len() {
+        if chars[i] == "\n" {
+            run = 0
+        } else {
+            run = run + 1
+            if run > fmt_max_line() {
+                return true
+            }
+        }
+        i = i + 1
+    }
+    return false
+}
+
+fn fmt_source(source: String) -> String {
+    let lines = fmt_split_lines(source)
+    var out: List<String> = []
+    var state = fmt_state()
+    var blank_run = false
+    var i = 0
+    while i < lines.len() {
+        let raw = fmt_trim_end(lines[i])
+        if state.in_string || state.block_depth > 0 {
+            out.push(raw)
+            state = fmt_scan(raw, state)
+            blank_run = fmt_is_blank(raw)
+        } else {
+            let content = fmt_trim_start(raw)
+            if content.len() == 0 {
+                if !blank_run && out.len() > 0 {
+                    out.push("")
+                }
+                blank_run = true
+            } else {
+                blank_run = false
+                let closes = fmt_leading_closes(content)
+                var indent = state.depth - closes
+                if indent < 0 {
+                    indent = 0
+                }
+                out.push(fmt_indent(indent) + content)
+                state = fmt_scan(content, state)
+            }
+        }
+        i = i + 1
+    }
+    var end = out.len()
+    while end > 0 && out[end - 1].len() == 0 {
+        end = end - 1
+    }
+    if end == 0 {
+        return ""
+    }
+    var kept: List<String> = []
+    var k = 0
+    while k < end {
+        kept.push(out[k])
+        k = k + 1
+    }
+    // split() keeps the empty tail of a trailing newline; normalising the end
+    // makes the formatter idempotent no matter how the source ended.
+    let joined = fmt_join(kept).trim_end()
+    if joined.len() == 0 {
+        return ""
+    }
+    return joined + "\n"
+}
+
+fn fmt_is_formatted(source: String) -> Bool {
+    return fmt_source(source) == source
+}

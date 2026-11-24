@@ -1,0 +1,323 @@
+// Nova Boxes — the package manager for Nova, written in Nova.
+//
+// A package is a *box*. A box ships a `box.toml` manifest:
+//
+//   [package]
+//   name = "render"
+//   version = "0.1.0"
+//
+//   [dependencies]
+//   math = "0.2.0"
+//   gui = { path = "../gui" }
+//
+// and resolves to a `boxes.lock` listing every dependency in order. There are
+// no Cargo crates, no registry client and no Rust in this path: manifests,
+// validation, import graphs and lockfiles are plain Nova values, so the same
+// code runs in the compiler, the CLI and an editor.
+
+struct BoxDep {
+    name: String,
+    path: String,
+    version: String,
+}
+
+struct BoxManifest {
+    name: String,
+    version: String,
+    bin: String,
+    deps: List<BoxDep>,
+}
+
+fn bx_trim_end(text: String) -> String {
+    let chars = text.chars()
+    var stop = chars.len()
+    while stop > 0 {
+        let c = chars[stop - 1]
+        if c == " " || c == "\t" || c == "\r" {
+            stop = stop - 1
+        } else {
+            var out = ""
+            var i = 0
+            while i < stop {
+                out = out + chars[i]
+                i = i + 1
+            }
+            return out
+        }
+    }
+    return ""
+}
+
+fn bx_trim_start(text: String) -> String {
+    let chars = text.chars()
+    var start = 0
+    while start < chars.len() {
+        let c = chars[start]
+        if c == " " || c == "\t" {
+            start = start + 1
+        } else {
+            var out = ""
+            var i = start
+            while i < chars.len() {
+                out = out + chars[i]
+                i = i + 1
+            }
+            return out
+        }
+    }
+    return ""
+}
+
+fn bx_trim(text: String) -> String {
+    return bx_trim_start(bx_trim_end(text))
+}
+
+fn bx_lines(source: String) -> List<String> {
+    let chars = source.chars()
+    var lines: List<String> = []
+    var current = ""
+    var i = 0
+    while i < chars.len() {
+        if chars[i] == "\n" {
+            lines.push(current)
+            current = ""
+        } else {
+            current = current + chars[i]
+        }
+        i = i + 1
+    }
+    lines.push(current)
+    return lines
+}
+
+// Drops a trailing `# comment`, but only when the `#` is outside quotes.
+fn bx_strip_comment(line: String) -> String {
+    let chars = line.chars()
+    var quoted = false
+    var i = 0
+    while i < chars.len() {
+        let c = chars[i]
+        if c == "\"" {
+            quoted = !quoted
+        } else if c == "#" && !quoted {
+            var out = ""
+            var k = 0
+            while k < i {
+                out = out + chars[k]
+                k = k + 1
+            }
+            return out
+        }
+        i = i + 1
+    }
+    return line
+}
+
+fn bx_unquote(text: String) -> String {
+    let chars = text.chars()
+    var out = ""
+    var i = 0
+    var quoted = false
+    while i < chars.len() {
+        if chars[i] == "\"" {
+            quoted = !quoted
+        } else if quoted {
+            out = out + chars[i]
+        }
+        i = i + 1
+    }
+    return out
+}
+
+// The value of `path = "..."` inside an inline table, or "" when absent.
+fn bx_table_value(text: String, key: String) -> String {
+    let chars = text.chars()
+    var i = 0
+    while i < chars.len() {
+        if chars[i] == key.chars()[0] {
+            var word = ""
+            var k = i
+            while k < chars.len() && (chars[k].len() == 1 && chars[k] != " " && chars[k] != "=" && chars[k] != "," && chars[k] != "}") {
+                word = word + chars[k]
+                k = k + 1
+            }
+            if word == key {
+                var rest = ""
+                var r = k
+                while r < chars.len() {
+                    rest = rest + chars[r]
+                    r = r + 1
+                }
+                return bx_unquote(rest)
+            }
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+fn bx_valid_name(name: String) -> Bool {
+    if name.len() == 0 {
+        return false
+    }
+    let chars = name.chars()
+    var i = 0
+    while i < chars.len() {
+        let c = chars[i]
+        let allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+        var ok = false
+        for known in allowed.chars() {
+            if c == known {
+                ok = true
+            }
+        }
+        if !ok {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+fn bx_parse_manifest(source: String) -> BoxManifest {
+    var name = ""
+    var version = "0.1.0"
+    var bin = "src/main.nova"
+    var deps: List<BoxDep> = []
+    var section = ""
+    for raw in bx_lines(source) {
+        let line = bx_trim(bx_strip_comment(raw))
+        if line.len() > 0 {
+        if line.starts_with("[") {
+            if line == "[package]" {
+                section = "package"
+            } else if line == "[bin]" {
+                section = "bin"
+            } else if line == "[dependencies]" {
+                section = "dependencies"
+            } else {
+                section = "other"
+            }
+        } else {
+            let parts = bx_split_key(line)
+            let key = parts.0
+            let value = parts.1
+            if section == "package" && key == "name" {
+                name = bx_unquote(value)
+            }
+            if section == "package" && key == "version" {
+                version = bx_unquote(value)
+            }
+            if section == "bin" && key == "path" {
+                bin = bx_unquote(value)
+            }
+            if section == "dependencies" && key.len() > 0 {
+                var path = ""
+                var ver = ""
+                if value.starts_with("{") {
+                    path = bx_table_value(value, "path")
+                    ver = bx_table_value(value, "version")
+                } else {
+                    ver = bx_unquote(value)
+                }
+                deps.push(BoxDep { name: key, path: path, version: ver })
+            }
+        }
+        }
+    }
+    return BoxManifest { name: name, version: version, bin: bin, deps: deps }
+}
+
+fn bx_split_key(line: String) -> (String, String) {
+    let chars = line.chars()
+    var i = 0
+    while i < chars.len() && chars[i] != "=" {
+        i = i + 1
+    }
+    var key = ""
+    var k = 0
+    while k < i {
+        key = key + chars[k]
+        k = k + 1
+    }
+    var value = ""
+    var v = i + 1
+    while v < chars.len() {
+        value = value + chars[v]
+        v = v + 1
+    }
+    return (bx_trim(key), bx_trim(value))
+}
+
+fn bx_lock(manifest: BoxManifest) -> String {
+    var out = "# generated by nova-boxes — do not edit\n"
+    out = out + "${manifest.name} ${manifest.version}\\n"
+    for dep in manifest.deps {
+        if dep.path.len() > 0 {
+            out = out + "${dep.name} path ${dep.path}\\n"
+        } else {
+            out = out + "${dep.name} version ${dep.version}\\n"
+        }
+    }
+    return out
+}
+
+// Every `import "..."` path in a source file, in order, without duplicates.
+fn bx_imports(source: String) -> List<String> {
+    var found: List<String> = []
+    for raw in bx_lines(source) {
+        let line = bx_trim(raw)
+        if line.starts_with("import") {
+            let chars = line.chars()
+            var first = -1
+            var last = -1
+            var i = 0
+            while i < chars.len() {
+                if chars[i] == "\"" {
+                    if first < 0 {
+                        first = i
+                    } else {
+                        last = i
+                    }
+                }
+                i = i + 1
+            }
+            if first >= 0 && last > first {
+                var path = ""
+                var k = first + 1
+                while k < last {
+                    path = path + chars[k]
+                    k = k + 1
+                }
+                var seen = false
+                for existing in found {
+                    if existing == path {
+                        seen = true
+                    }
+                }
+                if !seen {
+                    found.push(path)
+                }
+            }
+        }
+    }
+    return found
+}
+
+fn bx_manifest_ok(manifest: BoxManifest) -> Bool {
+    if !bx_valid_name(manifest.name) {
+        return false
+    }
+    if manifest.version.len() == 0 {
+        return false
+    }
+    for dep in manifest.deps {
+        if !bx_valid_name(dep.name) {
+            return false
+        }
+        if dep.path.len() == 0 && dep.version.len() == 0 {
+            return false
+        }
+    }
+    return true
+}

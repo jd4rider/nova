@@ -3937,6 +3937,24 @@ impl Checker {
                     };
                     self.finish(te, expected)
                 }
+                "join" => {
+                    self.require_args(method, args, 1, span);
+                    let argument = args
+                        .first()
+                        .map(|a| self.check_expr(&a.value, Some(&Type::String)))
+                        .map(|e| vec![e])
+                        .unwrap_or_default();
+                    let te = TExpr::new(
+                        TExprKind::Method {
+                            receiver: Box::new(recv),
+                            method: BuiltinMethod::StringJoin,
+                            args: argument,
+                        },
+                        Type::String,
+                        span,
+                    );
+                    self.finish(te, expected)
+                }
                 other => self.unknown_method(other, &recv_ty, method_span, span),
             },
             Type::Map(key, value) => match method {
@@ -4235,6 +4253,42 @@ impl Checker {
                             args: Vec::new(),
                         },
                         Type::String,
+                        span,
+                    );
+                    self.finish(te, expected)
+                }
+                "trim_start" | "trim_end" => {
+                    self.require_args(method, args, 0, span);
+                    let builtin = if method == "trim_start" {
+                        BuiltinMethod::StringTrimStart
+                    } else {
+                        BuiltinMethod::StringTrimEnd
+                    };
+                    let te = TExpr::new(
+                        TExprKind::Method {
+                            receiver: Box::new(recv),
+                            method: builtin,
+                            args: Vec::new(),
+                        },
+                        Type::String,
+                        span,
+                    );
+                    self.finish(te, expected)
+                }
+                "split" => {
+                    self.require_args(method, args, 1, span);
+                    let argument = args
+                        .first()
+                        .map(|a| self.check_expr(&a.value, Some(&Type::String)))
+                        .map(|e| vec![e])
+                        .unwrap_or_default();
+                    let te = TExpr::new(
+                        TExprKind::Method {
+                            receiver: Box::new(recv),
+                            method: BuiltinMethod::StringSplit,
+                            args: argument,
+                        },
+                        Type::List(Box::new(Type::String)),
                         span,
                     );
                     self.finish(te, expected)
