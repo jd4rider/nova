@@ -45,6 +45,8 @@ struct App {
     message: String,
     hits: List<Int>,
     hit_at: Int,
+    fonts: List<String>,
+    font_index: Int,
     quit: Bool,
 }
 
@@ -261,7 +263,7 @@ fn draw_grid(app: App) {
     let window_w = gui.width()
     let grid_h = gui.height() - tab_height() - status_height()
     gui.rect(0, top, window_w, grid_h, pal.bg)
-    if app.tabs.len() == 0 {
+    if app.tabs.len() == 0 || app.active < 0 || app.active >= app.tabs.len() {
         return
     }
     let tab = app.tabs[app.active]
@@ -290,12 +292,14 @@ fn draw_status(app: App) {
     gui.rect(0, y, window_w, status_height(), theme.status)
     gui.text(12, y + 6, "◈ nova-term", 11, gui.white())
     var left = 118
-    if app.tabs.len() > 0 {
+    if app.tabs.len() > 0 && app.active >= 0 && app.active < app.tabs.len() {
         let tab = app.tabs[app.active]
         gui.text(left, y + 6, tab.cwd, 11, gui.white())
         left = left + gui.text_width(tab.cwd, 11) + 18
     }
     gui.text(left, y + 6, app.theme_name, 11, gui.white())
+    let family = gui.mono_font()
+    gui.text(left + 84, y + 6, family, 11, gui.white())
     let dims = grid_cols(app)
     let size_text = "${app.tabs.len()} tabs  " + "${dims}x" + "${grid_rows(app)}  " + "${app.size}pt"
     gui.text(window_w - gui.text_width(size_text, 11) - 14, y + 6, size_text, 11, gui.white())
@@ -317,6 +321,7 @@ fn commands() -> List<Command> {
     list.push(Command { id: "smaller", label: "Smaller text", hint: "⌘-" })
     list.push(Command { id: "top", label: "Scroll to top", hint: "" })
     list.push(Command { id: "bottom", label: "Scroll to bottom", hint: "⌘K" })
+    list.push(Command { id: "font", label: "Font: next monospaced family", hint: "" })
     return list
 }
 
@@ -386,6 +391,16 @@ fn run_command(app: App, id: String) -> App {
     }
     if id == "bottom" {
         app.tabs[app.active].term = vt.tm_scroll_bottom(app.tabs[app.active].term)
+    }
+    if id == "font" {
+        if app.fonts.len() == 0 {
+            app.fonts = lines_of(gui.mono_fonts())
+        }
+        if app.fonts.len() > 0 {
+            app.font_index = (app.font_index + 1) % app.fonts.len()
+            gui.set_mono_font(app.fonts[app.font_index])
+            app.message = "font: " + app.fonts[app.font_index]
+        }
     }
     return app
 }
@@ -535,11 +550,15 @@ fn key(app: App, code: Int, mods: Int) -> App {
         return app
     }
     if code == gui.key_page_up() {
-        app.tabs[app.active].term = vt.tm_scroll(app.tabs[app.active].term, 10)
+        if app.tabs.len() > 0 {
+            app.tabs[app.active].term = vt.tm_scroll(app.tabs[app.active].term, 10)
+        }
         return app
     }
     if code == gui.key_page_down() {
-        app.tabs[app.active].term = vt.tm_scroll(app.tabs[app.active].term, 0 - 10)
+        if app.tabs.len() > 0 {
+            app.tabs[app.active].term = vt.tm_scroll(app.tabs[app.active].term, 0 - 10)
+        }
         return app
     }
     if app.tabs.len() == 0 {
@@ -733,6 +752,19 @@ fn run_script(app: App, path: String) -> App {
                 let cell = vt.tm_cell_at(app.tabs[app.active].term, to_int(words[1]), to_int(words[2]))
                 println(truth(cell.fg == to_int(words[3])) + " " + trimmed)
             }
+            if cmd == "assert_alt" && words.len() >= 2 {
+                var want = false
+                if words[1] == "1" {
+                    want = true
+                }
+                println(truth(vt.tm_alt_on(app.tabs[app.active].term) == want) + " " + trimmed)
+            }
+            if cmd == "fontname" {
+                println("FONT " + gui.mono_font())
+            }
+            if cmd == "assert_font_has" && words.len() >= 2 {
+                println(truth(gui.mono_font().contains(words[1])) + " " + trimmed)
+            }
             if cmd == "assert_title" && words.len() >= 2 {
                 println(truth(app.tabs[app.active].term.strs[0].contains(words[1])) + " " + trimmed)
             }
@@ -759,7 +791,18 @@ fn main() {
         message: "",
         hits: [],
         hit_at: 0,
+        fonts: [],
+        font_index: 0,
         quit: false,
+    }
+    app.fonts = lines_of(gui.mono_fonts())
+    let active_font = gui.mono_font()
+    var fi = 0
+    while fi < app.fonts.len() {
+        if app.fonts[fi] == active_font {
+            app.font_index = fi
+        }
+        fi = fi + 1
     }
     app = spawn(app)
     let script = gui.env("NOVA_TERM_SCRIPT")

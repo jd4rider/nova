@@ -62,6 +62,20 @@ assert_title my-shell
 SCRIPT
 run_case title "$WORK/title.txt"
 
+cat > "$WORK/alt.txt" <<'SCRIPT'
+feed row-one
+feed <E>[?1049hZZZ<E>[?1049l
+assert_cell 0 0 r
+assert_has row-one
+SCRIPT
+run_case altscreen "$WORK/alt.txt"
+
+cat > "$WORK/font.txt" <<'SCRIPT'
+fontname
+assert_font_has Nerd
+SCRIPT
+run_case font "$WORK/font.txt"
+
 echo
 echo "passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]

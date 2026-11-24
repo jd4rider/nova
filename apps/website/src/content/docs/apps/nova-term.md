@@ -19,6 +19,7 @@ NOVA_TERM_ROOT="$PWD" ./target/nova/nova-term
 | `NOVA_TERM_ROOT` | Folder new tabs start in. Defaults to the working directory. |
 | `NOVA_TERM_SCRIPT` | Runs a scripted UI test, then exits (see [Tests](#tests)). |
 | `NOVA_TERM_SHOT` | Writes the first frame to a PNG and exits. |
+| `NOVA_MONO_FONT` | Overrides the monospaced family. Defaults to an installed Nerd Font. |
 
 ## What it does
 
@@ -26,8 +27,9 @@ NOVA_TERM_ROOT="$PWD" ./target/nova/nova-term
 - **ANSI / VT100 screen.** SGR colours (16, 256 and 24-bit), cursor addressing, erase, insert/delete line and character, scroll regions, save/restore cursor, tab stops, wrapping, the alternate screen (`ESC[?1049h`) and OSC window titles.
 - **Scrollback.** 2000 lines per tab, wheel or `PageUp`/`PageDown`, `Cmd+F` searches it and marks each hit on the left edge.
 - **Prompt blocks.** A 2px rail marks every prompt line (OSC 133 `A`, or a line beginning with `$`, `❯` or `%`), so commands are easy to find while scrolling.
-- **Command palette.** `Cmd+K` filters *new tab, close tab, clear, copy, paste, find, theme, larger/smaller text, scroll to top/bottom*.
+- **Command palette.** `Cmd+K` filters *new tab, close tab, clear, copy, paste, find, theme, font, larger/smaller text, scroll to top/bottom*.
 - **Themes and zoom.** Dark+ and Gruvbox palettes, 10–22pt text; the grid and the pty resize together.
+- **Nerd Font by default.** The host picks an installed family named `… Nerd Font …` (override with `NOVA_MONO_FONT`), so Powerline and devicon glyphs draw instead of boxes. *Font: next monospaced family* in the palette cycles every installed monospaced family and the status bar names the one in use.
 - **Copy and paste** through the system clipboard.
 
 ## Keys
@@ -77,7 +79,7 @@ cd examples/nova-term
 sh tests/term-ui.sh
 ```
 
-The harness feeds synthetic ANSI through the real parser and drives the real pty: colour indices, cursor addressing, alternate-screen restore, 256-colour, `pwd` through a shell, tab create/close and OSC titles. It prints `passed n, failed 0`.
+The harness feeds synthetic ANSI through the real parser and drives the real pty: colour indices, cursor addressing, alternate-screen restore (the alt screen is the second half of the cell buffer, so `vim` and `less` land back on the exact prompt), 256-colour, `pwd` through a shell, tab create/close and OSC titles. It prints `passed n, failed 0`.
 
 ## Install as an application
 

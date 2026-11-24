@@ -141,6 +141,16 @@ assert_split 0
 SCRIPT
 run_case panesandrefs "$WORK/pane.txt"
 
+cat > "$WORK/termselect.txt" <<'SCRIPT'
+termfeed <E>[2J<E>[Hhello selection
+termselect 0 0 0 14
+assert_term_sel_has hello
+keymod 99 1
+assert_clipboard_has hello
+termfont
+SCRIPT
+run_case termselection "$WORK/termselect.txt"
+
 echo
 echo "passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]

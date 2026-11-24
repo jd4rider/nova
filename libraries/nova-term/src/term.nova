@@ -51,8 +51,12 @@ fn tm_i_pcount() -> Int { return 23 }
 fn tm_i_shead() -> Int { return 24 }
 fn tm_i_scount() -> Int { return 25 }
 fn tm_i_mbase() -> Int { return 26 }
+fn tm_i_mlen() -> Int { return 27 }
 
-fn tm_register_count() -> Int { return 27 }
+// 27 is the alternate-screen base row: 0 for the main screen, `rows` for alt.
+fn tm_i_abase() -> Int { return tm_i_mlen() }
+
+fn tm_register_count() -> Int { return 28 }
 fn tm_param_slots() -> Int { return 16 }
 
 // String registers: title, OSC payload, private marker, final byte.
@@ -263,14 +267,16 @@ fn tm_new(width: Int, height: Int) -> Term {
     regs[tm_i_cursor()] = 1
     var strs: List<String> = ["", "", "", ""]
     var marks: List<Int> = []
+    var grid = tm_blank_grid(c * r)
+    var saved_grid = tm_blank_grid(c * r)
     return Term {
         regs: regs,
         strs: strs,
-        cells: tm_blank_grid(c * r),
+        cells: tm_blank_grid(c * r * 2),
         sb: tm_blank_lines(tm_scrollback_capacity()),
         marks: marks,
         params: tm_blank_ints(tm_param_slots()),
-        main_cells: tm_blank_grid(c * r),
+        main_cells: [],
     }
 }
 
@@ -295,6 +301,10 @@ fn tm_resize(t: Term, width: Int, height: Int) -> Term {
     tm_set_str(fresh, tm_s_title(), tm_str_reg(t, tm_s_title()))
     tm_set_reg(fresh, tm_i_scount(), tm_reg(t, tm_i_scount()))
     tm_set_reg(fresh, tm_i_shead(), tm_reg(t, tm_i_shead()))
+    if tm_reg(t, tm_i_alt()) == 1 {
+        tm_set_reg(fresh, tm_i_alt(), 1)
+        tm_set_reg(fresh, tm_i_abase(), r)
+    }
     var i = 0
     while i < tm_reg(t, tm_i_scount()) {
         var sb = fresh.sb
@@ -330,7 +340,8 @@ fn tm_physical(t: Term, row: Int) -> Int {
     if mapped < 0 {
         mapped = mapped + tm_rows(t)
     }
-    return (tm_reg(t, tm_i_head()) + mapped) % tm_rows(t)
+    let base = tm_reg(t, tm_i_abase())
+    return base + (tm_reg(t, tm_i_head()) + mapped) % tm_rows(t)
 }
 
 fn tm_cell_at(t: Term, row: Int, col: Int) -> Cell {
@@ -849,41 +860,34 @@ fn tm_alt_enter(t: Term) {
     if tm_reg(t, tm_i_alt()) == 1 {
         return
     }
-    var saved = t.main_cells
-    var i = 0
-    while i < t.cells.len() && i < saved.len() {
-        saved[i] = t.cells[i]
-        i = i + 1
-    }
+    /* The alternate screen is the second half of the cell buffer. Entering it
+     * just moves the base register, so the main screen is never copied and
+     * cannot be overwritten by the full-screen program. */
     var cells = t.cells
-    i = 0
-    while i < cells.len() {
-        cells[i] = tm_blank_cell()
-        i = i + 1
-    }
+    let rows = tm_rows(t)
+    let cols = tm_cols(t)
     tm_set_reg(t, tm_i_mhead(), tm_reg(t, tm_i_head()))
     tm_set_reg(t, tm_i_mx(), tm_reg(t, tm_i_cx()))
     tm_set_reg(t, tm_i_my(), tm_reg(t, tm_i_cy()))
+    tm_set_reg(t, tm_i_abase(), rows)
+    var i = 0
+    while i < rows * cols && rows * cols + i < cells.len() {
+        cells[rows * cols + i] = tm_blank_cell()
+        i = i + 1
+    }
     tm_set_reg(t, tm_i_head(), 0)
     tm_set_reg(t, tm_i_cx(), 0)
     tm_set_reg(t, tm_i_cy(), 0)
     tm_set_reg(t, tm_i_alt(), 1)
     tm_set_reg(t, tm_i_top(), 0)
-    tm_set_reg(t, tm_i_bottom(), tm_rows(t) - 1)
-    tm_set_reg(t, tm_i_wrap(), 0)
+    tm_set_reg(t, tm_i_bottom(), rows - 1)
 }
 
 fn tm_alt_leave(t: Term) {
     if tm_reg(t, tm_i_alt()) == 0 {
         return
     }
-    var cells = t.cells
-    var saved = t.main_cells
-    var i = 0
-    while i < cells.len() && i < saved.len() {
-        cells[i] = saved[i]
-        i = i + 1
-    }
+    tm_set_reg(t, tm_i_abase(), 0)
     tm_set_reg(t, tm_i_head(), tm_reg(t, tm_i_mhead()))
     tm_set_reg(t, tm_i_cx(), tm_reg(t, tm_i_mx()))
     tm_set_reg(t, tm_i_cy(), tm_reg(t, tm_i_my()))
@@ -892,6 +896,64 @@ fn tm_alt_leave(t: Term) {
     tm_set_reg(t, tm_i_bottom(), tm_rows(t) - 1)
     tm_set_reg(t, tm_i_wrap(), 0)
 }
+
+fn tm_rstrip(line: String) -> String {
+    let chars = line.chars()
+    var end = chars.len()
+    while end > 0 {
+        if chars[end - 1] == " " || chars[end - 1] == "\t" {
+            end = end - 1
+        } else {
+            return tm_slice_join(chars, 0, end)
+        }
+    }
+    return ""
+}
+
+// Text between two screen cells, inclusive, one line per row.
+fn tm_selection_text(t: Term, r0: Int, c0: Int, r1: Int, c1: Int) -> String {
+    var top_row = r0
+    var top_col = c0
+    var bot_row = r1
+    var bot_col = c1
+    if bot_row < top_row || (bot_row == top_row && bot_col < top_col) {
+        top_row = r1
+        top_col = c1
+        bot_row = r0
+        bot_col = c0
+    }
+    var out = ""
+    var row = top_row
+    while row <= bot_row {
+        var from = 0
+        var to = tm_cols(t)
+        if row == top_row {
+            from = top_col
+        }
+        if row == bot_row {
+            to = bot_col + 1
+        }
+        if from < 0 {
+            from = 0
+        }
+        if to > tm_cols(t) {
+            to = tm_cols(t)
+        }
+        var line = ""
+        var col = from
+        while col < to {
+            line = line + tm_cell_at(t, row, col).ch
+            col = col + 1
+        }
+        out = out + tm_rstrip(line)
+        if row < bot_row {
+            out = out + "\n"
+        }
+        row = row + 1
+    }
+    return out
+}
+
 
 fn tm_dispatch_csi(t: Term) {
     let fin = tm_str_reg(t, tm_s_fin())
@@ -1166,9 +1228,9 @@ fn tm_is_truecolour(value: Int) -> Bool {
     return value >= 16777216
 }
 
-fn tm_colour(t: Term, value: Int, pal: Palette) -> Int {
+fn tm_colour_of(t: Term, value: Int, pal: Palette, fallback: Int) -> Int {
     if value < 0 {
-        return pal.fg
+        return fallback
     }
     if tm_is_truecolour(value) {
         return value - 16777216
@@ -1177,7 +1239,7 @@ fn tm_colour(t: Term, value: Int, pal: Palette) -> Int {
         if value < pal.ansi.len() {
             return pal.ansi[value]
         }
-        return pal.fg
+        return fallback
     }
     if value < 232 {
         let index = value - 16
@@ -1190,7 +1252,12 @@ fn tm_colour(t: Term, value: Int, pal: Palette) -> Int {
         let level = (value - 232) * 10 + 8
         return gui.rgb(level, level, level)
     }
-    return pal.fg
+    return fallback
+}
+
+// Kept for callers that mean "a foreground colour".
+fn tm_colour(t: Term, value: Int, pal: Palette) -> Int {
+    return tm_colour_of(t, value, pal, pal.fg)
 }
 
 // ---------- drawing ----------
@@ -1241,15 +1308,15 @@ fn tm_draw_row(t: Term, absolute: Int, x: Int, y: Int, cfit: Int, cw: Int, size:
     var run_bg = pal.bg
     while col < tm_cols(t) && col < cfit {
         let cell = tm_cell_at(t, row, col)
-        var fg = tm_colour(t, cell.fg, pal)
-        var bg = tm_colour(t, cell.bg, pal)
+        var fg = tm_colour_of(t, cell.fg, pal, pal.fg)
+        var bg = tm_colour_of(t, cell.bg, pal, pal.bg)
         if tm_has_flag(cell.flags, tm_inverse_bit()) {
             let swap = fg
             fg = bg
             bg = swap
         }
         if tm_has_flag(cell.flags, tm_bold_bit()) && cell.fg >= 0 && cell.fg < 8 {
-            fg = tm_colour(t, cell.fg + 8, pal)
+            fg = tm_colour_of(t, cell.fg + 8, pal, pal.fg)
         }
         if bg != pal.bg || fg != run_fg || run.graphemes().len() > 96 {
             tm_flush_run(t, run, x + (col - run.graphemes().len()) * cw, y, size, run_fg, run_bg, pal)
@@ -1268,7 +1335,7 @@ fn tm_flush_run(t: Term, text: String, x: Int, y: Int, size: Int, fg: Int, bg: I
         return
     }
     if bg != pal.bg {
-        gui.rect(x, y + 1, gui.mono_width(text, size), tm_cell_height(size) - 2, bg)
+        gui.rect(x, y, gui.mono_width(text, size), tm_cell_height(size), bg)
     }
     gui.mono(x, y + 2, text, size, fg)
 }
@@ -1443,6 +1510,14 @@ fn tm_view(t: Term) -> Int {
         return t.regs[slot]
     }
     return 0
+}
+
+fn tm_backlog(t: Term) -> Int {
+    return tm_reg(t, tm_i_scount())
+}
+
+fn tm_alt_on(t: Term) -> Bool {
+    return tm_reg(t, tm_i_alt()) == 1
 }
 
 fn tm_bell_count(t: Term) -> Int {

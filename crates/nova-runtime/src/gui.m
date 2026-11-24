@@ -562,14 +562,52 @@ static CGColorRef nova_gui_color(int64_t rgb) {
     return color;
 }
 
+/* The monospaced family is a setting, not a constant: terminals want a Nerd
+ * Font for its icons, editors may want Menlo. The cache lives at file scope so
+ * changing the family can drop it. */
+static char nova_mono_family[160] = {0};
+static int nova_mono_ready = 0;
+static CTFontRef nova_font_cache[2][80];
+
+static void nova_mono_pick(void) {
+    if (nova_mono_ready) return;
+    nova_mono_ready = 1;
+    const char *env = getenv("NOVA_MONO_FONT");
+    if (env && env[0]) {
+        snprintf(nova_mono_family, sizeof(nova_mono_family), "%s", env);
+        return;
+    }
+    @autoreleasepool {
+        NSString *best = nil;
+        NSString *any_nerd = nil;
+        for (NSString *name in [[NSFontManager sharedFontManager] availableFontFamilies]) {
+            if ([name rangeOfString:@"Nerd Font"].location == NSNotFound) continue;
+            if (!any_nerd) any_nerd = name;
+            if (!best && [name rangeOfString:@"Mono"].location != NSNotFound) best = name;
+        }
+        NSString *chosen = best ? best : any_nerd;
+        if (!chosen) chosen = @"Menlo";
+        snprintf(nova_mono_family, sizeof(nova_mono_family), "%s", [chosen UTF8String]);
+    }
+}
+
+static const char *nova_mono_name(void) {
+    nova_mono_pick();
+    return nova_mono_family;
+}
+
 static CTFontRef nova_gui_font(int64_t size, int64_t mono) {
-    static CTFontRef cache[2][80];
+    CTFontRef (*cache)[80] = nova_font_cache;
     int index = (int)(size < 1 ? 1 : (size > 79 ? 79 : size));
     int which = mono ? 1 : 0;
     if (!cache[which][index]) {
         CTFontRef font = NULL;
         if (mono) {
-            font = CTFontCreateWithName(CFSTR("Menlo"), (CGFloat)index, NULL);
+            CFStringRef family = CFStringCreateWithCString(NULL, nova_mono_name(), kCFStringEncodingUTF8);
+            if (family) {
+                font = CTFontCreateWithName(family, (CGFloat)index, NULL);
+                CFRelease(family);
+            }
         }
         if (!font) {
             font = CTFontCreateUIFontForLanguage(kCTFontUIFontSystem, (CGFloat)index, NULL);
@@ -997,6 +1035,80 @@ static char *nova_gui_cstr(nova_str text) {
 static nova_str nova_gui_empty(void) {
     nova_str empty = {"", 0};
     return empty;
+}
+
+nova_str nova_gui_mono_font(void) {
+    const char *name = nova_mono_name();
+    size_t len = strlen(name);
+    char *copy = (char *)malloc(len + 1);
+    if (!copy) return nova_gui_empty();
+    memcpy(copy, name, len + 1);
+    nova_str result = {copy, (int64_t)len};
+    return result;
+}
+
+int64_t nova_gui_set_mono_font(nova_str family) {
+    char *name = nova_gui_cstr(family);
+    if (!name) return 0;
+    int matched = 0;
+    @autoreleasepool {
+        NSString *wanted = [NSString stringWithUTF8String:name];
+        if (wanted) {
+            for (NSString *candidate in [[NSFontManager sharedFontManager] availableFontFamilies]) {
+                if ([candidate isEqualToString:wanted]) {
+                    matched = 1;
+                    break;
+                }
+            }
+        }
+        if (matched) {
+            snprintf(nova_mono_family, sizeof(nova_mono_family), "%s", name);
+        }
+    }
+    free(name);
+    if (matched) {
+        nova_mono_ready = 1;
+        for (int i = 0; i < 80; i++) {
+            if (nova_font_cache[1][i]) {
+                CFRelease(nova_font_cache[1][i]);
+                nova_font_cache[1][i] = NULL;
+            }
+        }
+    }
+    return matched;
+}
+
+/* Families worth offering in a terminal: patched (Nerd), monospaced or code. */
+nova_str nova_gui_mono_fonts(void) {
+    @autoreleasepool {
+        NSMutableArray<NSString *> *names = [NSMutableArray array];
+        for (NSString *name in [[NSFontManager sharedFontManager] availableFontFamilies]) {
+            int nerd = [name rangeOfString:@"Nerd Font"].location != NSNotFound;
+            int mono = [name rangeOfString:@"Mono"].location != NSNotFound;
+            int code = [name rangeOfString:@"Code"].location != NSNotFound;
+            if (nerd || mono || code) [names addObject:name];
+        }
+        [names sortUsingSelector:@selector(localizedCaseInsensitiveCompare:)];
+        NSMutableString *out = [NSMutableString string];
+        for (NSString *name in names) {
+            if ([name rangeOfString:@"Nerd Font"].location != NSNotFound) {
+                [out appendFormat:@"%@\n", name];
+            }
+        }
+        for (NSString *name in names) {
+            if ([name rangeOfString:@"Nerd Font"].location == NSNotFound) {
+                [out appendFormat:@"%@\n", name];
+            }
+        }
+        const char *utf8 = [out UTF8String];
+        if (!utf8) return nova_gui_empty();
+        size_t len = strlen(utf8);
+        char *copy = (char *)malloc(len + 1);
+        if (!copy) return nova_gui_empty();
+        memcpy(copy, utf8, len + 1);
+        nova_str result = {copy, (int64_t)len};
+        return result;
+    }
 }
 
 /* Reads a whole file. An unreadable path yields an empty string, which the

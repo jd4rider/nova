@@ -600,6 +600,13 @@ struct App {
     ref_paths: List<String>,
     ref_lines: List<Int>,
     ref_index: Int,
+    term_sel: Bool,
+    term_r0: Int,
+    term_c0: Int,
+    term_r1: Int,
+    term_c1: Int,
+    term_fonts: List<String>,
+    term_font_index: Int,
 }
 
 // ---------- workspace ----------
@@ -2189,6 +2196,43 @@ fn draw_panel(app: App, x: Int, y: Int, w: Int, h: Int) {
         let grid_h = body_h - 34
         vt.tm_draw(app.term, x + 14, grid_y, w - 28, grid_h, 12, pal)
         vt.tm_draw_rail(app.term, x + 6, grid_y, grid_h, 12, pal)
+        if app.term_sel && vt.tm_view(app.term) == 0 {
+            let cell_h = vt.tm_cell_height(12)
+            let cell_w = gui.advance(12)
+            var r = gui.min(app.term_r0, app.term_r1)
+            let last_r = gui.max(app.term_r0, app.term_r1)
+            while r <= last_r && r < app.term_rows {
+                var c0 = 0
+                var c1 = app.term_cols - 1
+                if r == app.term_r0 && r == app.term_r1 {
+                    c0 = gui.min(app.term_c0, app.term_c1)
+                    c1 = gui.max(app.term_c0, app.term_c1)
+                } else if r == app.term_r0 {
+                    c0 = app.term_c0
+                } else if r == app.term_r1 {
+                    c1 = app.term_c1
+                }
+                gui.rect_alpha(x + 14 + c0 * cell_w, grid_y + r * cell_h, (c1 - c0 + 1) * cell_w, cell_h, pal.cursor, 70)
+                r = r + 1
+            }
+        }
+        // Scrollbar: thumb tracks how far the view is scrolled back.
+        let total = vt.tm_total_lines(app.term)
+        let shown = vt.tm_rows(app.term)
+        if total > shown {
+            let track_h = grid_h
+            var thumb_h = track_h * shown / total
+            if thumb_h < 24 {
+                thumb_h = 24
+            }
+            let back = vt.tm_backlog(app.term)
+            var offset = 0
+            if back > 0 {
+                offset = (track_h - thumb_h) * (back - vt.tm_view(app.term)) / back
+            }
+            gui.rect(x + w - 8, grid_y, 4, track_h, theme.panel)
+            gui.rect(x + w - 8, grid_y + offset, 4, thumb_h, theme.border_strong)
+        }
         let footer_y = body_y + body_h - 22
         gui.rect(x, footer_y - 4, w, 26, theme.panel)
         var state_text = "idle"
@@ -2200,7 +2244,12 @@ fn draw_panel(app: App, x: Int, y: Int, w: Int, h: Int) {
         if app.term_focus {
             gui.text(x + w - 150, footer_y, "typing - esc returns to the editor", 10, theme.faint)
         } else {
+            gui.text(x + w - 250, footer_y, gui.mono_font(), 10, theme.faint)
+        if !gui.pty_running(app.term_slot) {
+            gui.text(x + w - 118, footer_y, "restart shell", 10, theme.faint)
+        } else {
             gui.text(x + w - 96, footer_y, "click to type", 10, theme.faint)
+        }
         }
     }
     if app.bottom == "docs" {
@@ -3821,6 +3870,20 @@ fn run_script(app: App, path: String) -> App {
             if cmd == "termclear" {
                 app.term = vt.tm_new(app.term_cols, app.term_rows)
             }
+            if cmd == "termselect" && words.len() >= 5 {
+                app.term_focus = true
+                app.term_sel = true
+                app.term_r0 = str_to_int(words[1])
+                app.term_c0 = str_to_int(words[2])
+                app.term_r1 = str_to_int(words[3])
+                app.term_c1 = str_to_int(words[4])
+            }
+            if cmd == "assert_term_sel_has" && words.len() >= 2 {
+                report(vt.tm_selection_text(app.term, app.term_r0, app.term_c0, app.term_r1, app.term_c1).contains(words[1]), trimmed)
+            }
+            if cmd == "termfont" {
+                println("TERMFONT " + gui.mono_font())
+            }
             if cmd == "assert_term_cell" && words.len() >= 3 {
                 report(vt.tm_cell_at(app.term, str_to_int(words[1]), str_to_int(words[2])).ch == words[3], trimmed)
             }
@@ -3900,8 +3963,17 @@ fn term_key(app: App, code: Int, mods: Int) -> App {
             return app
         }
         if code == 99 {
-            gui.set_clipboard(vt.tm_screen_text(app.term))
-            app.status = "copied screen"
+            if app.term_sel {
+                gui.set_clipboard(vt.tm_selection_text(app.term, app.term_r0, app.term_c0, app.term_r1, app.term_c1))
+                app.status = "copied selection"
+            } else {
+                gui.set_clipboard(vt.tm_screen_text(app.term))
+                app.status = "copied screen"
+            }
+            return app
+        }
+        if code == 108 {
+            vt.tm_feed(app.term, vt.tm_escape() + "[2J" + vt.tm_escape() + "[H")
             return app
         }
         if code == 107 {
@@ -4218,6 +4290,9 @@ fn key(app: App, code: Int, mods: Int) -> App {
         return overlay_key(app, code, mods)
     }
     if command {
+        if app.term_focus && (code == 99 || code == 108 || code == 107) {
+            return term_key(app, code, mods)
+        }
         if code == 115 {
             if shift {
                 return save_all(app)
@@ -4795,6 +4870,26 @@ fn click(app: App, mx: Int, my: Int, mods: Int) -> App {
         if my > panel_y + 35 && my < h - status_height() && mx > left {
             if app.bottom == "terminal" {
                 app.term_focus = true
+                if !gui.pty_running(app.term_slot) && mx > gui.width() - 170 && my > panel_y + panel_height() - 30 {
+                    app.term = vt.tm_new(app.term_cols, app.term_rows)
+                    if gui.pty_open(app.term_slot, "sh", app.root, app.term_cols, app.term_rows) {
+                        app.status = "shell started"
+                    }
+                    return app
+                }
+                let cell_h = vt.tm_cell_height(12)
+                let cell_w = gui.advance(12)
+                let grid_x = left + 14
+                let grid_y = panel_y + 41
+                var row = (my - grid_y) / cell_h
+                var col = (mx - grid_x) / cell_w
+                row = gui.clamp(row, 0, app.term_rows - 1)
+                col = gui.clamp(col, 0, app.term_cols - 1)
+                app.term_sel = true
+                app.term_r0 = row
+                app.term_c0 = col
+                app.term_r1 = row
+                app.term_c1 = col
             }
         }
     }
@@ -4945,6 +5040,13 @@ fn main() {
         ref_paths: [],
         ref_lines: [],
         ref_index: 0,
+        term_sel: false,
+        term_r0: 0,
+        term_c0: 0,
+        term_r1: 0,
+        term_c1: 0,
+        term_fonts: [],
+        term_font_index: 0,
     }
     app.nodes = build_nodes(app.root, 0, app.expanded)
     app.plugins = load_plugins(app.root)

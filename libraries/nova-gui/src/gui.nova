@@ -90,6 +90,9 @@ extern "C" fn nova_pty_resize(slot: Int, cols: Int, rows: Int)
 extern "C" fn nova_pty_clear(slot: Int)
 extern "C" fn nova_pty_status(slot: Int) -> Int
 extern "C" fn nova_pty_close(slot: Int)
+extern "C" fn nova_gui_mono_font() -> String
+extern "C" fn nova_gui_set_mono_font(family: String) -> Int
+extern "C" fn nova_gui_mono_fonts() -> String
 extern "C" fn nova_fs_cwd() -> String
 extern "C" fn nova_env(name: String) -> String
 extern "C" fn nova_process_run(command: String, cwd: String) -> String
@@ -584,6 +587,25 @@ fn pty_status(slot: Int) -> Int {
 
 fn pty_close(slot: Int) {
     nova_pty_close(slot)
+}
+
+// ---------- fonts ----------
+
+// The monospaced family every mono draw uses. The host starts on a Nerd Font
+// when one is installed, so prompt glyphs and file icons draw without fallback.
+fn mono_font() -> String {
+    return nova_gui_mono_font()
+}
+
+// Returns false when the family is not installed.
+fn set_mono_font(family: String) -> Bool {
+    return nova_gui_set_mono_font(family) == 1
+}
+
+// Newline-separated families worth offering: Nerd Fonts first, then other
+// monospaced and code faces.
+fn mono_fonts() -> String {
+    return nova_gui_mono_fonts()
 }
 
 fn env(name: String) -> String {

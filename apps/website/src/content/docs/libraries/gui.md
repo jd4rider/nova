@@ -60,7 +60,8 @@ Everything is immediate mode: a frame is whatever the loop draws between `begin`
 | Terminal pool | `pty_open(slot, cmd, dir, cols, rows)`, `pty_poll(slot)`, `pty_running(slot)`, `pty_write(slot, code)`, `pty_write_text(slot, text)`, `pty_resize(slot, cols, rows)`, `pty_status(slot)`, `pty_close(slot)` — up to eight ptys, each a real terminal with its own window size |
 | Frame | `begin()`, `clear(color)`, `present()`, `save_png(path)`, `sleep(ms)` |
 | Shapes | `rect`, `round_rect`, `stroke`, `line`, `rect_alpha` |
-| Text | `text` (system font), `mono` (Menlo), `text_width`, `mono_width`, `advance(size)` |
+| Text | `text` (system font), `mono` (monospaced), `text_width`, `mono_width`, `advance(size)` |
+| Mono font | `mono_font()`, `set_mono_font(family)`, `mono_fonts()` — the family defaults to an installed Nerd Font (`NOVA_MONO_FONT` overrides it), `mono_fonts()` lists every installed monospaced family, and setting one invalidates the host's glyph cache |
 | Clipping | `clip(x, y, w, h)`, `clip_reset()` |
 | Input | `next_event()` returning `Event { kind, code, x, y, mods, delta }` |
 | Events | `event_key`, `event_mouse_down`, `event_mouse_up`, `event_mouse_move`, `event_drag`, `event_scroll`, `event_resize`, `event_close` |
