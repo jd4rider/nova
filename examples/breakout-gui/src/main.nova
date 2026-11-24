@@ -231,13 +231,17 @@ fn key_pause(app: App, code: Int) -> App {
         return set_screen(app, "menu")
     }
     if code == gui.key_escape() {
-        return set_screen(app, "play")
+        return set_screen(app, "menu")
     }
     return app
 }
 
 fn key_play(app: App, code: Int) -> App {
-    if code == gui.key_escape() || code == 112 {
+    // Esc is the way out: menu first, quit only from the menu.
+    if code == gui.key_escape() {
+        return set_screen(app, "menu")
+    }
+    if code == 112 {
         return set_screen(app, "pause")
     }
     if code == 32 {
@@ -613,7 +617,7 @@ fn draw_play(app: App) {
     if app.muted {
         sound = "M sound off"
     }
-    let hint = "← → or A D hold to move   ·   mouse aims   ·   space launch   ·   P pause   ·   ${sound}   ·   R restart   ·   ⌘Q quit"
+    let hint = "← → or A D hold to move   ·   mouse aims   ·   space launch   ·   P pause   ·   Esc menu   ·   ${sound}   ·   R restart   ·   ⌘Q quit"
     gui.text((window_w() - gui.text_width(hint, 11)) / 2, window_h() - 34, hint, 11, theme.faint)
 }
 
@@ -683,7 +687,7 @@ fn draw_menu(app: App) {
     centered(436, "SPACE OR CLICK TO PLAY", 18, theme.fg_bright)
     centered(466, "◀ ▶ or A D pick a level", 12, theme.muted)
 
-    let hint = "A D or arrows move   ·   mouse aims   ·   click launches   ·   P pauses   ·   ⌘Q quits"
+    let hint = "A D or arrows move   ·   mouse aims   ·   click launches   ·   Esc quits   ·   ⌘Q quits"
     gui.text((window_w() - gui.text_width(hint, 11)) / 2, window_h() - 34, hint, 11, theme.faint)
 }
 
@@ -697,7 +701,7 @@ fn draw_pause(app: App) {
     let mid = field_y() + field_height() / 2
     centered(mid - 46, "PAUSED", 30, theme.fg_bright)
     centered(mid + 4, "space or P resumes", 13, theme.muted)
-    centered(mid + 28, "R restarts this level   ·   M returns to the menu", 12, theme.faint)
+    centered(mid + 28, "R restarts this level   ·   Esc or M returns to the menu", 12, theme.faint)
     gui.text((window_w() - gui.text_width("⌘Q quits", 11)) / 2, window_h() - 34, "⌘Q quits", 11, theme.faint)
 }
 

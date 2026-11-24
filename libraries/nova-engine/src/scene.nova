@@ -377,17 +377,18 @@ fn scene_tick(scene: Scene) -> Scene {
     var c = 0
     while c < ids.len() {
         if !solids[c] {
-            if vxs[c] > 24 {
-                vxs[c] = 24
+            // Velocities are millipixels per tick: cap at 24 px/tick.
+            if vxs[c] > 24000 {
+                vxs[c] = 24000
             }
-            if vxs[c] < -24 {
-                vxs[c] = -24
+            if vxs[c] < -24000 {
+                vxs[c] = -24000
             }
-            if vys[c] > 24 {
-                vys[c] = 24
+            if vys[c] > 24000 {
+                vys[c] = 24000
             }
-            if vys[c] < -24 {
-                vys[c] = -24
+            if vys[c] < -24000 {
+                vys[c] = -24000
             }
             if xs[c] < 0 {
                 xs[c] = 0
