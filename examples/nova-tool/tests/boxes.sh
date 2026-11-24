@@ -193,6 +193,14 @@ JSON
     grep -q 'sha256 "' "$tmp/edit-project/app/Box.lock" && ok || no "update records the checksum"
     grep -q 'box "util" "1.0.0" path' "$tmp/edit-project/app/Box.lock" && ok || no "update keeps path boxes"
 
+    # The index now yanks 1.0.0 and publishes 1.0.1, which `~1.0.0` accepts.
+    cat > "$reg/index/v1/packages/$aa/$bb/nova/app.json" <<JSON
+{"name":"@nova/app","versions":[{"version":"1.0.0","dependencies":[{"name":"@nova/math","req":"^0.2.0"}],"license":"MIT","archive":"files/app-1.0.0.box","sha256":"$sha","yanked":true},{"version":"1.0.1","dependencies":[{"name":"@nova/math","req":"^0.2.0"}],"license":"MIT","archive":"files/app-1.0.0.box","sha256":"$sha","yanked":false}]}
+JSON
+    out=$( cd "$tmp/edit-project/app" && NOVA_BOXES_REGISTRY="$reg" NOVA_TOOL_BIN="$tool" "$nova" box update 2>&1 )
+    echo "$out" | grep -q "warning: @nova/app 1.0.0 is yanked" && ok || no "update warns about a yanked lock"
+    grep -q 'box "@nova/app" "1.0.1" registry' "$tmp/edit-project/app/Box.lock" && ok || no "update moves off a yanked version"
+
     ( cd "$tmp/edit-project/app" && NOVA_TOOL_BIN="$tool" "$nova" box remove '@nova/app' ) >/dev/null 2>&1 && ok || no "nova box remove"
     grep -q '"@nova/app"' "$tmp/edit-project/app/Box.toml" && no "remove leaves the dependency" || ok
     ( cd "$tmp/edit-project/app" && NOVA_TOOL_BIN="$tool" "$nova" box remove '@nova/app' ) > "$tmp/remove.log" 2>&1
@@ -212,6 +220,23 @@ JSON
         echo "$out" | grep -q "versions: 2" && ok || no "http index read"
         kill "$server" 2>/dev/null
         wait "$server" 2>/dev/null
+    fi
+
+    ( cd "$tmp" && NOVA_BOXES_OFFLINE=1 NOVA_BOXES_REGISTRY="http://127.0.0.1:9" NOVA_TOOL_BIN="$tool" "$nova" box info @nova/app ) > "$tmp/offline.log" 2>&1
+    status=$?
+    [ $status -ne 0 ] && grep -q "NOVA_BOXES_OFFLINE" "$tmp/offline.log" && ok || no "offline mode refuses a remote registry"
+
+    # ---- The compiler accepts Box.toml and honours Box.lock ------------
+    if command -v clang >/dev/null 2>&1; then
+        mkdir -p "$tmp/boxproj/src"
+        printf '[package]\nname = "boxed"\nversion = "1.0.0"\n' > "$tmp/boxproj/Box.toml"
+        printf 'fn main() { }\n' > "$tmp/boxproj/src/main.nova"
+        ( cd "$tmp/boxproj" && "$nova" build --locked ) > "$tmp/boxlock.log" 2>&1
+        status=$?
+        [ $status -ne 0 ] && grep -q "Box.lock" "$tmp/boxlock.log" && ok || no "--locked requires Box.lock"
+        ( cd "$tmp/boxproj" && "$nova" build ) > "$tmp/boxbuild.log" 2>&1 && ok || no "build a Box.toml project"
+        [ -f "$tmp/boxproj/Box.lock" ] && ok || no "build writes Box.lock"
+        ( cd "$tmp/boxproj" && "$nova" build --locked ) >/dev/null 2>&1 && ok || no "--locked accepts a fresh Box.lock"
     fi
 fi
 

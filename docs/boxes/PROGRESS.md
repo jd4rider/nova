@@ -14,9 +14,11 @@ Status is evidence-based: a milestone is only marked done when its tests pass.
 | Sparse index client | done | sharded record lookup, search, info; local and HTTP reads |
 | Manifest editing | done | `add`/`remove` keep other lines and comments |
 | Registry-backed `update` | done | `Box.lock` records versions, sources and SHA-256 |
+| Yank warning on update | done | an existing lock pinning a yanked version is reported |
+| Compiler manifest and lockfile | partial | `nova build` reads `Box.toml`, writes/requires `Box.lock`; deps still refuse |
 | `.box` archive pack/verify/unpack | done | gzip/tar/SHA-256/traversal tests |
 | Cache and `fetch` | done | SHA-256 verified fetch unpacks into the cache |
-| Offline mode | partial | local mirrors work; no `--offline` flag yet |
+| Offline mode | done | `NOVA_BOXES_OFFLINE=1` refuses a remote registry |
 | Registry publishing (reviewed PR) | not started | — |
 | Studio and language-server integration | not started | — |
 | Website catalogue | not started | — |
@@ -56,10 +58,9 @@ guess.
 
 ## Next
 
-1. Compiler import resolution from fetched boxes (`nova build` currently reads
-   `nova.toml`, refuses dependencies and does not consult `Box.lock`).
-2. Yarn-style yank warning when an existing lock pins a version the index now
-   marks yanked.
+1. Compiler import resolution from fetched boxes: `nova build` still refuses
+   any `[dependencies]` and cannot load a registry box by name.
+2. Cached index records so `info`/`search` work without re-reading the mirror.
 3. Nova Studio box panel and language-server completion for registry names.
 4. Website catalogue page generated from the same index.
 5. Reviewed publishing workflow, after the repository and Pages exist.

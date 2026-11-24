@@ -241,6 +241,9 @@ fn rg_check_registry(root: String) -> String {
     if root.len() == 0 {
         return "error: NOVA_BOXES_REGISTRY is not set and no first-party registry is deployed yet; point it at a mirror root"
     }
+    if !rg_is_local(root) && gui.env("NOVA_BOXES_OFFLINE").trim() == "1" {
+        return "error: NOVA_BOXES_OFFLINE is set but the registry is remote (" + root + ")"
+    }
     let text = rg_read(root, "config.json")
     if text.len() == 0 {
         return "error: cannot read " + rg_join(root, "config.json")
@@ -419,6 +422,9 @@ fn rg_resolve_url(root: String, location: String) -> String {
 }
 
 fn rg_download(url: String, destination: String) -> Bool {
+    if !rg_is_local(url) && gui.env("NOVA_BOXES_OFFLINE").trim() == "1" {
+        return false
+    }
     if rg_is_local(url) {
         let path = rg_strip_file(url)
         if !gui.exists(path) || gui.is_dir(path) {
@@ -629,6 +635,70 @@ fn rg_update(source: String, base: String, registry_root: String) -> String {
         return out
     }
     return rg_lock_text(manifest, result)
+}
+
+// Splits a lockfile line into fields, keeping quoted strings together.
+fn rg_fields(line: String) -> List<String> {
+    var out: List<String> = []
+    var current = ""
+    var quoted = false
+    for c in line.chars() {
+        if c == "\"" {
+            quoted = !quoted
+        } else if (c == " " || c == "\t") && !quoted {
+            if current.len() > 0 {
+                out.push(current)
+                current = ""
+            }
+        } else {
+            current = current + c
+        }
+    }
+    if current.len() > 0 {
+        out.push(current)
+    }
+    return out
+}
+
+// Warns when a version pinned in the existing Box.lock has since been yanked.
+// Resolution already refuses yanked versions, so this explains why an update
+// changes a version the project was already using.
+fn rg_yank_warnings(base: String, registry_root: String) -> String {
+    if registry_root.len() == 0 {
+        return ""
+    }
+    let lock = gui.read(rs_join(base, "Box.lock"))
+    if lock.len() == 0 {
+        return ""
+    }
+    var out = ""
+    for line in bx_lines(lock) {
+        let fields = rg_fields(bx_trim(line))
+        if fields.len() >= 4 && fields[0] == "box" && fields[3] == "registry" {
+            let name = fields[1]
+            let version = fields[2]
+            if rg_valid_name(name) {
+                let text = rg_read(registry_root, rg_record_path(name))
+                if text.len() > 0 {
+                    let doc = js_parse(text)
+                    if doc.error.len() == 0 {
+                        let record = doc.nodes.len() - 1
+                        let versions = rg_versions(doc, record)
+                        var i = 0
+                        while i < js_len(doc, versions) {
+                            let item = js_at(doc, versions, i)
+                            let recorded = js_str(doc, js_get(doc, item, "version"))
+                            if recorded == version && js_bool(doc, js_get(doc, item, "yanked")) {
+                                out = out + "warning: " + name + " " + version + " is yanked by the registry\n"
+                            }
+                            i = i + 1
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return out
 }
 
 fn rg_fetch(root: String, spec: String) -> String {

@@ -369,8 +369,14 @@ fn build_project(
     lto: bool,
     locked: bool,
 ) -> Result<PathBuf, i32> {
-    if locked && !root.join(nova_pkg::LOCK_NAME).is_file() {
-        eprintln!("nova build: --locked was passed but nova.lock does not exist");
+    let lock = nova_pkg::lock_path(root);
+    if locked && !lock.is_file() {
+        eprintln!(
+            "nova build: --locked was passed but {} does not exist",
+            lock.file_name()
+                .map(|name| name.to_string_lossy())
+                .unwrap_or_else(|| lock.to_string_lossy())
+        );
         return Err(EXIT_ERROR);
     }
     if !manifest.dependencies.is_empty() {
@@ -393,7 +399,10 @@ fn build_project(
     match compile(&checked.program, &checked.source, &options) {
         Ok(artifact) => {
             if let Err(error) = write_lock(root, manifest) {
-                eprintln!("nova: warning: could not write nova.lock: {error}");
+                eprintln!(
+                    "nova: warning: could not write {}: {error}",
+                    nova_pkg::lock_path(root).display()
+                );
             }
             println!("Built {}", artifact.executable.display());
             if let Some(ir) = artifact.ir {
@@ -943,6 +952,7 @@ fn cmd_box(action: &str, args: &[String]) -> i32 {
                 return EXIT_UNSUPPORTED;
             }
             mode = "box-update";
+            out = root.join("Box.lock").to_string_lossy().into_owned();
         }
         "tree" | "resolve" | "check" => {
             if !args.is_empty() {
@@ -1032,7 +1042,22 @@ fn cmd_box(action: &str, args: &[String]) -> i32 {
         println!("{verb} `{}` in {}", args[0], manifest.display());
         return EXIT_OK;
     }
-    if action == "lock" || action == "update" {
+    if action == "update" {
+        if !output.status.success() || text.contains("error:") {
+            print!("{text}");
+            eprint!("{}", String::from_utf8_lossy(&output.stderr));
+            return EXIT_ERROR;
+        }
+        print!("{text}");
+        let path = root.join("Box.lock");
+        if !path.is_file() {
+            eprintln!("nova box update: {} was not written", path.display());
+            return EXIT_ERROR;
+        }
+        println!("Wrote {}", path.display());
+        return EXIT_OK;
+    }
+    if action == "lock" {
         if !output.status.success() || text.contains("error:") {
             print!("{text}");
             eprint!("{}", String::from_utf8_lossy(&output.stderr));

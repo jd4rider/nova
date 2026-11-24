@@ -71,7 +71,25 @@ fn main() {
     }
 
     if mode == "box-update" {
-        println(rg_update(source, rs_dirname(path), rg_root()))
+        let base = rs_dirname(path)
+        let registry = rg_root()
+        let lock = rg_update(source, base, registry)
+        if lock.starts_with("error:") {
+            println(lock)
+            return
+        }
+        let warnings = rg_yank_warnings(base, registry)
+        if warnings.len() > 0 {
+            println(warnings)
+        }
+        let target = gui.env("NOVA_TOOL_OUT")
+        if target.len() > 0 {
+            if !gui.write(target, lock) {
+                println("error: cannot write " + target)
+            }
+        } else {
+            println(lock)
+        }
         return
     }
 

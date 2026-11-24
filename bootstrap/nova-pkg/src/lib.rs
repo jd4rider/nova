@@ -12,6 +12,28 @@ use serde::Deserialize;
 
 pub const MANIFEST_NAME: &str = "nova.toml";
 pub const LOCK_NAME: &str = "nova.lock";
+/// Boxes is the Nova package format; `Box.toml` wins when both exist.
+pub const BOX_MANIFEST_NAME: &str = "Box.toml";
+pub const BOX_LOCK_NAME: &str = "Box.lock";
+
+/// The manifest a project actually uses: `Box.toml` when present, otherwise
+/// the legacy `nova.toml`.
+pub fn manifest_path(root: &Path) -> PathBuf {
+    let boxed = root.join(BOX_MANIFEST_NAME);
+    if boxed.is_file() {
+        return boxed;
+    }
+    root.join(MANIFEST_NAME)
+}
+
+/// The lockfile that belongs to the chosen manifest, so a Boxes project never
+/// gets a second, divergent `nova.lock` written next to its `Box.lock`.
+pub fn lock_path(root: &Path) -> PathBuf {
+    if root.join(BOX_MANIFEST_NAME).is_file() {
+        return root.join(BOX_LOCK_NAME);
+    }
+    root.join(LOCK_NAME)
+}
 
 #[derive(Debug, Clone)]
 pub struct Manifest {
@@ -59,7 +81,7 @@ fn default_bin() -> String {
 }
 
 pub fn parse_manifest(source: &str) -> Result<Manifest, String> {
-    let raw: RawManifest = toml::from_str(source).map_err(|e| format!("invalid nova.toml: {e}"))?;
+    let raw: RawManifest = toml::from_str(source).map_err(|e| format!("invalid manifest: {e}"))?;
     validate_name(&raw.package.name)?;
     let mut dependencies = Vec::new();
     for (name, value) in raw.dependencies {
@@ -110,7 +132,7 @@ pub fn parse_manifest(source: &str) -> Result<Manifest, String> {
 }
 
 pub fn load(root: &Path) -> Result<Manifest, String> {
-    let path = root.join(MANIFEST_NAME);
+    let path = manifest_path(root);
     let source =
         fs::read_to_string(&path).map_err(|e| format!("could not read {}: {e}", path.display()))?;
     parse_manifest(&source)
@@ -119,7 +141,7 @@ pub fn load(root: &Path) -> Result<Manifest, String> {
 pub fn find_project_root(start: &Path) -> Option<PathBuf> {
     let mut current = Some(start);
     while let Some(dir) = current {
-        if dir.join(MANIFEST_NAME).is_file() {
+        if dir.join(BOX_MANIFEST_NAME).is_file() || dir.join(MANIFEST_NAME).is_file() {
             return Some(dir.to_path_buf());
         }
         current = dir.parent();
@@ -150,7 +172,7 @@ pub fn write_lock(root: &Path, manifest: &Manifest) -> Result<PathBuf, String> {
             ));
         }
     }
-    let path = root.join(LOCK_NAME);
+    let path = lock_path(root);
     fs::write(&path, out).map_err(|e| format!("could not write {}: {e}", path.display()))?;
     Ok(path)
 }
@@ -217,6 +239,36 @@ util = { path = "../util" }
     #[test]
     fn rejects_invalid_name() {
         assert!(parse_manifest("[package]\nname = \"../evil\"\n").is_err());
+    }
+
+    #[test]
+    fn prefers_box_manifest_and_writes_box_lock() {
+        let dir = std::env::temp_dir().join(format!(
+            "nova-pkg-box-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join(BOX_MANIFEST_NAME),
+            "[package]\nname = \"boxed\"\nversion = \"2.0.0\"\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join(MANIFEST_NAME),
+            "[package]\nname = \"legacy\"\n",
+        )
+        .unwrap();
+        let manifest = load(&dir).unwrap();
+        assert_eq!(manifest.name, "boxed");
+        assert_eq!(lock_path(&dir), dir.join(BOX_LOCK_NAME));
+        write_lock(&dir, &manifest).unwrap();
+        assert!(dir.join(BOX_LOCK_NAME).is_file());
+        assert!(!dir.join(LOCK_NAME).is_file());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
