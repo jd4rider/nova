@@ -1,0 +1,50 @@
+// Scene renderer: pixels for a Scene value, with no state of its own.
+//
+// Keeping the renderer separate from the simulation is what lets the same scene
+// be drawn by a game, an inspector or a thumbnail: give it a scene, an origin
+// and a theme. Entities with a solid flag draw as structural edges; dynamic
+// entities draw as filled shapes in the palette colour their index names.
+
+import "../../nova-gui/src/gui.nova" as gui
+import "scene.nova"
+
+fn palette(index: Int, theme: gui.Theme) -> Int {
+    let which = index % 6
+    if which == 0 {
+        return theme.red
+    }
+    if which == 1 {
+        return theme.orange
+    }
+    if which == 2 {
+        return theme.yellow
+    }
+    if which == 3 {
+        return theme.green
+    }
+    if which == 4 {
+        return theme.aqua
+    }
+    return theme.purple
+}
+
+fn draw_scene(scene: Scene, ox: Int, oy: Int, theme: gui.Theme) {
+    var i = 0
+    while i < scene_count(scene) {
+        let w = scene.hws[i] * 2
+        let h = scene.hhs[i] * 2
+        let x = ox + scene.xs[i] - scene.hws[i]
+        let y = oy + scene.ys[i] - scene.hhs[i]
+        if scene.solids[i] {
+            gui.round_rect(x, y, w, h, 4, theme.border_strong)
+            gui.stroke(x, y, w, h, theme.border)
+        } else {
+            let color = palette(scene.colours[i], theme)
+            let radius = gui.min(w, h) / 2
+            gui.round_rect(x + 2, y + 4, w, h, radius, theme.bg_hard)
+            gui.round_rect(x, y, w, h, radius, color)
+            gui.rect_alpha(x + w / 4, y + 2, w / 2, 3, gui.white(), 60)
+        }
+        i = i + 1
+    }
+}

@@ -65,7 +65,7 @@ fn main() {
     failures = failures + report(game.score > 0, "paddle play destroys bricks")
     failures = failures + report(escapes == 0, "the ball stays inside the field")
     failures = failures + report(game.score == (brick_count() - bricks_left(game)) * 10, "score matches the bricks removed")
-    failures = failures + report(game.vy != 0, "the ball keeps moving")
+    failures = failures + report(ball_pace(game) > 0, "the ball keeps moving")
 
     let lvl = level_game(1, 0, 3)
     failures = failures + report(bricks_left(lvl) < brick_count(), "level 1 is not a full grid")
@@ -88,8 +88,8 @@ fn main() {
     failures = failures + report(eased.paddle - 400 <= paddle_speed(), "the paddle eases toward its target")
 
     var world = scene_new(30)
-    world = scene_spawn(world, "floor", "solid", 400, 590, 800, 20, 0, true)
-    world = scene_spawn(world, "crate", "demo", 400, 120, 40, 40, 0, false)
+    world = scene_spawn(world, "floor", "solid", 400, 590, 800, 20, 0, true, 0)
+    world = scene_spawn(world, "crate", "demo", 400, 120, 40, 40, 0, false, 0)
     failures = failures + report(scene_count(world) == 2, "the scene spawns entities")
     var ticks = 0
     while ticks < 240 {
@@ -99,7 +99,38 @@ fn main() {
     failures = failures + report(scene_y(world, 2) > 120, "scene gravity moves a dynamic entity")
     failures = failures + report(scene_y(world, 2) < 570, "a solid entity stops it")
 
-    let total = 17
+    var doomed = scene_spawn(world, "temp", "demo", 100, 100, 10, 10, 0, false, 0)
+    doomed = scene_despawn(doomed, 3)
+    failures = failures + report(!scene_alive(doomed, 3) && scene_count(doomed) == 2, "despawn removes one entity and keeps ids")
+
+    var soak = scene_new(30)
+    soak = scene_spawn(soak, "floor", "solid", 400, 590, 800, 20, 0, true, 0)
+    soak = scene_spawn(soak, "left", "solid", 8, 300, 16, 600, 0, true, 0)
+    soak = scene_spawn(soak, "right", "solid", 792, 300, 16, 600, 0, true, 0)
+    var n = 0
+    while n < 200 {
+        soak = scene_spawn(soak, "crate", "debris", 40 + n % 20 * 36, 40 + n / 20 * 24, 20, 20, n % 6, false, 40)
+        n = n + 1
+    }
+    var step_count = 0
+    while step_count < 300 {
+        soak = scene_tick(soak)
+        step_count = step_count + 1
+    }
+    var inside = true
+    var k = 0
+    while k < scene_count(soak) {
+        if soak.xs[k] < 0 || soak.xs[k] > 800 || soak.ys[k] < 0 || soak.ys[k] > 600 {
+            inside = false
+        }
+        k = k + 1
+    }
+    failures = failures + report(scene_count(soak) == 203 && inside, "200 bodies stay in bounds over 300 ticks")
+
+    let extra = multiball(launch(level_game(0, 0, 3)))
+    failures = failures + report(ball_count(extra) > 1, "multiball spawns extra balls")
+
+    let total = 20
     println("")
     println("passed " + "${total - failures}" + ", failed " + "${failures}")
     if failures > 0 {

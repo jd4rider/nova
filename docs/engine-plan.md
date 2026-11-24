@@ -19,8 +19,8 @@ the swept-AABB core, then clamps to the field. Verified by the physics lab.
   integer millipixels, no wall-clock inside the simulation.
 - Spawn/despawn by id with a free list, not list compaction, so references stay
   valid for a frame.
-- Remaining: despawn/free list, 200-body soak test, and a renderer that draws a
-  Scene the way `breakout-gui` draws a Game.
+- Shipped since: `scene_despawn`/`scene_alive`, per-entity restitution, a
+  200-body soak check, and `render.nova` + `examples/scene-gui` for pixels.
 
 ## Phase 1 — Editor
 

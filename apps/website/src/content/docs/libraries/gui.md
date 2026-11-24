@@ -126,3 +126,14 @@ gui.save_png("dist/frame.png")
 - The event queue holds 1024 events and drops the newest when full.
 
 The [Studio rewrite](../../studio/nova-studio/) is the reference application: it uses the whole surface above.
+
+## Key releases and sound
+
+`event_key_up()` pairs with `event_key()`, so a program can tell a tap from a
+hold. The host maps both through the same key-code table, and reports the
+modifier set on each.
+
+`gui.sound(frequency, milliseconds, volume)` plays a synthesized tone: the host
+builds a small mono WAV in memory (sine plus a second harmonic, 6 ms attack,
+exponential decay) and hands it to `NSSound`, so a bundle needs no audio files
+and several tones may overlap. Volume is 0–100; the call is fire-and-forget.

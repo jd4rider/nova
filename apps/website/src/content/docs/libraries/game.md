@@ -166,3 +166,20 @@ solid flag in index-aligned lists. `scene_spawn` returns a new scene value,
 `scene_tick` applies gravity and resolves every dynamic entity against every
 solid through the same swept-AABB core, and accessors (`scene_x`, `scene_y`,
 `scene_count`, `scene_tag`) work by stable id. `examples/physics-lab` covers it.
+
+## Multiball and held-key steering
+
+Balls are flat quads in `game.balls` (x, y, vx, vy, millipixels), so the engine
+advances every ball in one pass: each one sweeps walls, live bricks and the
+paddle, and a ball that leaves the bottom is simply not copied into the next
+list. `ball_count`, `ball_px_x(_at)` and `ball_px_y(_at)` expose them to a
+renderer. The fourth capsule — purple `×2` — mirrors every live ball once, up to
+`max_balls()` (6). A life is lost only when the last ball drains.
+
+`paddle_hits` counts paddle contacts without changing the simulation, which
+gives the audio layer a clean edge to trigger on.
+
+For keyboard steering the app tracks key-up, not key repeat: while an arrow or
+A/D is held it slides `target` by 20 px each tick and the engine's easing turns
+that into constant motion; release stops it. macOS's delayed first repeat never
+enters the picture, so holding glides the same way the mouse does.

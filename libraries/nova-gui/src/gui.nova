@@ -95,6 +95,7 @@ extern "C" fn nova_gui_set_mono_font(family: String) -> Int
 extern "C" fn nova_gui_mono_fonts() -> String
 extern "C" fn nova_fs_cwd() -> String
 extern "C" fn nova_env(name: String) -> String
+extern "C" fn nova_sound_tone(frequency: Int, milliseconds: Int, volume: Int) -> Int
 extern "C" fn nova_process_run(command: String, cwd: String) -> String
 extern "C" fn nova_process_status() -> Int
 
@@ -239,6 +240,12 @@ fn event_close() -> Int {
 // The window became key or inactive: redraw so the frame matches the state.
 fn event_repaint() -> Int {
     return 9
+}
+
+// A key was released. Paired with event_key, this is how a game tells a held
+// arrow from a tap: hold drives the target every tick, release stops it.
+fn event_key_up() -> Int {
+    return 10
 }
 
 fn key_enter() -> Int {
@@ -610,6 +617,11 @@ fn mono_fonts() -> String {
 
 fn env(name: String) -> String {
     return nova_env(name)
+}
+
+// Plays a synthesized tone: frequency in Hz, length in ms, volume 0..100.
+fn sound(frequency: Int, milliseconds: Int, volume: Int) {
+    nova_sound_tone(frequency, milliseconds, volume)
 }
 
 // Runs a shell command in a directory and returns its combined output.

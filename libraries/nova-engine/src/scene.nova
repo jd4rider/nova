@@ -19,6 +19,8 @@ struct Scene {
     hhs: List<Int>,
     colours: List<Int>,
     solids: List<Bool>,
+    // Per-entity restitution in percent: 0 lands dead, 90 keeps bouncing.
+    bounces: List<Int>,
     gravity: Int,
     next_id: Int,
 }
@@ -35,6 +37,7 @@ fn scene_new(gravity: Int) -> Scene {
     var hhs: List<Int> = []
     var colours: List<Int> = []
     var solids: List<Bool> = []
+    var bounces: List<Int> = []
     return Scene {
         ids: ids,
         names: names,
@@ -47,6 +50,7 @@ fn scene_new(gravity: Int) -> Scene {
         hhs: hhs,
         colours: colours,
         solids: solids,
+        bounces: bounces,
         gravity: gravity,
         next_id: 1,
     }
@@ -57,7 +61,7 @@ fn scene_count(scene: Scene) -> Int {
 }
 
 // x and y are the centre in pixels; w and h are the full size.
-fn scene_spawn(scene: Scene, name: String, tag: String, x: Int, y: Int, w: Int, h: Int, colour: Int, solid: Bool) -> Scene {
+fn scene_spawn(scene: Scene, name: String, tag: String, x: Int, y: Int, w: Int, h: Int, colour: Int, solid: Bool, bounce: Int) -> Scene {
     var ids = scene.ids
     var names = scene.names
     var tags = scene.tags
@@ -69,6 +73,7 @@ fn scene_spawn(scene: Scene, name: String, tag: String, x: Int, y: Int, w: Int, 
     var hhs = scene.hhs
     var colours = scene.colours
     var solids = scene.solids
+    var bounces = scene.bounces
     ids.push(scene.next_id)
     names.push(name)
     tags.push(tag)
@@ -80,6 +85,7 @@ fn scene_spawn(scene: Scene, name: String, tag: String, x: Int, y: Int, w: Int, 
     hhs.push(h / 2)
     colours.push(colour)
     solids.push(solid)
+    bounces.push(bounce)
     return Scene {
         ids: ids,
         names: names,
@@ -92,9 +98,69 @@ fn scene_spawn(scene: Scene, name: String, tag: String, x: Int, y: Int, w: Int, 
         hhs: hhs,
         colours: colours,
         solids: solids,
+        bounces: bounces,
         gravity: scene.gravity,
         next_id: scene.next_id + 1,
     }
+}
+
+// Stable ids make despawn explicit: rebuild the component lists without the
+// entity, keeping every other id untouched.
+fn scene_despawn(scene: Scene, id: Int) -> Scene {
+    let drop = scene_index(scene, id)
+    if drop < 0 {
+        return scene
+    }
+    var ids: List<Int> = []
+    var names: List<String> = []
+    var tags: List<String> = []
+    var xs: List<Int> = []
+    var ys: List<Int> = []
+    var vxs: List<Int> = []
+    var vys: List<Int> = []
+    var hws: List<Int> = []
+    var hhs: List<Int> = []
+    var colours: List<Int> = []
+    var solids: List<Bool> = []
+    var bounces: List<Int> = []
+    var i = 0
+    while i < scene_count(scene) {
+        if i != drop {
+            ids.push(scene.ids[i])
+            names.push(scene.names[i])
+            tags.push(scene.tags[i])
+            xs.push(scene.xs[i])
+            ys.push(scene.ys[i])
+            vxs.push(scene.vxs[i])
+            vys.push(scene.vys[i])
+            hws.push(scene.hws[i])
+            hhs.push(scene.hhs[i])
+            colours.push(scene.colours[i])
+            solids.push(scene.solids[i])
+            bounces.push(scene.bounces[i])
+        }
+        i = i + 1
+    }
+    return Scene {
+        ids: ids,
+        names: names,
+        tags: tags,
+        xs: xs,
+        ys: ys,
+        vxs: vxs,
+        vys: vys,
+        hws: hws,
+        hhs: hhs,
+        colours: colours,
+        solids: solids,
+        bounces: bounces,
+        gravity: scene.gravity,
+        next_id: scene.next_id,
+    }
+}
+
+fn scene_alive(scene: Scene, id: Int) -> Bool {
+    return scene_index(scene, id) >= 0
 }
 
 fn scene_index(scene: Scene, id: Int) -> Int {
@@ -162,12 +228,13 @@ fn scene_tick(scene: Scene) -> Scene {
     let solids = scene.solids
     let hws = scene.hws
     let hhs = scene.hhs
+    let bounces = scene.bounces
 
     var i = 0
     while i < ids.len() {
         if !solids[i] {
             var body = ph_body(xs[i], ys[i], hws[i] * 2, hhs[i] * 2)
-            body = ph_with_bounce(body, 0)
+            body = ph_with_bounce(body, bounces[i])
             body = ph_with_velocity(body, vxs[i], vys[i])
             body = ph_gravity(body, scene.gravity)
             var best = ph_miss()

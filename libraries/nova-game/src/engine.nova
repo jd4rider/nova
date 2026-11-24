@@ -1,19 +1,19 @@
-// Nova Game Engine: Breakout with levels, power-ups and a kinematic paddle.
+// Nova Game Engine: Breakout with levels, power-ups, multiball and a kinematic
+// paddle.
 //
 // The engine is pure: `step(game, target)` returns the next Game and knows
 // nothing about rendering. The paddle eases toward its target at a bounded
 // speed, so a keyboard tap glides instead of teleporting and a mouse drag
-// tracks smoothly. Ball state is millipixels, so a long rally stays exact.
+// tracks smoothly. Balls live as flat quads (x, y, vx, vy) in millipixels, so a
+// long rally stays exact and a ball list is cheap to copy.
 
 import "physics.nova"
 
 struct Game {
-    ball_x: Int,
-    ball_y: Int,
-    vx: Int,
-    vy: Int,
+    balls: List<Int>,
     paddle: Int,
     paddle_v: Int,
+    paddle_hits: Int,
     lives: Int,
     score: Int,
     rally: Int,
@@ -50,6 +50,10 @@ fn brick_count() -> Int {
 
 fn ball_size() -> Int {
     return 16
+}
+
+fn max_balls() -> Int {
+    return 6
 }
 
 fn paddle_width() -> Int {
@@ -155,25 +159,120 @@ fn brick_colour(row: Int) -> Int {
     return index % 6
 }
 
+// ---------- balls ----------
+
+fn ball_quad(x: Int, y: Int, vx: Int, vy: Int) -> List<Int> {
+    var quad: List<Int> = []
+    quad.push(x)
+    quad.push(y)
+    quad.push(vx)
+    quad.push(vy)
+    return quad
+}
+
+fn ball_count(game: Game) -> Int {
+    return game.balls.len() / 4
+}
+
+fn ball_x_at(game: Game, index: Int) -> Int {
+    if index < 0 || index >= ball_count(game) {
+        return 0
+    }
+    return game.balls[index * 4]
+}
+
+fn ball_y_at(game: Game, index: Int) -> Int {
+    if index < 0 || index >= ball_count(game) {
+        return 0
+    }
+    return game.balls[index * 4 + 1]
+}
+
+fn ball_px_x_at(game: Game, index: Int) -> Int {
+    return ph_px(ball_x_at(game, index))
+}
+
+fn ball_px_y_at(game: Game, index: Int) -> Int {
+    return ph_px(ball_y_at(game, index))
+}
+
 fn ball_px_x(game: Game) -> Int {
-    return ph_px(game.ball_x)
+    return ball_px_x_at(game, 0)
 }
 
 fn ball_px_y(game: Game) -> Int {
-    return ph_px(game.ball_y)
+    return ball_px_y_at(game, 0)
 }
 
 fn ball_pace(game: Game) -> Int {
-    var vx = game.vx
+    if ball_count(game) == 0 {
+        return 0
+    }
+    var vx = game.balls[2]
     if vx < 0 {
         vx = -vx
     }
-    var vy = game.vy
+    var vy = game.balls[3]
     if vy < 0 {
         vy = -vy
     }
     return (vx + vy) / 1000
 }
+
+// Mirror every in-play ball once, keeping the total at or below max_balls.
+fn mirror_balls(balls: List<Int>) -> List<Int> {
+    var out: List<Int> = []
+    var i = 0
+    while i < balls.len() {
+        out.push(balls[i])
+        i = i + 1
+    }
+    let count = balls.len() / 4
+    i = 0
+    while i < count && out.len() / 4 < max_balls() {
+        let x = balls[i * 4]
+        let y = balls[i * 4 + 1]
+        var vx = -balls[i * 4 + 2] + 800
+        if vx > 9000 {
+            vx = 9000
+        }
+        if vx < -9000 {
+            vx = -9000
+        }
+        out.push(x)
+        out.push(y)
+        out.push(vx)
+        out.push(-4600)
+        i = i + 1
+    }
+    return out
+}
+
+fn multiball(game: Game) -> Game {
+    if game.status != 1 {
+        return game
+    }
+    return Game {
+        balls: mirror_balls(game.balls),
+        paddle: game.paddle,
+        paddle_v: game.paddle_v,
+        paddle_hits: game.paddle_hits,
+        lives: game.lives,
+        score: game.score,
+        rally: game.rally,
+        status: game.status,
+        level: game.level,
+        bricks: game.bricks,
+        caps_x: game.caps_x,
+        caps_y: game.caps_y,
+        caps_kind: game.caps_kind,
+        caps_alive: game.caps_alive,
+        wide: game.wide,
+        slow: game.slow,
+    }
+}
+
+// ---------- levels ----------
 
 fn level_bricks(level: Int) -> List<Int> {
     var bricks: List<Int> = []
@@ -195,12 +294,10 @@ fn level_bricks(level: Int) -> List<Int> {
 
 fn level_game(level: Int, score: Int, lives: Int) -> Game {
     return Game {
-        ball_x: 400000,
-        ball_y: 440000,
-        vx: 4000,
-        vy: -5000,
+        balls: ball_quad(400000, 440000, 0, 0),
         paddle: 400,
         paddle_v: 0,
+        paddle_hits: 0,
         lives: lives,
         score: score,
         rally: 0,
@@ -225,12 +322,10 @@ fn launch(game: Game) -> Game {
         return game
     }
     return Game {
-        ball_x: game.ball_x,
-        ball_y: game.ball_y,
-        vx: 4000,
-        vy: -5000,
+        balls: ball_quad(game.paddle * 1000, 440000, 4000, -5000),
         paddle: game.paddle,
         paddle_v: game.paddle_v,
+        paddle_hits: game.paddle_hits,
         lives: game.lives,
         score: game.score,
         rally: 0,
@@ -268,6 +363,8 @@ fn bricks_left(game: Game) -> Int {
     return alive
 }
 
+// ---------- geometry ----------
+
 fn brick_body(column: Int, row: Int) -> Body {
     return ph_solid_box(brick_x(column), brick_y(row), brick_w(), brick_h())
 }
@@ -304,18 +401,18 @@ fn eased_paddle(game: Game, target: Int) -> Int {
     return paddle
 }
 
+// ---------- simulation ----------
+
 fn step(game: Game, target: Int) -> Game {
     let paddle = eased_paddle(game, target)
     let paddle_v = paddle - game.paddle
 
     if game.status == 0 {
         return Game {
-            ball_x: paddle * 1000,
-            ball_y: 440000,
-            vx: 0,
-            vy: 0,
+            balls: ball_quad(paddle * 1000, 440000, 0, 0),
             paddle: paddle,
             paddle_v: paddle_v,
+            paddle_hits: game.paddle_hits,
             lives: game.lives,
             score: game.score,
             rally: game.rally,
@@ -333,12 +430,10 @@ fn step(game: Game, target: Int) -> Game {
 
     if game.status != 1 {
         return Game {
-            ball_x: game.ball_x,
-            ball_y: game.ball_y,
-            vx: game.vx,
-            vy: game.vy,
+            balls: game.balls,
             paddle: paddle,
             paddle_v: paddle_v,
+            paddle_hits: game.paddle_hits,
             lives: game.lives,
             score: game.score,
             rally: game.rally,
@@ -354,50 +449,7 @@ fn step(game: Game, target: Int) -> Game {
         }
     }
 
-    var ball = ph_with_velocity(ph_body(ph_px(game.ball_x), ph_px(game.ball_y), ball_size(), ball_size()), game.vx, game.vy)
-
-    var kind = 0
-    var hit = -1
-    var best = ph_miss()
-    let walls = wall_list()
-    var i = 0
-    while i < walls.len() {
-        let when = ph_sweep(ball, walls[i])
-        if when < best {
-            best = when
-            hit = i
-            kind = 1
-        }
-        i = i + 1
-    }
-
     var bricks = game.bricks
-    var row = 0
-    while row < brick_rows() {
-        var column = 0
-        while column < brick_cols() {
-            let index = row * brick_cols() + column
-            if bricks[index] == 1 {
-                let when = ph_sweep(ball, brick_body(column, row))
-                if when < best {
-                    best = when
-                    hit = index
-                    kind = 2
-                }
-            }
-            column = column + 1
-        }
-        row = row + 1
-    }
-
-    if game.vy > 0 {
-        let paddle_when = ph_sweep(ball, paddle_body(game))
-        if paddle_when < best {
-            best = paddle_when
-            kind = 3
-        }
-    }
-
     var score = game.score
     var rally = game.rally
     var caps_x = game.caps_x
@@ -407,49 +459,109 @@ fn step(game: Game, target: Int) -> Game {
     var wide = game.wide
     var slow = game.slow
     var bonus = 0
+    var hits = game.paddle_hits
+    var multiball_hit = false
+    let walls = wall_list()
+    var alive: List<Int> = []
 
-    if kind == 0 {
-        ball = ph_advance(ball)
-    } else if kind == 1 {
-        ball = ph_resolve(ball, walls[hit])
-    } else if kind == 3 {
-        ball = ph_bounce_paddle(ball, paddle_body(game), 9)
-        var spin = ball.vx + paddle_v * 700
-        if spin > 9500 {
-            spin = 9500
+    var b = 0
+    let count = ball_count(game)
+    while b < count {
+        var ball = ph_with_velocity(ph_body(ph_px(game.balls[b * 4]), ph_px(game.balls[b * 4 + 1]), ball_size(), ball_size()), game.balls[b * 4 + 2], game.balls[b * 4 + 3])
+
+        var kind = 0
+        var hit = -1
+        var best = ph_miss()
+        var i = 0
+        while i < walls.len() {
+            let when = ph_sweep(ball, walls[i])
+            if when < best {
+                best = when
+                hit = i
+                kind = 1
+            }
+            i = i + 1
         }
-        if spin < -9500 {
-            spin = -9500
+
+        var row = 0
+        while row < brick_rows() {
+            var column = 0
+            while column < brick_cols() {
+                let index = row * brick_cols() + column
+                if bricks[index] == 1 {
+                    let when = ph_sweep(ball, brick_body(column, row))
+                    if when < best {
+                        best = when
+                        hit = index
+                        kind = 2
+                    }
+                }
+                column = column + 1
+            }
+            row = row + 1
         }
-        ball = ph_with_velocity(ball, spin, ball.vy)
-        if ball.vy > -3000 {
-            ball = ph_with_velocity(ball, ball.vx, -4000)
+
+        if ball.vy > 0 {
+            let paddle_when = ph_sweep(ball, paddle_body(game))
+            if paddle_when < best {
+                best = paddle_when
+                kind = 3
+            }
         }
-        rally = 0
-    } else {
-        ball = ph_resolve(ball, brick_body(hit % brick_cols(), hit / brick_cols()))
-        bricks[hit] = 0
-        score = score + 10
-        rally = rally + 1
-        var factor = 100 + rally * 2
-        if factor > 150 {
-            factor = 150
+
+        if kind == 0 {
+            ball = ph_advance(ball)
+        } else if kind == 1 {
+            ball = ph_resolve(ball, walls[hit])
+        } else if kind == 3 {
+            ball = ph_bounce_paddle(ball, paddle_body(game), 9)
+            var spin = ball.vx + paddle_v * 700
+            if spin > 9500 {
+                spin = 9500
+            }
+            if spin < -9500 {
+                spin = -9500
+            }
+            ball = ph_with_velocity(ball, spin, ball.vy)
+            if ball.vy > -3000 {
+                ball = ph_with_velocity(ball, ball.vx, -4000)
+            }
+            hits = hits + 1
+            rally = 0
+        } else {
+            ball = ph_resolve(ball, brick_body(hit % brick_cols(), hit / brick_cols()))
+            bricks[hit] = 0
+            score = score + 10
+            rally = rally + 1
+            var factor = 100 + rally * 2
+            if factor > 150 {
+                factor = 150
+            }
+            if slow > 0 {
+                factor = 100
+            }
+            ball = ph_with_velocity(ball, ball.vx * factor / 100, ball.vy * factor / 100)
+            // Every fifth cleared brick drops a capsule, deterministically.
+            if score / 10 % 5 == 3 && !caps_alive {
+                caps_x = brick_x(hit % brick_cols()) + brick_w() / 2
+                caps_y = brick_y(hit / brick_cols()) + brick_h() / 2
+                caps_kind = score / 10 % 4 + 1
+                caps_alive = true
+            }
         }
-        if slow > 0 {
-            factor = 100
+
+        ball = ph_clamp(ball, 8, 8, field_width() - 8, field_height() + 60)
+        ball = ph_speed_clamp(ball, 14000)
+
+        // A ball that left the bottom is gone; the others keep playing.
+        if ph_px(ball.y) <= field_height() {
+            alive.push(ball.x)
+            alive.push(ball.y)
+            alive.push(ball.vx)
+            alive.push(ball.vy)
         }
-        ball = ph_with_velocity(ball, ball.vx * factor / 100, ball.vy * factor / 100)
-        // Every fifth cleared brick drops a capsule, deterministically.
-        if score / 10 % 5 == 3 {
-            caps_x = brick_x(hit % brick_cols()) + brick_w() / 2
-            caps_y = brick_y(hit / brick_cols()) + brick_h() / 2
-            caps_kind = score / 10 % 3 + 1
-            caps_alive = true
-        }
+        b = b + 1
     }
-
-    ball = ph_clamp(ball, 8, 8, field_width() - 8, field_height() + 60)
-    ball = ph_speed_clamp(ball, 14000)
 
     if caps_alive {
         caps_y = caps_y + capsule_speed()
@@ -465,11 +577,18 @@ fn step(game: Game, target: Int) -> Game {
             if caps_kind == 3 {
                 bonus = bonus + 1
             }
+            if caps_kind == 4 {
+                multiball_hit = true
+            }
             caps_alive = false
         }
         if caps_y > field_height() + 40 {
             caps_alive = false
         }
+    }
+
+    if multiball_hit {
+        alive = mirror_balls(alive)
     }
 
     if wide > 0 {
@@ -480,25 +599,19 @@ fn step(game: Game, target: Int) -> Game {
     }
 
     var lives = game.lives + bonus
-    var status = 1
-    let by = ph_px(ball.y)
-    if by > field_height() {
+
+    // All balls gone: one life, a fresh ball on the paddle.
+    if alive.len() == 0 {
         lives = lives - 1
-        rally = 0
-        caps_alive = false
-        wide = 0
-        slow = 0
         var next_status = 0
         if lives <= 0 {
             next_status = 3
         }
         return Game {
-            ball_x: paddle * 1000,
-            ball_y: 440000,
-            vx: 0,
-            vy: 0,
+            balls: ball_quad(paddle * 1000, 440000, 0, 0),
             paddle: paddle,
             paddle_v: paddle_v,
+            paddle_hits: hits,
             lives: lives,
             score: score,
             rally: 0,
@@ -513,6 +626,8 @@ fn step(game: Game, target: Int) -> Game {
             slow: 0,
         }
     }
+
+    var status = 1
     var remaining = 0
     for brick in bricks {
         if brick == 1 {
@@ -524,12 +639,10 @@ fn step(game: Game, target: Int) -> Game {
     }
 
     return Game {
-        ball_x: ball.x,
-        ball_y: ball.y,
-        vx: ball.vx,
-        vy: ball.vy,
+        balls: alive,
         paddle: paddle,
         paddle_v: paddle_v,
+        paddle_hits: hits,
         lives: lives,
         score: score,
         rally: rally,

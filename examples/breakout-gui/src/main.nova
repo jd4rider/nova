@@ -3,9 +3,11 @@ import "../../../libraries/nova-gui/src/gui.nova" as gui
 import "../../../libraries/nova-game/src/engine.nova"
 
 // Nova Breakout, drawn by nova-gui. The engine owns the simulation; this file
-// owns input and pixels. One frame is one 16 ms tick, so physics is fixed-step
-// and a replay is identical. The paddle itself is eased by the engine, so a
-// key tap glides and a mouse drag tracks without snapping.
+// owns input and pixels. One frame is one 16 ms tick, so physics is fixed-step.
+//
+// Movement is driven by held keys, not by key repeats: the host reports key-up
+// now, so `hold` steers the target every tick. A tap still moves a little; a
+// held arrow glides at full speed, exactly like the mouse.
 
 fn window_w() -> Int {
     return 900
@@ -29,30 +31,32 @@ struct App {
     quit: Bool,
     screen: String,
     pick: Int,
+    hold: Int,
+    muted: Bool,
 }
 
-fn start_level(level: Int, quit: Bool) -> App {
+fn tune(app: App, game: Game, target: Int, screen: String, pick: Int, hold: Int) -> App {
     return App {
-        game: level_game(level, 0, 3),
-        target: 400,
-        quit: quit,
-        screen: "play",
-        pick: level,
+        game: game,
+        target: target,
+        quit: app.quit,
+        screen: screen,
+        pick: pick,
+        hold: hold,
+        muted: app.muted,
     }
+}
+
+fn start_level(app: App, level: Int) -> App {
+    return tune(app, level_game(level, 0, 3), 400, "play", level, 0)
 }
 
 fn restart(app: App) -> App {
-    return start_level(app.game.level, app.quit)
+    return tune(app, level_game(app.game.level, 0, 3), 400, "play", app.game.level, 0)
 }
 
 fn quit(app: App) -> App {
-    return App {
-        game: app.game,
-        target: app.target,
-        quit: true,
-        screen: app.screen,
-        pick: app.pick,
-    }
+    return tune(app, app.game, app.target, app.screen, app.pick, 0)
 }
 
 fn with_target(app: App, target: Int) -> App {
@@ -63,52 +67,43 @@ fn with_target(app: App, target: Int) -> App {
     if next > field_width() - 50 {
         next = field_width() - 50
     }
-    return App {
-        game: app.game,
-        target: next,
-        quit: app.quit,
-        screen: app.screen,
-        pick: app.pick,
-    }
+    return tune(app, app.game, next, app.screen, app.pick, app.hold)
 }
 
 fn with_screen(app: App, screen: String) -> App {
+    return tune(app, app.game, app.target, screen, app.pick, 0)
+}
+
+fn with_hold(app: App, hold: Int) -> App {
+    return tune(app, app.game, app.target, app.screen, app.pick, hold)
+}
+
+fn with_mute(app: App, muted: Bool) -> App {
     return App {
         game: app.game,
         target: app.target,
         quit: app.quit,
-        screen: screen,
+        screen: app.screen,
         pick: app.pick,
+        hold: app.hold,
+        muted: muted,
     }
 }
 
-// Space and a click mean "the obvious next thing": start, launch, next level,
-// retry or resume depending on where the player is.
+// Space and a click mean "the obvious next thing".
 fn action(app: App) -> App {
     if app.screen == "menu" {
-        return start_level(app.pick, app.quit)
+        return start_level(app, app.pick)
     }
     if app.screen == "pause" {
         return with_screen(app, "play")
     }
     if app.game.status == 0 {
-        return App {
-            game: launch(app.game),
-            target: app.target,
-            quit: app.quit,
-            screen: app.screen,
-            pick: app.pick,
-        }
+        return tune(app, launch(app.game), app.target, "play", app.pick, app.hold)
     }
     if app.game.status == 2 {
         let advanced = next_level(app.game)
-        return App {
-            game: advanced,
-            target: 400,
-            quit: app.quit,
-            screen: app.screen,
-            pick: advanced.level,
-        }
+        return tune(app, advanced, 400, "play", advanced.level, 0)
     }
     if app.game.status == 3 {
         return restart(app)
@@ -122,26 +117,14 @@ fn key_menu(app: App, code: Int) -> App {
         if pick < 0 {
             pick = level_count() - 1
         }
-        return App {
-            game: app.game,
-            target: app.target,
-            quit: app.quit,
-            screen: app.screen,
-            pick: pick,
-        }
+        return tune(app, app.game, app.target, app.screen, pick, 0)
     }
     if code == gui.key_right() || code == 100 {
         var pick = app.pick + 1
         if pick >= level_count() {
             pick = 0
         }
-        return App {
-            game: app.game,
-            target: app.target,
-            quit: app.quit,
-            screen: app.screen,
-            pick: pick,
-        }
+        return tune(app, app.game, app.target, app.screen, pick, 0)
     }
     if code == 32 || code == gui.key_enter() {
         return action(app)
@@ -178,11 +161,18 @@ fn key_play(app: App, code: Int) -> App {
     if code == 114 {
         return restart(app)
     }
+    if code == 109 {
+        let muted = !app.muted
+        if !muted {
+            gui.sound(620, 40, 30)
+        }
+        return with_mute(app, muted)
+    }
     if code == 97 || code == gui.key_left() {
-        return with_target(app, app.target - 28)
+        return with_hold(with_target(app, app.target - 20), -1)
     }
     if code == 100 || code == gui.key_right() {
-        return with_target(app, app.target + 28)
+        return with_hold(with_target(app, app.target + 20), 1)
     }
     if code == gui.key_home() {
         return with_target(app, 50)
@@ -207,22 +197,90 @@ fn key(app: App, code: Int, mods: Int) -> App {
     return key_play(app, code)
 }
 
+// Release stops the glide. Releasing the direction that is not held leaves the
+// other direction intact, so tapping both keys cannot leave the paddle running.
+fn key_release(app: App, code: Int) -> App {
+    if code == gui.key_left() || code == 97 {
+        if app.hold < 0 {
+            return with_hold(app, 0)
+        }
+    }
+    if code == gui.key_right() || code == 100 {
+        if app.hold > 0 {
+            return with_hold(app, 0)
+        }
+    }
+    return app
+}
+
+// Applied once per tick before the simulation: holding a direction slides the
+// target, and the engine's easing turns that into constant paddle motion.
+fn held_step(app: App) -> App {
+    if app.screen != "play" || app.hold == 0 {
+        return app
+    }
+    return with_target(app, app.target + app.hold * 20)
+}
+
 fn handle(app: App, event: gui.Event) -> App {
     if event.kind == gui.event_key() {
         return key(app, event.code, event.mods)
     }
+    if event.kind == gui.event_key_up() {
+        return key_release(app, event.code)
+    }
     if event.kind == gui.event_close() {
         return quit(app)
     }
-    if app.screen == "play" {
-        if event.kind == gui.event_mouse_move() || event.kind == gui.event_drag() {
+    if event.kind == gui.event_mouse_move() || event.kind == gui.event_drag() {
+        if app.screen == "play" {
             return with_target(app, event.x - field_x())
         }
+        return app
     }
     if event.kind == gui.event_mouse_down() {
+        if app.screen == "play" {
+            return action(with_target(app, event.x - field_x()))
+        }
         return action(app)
     }
     return app
+}
+
+// Sound follows the simulation, not the input: one tone per material event,
+// compared across the tick. The app stays silent while muted.
+fn sfx(prev: Game, next: Game, muted: Bool) {
+    if muted {
+        return
+    }
+    if prev.status == 0 && next.status == 1 {
+        gui.sound(720, 60, 38)
+    }
+    if next.score > prev.score {
+        let step = next.score / 10
+        gui.sound(760 + step % 5 * 70, 42, 36)
+    }
+    if next.paddle_hits > prev.paddle_hits {
+        gui.sound(420, 38, 30)
+    }
+    if ball_count(next) > ball_count(prev) {
+        gui.sound(980, 70, 44)
+        gui.sound(1320, 90, 32)
+    }
+    if prev.caps_alive && !next.caps_alive && next.lives >= prev.lives {
+        gui.sound(1180, 90, 44)
+    }
+    if next.lives < prev.lives {
+        gui.sound(170, 220, 58)
+    }
+    if next.status == 2 && prev.status != 2 {
+        gui.sound(660, 150, 48)
+        gui.sound(880, 170, 44)
+        gui.sound(1320, 240, 38)
+    }
+    if next.status == 3 && prev.status != 3 {
+        gui.sound(150, 320, 58)
+    }
 }
 
 fn brick_color(row: Int, theme: gui.Theme) -> Int {
@@ -254,7 +312,7 @@ fn draw_brand(theme: gui.Theme) {
     gui.text(24, 26, "NOVA", 20, theme.fg_bright)
     let brand_x = 24 + gui.text_width("NOVA", 20) + 10
     gui.text(brand_x, 26, "BREAKOUT", 20, theme.accent)
-    gui.text(24, 56, "levels · power-ups · swept physics", 11, theme.faint)
+    gui.text(24, 56, "levels · power-ups · multiball · swept physics", 11, theme.faint)
 }
 
 fn draw_hud(game: Game, theme: gui.Theme) {
@@ -273,6 +331,11 @@ fn draw_hud(game: Game, theme: gui.Theme) {
     gui.text(window_w() - 24 - gui.text_width(hearts, 13), 54, hearts, 13, theme.red)
 
     var chips_x = window_w() - 24
+    if ball_count(game) > 1 {
+        let chip = "×${ball_count(game)} BALLS"
+        chips_x = chips_x - gui.text_width(chip, 11) - 12
+        gui.text(chips_x, 76, chip, 11, theme.purple)
+    }
     if game.slow > 0 {
         let chip = "SLOW ${game.slow / 60}s"
         chips_x = chips_x - gui.text_width(chip, 11) - 12
@@ -313,6 +376,9 @@ fn capsule_color(kind: Int, theme: gui.Theme) -> Int {
     if kind == 2 {
         return theme.aqua
     }
+    if kind == 4 {
+        return theme.purple
+    }
     return theme.red
 }
 
@@ -334,17 +400,26 @@ fn draw_capsule(game: Game, theme: gui.Theme) {
     if game.caps_kind == 2 {
         label = "S"
     }
+    if game.caps_kind == 4 {
+        label = "×2"
+    }
     let width = gui.text_width(label, 12)
     gui.text(x - width / 2, y - 9, label, 12, theme.bg)
 }
 
-fn draw_ball(game: Game, theme: gui.Theme) {
-    let bx = field_x() + ball_px_x(game)
-    let by = field_y() + ball_px_y(game)
+fn draw_ball_at(bx: Int, by: Int, theme: gui.Theme) {
     let radius = ball_size() / 2
     gui.round_rect(bx - radius - 4, by - radius - 4, radius * 2 + 8, radius * 2 + 8, radius + 4, theme.selection)
     gui.round_rect(bx - radius - 2, by - radius - 2, radius * 2 + 4, radius * 2 + 4, radius + 2, gui.rgb(220, 240, 255))
     gui.round_rect(bx - radius, by - radius, radius * 2, radius * 2, radius, gui.white())
+}
+
+fn draw_balls(game: Game, theme: gui.Theme) {
+    var i = 0
+    while i < ball_count(game) {
+        draw_ball_at(field_x() + ball_px_x_at(game, i), field_y() + ball_px_y_at(game, i), theme)
+        i = i + 1
+    }
 }
 
 fn draw_paddle(game: Game, theme: gui.Theme) {
@@ -358,7 +433,6 @@ fn draw_paddle(game: Game, theme: gui.Theme) {
     gui.round_rect(px, py + 4, width, paddle_height(), 9, theme.bg_hard)
     gui.round_rect(px, py, width, paddle_height(), 9, color)
     gui.rect_alpha(px + 8, py + 3, width - 16, 4, gui.white(), 110)
-    // A marker at the paddle's centre makes the eased motion legible.
     gui.rect_alpha(px + width / 2 - 1, py + 6, 2, paddle_height() - 10, gui.white(), 60)
 }
 
@@ -369,7 +443,7 @@ fn draw_field(game: Game, theme: gui.Theme) {
     draw_capsule(game, theme)
     draw_paddle(game, theme)
     if game.status != 2 && game.status != 3 {
-        draw_ball(game, theme)
+        draw_balls(game, theme)
     }
 }
 
@@ -377,7 +451,7 @@ fn draw_overlay(game: Game, theme: gui.Theme) {
     let mid = field_y() + field_height() / 2
     if game.status == 0 {
         centered(mid - 20, "SPACE OR CLICK TO LAUNCH", 18, theme.fg_bright)
-        centered(mid + 10, "the paddle steers the ball", 12, theme.muted)
+        centered(mid + 10, "hold a direction to slide the paddle", 12, theme.muted)
     }
     if game.status == 2 {
         centered(mid - 24, "LEVEL CLEARED", 26, theme.green)
@@ -401,7 +475,11 @@ fn draw_play(app: App) {
     draw_hud(game, theme)
     draw_field(game, theme)
     draw_overlay(game, theme)
-    let hint = "← → or A D move   ·   mouse aims   ·   space launch   ·   P pause   ·   R restart   ·   ⌘Q quit"
+    var sound = "M sound on"
+    if app.muted {
+        sound = "M sound off"
+    }
+    let hint = "← → or A D hold to move   ·   mouse aims   ·   space launch   ·   P pause   ·   ${sound}   ·   R restart   ·   ⌘Q quit"
     gui.text((window_w() - gui.text_width(hint, 11)) / 2, window_h() - 34, hint, 11, theme.faint)
 }
 
@@ -425,10 +503,8 @@ fn draw_menu(app: App) {
     let start_x = (window_w() - title_width - nova_width) / 2
     gui.text(start_x, title_y, "NOVA", title_size, theme.fg_bright)
     gui.text(start_x + nova_width, title_y, title, title_size, theme.accent)
-    centered(title_y + 62, "colour, levels and power-ups on the Nova game engine", 13, theme.muted)
+    centered(title_y + 62, "colour, levels, power-ups and multiball on the Nova engine", 13, theme.muted)
 
-    // A mosaic of every level colour, drawn with the same brick geometry the
-    // playfield uses so the menu previews the real palette.
     let gap = 12
     let brick_w_menu = 96
     let row_w = 7 * brick_w_menu + 6 * gap
@@ -470,7 +546,6 @@ fn draw_menu(app: App) {
 
     let hint = "A D or arrows move   ·   mouse aims   ·   click launches   ·   P pauses   ·   ⌘Q quits"
     gui.text((window_w() - gui.text_width(hint, 11)) / 2, window_h() - 34, hint, 11, theme.faint)
-
 }
 
 fn draw_pause(app: App) {
@@ -499,63 +574,86 @@ fn draw(app: App) {
     draw_play(app)
 }
 
-fn simulate(ticks: Int, follow: Bool) -> App {
-    var app = start_level(0, false)
-    app = App {
-        game: launch(app.game),
-        target: app.target,
-        quit: app.quit,
-        screen: app.screen,
-        pick: app.pick,
+fn simulate(ticks: Int, follow: Bool, want_balls: Bool) -> App {
+    var app = App {
+        game: new_game(),
+        target: 400,
+        quit: false,
+        screen: "play",
+        pick: 0,
+        hold: 0,
+        muted: false,
     }
+    app = tune(app, launch(app.game), app.target, "play", app.pick, 0)
     var i = 0
-    // Stop the moment a capsule is on screen: that is the frame worth checking.
-    while i < ticks && !app.game.caps_alive {
+    while i < ticks {
+        if want_balls && ball_count(app.game) > 1 {
+            break
+        }
+        if !want_balls && app.game.caps_alive {
+            break
+        }
         var target = app.target
         if follow {
             target = ball_px_x(app.game)
         }
-        app = App {
-            game: step(app.game, target),
-            target: target,
-            quit: app.quit,
-            screen: app.screen,
-            pick: app.pick,
-        }
+        app = tune(app, step(app.game, target), target, "play", app.pick, 0)
         i = i + 1
+    }
+    if want_balls {
+        app = tune(app, multiball(app.game), 400, "play", app.pick, 0)
+        // The mirrored balls are born overlapping: give them a few ticks to
+        // separate before anyone looks at the frame.
+        var settle = 0
+        while settle < 18 {
+            app = tune(app, step(app.game, app.target), app.target, "play", app.pick, 0)
+            settle = settle + 1
+        }
     }
     return app
 }
 
 fn main() {
+    // Headless check for held-key steering: no window, just the tick pipeline
+    // the game runs, so the glide can be measured instead of eyeballed.
+    let hold_check = gui.env("NOVA_BREAKOUT_HOLD")
+    if hold_check.len() > 0 {
+        var check = App {
+            game: launch(new_game()),
+            target: 400,
+            quit: false,
+            screen: "play",
+            pick: 0,
+            hold: 1,
+            muted: true,
+        }
+        var positions = ""
+        var tick = 0
+        while tick < 24 {
+            check = held_step(check)
+            check = tune(check, step(check.game, check.target), check.target, check.screen, check.pick, check.hold)
+            positions = positions + " ${check.game.paddle}"
+            tick = tick + 1
+        }
+        println("hold:${positions}")
+        return
+    }
     let shot = gui.env("NOVA_BREAKOUT_SHOT")
     if shot.len() > 0 {
         let screen = gui.env("NOVA_BREAKOUT_SCREEN")
-        var app = simulate(6000, true)
+        var app = simulate(6000, true, screen == "balls")
         if screen == "menu" {
-            app = App {
-                game: app.game,
-                target: app.target,
-                quit: app.quit,
-                screen: "menu",
-                pick: 2,
-            }
+            app = tune(app, app.game, app.target, "menu", 2, 0)
         }
         if screen == "pause" {
-            app = App {
-                game: app.game,
-                target: app.target,
-                quit: app.quit,
-                screen: "pause",
-                pick: app.pick,
-            }
+            app = tune(app, app.game, app.target, "pause", app.pick, 0)
         }
         if gui.open("Nova Breakout", window_w(), window_h()) {
             gui.begin()
             draw(app)
             gui.present()
             let saved = gui.save_png(shot)
-            println("breakout-gui: saved=${saved} screen=${app.screen} level=${app.game.level} bricks=${bricks_left(app.game)} score=${app.game.score} capsule=${app.game.caps_alive}")
+            println("breakout-gui: saved=${saved} screen=${app.screen} level=${app.game.level} balls=${ball_count(app.game)} bricks=${bricks_left(app.game)} score=${app.game.score} capsule=${app.game.caps_alive}")
             gui.close()
         }
         return
@@ -570,6 +668,8 @@ fn main() {
         quit: false,
         screen: "menu",
         pick: 0,
+        hold: 0,
+        muted: false,
     }
     while !app.quit && gui.is_open() {
         var event = gui.next_event()
@@ -578,13 +678,11 @@ fn main() {
             event = gui.next_event()
         }
         if app.screen == "play" {
-            app = App {
-                game: step(app.game, app.target),
-                target: app.target,
-                quit: app.quit,
-                screen: app.screen,
-                pick: app.pick,
-            }
+            app = held_step(app)
+            let before = app.game
+            let after = step(app.game, app.target)
+            app = tune(app, after, app.target, app.screen, app.pick, app.hold)
+            sfx(before, after, app.muted)
         }
         gui.begin()
         draw(app)

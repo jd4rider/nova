@@ -56,6 +56,7 @@ typedef struct {
 #define NOVA_GUI_RESIZE 7
 #define NOVA_GUI_CLOSE 8
 #define NOVA_GUI_REPAINT 9
+#define NOVA_GUI_KEY_UP 10
 
 #define NOVA_KEY_ENTER 13
 #define NOVA_KEY_TAB 9
@@ -201,42 +202,52 @@ static int64_t nova_gui_modifiers(NSEventModifierFlags flags) {
     return NSMakePoint(local.x, (CGFloat)nova_h - local.y);
 }
 
-- (void)keyDown:(NSEvent *)event {
-    int64_t mods = nova_gui_modifiers(event.modifierFlags);
-    nova_gui_trace("keyDown keyCode=%d mods=%lld key=%d active=%d", (int)event.keyCode,
-                   mods, (int)nova_window.isKeyWindow, (int)NSApp.isActive);
-    int64_t code = 0;
+/* Maps an AppKit key event to the Nova key vocabulary: named keys get the
+ * codes from nova-tui, printable characters keep their Unicode scalar. */
+static int64_t nova_gui_key_code(NSEvent *event, int64_t mods) {
     switch (event.keyCode) {
-        case 36: code = NOVA_KEY_ENTER; break;
-        case 48: code = NOVA_KEY_TAB; break;
-        case 53: code = NOVA_KEY_ESCAPE; break;
-        case 51: code = NOVA_KEY_BACKSPACE; break;
-        case 117: code = NOVA_KEY_DELETE; break;
-        case 123: code = NOVA_KEY_LEFT; break;
-        case 124: code = NOVA_KEY_RIGHT; break;
-        case 126: code = NOVA_KEY_UP; break;
-        case 125: code = NOVA_KEY_DOWN; break;
-        case 115: code = NOVA_KEY_HOME; break;
-        case 119: code = NOVA_KEY_END; break;
-        case 116: code = NOVA_KEY_PAGE_UP; break;
-        case 121: code = NOVA_KEY_PAGE_DOWN; break;
-        case 111: code = NOVA_KEY_F12; break;
+        case 36: return NOVA_KEY_ENTER;
+        case 48: return NOVA_KEY_TAB;
+        case 53: return NOVA_KEY_ESCAPE;
+        case 51: return NOVA_KEY_BACKSPACE;
+        case 117: return NOVA_KEY_DELETE;
+        case 123: return NOVA_KEY_LEFT;
+        case 124: return NOVA_KEY_RIGHT;
+        case 126: return NOVA_KEY_UP;
+        case 125: return NOVA_KEY_DOWN;
+        case 115: return NOVA_KEY_HOME;
+        case 119: return NOVA_KEY_END;
+        case 116: return NOVA_KEY_PAGE_UP;
+        case 121: return NOVA_KEY_PAGE_DOWN;
+        case 111: return NOVA_KEY_F12;
         default: break;
     }
-    if (code == 0) {
-        NSString *text = (mods & NOVA_MOD_COMMAND) ? event.charactersIgnoringModifiers : event.characters;
-        if (text.length > 0) {
-            unichar first = [text characterAtIndex:0];
-            /* Surrogate pair: combine into one scalar. */
-            if (first >= 0xD800 && first <= 0xDBFF && text.length > 1) {
-                unichar low = [text characterAtIndex:1];
-                code = 0x10000 + ((int64_t)(first - 0xD800) << 10) + (int64_t)(low - 0xDC00);
-            } else {
-                code = first;
-            }
-        }
+    NSString *text = (mods & NOVA_MOD_COMMAND) ? event.charactersIgnoringModifiers : event.characters;
+    if (text.length == 0) return 0;
+    unichar first = [text characterAtIndex:0];
+    if (first >= 0xD800 && first <= 0xDBFF && text.length > 1) {
+        unichar low = [text characterAtIndex:1];
+        return 0x10000 + ((int64_t)(first - 0xD800) << 10) + (int64_t)(low - 0xDC00);
     }
+    return first;
+}
+
+- (void)keyDown:(NSEvent *)event {
+    int64_t mods = nova_gui_modifiers(event.modifierFlags);
+    int64_t code = nova_gui_key_code(event, mods);
+    nova_gui_trace("keyDown keyCode=%d mods=%lld key=%d repeat=%d active=%d",
+                   (int)event.keyCode, mods, (int)nova_window.isKeyWindow,
+                   (int)event.isARepeat, (int)NSApp.isActive);
     nova_gui_emit(NOVA_GUI_KEY, code, 0, 0, mods, 0);
+}
+
+/* Key releases let a program distinguish "held" from "tapped": the arrows are
+ * sampled every tick while held, instead of relying on the OS repeat delay. */
+- (void)keyUp:(NSEvent *)event {
+    int64_t mods = nova_gui_modifiers(event.modifierFlags);
+    int64_t code = nova_gui_key_code(event, mods);
+    nova_gui_trace("keyUp keyCode=%d code=%lld", (int)event.keyCode, code);
+    nova_gui_emit(NOVA_GUI_KEY_UP, code, 0, 0, mods, 0);
 }
 
 - (void)flagsChanged:(NSEvent *)event {
@@ -1733,4 +1744,81 @@ int64_t nova_gui_save_png(nova_str path) {
     CFRelease(target);
     CGImageRelease(image);
     return ok;
+}
+
+/* ---------- sound ----------
+ *
+ * Short UI tones are synthesized here rather than shipped as files: a sine with
+ * a 6 ms attack and an exponential decay, wrapped in a small WAV container and
+ * handed to NSSound. That keeps a game bundle self-contained and lets the Nova
+ * side pick a pitch per event. Several tones may overlap, which gives a level
+ * clear its little chord.
+ */
+
+static NSMutableArray *nova_sounds = nil;
+
+static void nova_wav_u32(unsigned char *p, uint32_t v) {
+    p[0] = (unsigned char)(v & 0xff);
+    p[1] = (unsigned char)((v >> 8) & 0xff);
+    p[2] = (unsigned char)((v >> 16) & 0xff);
+    p[3] = (unsigned char)((v >> 24) & 0xff);
+}
+
+static void nova_wav_u16(unsigned char *p, uint16_t v) {
+    p[0] = (unsigned char)(v & 0xff);
+    p[1] = (unsigned char)((v >> 8) & 0xff);
+}
+
+int nova_sound_tone(int64_t frequency, int64_t milliseconds, int64_t volume) {
+    if (frequency < 40) frequency = 40;
+    if (frequency > 8000) frequency = 8000;
+    if (milliseconds < 10) milliseconds = 10;
+    if (milliseconds > 1200) milliseconds = 1200;
+    if (volume <= 0) return 0;
+    if (volume > 100) volume = 100;
+
+    const int64_t rate = 44100;
+    const int64_t frames = rate * milliseconds / 1000;
+    const int64_t data_bytes = frames * 2;
+    const int64_t total = 44 + data_bytes;
+    unsigned char *buffer = calloc(1, (size_t)total);
+    if (!buffer) return 0;
+
+    memcpy(buffer + 0, "RIFF", 4);
+    nova_wav_u32(buffer + 4, (uint32_t)(36 + data_bytes));
+    memcpy(buffer + 8, "WAVEfmt ", 8);
+    nova_wav_u32(buffer + 16, 16);
+    nova_wav_u16(buffer + 20, 1);
+    nova_wav_u16(buffer + 22, 1);
+    nova_wav_u32(buffer + 24, (uint32_t)rate);
+    nova_wav_u32(buffer + 28, (uint32_t)(rate * 2));
+    nova_wav_u16(buffer + 32, 2);
+    nova_wav_u16(buffer + 34, 16);
+    memcpy(buffer + 36, "data", 4);
+    nova_wav_u32(buffer + 40, (uint32_t)data_bytes);
+
+    const double amplitude = 0.32 * (double)volume / 100.0;
+    const double attack = 0.006 * (double)rate;
+    const double decay = (double)frames * 0.32;
+    for (int64_t i = 0; i < frames; i++) {
+        double t = (double)i / (double)rate;
+        double envelope = 1.0;
+        if ((double)i < attack) envelope = (double)i / attack;
+        envelope *= exp(-(double)i / decay);
+        double phase = 2.0 * M_PI * (double)frequency * t;
+        /* A touch of second harmonic reads as "game" rather than "beep". */
+        double sample = sin(phase) * 0.82 + sin(phase * 2.0) * 0.18;
+        int16_t pcm = (int16_t)(sample * envelope * amplitude * 32767.0);
+        nova_wav_u16(buffer + 44 + i * 2, (uint16_t)pcm);
+    }
+
+    NSData *data = [NSData dataWithBytes:buffer length:(NSUInteger)total];
+    free(buffer);
+    NSSound *sound = [[NSSound alloc] initWithData:data];
+    if (!sound) return 0;
+    sound.volume = (float)volume / 100.0f;
+    if (!nova_sounds) nova_sounds = [NSMutableArray array];
+    [nova_sounds addObject:sound];
+    while (nova_sounds.count > 24) [nova_sounds removeObjectAtIndex:0];
+    return [sound play] ? 1 : 0;
 }
