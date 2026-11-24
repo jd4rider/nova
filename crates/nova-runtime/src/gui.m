@@ -230,6 +230,14 @@ static int64_t nova_gui_modifiers(NSEventModifierFlags flags) {
     nova_gui_emit(NOVA_GUI_NONE, 0, 0, 0, nova_gui_modifiers(event.modifierFlags), 0);
 }
 
+/* Without this the click that activates an inactive window is swallowed by
+ * AppKit: the app comes forward but the click is never delivered, so the first
+ * click on every control appears to do nothing. */
+- (BOOL)acceptsFirstMouse:(NSEvent *)event {
+    (void)event;
+    return YES;
+}
+
 - (void)mouseDown:(NSEvent *)event {
     /* The first click on an inactive window has to pull the app forward. */
     nova_gui_activate_window();
@@ -789,6 +797,16 @@ void nova_gui_clip_reset(void) {
  * idles, and a window whose layer transaction never commits stays blank, so
  * this is called on every iteration of a Nova loop, not only on redraws. */
 void nova_gui_pump(void) {
+    /* A freshly launched app can lose the activation race against the app that
+     * was in front, leaving a dim window that ignores clicks. Nudge it forward
+     * for the first fraction of a second, then leave focus alone. */
+    static int startup_ticks = 40;
+    if (startup_ticks > 0) {
+        startup_ticks--;
+        if (![NSApp isActive] && nova_window) {
+            [NSApp activateIgnoringOtherApps:YES];
+        }
+    }
     @autoreleasepool {
         for (;;) {
             NSEvent *event = [NSApp nextEventMatchingMask:NSEventMaskAny
