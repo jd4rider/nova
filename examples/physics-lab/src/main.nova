@@ -1,0 +1,75 @@
+import std.io { println }
+import "../../../libraries/nova-game/src/engine.nova"
+import "../../../libraries/nova-game/src/physics.nova"
+
+// A deterministic physics lab: every scenario runs the same on every machine,
+// because positions and velocities are integers in millipixels.
+
+fn report(ok: Bool, name: String) -> Int {
+    if ok {
+        println("PASS " + name)
+        return 0
+    }
+    println("FAIL " + name)
+    return 1
+}
+
+fn main() {
+    var failures = 0
+
+    var falling = ph_with_velocity(ph_body(100, 100, 10, 10), 0, 0)
+    var i = 0
+    while i < 60 {
+        falling = ph_advance(ph_gravity(falling, 5))
+        i = i + 1
+    }
+    failures = failures + report(falling.y > 100000, "gravity accelerates a free body")
+    failures = failures + report(falling.vy > 0, "gravity gives downward velocity")
+
+    let floor = ph_solid(0, 480, 800, 40)
+    var ball = ph_with_velocity(ph_body(400, 100, 16, 16), 0, 12000)
+    var bounced = false
+    i = 0
+    while i < 200 {
+        ball = ph_resolve(ball, floor)
+        if ball.vy < 0 {
+            bounced = true
+        }
+        i = i + 1
+    }
+    failures = failures + report(bounced, "a ball bounces off the floor")
+    failures = failures + report(ball.y < 480000, "the ball stays above the floor")
+
+    let thin = ph_solid(400, 0, 4, 600)
+    let fast = ph_with_velocity(ph_body(350, 300, 16, 16), 60000, 0)
+    failures = failures + report(ph_sweep(fast, thin) < ph_miss(), "a fast body sees a thin wall")
+    let stopped = ph_resolve(fast, thin)
+    failures = failures + report(stopped.x < 400000, "a fast body cannot tunnel")
+
+    var soft = ph_with_velocity(ph_with_bounce(ph_body(290, 100, 10, 10), 50), 10000, 0)
+    let wall = ph_solid(300, 0, 10, 400)
+    soft = ph_resolve(soft, wall)
+    failures = failures + report(soft.vx == -5000, "restitution halves the speed")
+
+    var game = launch(new_game())
+    var steps = 0
+    var escapes = 0
+    while steps < 4000 && game.status == 1 {
+        game = step(game, game.ball_x)
+        if game.ball_x < 0 || game.ball_x > field_width() || game.ball_y < 0 {
+            escapes = escapes + 1
+        }
+        steps = steps + 1
+    }
+    failures = failures + report(game.score > 0, "paddle play destroys bricks")
+    failures = failures + report(escapes == 0, "the ball stays inside the field")
+    failures = failures + report(game.score == (brick_count() - bricks_left(game)) * 10, "score matches the bricks removed")
+    failures = failures + report(game.vy != 0, "the ball keeps moving")
+
+    let total = 11
+    println("")
+    println("passed " + "${total - failures}" + ", failed " + "${failures}")
+    if failures > 0 {
+        println("physics-lab: FAILED")
+    }
+}

@@ -1,0 +1,371 @@
+// Physics for the Nova game engine: swept AABB collision in integer millipixels.
+//
+// Everything is an integer so a simulation replays identically on native and
+// wasm, and so a fast body cannot tunnel through a thin wall: the step solves
+// for the time of impact along the motion instead of sampling the end position.
+//
+// Units: positions, sizes and velocities are thousandths of a pixel. A velocity
+// of 4000 moves 4 pixels per tick; `ph_px` converts back for rendering.
+
+struct Body {
+    x: Int,
+    y: Int,
+    vx: Int,
+    vy: Int,
+    hw: Int,
+    hh: Int,
+    bounce: Int,
+    solid: Bool,
+    alive: Bool,
+}
+
+// No overlap happened within this step.
+fn ph_miss() -> Int {
+    return 1001
+}
+
+fn ph_px(value: Int) -> Int {
+    if value >= 0 {
+        return value / 1000
+    }
+    return -((-value + 999) / 1000)
+}
+
+fn ph_body(x: Int, y: Int, w: Int, h: Int) -> Body {
+    return Body {
+        x: x * 1000,
+        y: y * 1000,
+        vx: 0,
+        vy: 0,
+        hw: w * 500,
+        hh: h * 500,
+        bounce: 100,
+        solid: false,
+        alive: true,
+    }
+}
+
+fn ph_solid(x: Int, y: Int, w: Int, h: Int) -> Body {
+    return Body {
+        x: x * 1000,
+        y: y * 1000,
+        vx: 0,
+        vy: 0,
+        hw: w * 500,
+        hh: h * 500,
+        bounce: 100,
+        solid: true,
+        alive: true,
+    }
+}
+
+// Box helper: takes the top-left corner, the way a renderer and a level file
+// describe a rectangle, and stores the centre the sweeps work in.
+fn ph_box(left: Int, top: Int, w: Int, h: Int) -> Body {
+    return Body {
+        x: left * 1000 + w * 500,
+        y: top * 1000 + h * 500,
+        vx: 0,
+        vy: 0,
+        hw: w * 500,
+        hh: h * 500,
+        bounce: 100,
+        solid: false,
+        alive: true,
+    }
+}
+
+fn ph_solid_box(left: Int, top: Int, w: Int, h: Int) -> Body {
+    let body = ph_box(left, top, w, h)
+    return Body {
+        x: body.x,
+        y: body.y,
+        vx: body.vx,
+        vy: body.vy,
+        hw: body.hw,
+        hh: body.hh,
+        bounce: body.bounce,
+        solid: true,
+        alive: body.alive,
+    }
+}
+
+fn ph_with_velocity(body: Body, vx: Int, vy: Int) -> Body {
+    return Body {
+        x: body.x,
+        y: body.y,
+        vx: vx,
+        vy: vy,
+        hw: body.hw,
+        hh: body.hh,
+        bounce: body.bounce,
+        solid: body.solid,
+        alive: body.alive,
+    }
+}
+
+fn ph_with_bounce(body: Body, bounce: Int) -> Body {
+    var kept = bounce
+    if kept < 0 {
+        kept = 0
+    }
+    if kept > 100 {
+        kept = 100
+    }
+    return Body {
+        x: body.x,
+        y: body.y,
+        vx: body.vx,
+        vy: body.vy,
+        hw: body.hw,
+        hh: body.hh,
+        bounce: kept,
+        solid: body.solid,
+        alive: body.alive,
+    }
+}
+
+fn ph_moved(body: Body, x: Int, y: Int) -> Body {
+    return Body {
+        x: x,
+        y: y,
+        vx: body.vx,
+        vy: body.vy,
+        hw: body.hw,
+        hh: body.hh,
+        bounce: body.bounce,
+        solid: body.solid,
+        alive: body.alive,
+    }
+}
+
+fn ph_overlaps(a: Body, b: Body) -> Bool {
+    if a.x - a.hw >= b.x + b.hw || a.x + a.hw <= b.x - b.hw {
+        return false
+    }
+    if a.y - a.hh >= b.y + b.hh || a.y + a.hh <= b.y - b.hh {
+        return false
+    }
+    return true
+}
+
+// Entry and exit times (scaled 0..1000) for one axis, given the mover travels
+// `delta` over the step. -1 and 1001 mean "always overlapping" and "never".
+fn ph_axis_entry(centre: Int, half: Int, delta: Int, other: Int, other_half: Int) -> Int {
+    let near = other - other_half
+    let far = other + other_half
+    if delta > 0 {
+        return (near - (centre + half)) * 1000 / delta
+    }
+    if delta < 0 {
+        return (far - (centre - half)) * 1000 / delta
+    }
+    if centre + half > near && centre - half < far {
+        return -1000
+    }
+    return ph_miss()
+}
+
+fn ph_axis_exit(centre: Int, half: Int, delta: Int, other: Int, other_half: Int) -> Int {
+    let near = other - other_half
+    let far = other + other_half
+    if delta > 0 {
+        return (far - (centre - half)) * 1000 / delta
+    }
+    if delta < 0 {
+        return (near - (centre + half)) * 1000 / delta
+    }
+    if centre + half > near && centre - half < far {
+        return 1000
+    }
+    return -1
+}
+
+// First time in this step at which `mover` touches `wall`, 0..1000, or
+// `ph_miss()` when it does not.
+fn ph_sweep(mover: Body, wall: Body) -> Int {
+    let x_entry = ph_axis_entry(mover.x, mover.hw, mover.vx, wall.x, wall.hw)
+    let y_entry = ph_axis_entry(mover.y, mover.hh, mover.vy, wall.y, wall.hh)
+    if x_entry == ph_miss() || y_entry == ph_miss() {
+        return ph_miss()
+    }
+    let x_exit = ph_axis_exit(mover.x, mover.hw, mover.vx, wall.x, wall.hw)
+    let y_exit = ph_axis_exit(mover.y, mover.hh, mover.vy, wall.y, wall.hh)
+    var entry = x_entry
+    if y_entry > entry {
+        entry = y_entry
+    }
+    var exit = x_exit
+    if y_exit < exit {
+        exit = y_exit
+    }
+    if entry > exit {
+        return ph_miss()
+    }
+    if exit < 0 || entry > 1000 {
+        return ph_miss()
+    }
+    if entry < 0 {
+        return 0
+    }
+    return entry
+}
+
+// Which axis the contact is on: 0 for a vertical surface, 1 for a horizontal one.
+fn ph_axis(mover: Body, wall: Body) -> Int {
+    let x_entry = ph_axis_entry(mover.x, mover.hw, mover.vx, wall.x, wall.hw)
+    let y_entry = ph_axis_entry(mover.y, mover.hh, mover.vy, wall.y, wall.hh)
+    if x_entry >= y_entry {
+        return 0
+    }
+    return 1
+}
+
+// Move to first contact, then reflect the velocity component along the normal
+// and drop the body just clear of the wall so the next step cannot re-collide.
+fn ph_resolve(mover: Body, wall: Body) -> Body {
+    let when = ph_sweep(mover, wall)
+    if when >= ph_miss() {
+        return ph_moved(mover, mover.x + mover.vx, mover.y + mover.vy)
+    }
+    var x = mover.x + mover.vx * when / 1000
+    var y = mover.y + mover.vy * when / 1000
+    var vx = mover.vx
+    var vy = mover.vy
+    if ph_axis(mover, wall) == 0 {
+        if vx > 0 {
+            x = wall.x - wall.hw - mover.hw
+        } else if vx < 0 {
+            x = wall.x + wall.hw + mover.hw
+        }
+        vx = -(vx * mover.bounce / 100)
+    } else {
+        if vy > 0 {
+            y = wall.y - wall.hh - mover.hh
+        } else if vy < 0 {
+            y = wall.y + wall.hh + mover.hh
+        }
+        vy = -(vy * mover.bounce / 100)
+    }
+    return Body {
+        x: x,
+        y: y,
+        vx: vx,
+        vy: vy,
+        hw: mover.hw,
+        hh: mover.hh,
+        bounce: mover.bounce,
+        solid: mover.solid,
+        alive: mover.alive,
+    }
+}
+
+fn ph_advance(body: Body) -> Body {
+    return ph_moved(body, body.x + body.vx, body.y + body.vy)
+}
+
+fn ph_gravity(body: Body, pull: Int) -> Body {
+    return ph_with_velocity(body, body.vx, body.vy + pull)
+}
+
+// Speed limit keeps a bouncy body from being launched off the field.
+fn ph_speed_clamp(body: Body, limit: Int) -> Body {
+    var vx = body.vx
+    var vy = body.vy
+    if vx > limit {
+        vx = limit
+    }
+    if vx < -limit {
+        vx = -limit
+    }
+    if vy > limit {
+        vy = limit
+    }
+    if vy < -limit {
+        vy = -limit
+    }
+    return ph_with_velocity(body, vx, vy)
+}
+
+// Keep a body inside the field. Resolving against one brick can push a body
+// past a wall in the same step, so the world clamps afterwards.
+fn ph_clamp(body: Body, left: Int, top: Int, right: Int, bottom: Int) -> Body {
+    var x = body.x
+    var y = body.y
+    var vx = body.vx
+    var vy = body.vy
+    if x - body.hw < left * 1000 {
+        x = left * 1000 + body.hw
+        if vx < 0 {
+            vx = -(vx * body.bounce / 100)
+        }
+    }
+    if x + body.hw > right * 1000 {
+        x = right * 1000 - body.hw
+        if vx > 0 {
+            vx = -(vx * body.bounce / 100)
+        }
+    }
+    if y - body.hh < top * 1000 {
+        y = top * 1000 + body.hh
+        if vy < 0 {
+            vy = -(vy * body.bounce / 100)
+        }
+    }
+    if y + body.hh > bottom * 1000 {
+        y = bottom * 1000 - body.hh
+        if vy > 0 {
+            vy = -(vy * body.bounce / 100)
+        }
+    }
+    return Body {
+        x: x,
+        y: y,
+        vx: vx,
+        vy: vy,
+        hw: body.hw,
+        hh: body.hh,
+        bounce: body.bounce,
+        solid: body.solid,
+        alive: body.alive,
+    }
+}
+
+// Earliest contact against a list of solids. Returns the index, or -1.
+fn ph_first_contact(mover: Body, walls: List<Body>) -> Int {
+    var best = -1
+    var best_when = ph_miss()
+    var i = 0
+    while i < walls.len() {
+        let when = ph_sweep(mover, walls[i])
+        if when < best_when {
+            best_when = when
+            best = i
+        }
+        i = i + 1
+    }
+    return best
+}
+
+// Breakout-style bounce off a paddle: the horizontal offset of the contact
+// steers the ball, which is what makes the game controllable.
+fn ph_bounce_paddle(mover: Body, paddle: Body, max_vx: Int) -> Body {
+    var ball = ph_resolve(mover, paddle)
+    if ball.vy > 0 {
+        ball = ph_with_velocity(ball, ball.vx, -ball.vy)
+    }
+    let offset = ball.x - paddle.x
+    var steer = offset / 12
+    let limit = max_vx * 1000
+    if steer > limit {
+        steer = limit
+    }
+    if steer < -limit {
+        steer = -limit
+    }
+    var vx = steer
+    if vx == 0 && mover.vx != 0 {
+        vx = mover.vx
+    }
+    return ph_with_velocity(ball, vx, ball.vy)
+}

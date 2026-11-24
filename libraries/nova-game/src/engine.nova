@@ -1,9 +1,11 @@
-// Nova Game Engine: integer-pixel 2D physics with no allocation in the step.
+// Nova Game Engine: Breakout on top of the swept-AABB physics core.
 //
 // The engine is pure: `step(game, paddle_target)` takes a Game and returns the
-// next Game. Rendering and input belong to the host shell, which reads the
-// state the game writes into wasm slots. That keeps the simulation testable in
-// plain Nova and identical on native and wasm.
+// next Game. Collision goes through `physics.nova`, so the ball cannot tunnel
+// through a brick at speed and the paddle steers by contact offset. Rendering
+// and input belong to the host shell.
+
+import "physics.nova"
 
 struct Game {
     ball_x: Int,
@@ -37,6 +39,18 @@ fn brick_count() -> Int {
     return brick_cols() * brick_rows()
 }
 
+fn ball_size() -> Int {
+    return 16
+}
+
+fn paddle_width() -> Int {
+    return 120
+}
+
+fn paddle_y() -> Int {
+    return 466
+}
+
 fn new_game() -> Game {
     var bricks: List<Int> = []
     var index = 0
@@ -46,7 +60,7 @@ fn new_game() -> Game {
     }
     return Game {
         ball_x: 400,
-        ball_y: 460,
+        ball_y: 440,
         vx: 4,
         vy: -5,
         paddle: 400,
@@ -98,6 +112,19 @@ fn with_paddle(game: Game, paddle: Int) -> Game {
     }
 }
 
+fn brick_box(column: Int, row: Int) -> Body {
+    return ph_solid_box(30 + column * 78, 60 + row * 30, 70, 24)
+}
+
+// Top, left and right walls. The bottom is open: falling out costs a life.
+fn wall_list() -> List<Body> {
+    var walls: List<Body> = []
+    walls.push(ph_solid_box(0, -8, field_width(), 8))
+    walls.push(ph_solid_box(-8, 0, 8, field_height()))
+    walls.push(ph_solid_box(field_width(), 0, 8, field_height()))
+    return walls
+}
+
 fn step(game: Game, target: Int) -> Game {
     var paddle = target
     if paddle < 50 {
@@ -109,7 +136,7 @@ fn step(game: Game, target: Int) -> Game {
     if game.status == 0 {
         return Game {
             ball_x: paddle,
-            ball_y: 460,
+            ball_y: 440,
             vx: 0,
             vy: 0,
             paddle: paddle,
@@ -123,49 +150,82 @@ fn step(game: Game, target: Int) -> Game {
         return with_paddle(game, paddle)
     }
 
-    var bx = game.ball_x + game.vx
-    var by = game.ball_y + game.vy
-    var vx = game.vx
-    var vy = game.vy
+    var ball = ph_with_velocity(
+        ph_body(game.ball_x, game.ball_y, ball_size(), ball_size()),
+        game.vx * 1000,
+        game.vy * 1000
+    )
 
-    if bx < 8 {
-        bx = 8
-        vx = -vx
-    }
-    if bx > field_width() - 8 {
-        bx = field_width() - 8
-        vx = -vx
-    }
-    if by < 8 {
-        by = 8
-        vy = -vy
-    }
-
-    if vy > 0 && by + 8 >= 466 && by - 8 <= 484 && bx >= paddle - 58 && bx <= paddle + 58 {
-        by = 458
-        vy = -vy
-        vx = vx + (bx - paddle) / 12
-        if vx > 9 {
-            vx = 9
+    // Earliest contact wins: walls, then bricks, then the paddle.
+    var kind = 0
+    var hit = -1
+    var best = ph_miss()
+    let walls = wall_list()
+    var i = 0
+    while i < walls.len() {
+        let when = ph_sweep(ball, walls[i])
+        if when < best {
+            best = when
+            hit = i
+            kind = 1
         }
-        if vx < -9 {
-            vx = -9
-        }
+        i = i + 1
     }
 
     var bricks = game.bricks
-    var score = game.score
-    if by >= 60 && by <= 210 {
-        let column = (bx - 30) / 78
-        let row = (by - 60) / 30
-        if column >= 0 && column < brick_cols() && row >= 0 && row < brick_rows() {
+    var row = 0
+    while row < brick_rows() {
+        var column = 0
+        while column < brick_cols() {
             let index = row * brick_cols() + column
             if bricks[index] == 1 {
-                bricks[index] = 0
-                score = score + 10
-                vy = -vy
+                let when = ph_sweep(ball, brick_box(column, row))
+                if when < best {
+                    best = when
+                    hit = index
+                    kind = 2
+                }
             }
+            column = column + 1
         }
+        row = row + 1
+    }
+
+    // Only a descending ball hits the paddle: sweeping while it climbs would
+    // pin it to the paddle at time zero and it would never leave.
+    let paddle_box = ph_solid_box(paddle - paddle_width() / 2, paddle_y(), paddle_width(), 18)
+    if game.vy > 0 {
+        let paddle_when = ph_sweep(ball, paddle_box)
+        if paddle_when < best {
+            best = paddle_when
+            kind = 3
+        }
+    }
+
+    var score = game.score
+    if kind == 0 {
+        ball = ph_advance(ball)
+    } else if kind == 1 {
+        ball = ph_resolve(ball, walls[hit])
+    } else if kind == 3 {
+        ball = ph_bounce_paddle(ball, paddle_box, 9)
+    } else {
+        ball = ph_resolve(ball, brick_box(hit % brick_cols(), hit / brick_cols()))
+        bricks[hit] = 0
+        score = score + 10
+    }
+
+    ball = ph_clamp(ball, 8, 8, field_width() - 8, field_height() + 40)
+
+    var bx = ph_px(ball.x)
+    var by = ph_px(ball.y)
+    var vx = ph_px(ball.vx)
+    var vy = ph_px(ball.vy)
+    if vy == 0 {
+        vy = -4
+    }
+    if vx == 0 {
+        vx = 3
     }
 
     var lives = game.lives
@@ -178,7 +238,7 @@ fn step(game: Game, target: Int) -> Game {
             status = 0
         }
         bx = paddle
-        by = 460
+        by = 440
         vx = 0
         vy = 0
     }
