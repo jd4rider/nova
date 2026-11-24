@@ -1,0 +1,55 @@
+---
+title: Nova Game Engine
+description: A small 2D game engine written in Nova, with Breakout as a desktop terminal game built on the TUI runtime.
+---
+
+**Status: experimental.** The engine lives in `libraries/nova-game/src/engine.nova` and is plain Nova with no rendering, input or platform code. `examples/breakout` is a desktop terminal game that uses it.
+
+## Run Breakout
+
+```sh
+cd examples/breakout
+../../target/debug/nova build
+./target/nova/nova-breakout
+```
+
+`a`/`d` move the paddle, `space` launches the ball, `r` starts over, `q` or `Esc` quits. It runs in the alternate screen with a 16 ms tick.
+
+## The engine
+
+The simulation is a pure function. No globals, no callbacks, no allocation beyond the brick list:
+
+```nova
+struct Game {
+    ball_x: Int,
+    ball_y: Int,
+    vx: Int,
+    vy: Int,
+    paddle: Int,
+    lives: Int,
+    score: Int,
+    status: Int,
+    bricks: List<Int>,
+}
+
+fn new_game() -> Game
+fn launch(game: Game) -> Game
+fn step(game: Game, paddle_target: Int) -> Game
+fn bricks_left(game: Game) -> Int
+```
+
+`step` moves the ball, bounces it off the walls and paddle, clears the brick it hits, updates score and lives, and returns the next `Game`. Positions are integer pixels in an 800×520 field; the brick grid is 10×5 (50 bricks, 10 points each, 500 to clear). Status is `0` ready, `1` playing, `2` won, `3` lost.
+
+Because it is pure, the same engine can be driven by the terminal demo, a test, or a future canvas/WebAssembly host without changes.
+
+## Rendering
+
+The demo uses the [Nova TUI](../tui/) runtime: a model of `Game` plus a paddle target, key events, a tick that calls `step`, and a view that maps the engine's coordinates onto terminal rows and columns (bricks as blocks, the ball as `●`, the paddle as `▬`). Terminal width is not simulated exactly; the mapping is proportional.
+
+## Limits
+
+- **Breakout physics only.** No sprites, scenes, audio, tilemaps, collision layers or entity components.
+- **Integer pixels.** No sub-pixel motion or delta-time; the tick is fixed at 16 ms.
+- **One ball and one paddle.** The engine models exactly the Breakout pieces.
+- **Approximate terminal rendering.** The view maps an 800×520 field onto a character grid; it is a demo renderer, not a pixel-accurate one.
+- **Desktop only.** The engine is pure Nova and portable, but the included game runs in a terminal through nova-tui.

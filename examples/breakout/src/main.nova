@@ -1,0 +1,140 @@
+import std.io { println }
+import "../../../libraries/nova-tui/src/bubble.nova" as bubble
+import "../../../libraries/nova-tui/src/tui.nova" as tui
+import "../../../libraries/nova-game/src/engine.nova"
+
+// Desktop Breakout: a terminal game. The engine (libraries/nova-game) owns all
+// physics and collision; this file owns input and drawing.
+//
+//   a / d      move the paddle
+//   space      launch the ball
+//   r          new game
+//   q / esc    quit
+
+struct Model {
+    game: Game,
+    target: Int,
+}
+
+fn move(game: Game, target: Int) -> Model {
+    return Model { game: game, target: target }
+}
+
+fn update(model: Model, event: bubble.Event) -> (Model, bubble.Cmd) {
+    match event {
+        bubble.Event.KeyEvent(code) => key(model, code),
+        bubble.Event.TickEvent => (move(step(model.game, model.target), model.target), bubble.Cmd.AfterCmd(16)),
+        bubble.Event.MouseEvent(code, x, y) => (model, bubble.Cmd.IdleCmd),
+        bubble.Event.PasteEvent(text) => (model, bubble.Cmd.IdleCmd),
+        bubble.Event.ResizeEvent(width, height) => (model, bubble.Cmd.IdleCmd),
+    }
+}
+
+fn key(model: Model, code: Int) -> (Model, bubble.Cmd) {
+    if code == 97 || code == 104 {
+        return (move(model.game, model.target - 60), bubble.Cmd.IdleCmd)
+    }
+    if code == 100 || code == 108 {
+        return (move(model.game, model.target + 60), bubble.Cmd.IdleCmd)
+    }
+    if code == 32 {
+        if model.game.status == 0 {
+            return (move(launch(model.game), model.target), bubble.Cmd.IdleCmd)
+        }
+        if model.game.status == 2 || model.game.status == 3 {
+            return (move(launch(new_game()), 400), bubble.Cmd.IdleCmd)
+        }
+    }
+    if code == 114 {
+        return (move(new_game(), 400), bubble.Cmd.IdleCmd)
+    }
+    if code == 113 || code == 27 {
+        return (model, bubble.Cmd.QuitCmd)
+    }
+    return (model, bubble.Cmd.IdleCmd)
+}
+
+fn brick_line(game: Game, row: Int) -> String {
+    var out = "  "
+    var column = 0
+    while column < 10 {
+        if game.bricks[row * 10 + column] == 1 {
+            out = out + "████ "
+        } else {
+            out = out + "     "
+        }
+        column = column + 1
+    }
+    return out
+}
+
+fn ball_at(game: Game) -> String {
+    var column = game.ball_x / 10
+    if column < 0 {
+        column = 0
+    }
+    if column > 60 {
+        column = 60
+    }
+    return "  " + tui.repeat(" ", column) + "●"
+}
+
+fn paddle_line(game: Game) -> String {
+    var column = (game.paddle - 60) / 10
+    if column < 0 {
+        column = 0
+    }
+    if column > 62 {
+        column = 62
+    }
+    return "  " + tui.repeat(" ", column) + "▬▬▬▬▬▬▬▬"
+}
+
+fn view(model: Model) -> String {
+    let game = model.game
+    var out = tui.clear()
+    out = out + "  NOVA BREAKOUT   score " + "${game.score}" + "   lives " + "${game.lives}" + "   bricks " + "${bricks_left(game)}" + "\n"
+    out = out + "  a/d move · space launch · r restart · q quit\n\n"
+    let ball_line = game.ball_y / 38
+    var line = 0
+    while line < 14 {
+        if line == 13 {
+            out = out + paddle_line(game)
+        } else {
+            if line == ball_line {
+                out = out + ball_at(game)
+            } else {
+                if line < 5 {
+                    out = out + brick_line(game, line)
+                } else {
+                    out = out + "  " + tui.repeat(" ", 62)
+                }
+            }
+        }
+        out = out + "\n"
+        line = line + 1
+    }
+    if game.status == 0 {
+        out = out + "\n  press space to launch"
+    }
+    if game.status == 2 {
+        out = out + "\n  cleared! space plays again"
+    }
+    if game.status == 3 {
+        out = out + "\n  game over — space retries"
+    }
+    return out
+}
+
+fn main() {
+    if tui.is_tty() == false {
+        println("nova-breakout: run this in a terminal")
+        return
+    }
+    bubble.run(
+        Model { game: new_game(), target: 400 },
+        update,
+        view,
+        bubble.settings(16)
+    )
+}

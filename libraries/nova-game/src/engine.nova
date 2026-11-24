@@ -1,0 +1,200 @@
+// Nova Game Engine: integer-pixel 2D physics with no allocation in the step.
+//
+// The engine is pure: `step(game, paddle_target)` takes a Game and returns the
+// next Game. Rendering and input belong to the host shell, which reads the
+// state the game writes into wasm slots. That keeps the simulation testable in
+// plain Nova and identical on native and wasm.
+
+struct Game {
+    ball_x: Int,
+    ball_y: Int,
+    vx: Int,
+    vy: Int,
+    paddle: Int,
+    lives: Int,
+    score: Int,
+    status: Int,
+    bricks: List<Int>,
+}
+
+fn field_width() -> Int {
+    return 800
+}
+
+fn field_height() -> Int {
+    return 520
+}
+
+fn brick_cols() -> Int {
+    return 10
+}
+
+fn brick_rows() -> Int {
+    return 5
+}
+
+fn brick_count() -> Int {
+    return brick_cols() * brick_rows()
+}
+
+fn new_game() -> Game {
+    var bricks: List<Int> = []
+    var index = 0
+    while index < brick_count() {
+        bricks.push(1)
+        index = index + 1
+    }
+    return Game {
+        ball_x: 400,
+        ball_y: 460,
+        vx: 4,
+        vy: -5,
+        paddle: 400,
+        lives: 3,
+        score: 0,
+        status: 0,
+        bricks: bricks,
+    }
+}
+
+fn launch(game: Game) -> Game {
+    if game.status == 0 {
+        return Game {
+            ball_x: game.ball_x,
+            ball_y: game.ball_y,
+            vx: 4,
+            vy: -5,
+            paddle: game.paddle,
+            lives: game.lives,
+            score: game.score,
+            status: 1,
+            bricks: game.bricks,
+        }
+    }
+    return game
+}
+
+fn bricks_left(game: Game) -> Int {
+    var alive = 0
+    for brick in game.bricks {
+        if brick == 1 {
+            alive = alive + 1
+        }
+    }
+    return alive
+}
+
+fn with_paddle(game: Game, paddle: Int) -> Game {
+    return Game {
+        ball_x: game.ball_x,
+        ball_y: game.ball_y,
+        vx: game.vx,
+        vy: game.vy,
+        paddle: paddle,
+        lives: game.lives,
+        score: game.score,
+        status: game.status,
+        bricks: game.bricks,
+    }
+}
+
+fn step(game: Game, target: Int) -> Game {
+    var paddle = target
+    if paddle < 50 {
+        paddle = 50
+    }
+    if paddle > field_width() - 50 {
+        paddle = field_width() - 50
+    }
+    if game.status == 0 {
+        return Game {
+            ball_x: paddle,
+            ball_y: 460,
+            vx: 0,
+            vy: 0,
+            paddle: paddle,
+            lives: game.lives,
+            score: game.score,
+            status: 0,
+            bricks: game.bricks,
+        }
+    }
+    if game.status != 1 {
+        return with_paddle(game, paddle)
+    }
+
+    var bx = game.ball_x + game.vx
+    var by = game.ball_y + game.vy
+    var vx = game.vx
+    var vy = game.vy
+
+    if bx < 8 {
+        bx = 8
+        vx = -vx
+    }
+    if bx > field_width() - 8 {
+        bx = field_width() - 8
+        vx = -vx
+    }
+    if by < 8 {
+        by = 8
+        vy = -vy
+    }
+
+    if vy > 0 && by + 8 >= 466 && by - 8 <= 484 && bx >= paddle - 58 && bx <= paddle + 58 {
+        by = 458
+        vy = -vy
+        vx = vx + (bx - paddle) / 12
+        if vx > 9 {
+            vx = 9
+        }
+        if vx < -9 {
+            vx = -9
+        }
+    }
+
+    var bricks = game.bricks
+    var score = game.score
+    if by >= 60 && by <= 210 {
+        let column = (bx - 30) / 78
+        let row = (by - 60) / 30
+        if column >= 0 && column < brick_cols() && row >= 0 && row < brick_rows() {
+            let index = row * brick_cols() + column
+            if bricks[index] == 1 {
+                bricks[index] = 0
+                score = score + 10
+                vy = -vy
+            }
+        }
+    }
+
+    var lives = game.lives
+    var status = 1
+    if by > field_height() {
+        lives = lives - 1
+        if lives <= 0 {
+            status = 3
+        } else {
+            status = 0
+        }
+        bx = paddle
+        by = 460
+        vx = 0
+        vy = 0
+    }
+    if score >= brick_count() * 10 {
+        status = 2
+    }
+
+    return Game {
+        ball_x: bx,
+        ball_y: by,
+        vx: vx,
+        vy: vy,
+        paddle: paddle,
+        lives: lives,
+        score: score,
+        status: status,
+        bricks: bricks,
+    }
+}
