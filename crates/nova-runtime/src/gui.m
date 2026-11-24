@@ -47,6 +47,7 @@ typedef struct {
 #define NOVA_GUI_SCROLL 6
 #define NOVA_GUI_RESIZE 7
 #define NOVA_GUI_CLOSE 8
+#define NOVA_GUI_REPAINT 9
 
 #define NOVA_KEY_ENTER 13
 #define NOVA_KEY_TAB 9
@@ -93,6 +94,21 @@ static int nova_running = 0;
 static NSWindow *nova_window = nil;
 static NSView *nova_view = nil;
 static NSMutableString *nova_title = nil;
+
+/* Brings the app forward and makes the window key. A window launched from a
+ * shell script does not become active on its own, and macOS tints inactive
+ * windows, which reads as a greyed-out, frozen application. */
+static void nova_gui_activate_window(void) {
+    if (!nova_window) return;
+    [nova_window makeKeyAndOrderFront:nil];
+    [nova_window makeKeyWindow];
+    if (nova_view) [nova_window makeFirstResponder:nova_view];
+    if ([NSApp respondsToSelector:@selector(activate)]) {
+        [NSApp activate];
+    } else {
+        [NSApp activateIgnoringOtherApps:YES];
+    }
+}
 
 static void nova_gui_emit(int64_t kind, int64_t code, int64_t x, int64_t y, int64_t mods, int64_t delta) {
     int next = (nova_q_tail + 1) % NOVA_GUI_QUEUE;
@@ -188,6 +204,8 @@ static int64_t nova_gui_modifiers(NSEventModifierFlags flags) {
 }
 
 - (void)mouseDown:(NSEvent *)event {
+    /* The first click on an inactive window has to pull the app forward. */
+    nova_gui_activate_window();
     NSPoint point = [self nova_point:event];
     nova_gui_emit(NOVA_GUI_MOUSE_DOWN, 0, (int64_t)point.x, (int64_t)point.y, nova_gui_modifiers(event.modifierFlags), 1);
 }
@@ -238,7 +256,7 @@ static int64_t nova_gui_modifiers(NSEventModifierFlags flags) {
 
 @end
 
-@interface NovaGuiDelegate : NSObject <NSWindowDelegate>
+@interface NovaGuiDelegate : NSObject <NSWindowDelegate, NSApplicationDelegate>
 @end
 
 @implementation NovaGuiDelegate
@@ -248,6 +266,28 @@ static int64_t nova_gui_modifiers(NSEventModifierFlags flags) {
     nova_running = 0;
     nova_gui_emit(NOVA_GUI_CLOSE, 0, 0, 0, 0, 0);
     return NO;
+}
+
+/* Activation arrives asynchronously after `activate`, so the window has to be
+ * made key when it lands. An active app whose window is not key receives mouse
+ * events but no key events at all — which looks like a frozen editor. */
+- (void)applicationDidBecomeActive:(NSNotification *)notification {
+    (void)notification;
+    if (nova_window) {
+        [nova_window makeKeyAndOrderFront:nil];
+        if (nova_view) [nova_window makeFirstResponder:nova_view];
+    }
+    nova_gui_emit(NOVA_GUI_REPAINT, 0, 0, 0, 0, 0);
+}
+
+- (void)windowDidBecomeKey:(NSNotification *)notification {
+    (void)notification;
+    nova_gui_emit(NOVA_GUI_REPAINT, 0, 0, 0, 0, 0);
+}
+
+- (void)windowDidResignKey:(NSNotification *)notification {
+    (void)notification;
+    nova_gui_emit(NOVA_GUI_REPAINT, 0, 0, 0, 0, 0);
 }
 
 - (void)windowDidResize:(NSNotification *)notification {
@@ -398,11 +438,12 @@ int64_t nova_gui_open(nova_str title, int64_t width, int64_t height) {
         nova_window.contentView = nova_view;
         nova_delegate = [[NovaGuiDelegate alloc] init];
         nova_window.delegate = nova_delegate;
+        [NSApp setDelegate:nova_delegate];
 
         [nova_window center];
         [nova_window makeKeyAndOrderFront:nil];
         [nova_window makeFirstResponder:nova_view];
-        [NSApp activateIgnoringOtherApps:YES];
+        nova_gui_activate_window();
         /* One turn so the window is ordered and its first frame can commit. */
         [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode
                                  beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
@@ -646,6 +687,10 @@ void nova_gui_set_title(nova_str title) {
                                               length:(NSUInteger)(title.len > 0 ? title.len : 0)
                                             encoding:NSUTF8StringEncoding];
     if (text) nova_window.title = text;
+}
+
+void nova_gui_activate(void) {
+    nova_gui_activate_window();
 }
 
 void nova_gui_close(void) {

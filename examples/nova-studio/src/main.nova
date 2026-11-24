@@ -1445,6 +1445,10 @@ fn handle(app: App, event: gui.Event) -> App {
         app.quit = true
         return app
     }
+    // Focus changes only need a repaint; the model is unchanged.
+    if event.kind == gui.event_repaint() {
+        return app
+    }
     if event.kind == gui.event_mouse_move() {
         app.mouse_x = event.x
         app.mouse_y = event.y

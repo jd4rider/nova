@@ -63,6 +63,7 @@ extern "C" fn nova_gui_event_x() -> Int
 extern "C" fn nova_gui_event_y() -> Int
 extern "C" fn nova_gui_event_mods() -> Int
 extern "C" fn nova_gui_event_delta() -> Int
+extern "C" fn nova_gui_activate() -> Unit
 extern "C" fn nova_gui_set_title(title: String) -> Unit
 extern "C" fn nova_gui_close() -> Unit
 extern "C" fn nova_gui_save_png(path: String) -> Int
@@ -215,6 +216,11 @@ fn event_close() -> Int {
     return 8
 }
 
+// The window became key or inactive: redraw so the frame matches the state.
+fn event_repaint() -> Int {
+    return 9
+}
+
 fn key_enter() -> Int {
     return 13
 }
@@ -315,6 +321,11 @@ fn height() -> Int {
 
 fn set_title(title: String) {
     nova_gui_set_title(title)
+}
+
+// Brings the window to the front and makes it key.
+fn activate() {
+    nova_gui_activate()
 }
 
 fn close() {
