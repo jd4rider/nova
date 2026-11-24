@@ -1,0 +1,153 @@
+// Nova expression parser, in Nova.
+//
+// Pratt parser over lexer tokens. It renders a fully parenthesised prefix form
+// so the tree is readable in tests and in `nova-tool` output: `1 + 2 * 3`
+// becomes `(+ 1 (* 2 3))`.
+
+import "../../nova-lexer/src/lexer.nova"
+
+struct PExpr {
+    text: String,
+    next: Int,
+}
+
+fn px_expr(text: String, next: Int) -> PExpr {
+    return PExpr {
+        text: text,
+        next: next,
+    }
+}
+
+fn px_prec(op: String) -> Int {
+    if op == "||" {
+        return 1
+    }
+    if op == "&&" {
+        return 2
+    }
+    if op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=" {
+        return 3
+    }
+    if op == ".." {
+        return 4
+    }
+    if op == "+" || op == "-" {
+        return 5
+    }
+    if op == "*" || op == "/" || op == "%" {
+        return 6
+    }
+    return 0
+}
+
+fn px_args(tokens: List<Token>, at: Int) -> PExpr {
+    var i = at
+    var out = ""
+    if i < tokens.len() && tokens[i].text == ")" {
+        return px_expr(out, i + 1)
+    }
+    var done = false
+    while i < tokens.len() && !done {
+        let arg = px_binary(tokens, i, 1)
+        out = out + " " + arg.text
+        i = arg.next
+        if i < tokens.len() && tokens[i].text == "," {
+            i = i + 1
+        } else {
+            done = true
+        }
+    }
+    if i < tokens.len() && tokens[i].text == ")" {
+        i = i + 1
+    }
+    return px_expr(out, i)
+}
+
+fn px_primary(tokens: List<Token>, at: Int) -> PExpr {
+    var i = at
+    if i >= tokens.len() {
+        return px_expr("?", i)
+    }
+    let token = tokens[i]
+    if token.text == "(" {
+        let inner = px_binary(tokens, i + 1, 1)
+        var close = inner.next
+        if close < tokens.len() && tokens[close].text == ")" {
+            close = close + 1
+        }
+        return px_expr(inner.text, close)
+    }
+    var text = token.text
+    i = i + 1
+    var done = false
+    while i < tokens.len() && !done {
+        let part = tokens[i]
+        if part.text == "(" {
+            let args = px_args(tokens, i + 1)
+            text = "(call " + text + args.text + ")"
+            i = args.next
+        } else if part.text == "." && i + 1 < tokens.len() {
+            text = "(. " + text + " " + tokens[i + 1].text + ")"
+            i = i + 2
+        } else if part.text == "[" {
+            let inner = px_binary(tokens, i + 1, 1)
+            var close = inner.next
+            if close < tokens.len() && tokens[close].text == "]" {
+                close = close + 1
+            }
+            text = "(index " + text + " " + inner.text + ")"
+            i = close
+        } else {
+            done = true
+        }
+    }
+    return px_expr(text, i)
+}
+
+fn px_unary(tokens: List<Token>, at: Int) -> PExpr {
+    if at < tokens.len() {
+        if tokens[at].text == "-" {
+            let value = px_unary(tokens, at + 1)
+            return px_expr("(neg " + value.text + ")", value.next)
+        }
+        if tokens[at].text == "!" {
+            let value = px_unary(tokens, at + 1)
+            return px_expr("(not " + value.text + ")", value.next)
+        }
+    }
+    return px_primary(tokens, at)
+}
+
+fn px_binary(tokens: List<Token>, at: Int, min_prec: Int) -> PExpr {
+    let first = px_unary(tokens, at)
+    var text = first.text
+    var i = first.next
+    var more = true
+    while i < tokens.len() && more {
+        let op = tokens[i].text
+        let prec = px_prec(op)
+        if prec == 0 || prec < min_prec {
+            more = false
+        } else {
+            let right = px_binary(tokens, i + 1, prec + 1)
+            text = "(" + op + " " + text + " " + right.text + ")"
+            i = right.next
+        }
+    }
+    return px_expr(text, i)
+}
+
+// Parses a single expression and returns its prefix form. Anything left over is
+// reported rather than silently dropped.
+fn px_parse(source: String) -> String {
+    let tokens = lx_lex(source)
+    let tree = px_binary(tokens, 0, 1)
+    var end = tree.next
+    while end < tokens.len() && tokens[end].kind == lx_eof() {
+        end = end + 1
+    }
+    if end < tokens.len() {
+        return tree.text + " ?"
+    }
+    return tree.text
+}

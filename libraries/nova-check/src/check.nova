@@ -1,0 +1,163 @@
+// First slice of the semantic checker, in Nova.
+//
+// The bootstrap checker still owns types and bodies. This pass covers the
+// declaration layer: duplicate items, duplicate parameters and unknown type
+// names. Files that import other modules skip the type check, because their
+// types live in those modules.
+
+import "../../nova-lexer/src/lexer.nova"
+
+fn ck_is_item(kind: Int, word: String) -> Bool {
+    if kind != lx_keyword() {
+        return false
+    }
+    return word == "fn" || word == "struct" || word == "enum"
+}
+
+fn ck_next_ident(tokens: List<Token>, at: Int) -> String {
+    var i = at
+    while i < tokens.len() {
+        let token = tokens[i]
+        if token.kind == lx_ident() {
+            return token.text
+        }
+        if token.text == "{" || token.text == "}" || token.text == "(" || token.text == ";" {
+            return ""
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+fn ck_has(names: List<String>, name: String) -> Bool {
+    for existing in names {
+        if existing == name {
+            return true
+        }
+    }
+    return false
+}
+
+fn ck_builtin_type(name: String) -> Bool {
+    if name == "Int" || name == "Float" || name == "Bool" || name == "String" {
+        return true
+    }
+    if name == "Char" || name == "Unit" || name == "Void" || name == "Any" {
+        return true
+    }
+    return name == "List" || name == "Map" || name == "Set"
+}
+
+fn ck_is_type_word(token: Token, declared: List<String>) -> Bool {
+    if token.kind != lx_ident() {
+        return false
+    }
+    if ck_builtin_type(token.text) {
+        return true
+    }
+    return ck_has(declared, token.text)
+}
+
+fn ck_scan_params(
+    tokens: List<Token>,
+    open: Int,
+    declared: List<String>,
+    check_types: Bool
+) -> List<String> {
+    var diags: List<String> = []
+    var i = open + 1
+    var segment_start = true
+    var seen: List<String> = []
+    var expect_type = false
+    while i < tokens.len() && tokens[i].text != ")" {
+        let token = tokens[i]
+        if token.text == "," {
+            segment_start = true
+        } else if segment_start && token.kind == lx_ident() {
+            segment_start = false
+            if ck_has(seen, token.text) {
+                diags.push("E0201 duplicate parameter `${token.text}` at line ${token.line}")
+            } else {
+                seen.push(token.text)
+            }
+        } else if token.text == ":" {
+            expect_type = true
+        } else if expect_type {
+            expect_type = false
+            if check_types && !ck_is_type_word(token, declared) {
+                diags.push("E0202 unknown type `${token.text}` at line ${token.line}")
+            }
+        }
+        i = i + 1
+    }
+    return diags
+}
+
+fn ck_check(source: String) -> List<String> {
+    let tokens = lx_lex(source)
+    var diags: List<String> = []
+    var names: List<String> = []
+    var declared: List<String> = []
+    var depth = 0
+    var has_import = false
+    var i = 0
+    while i < tokens.len() {
+        let token = tokens[i]
+        if token.text == "{" {
+            depth = depth + 1
+        } else if token.text == "}" {
+            depth = depth - 1
+        } else if token.text == "import" && token.kind == lx_keyword() {
+            has_import = true
+        } else if depth == 0 && ck_is_item(token.kind, token.text) {
+            let name = ck_next_ident(tokens, i + 1)
+            if name.len() > 0 {
+                if token.text != "fn" {
+                    declared.push(name)
+                }
+                if ck_has(names, name) {
+                    diags.push("E0200 duplicate `${name}` at line ${token.line}")
+                } else {
+                    names.push(name)
+                }
+            }
+        }
+        i = i + 1
+    }
+    if !has_import {
+        for name in names {
+            declared.push(name)
+        }
+        i = 0
+        depth = 0
+        while i < tokens.len() {
+            let token = tokens[i]
+            if token.text == "{" {
+                depth = depth + 1
+            } else if token.text == "}" {
+                depth = depth - 1
+            } else if depth == 0 && token.kind == lx_keyword() && token.text == "fn" {
+                var open = i
+                while open < tokens.len() && tokens[open].text != "(" {
+                    open = open + 1
+                }
+                for message in ck_scan_params(tokens, open, declared, true) {
+                    diags.push(message)
+                }
+                var arrow = open
+                while arrow < tokens.len() && tokens[arrow].text != "->" && tokens[arrow].text != "{" {
+                    arrow = arrow + 1
+                }
+                if arrow < tokens.len() && tokens[arrow].text == "->" {
+                    if arrow + 1 < tokens.len() && !ck_is_type_word(tokens[arrow + 1], declared) {
+                        diags.push(
+                            "E0202 unknown type `${tokens[arrow + 1].text}` at line ${tokens[arrow + 1].line}"
+                        )
+                    }
+                }
+            }
+            i = i + 1
+        }
+    }
+    return diags
+}

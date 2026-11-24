@@ -5,6 +5,8 @@ import "../../../libraries/nova-lexer/src/lexer.nova"
 import "../../../libraries/nova-diag/src/diag.nova"
 import "../../../libraries/nova-boxes/src/boxes.nova"
 import "../../../libraries/nova-parser/src/parser.nova"
+import "../../../libraries/nova-parser/src/expr.nova"
+import "../../../libraries/nova-check/src/check.nova"
 
 // nova-tool: the phase-1 self-hosted toolchain, in Nova.
 //
@@ -62,6 +64,23 @@ fn main() {
     if mode == "parse" {
         for item in p_parse(source) {
             println("${item.kind} ${item.name} params=${item.params} stmts=${item.stmts} depth=${item.depth}")
+        }
+        return
+    }
+
+    if mode == "expr" {
+        println(px_parse(source))
+        return
+    }
+
+    if mode == "sema" {
+        let diags = ck_check(source)
+        if diags.len() == 0 {
+            println("OK ${path}")
+        } else {
+            for message in diags {
+                println(message)
+            }
         }
         return
     }

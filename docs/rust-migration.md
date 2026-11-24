@@ -76,7 +76,8 @@ The Nova implementations exist and are exercised by `examples/nova-tool`:
 | Piece | Nova file | State |
 |---|---|---|
 | Formatter | `libraries/nova-fmt/src/fmt.nova` | formats every corpus file, idempotent; `nova fmt`, the LSP and the wasm playground all run this implementation |
-| Parser | `libraries/nova-parser/src/parser.nova` | start of the port: items, parameters and statement nesting; expressions still in bootstrap |
+| Parser | `libraries/nova-parser/src/parser.nova`, `expr.nova` | items, parameters and statement nesting, plus a Pratt expression parser rendering prefix trees |
+| Semantic checks | `libraries/nova-check/src/check.nova` | declaration-level: duplicate items, duplicate parameters, unknown type names |
 | Lexer | `libraries/nova-lexer/src/lexer.nova` | tokenizes the full 5,139-line studio file and the large-input corpus |
 | Diagnostics | `libraries/nova-diag/src/diag.nova` | renders severity, location and caret |
 | Packages (**Nova Boxes**) | `libraries/nova-boxes/src/boxes.nova` | `box.toml`, `boxes.lock`, dependency and import graphs |
@@ -103,7 +104,11 @@ additions, `nova_input_ptr`/`nova_input_set` to hand source in and the existing
 output buffer to read the result back, plus value-ABI shims for `chars`, `split`,
 `join` and the trim family.
 
-Test state: `sh examples/nova-tool/tests/toolchain.sh` → **passed 101, failed 0**
+Phase-2 suites: `tests/expr.sh` (expression trees), `tests/sema.sh`
+(declaration checks), and `apps/website/scripts/test-playground-format.mjs`
+(the browser formatter wasm, output and idempotence).
+
+Test state: `sh examples/nova-tool/tests/toolchain.sh` → **passed 105, failed 0**
 (including formatting the studio source). No Rust crate has been deleted yet: the bootstrap
 compiler (parser, sema, codegen, CLI, LSP) is still Rust, and phases 2–4 of this
 document are what removes it.
