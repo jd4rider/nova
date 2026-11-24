@@ -10,7 +10,7 @@ description: A small 2D game engine written in Nova, with Breakout as a desktop 
 ```sh
 cd examples/breakout
 ../../target/debug/nova build
-./target/nova/nova-breakout
+./target/nova/breakout
 ```
 
 `a`/`d` move the paddle, `space` launches the ball, `r` starts over, `q` or `Esc` quits. It runs in the alternate screen with a 16 ms tick.
