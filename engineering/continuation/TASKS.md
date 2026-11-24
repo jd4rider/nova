@@ -37,7 +37,8 @@ and integration gate pass. The full matrix is `PARITY.md`.
   **TODO**.
 - CODEGEN-01.08 — `for`, `match`, `break`/`continue`, short-circuit booleans:
   **TODO**.
-- CODEGEN-01.09 — Clang invocation and linking from the Nova tool: **TODO**.
+- CODEGEN-01.09 — Clang invocation and linking from the Nova tool: **READY**,
+  depends on the Int ABI subset and host process surface.
 - CODEGEN-01.10 — Optimization pipeline parity: **TODO**.
 
 ## CLI-01 — Self-hosted driver

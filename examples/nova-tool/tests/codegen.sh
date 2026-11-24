@@ -12,9 +12,9 @@ no() { fail=$((fail + 1)); echo "FAIL $1"; }
 [ -x "$tool" ] || { echo "build examples/nova-tool first"; exit 1; }
 
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-sample.nova" "$tool")
-echo "$out" | grep -q "define i64 @nova_add(i64 %p0, i64 %p1)" && ok || no "add signature"
+echo "$out" | grep -q "define i64 @nova_user_0(ptr %arg_env, i64 %p0, i64 %p1)" && ok || no "add signature"
 echo "$out" | grep -q "add i64" && ok || no "integer addition"
-echo "$out" | grep -q "call i64 @nova_add(i64 1, i64 2)" && ok || no "direct call"
+echo "$out" | grep -q "call i64 @nova_user_0(ptr null, i64 1, i64 2)" && ok || no "direct call"
 echo "$out" | grep -q "define i32 @main()" && ok || no "entry wrapper"
 if echo "$out" | grep -q "alloca"; then
     no "immutable params/lets spill to stack"

@@ -14,6 +14,7 @@ struct CgSig {
     params: List<String>,
     ret: String,
     body: Int,
+    index: Int,
 }
 
 struct CgLocal {
@@ -167,7 +168,8 @@ fn cg_compile(source: String) -> CgResult {
                 params.push(param.text)
                 k = k + 1
             }
-            fns.push(CgSig { name: item.text, params: params, ret: item.aux, body: a_child(ast, node, item.count - 1) })
+            let index = fns.len()
+            fns.push(CgSig { name: item.text, params: params, ret: item.aux, body: a_child(ast, node, item.count - 1), index: index })
         }
         i = i + 1
     }
@@ -190,7 +192,7 @@ fn cg_compile(source: String) -> CgResult {
         emitted = emitted + 1
     }
     out = out + "define i32 @main() {\n"
-    out = out + "  %nova_result = call i64 @nova_main()\n"
+    out = out + "  %nova_result = call i64 @nova_user_" + fns[main_index].index.to_string() + "(ptr null)\n"
     out = out + "  %nova_exit = trunc i64 %nova_result to i32\n"
     out = out + "  ret i32 %nova_exit\n"
     out = out + "}\n"
@@ -223,14 +225,11 @@ fn cg_emit_fn(ast: Ast, fns: List<CgSig>, sig: CgSig) -> CgResult {
     if !state.terminated {
         return CgResult { ir: "", error: "function " + sig.name + " does not end with return" }
     }
-    let symbol = if sig.name == "main" { "nova_main" } else { "nova_" + sig.name }
-    var text = "define i64 @" + symbol + "("
+    let symbol = "nova_user_" + sig.index.to_string()
+    var text = "define i64 @" + symbol + "(ptr %arg_env"
     var k = 0
     while k < sig.params.len() {
-        if k > 0 {
-            text = text + ", "
-        }
-        text = text + "i64 %p" + k.to_string()
+        text = text + ", i64 %p" + k.to_string()
         k = k + 1
     }
     text = text + ") {\n"
@@ -514,8 +513,12 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
         let temp_result = cg_temp(work)
         work = temp_result.0
         let temp = temp_result.1
-        let symbol = if name == "main" { "nova_main" } else { "nova_" + name }
-        work = cg_line(work, "  " + temp + " = call i64 @" + symbol + "(" + args + ")")
+        let symbol = "nova_user_" + sig.index.to_string()
+        var call_args = "ptr null"
+        if args.len() > 0 {
+            call_args = call_args + ", " + args
+        }
+        work = cg_line(work, "  " + temp + " = call i64 @" + symbol + "(" + call_args + ")")
         return cg_val(work, temp)
     }
     return cg_val(cg_error(state, "unsupported expression"), "0")

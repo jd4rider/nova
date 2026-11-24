@@ -49,6 +49,8 @@ Result: PASS — passed 15, failed 0.
 - Mutable module compiles and exits 2.
 - Loop/branch module contains `icmp slt i64` and `br i1`; binary exits 17.
 - Immutable arithmetic module exits 9.
+- ABI assertions: `define i64 @nova_user_0(ptr %arg_env, ...)`, direct call
+  `@nova_user_0(ptr null, ...)`, and `@main` calls the entry with `ptr null`.
 - Host clang accepted every module; Mach-O confirmed on this host.
 
 Limit: the test invokes clang; `nova-tool emit-ir` only emits IR. This is not a
@@ -64,7 +66,8 @@ and cancellation are absent even in Rust.
 
 ## Commit history
 
-- Control-flow/parity checkpoint — branch HEAD.
+- Int-ABI checkpoint — branch HEAD.
+- `98c1ded` — native control flow and parity matrix.
 - `0fa226f` — SSA immutable bindings and performance gate.
 - `e9d9e4a` — native codegen path in Nova.
 - `47302b6` — AST-based semantic checker in Nova.

@@ -14,7 +14,7 @@ verified working, partial, missing, broken, blocked, not applicable.
 | Declaration checks | `libraries/nova-check/src/check.nova` | Nova | `tests/sema.sh` | partial | Duplicate items/parameters, unknown declared types |
 | Body sema slice | `libraries/nova-check/src/sema.nova` | Nova | `tests/sema-ast.sh` | partial | 9/9 focused diagnostics; not full type inference or generics |
 | LLVM codegen | `bootstrap/nova-codegen-llvm` | Rust | `cargo build` | verified working | Full seed backend; no Nova replacement in `nova build` |
-| Codegen slice | `libraries/nova-codegen/src/llvm.nova` | Nova | `tests/codegen.sh` | partial | Int IR with `if`/`else`, `while`, comparisons and SSA immutable bindings; clang validates it and native binaries exit 9/2/17 |
+| Codegen slice | `libraries/nova-codegen/src/llvm.nova` | Nova | `tests/codegen.sh` | partial | Int IR with `if`/`else`, `while`, comparisons, SSA bindings and seed-shaped `ptr %arg_env` symbols; native binaries exit 9/2/17 |
 | CLI | `bootstrap/nova-cli` | Rust | `cargo build -p nova-cli` | verified working | Nova tool covers fmt/lex/parse/boxes, not `build/run/test` |
 | LSP | `bootstrap/nova-lsp` | Rust | Rust build | missing in Nova | Blocked on full sema and a Nova stdio streaming primitive |
 | Nova tool | `examples/nova-tool` | Nova | built by `nova build` | partial | `ast-dump`, `sema`, `sema-ast`, formatter and Boxes modes |
