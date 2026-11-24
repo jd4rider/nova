@@ -2439,6 +2439,20 @@ impl<'a> ModuleGen<'a> {
             BuiltinMethod::MapGet => self.gen_map_get(&recv, args, ret_ty, span),
             BuiltinMethod::MapContainsKey => self.gen_map_contains(&recv, args, span),
             BuiltinMethod::SetContains => self.gen_set_contains(&recv, args, span),
+            BuiltinMethod::ListUtf8 => {
+                let list_slot = self.alloca("%nova.list");
+                self.store("%nova.list", &recv.repr, &list_slot);
+                let out_slot = self.alloca("%nova.string");
+                self.call_void(
+                    "nova_string_from_bytes",
+                    &[
+                        ("ptr".into(), list_slot.clone()),
+                        ("ptr".into(), out_slot.clone()),
+                    ],
+                );
+                let result = self.load("%nova.string", &out_slot);
+                Val::new(Type::String, result)
+            }
             BuiltinMethod::ListToSlice => {
                 let data = self.extract_value("%nova.list", &recv.repr, "ptr", 0);
                 let len = self.extract_value("%nova.list", &recv.repr, "i64", 1);
@@ -2672,6 +2686,18 @@ impl<'a> ModuleGen<'a> {
                     let result = self.load("%nova.list", &slot);
                     Val::new(ret_ty.clone(), result)
                 }
+            }
+            BuiltinMethod::StringBytes => {
+                let slot = self.alloca("%nova.list");
+                self.call_void(
+                    "nova_string_bytes",
+                    &[
+                        ("%nova.string".into(), recv.repr.clone()),
+                        ("ptr".into(), slot.clone()),
+                    ],
+                );
+                let result = self.load("%nova.list", &slot);
+                Val::new(ret_ty.clone(), result)
             }
             BuiltinMethod::StringChars => {
                 let slot = self.alloca("%nova.list");
@@ -3461,6 +3487,8 @@ declare %nova.string @nova_string_clip(%nova.string, i64)
 declare void @nova_string_wrap(%nova.string, i64, ptr)
 declare void @nova_string_graphemes(%nova.string, ptr)
 declare void @nova_string_chars(%nova.string, ptr)
+declare void @nova_string_bytes(%nova.string, ptr)
+declare void @nova_string_from_bytes(ptr, ptr)
 declare %nova.string @nova_term_take_paste()
 declare %nova.string @nova_http_get(%nova.string)
 declare %nova.string @nova_json_string(%nova.string, %nova.string)

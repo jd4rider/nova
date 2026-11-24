@@ -3852,6 +3852,19 @@ impl Checker {
         }
         match &recv_ty {
             Type::List(elem) => match method {
+                "utf8" => {
+                    self.require_args(method, args, 0, span);
+                    let te = TExpr::new(
+                        TExprKind::Method {
+                            receiver: Box::new(recv),
+                            method: BuiltinMethod::ListUtf8,
+                            args: Vec::new(),
+                        },
+                        Type::String,
+                        span,
+                    );
+                    self.finish(te, expected)
+                }
                 "len" => {
                     self.require_args(method, args, 0, span);
                     let te = TExpr::new(
@@ -4328,6 +4341,19 @@ impl Checker {
                             args: argument,
                         },
                         result_ty,
+                        span,
+                    );
+                    self.finish(te, expected)
+                }
+                "bytes" => {
+                    self.require_args(method, args, 0, span);
+                    let te = TExpr::new(
+                        TExprKind::Method {
+                            receiver: Box::new(recv),
+                            method: BuiltinMethod::StringBytes,
+                            args: Vec::new(),
+                        },
+                        Type::List(Box::new(Type::Int)),
                         span,
                     );
                     self.finish(te, expected)

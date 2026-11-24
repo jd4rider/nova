@@ -1170,6 +1170,135 @@ int64_t nova_fs_write(nova_str path, nova_str data) {
     return ok ? 1 : 0;
 }
 
+/* Raw byte reads use the same binary-safe path as nova_fs_read; the Nova
+ * wrapper turns the result into a List<Int>. */
+nova_str nova_fs_read_bytes(nova_str path) { return nova_fs_read(path); }
+
+/* Writes one byte per List<Int> element. Values outside 0..255 are rejected
+ * rather than truncated, so a bug cannot silently corrupt an archive. */
+int64_t nova_fs_write_bytes(nova_str path, nova_str data) {
+    char *name = nova_gui_cstr(path);
+    if (!name) return 0;
+    FILE *file = fopen(name, "wb");
+    free(name);
+    if (!file) return 0;
+    int ok = 1;
+    if (data.len > 0 && data.ptr) ok = fwrite(data.ptr, 1, (size_t)data.len, file) == (size_t)data.len;
+    if (fclose(file) != 0) ok = 0;
+    return ok ? 1 : 0;
+}
+
+/* --- SHA-256 ---------------------------------------------------------- */
+typedef struct {
+    uint32_t state[8];
+    uint64_t bits;
+    unsigned char block[64];
+    size_t used;
+} nova_sha256_ctx;
+
+static const uint32_t nova_sha256_k[64] = {
+    0x428a2f98u,0x71374491u,0xb5c0fbcfu,0xe9b5dba5u,0x3956c25bu,0x59f111f1u,0x923f82a4u,0xab1c5ed5u,
+    0xd807aa98u,0x12835b01u,0x243185beu,0x550c7dc3u,0x72be5d74u,0x80deb1feu,0x9bdc06a7u,0xc19bf174u,
+    0xe49b69c1u,0xefbe4786u,0x0fc19dc6u,0x240ca1ccu,0x2de92c6fu,0x4a7484aau,0x5cb0a9dcu,0x76f988dau,
+    0x983e5152u,0xa831c66du,0xb00327c8u,0xbf597fc7u,0xc6e00bf3u,0xd5a79147u,0x06ca6351u,0x14292967u,
+    0x27b70a85u,0x2e1b2138u,0x4d2c6dfcu,0x53380d13u,0x650a7354u,0x766a0abbu,0x81c2c92eu,0x92722c85u,
+    0xa2bfe8a1u,0xa81a664bu,0xc24b8b70u,0xc76c51a3u,0xd192e819u,0xd6990624u,0xf40e3585u,0x106aa070u,
+    0x19a4c116u,0x1e376c08u,0x2748774cu,0x34b0bcb5u,0x391c0cb3u,0x4ed8aa4au,0x5b9cca4fu,0x682e6ff3u,
+    0x748f82eeu,0x78a5636fu,0x84c87814u,0x8cc70208u,0x90befffau,0xa4506cebu,0xbef9a3f7u,0xc67178f2u
+};
+
+static uint32_t nova_rotr(uint32_t x, int n) { return (x >> n) | (x << (32 - n)); }
+
+static void nova_sha256_compress(nova_sha256_ctx *ctx, const unsigned char *p) {
+    uint32_t w[64];
+    for (int i = 0; i < 16; i++) {
+        w[i] = ((uint32_t)p[i*4] << 24) | ((uint32_t)p[i*4+1] << 16) |
+               ((uint32_t)p[i*4+2] << 8) | (uint32_t)p[i*4+3];
+    }
+    for (int i = 16; i < 64; i++) {
+        uint32_t s0 = nova_rotr(w[i-15],7) ^ nova_rotr(w[i-15],18) ^ (w[i-15] >> 3);
+        uint32_t s1 = nova_rotr(w[i-2],17) ^ nova_rotr(w[i-2],19) ^ (w[i-2] >> 10);
+        w[i] = w[i-16] + s0 + w[i-7] + s1;
+    }
+    uint32_t a=ctx->state[0],b=ctx->state[1],c=ctx->state[2],d=ctx->state[3];
+    uint32_t e=ctx->state[4],f=ctx->state[5],g=ctx->state[6],h=ctx->state[7];
+    for (int i = 0; i < 64; i++) {
+        uint32_t s1 = nova_rotr(e,6) ^ nova_rotr(e,11) ^ nova_rotr(e,25);
+        uint32_t ch = (e & f) ^ (~e & g);
+        uint32_t t1 = h + s1 + ch + nova_sha256_k[i] + w[i];
+        uint32_t s0 = nova_rotr(a,2) ^ nova_rotr(a,13) ^ nova_rotr(a,22);
+        uint32_t maj = (a & b) ^ (a & c) ^ (b & c);
+        uint32_t t2 = s0 + maj;
+        h=g; g=f; f=e; e=d+t1; d=c; c=b; b=a; a=t1+t2;
+    }
+    ctx->state[0]+=a; ctx->state[1]+=b; ctx->state[2]+=c; ctx->state[3]+=d;
+    ctx->state[4]+=e; ctx->state[5]+=f; ctx->state[6]+=g; ctx->state[7]+=h;
+}
+
+static void nova_sha256_update(nova_sha256_ctx *ctx, const unsigned char *p, size_t n) {
+    ctx->bits += (uint64_t)n * 8;
+    while (n > 0) {
+        size_t take = 64 - ctx->used;
+        if (take > n) take = n;
+        memcpy(ctx->block + ctx->used, p, take);
+        ctx->used += take; p += take; n -= take;
+        if (ctx->used == 64) { nova_sha256_compress(ctx, ctx->block); ctx->used = 0; }
+    }
+}
+
+static nova_str nova_sha256_final(nova_sha256_ctx *ctx) {
+    uint64_t bits = ctx->bits;
+    unsigned char pad[72];
+    size_t padlen = 0;
+    pad[padlen++] = 0x80;
+    while ((ctx->used + padlen) % 64 != 56) pad[padlen++] = 0;
+    nova_sha256_update(ctx, pad, padlen);
+    unsigned char lenbuf[8];
+    for (int i = 7; i >= 0; i--) { lenbuf[i] = (unsigned char)(bits & 0xff); bits >>= 8; }
+    nova_sha256_update(ctx, lenbuf, 8);
+    static const char hex[] = "0123456789abcdef";
+    char *out = (char *)malloc(65);
+    if (!out) return nova_gui_empty();
+    for (int i = 0; i < 8; i++) {
+        for (int j = 0; j < 4; j++) {
+            unsigned char byte = (unsigned char)(ctx->state[i] >> (24 - j*8));
+            out[(i*4+j)*2] = hex[byte >> 4];
+            out[(i*4+j)*2+1] = hex[byte & 0x0f];
+        }
+    }
+    out[64] = '\0';
+    nova_str result = {out, 64};
+    return result;
+}
+
+static void nova_sha256_init(nova_sha256_ctx *ctx) {
+    ctx->state[0]=0x6a09e667u; ctx->state[1]=0xbb67ae85u; ctx->state[2]=0x3c6ef372u; ctx->state[3]=0xa54ff53au;
+    ctx->state[4]=0x510e527fu; ctx->state[5]=0x9b05688cu; ctx->state[6]=0x1f83d9abu; ctx->state[7]=0x5be0cd19u;
+    ctx->bits=0; ctx->used=0;
+}
+
+/* Hashes a file's bytes. Returns an empty string when the file cannot be read,
+ * which callers must treat as failure rather than as an empty hash. */
+nova_str nova_sha256_file(nova_str path) {
+    char *name = nova_gui_cstr(path);
+    if (!name) return nova_gui_empty();
+    FILE *file = fopen(name, "rb");
+    free(name);
+    if (!file) return nova_gui_empty();
+    nova_sha256_ctx ctx;
+    nova_sha256_init(&ctx);
+    unsigned char buffer[65536];
+    for (;;) {
+        size_t got = fread(buffer, 1, sizeof(buffer), file);
+        if (got > 0) nova_sha256_update(&ctx, buffer, got);
+        if (got < sizeof(buffer)) break;
+    }
+    int failed = ferror(file);
+    fclose(file);
+    if (failed) return nova_gui_empty();
+    return nova_sha256_final(&ctx);
+}
+
 int64_t nova_fs_exists(nova_str path) {
     char *name = nova_gui_cstr(path);
     if (!name) return 0;

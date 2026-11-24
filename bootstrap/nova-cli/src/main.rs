@@ -860,22 +860,6 @@ fn box_project_root() -> Result<PathBuf, i32> {
 /// Package operations run through the Nova implementation in `nova-tool`.
 /// Actions that are not implemented report unsupported instead of pretending.
 fn cmd_box(action: &str, args: &[String]) -> i32 {
-    if !args.is_empty() {
-        eprintln!("nova box {action}: arguments are not supported yet");
-        return EXIT_UNSUPPORTED;
-    }
-    let tool_mode = match action {
-        "tree" | "resolve" => "box-resolve",
-        "lock" => "box-lock",
-        "metadata" => "box-metadata",
-        "check" => "box-resolve",
-        _ => {
-            eprintln!(
-                "nova box: `{action}` is not implemented yet; available: tree, check, lock, metadata, resolve"
-            );
-            return EXIT_UNSUPPORTED;
-        }
-    };
     let root = match box_project_root() {
         Ok(root) => root,
         Err(code) => return code,
@@ -885,6 +869,52 @@ fn cmd_box(action: &str, args: &[String]) -> i32 {
     } else {
         root.join("nova.toml")
     };
+    let mut mode = "";
+    let mut tool_path = manifest.clone();
+    let mut out = String::new();
+    match action {
+        "tree" | "resolve" | "check" => {
+            if !args.is_empty() {
+                eprintln!("nova box {action}: arguments are not supported");
+                return EXIT_UNSUPPORTED;
+            }
+            mode = "box-resolve";
+        }
+        "lock" => {
+            if !args.is_empty() {
+                eprintln!("nova box lock: arguments are not supported");
+                return EXIT_UNSUPPORTED;
+            }
+            mode = "box-lock";
+        }
+        "metadata" => {
+            if !args.is_empty() {
+                eprintln!("nova box metadata: arguments are not supported");
+                return EXIT_UNSUPPORTED;
+            }
+            mode = "box-metadata";
+        }
+        "pack" => {
+            mode = "box-pack";
+            out = match args.first() {
+                Some(path) => path.clone(),
+                None => root.join("Box.box").to_string_lossy().into_owned(),
+            };
+        }
+        "verify" => {
+            mode = "box-verify";
+            tool_path = match args.first() {
+                Some(path) => PathBuf::from(path),
+                None => root.join("Box.box"),
+            };
+        }
+        _ => {
+            eprintln!(
+                "nova box: `{action}` is not implemented yet; available: tree, check, lock, metadata, resolve, pack, verify"
+            );
+            return EXIT_UNSUPPORTED;
+        }
+    }
     let tool = match nova_tool_path() {
         Some(tool) => tool,
         None => {
@@ -893,8 +923,9 @@ fn cmd_box(action: &str, args: &[String]) -> i32 {
         }
     };
     let output = match Command::new(&tool)
-        .env("NOVA_TOOL", tool_mode)
-        .env("NOVA_TOOL_PATH", &manifest)
+        .env("NOVA_TOOL", mode)
+        .env("NOVA_TOOL_PATH", &tool_path)
+        .env("NOVA_TOOL_OUT", &out)
         .output()
     {
         Ok(output) => output,
@@ -926,7 +957,7 @@ fn cmd_box(action: &str, args: &[String]) -> i32 {
         println!("Boxes check passed: {}", manifest.display());
         return EXIT_OK;
     }
-    if output.status.success() {
+    if output.status.success() && !text.contains("error:") {
         EXIT_OK
     } else {
         EXIT_ERROR

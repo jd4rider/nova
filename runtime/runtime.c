@@ -1359,6 +1359,34 @@ void nova_string_chars(nova_str value, nova_list *result) {
     }
 }
 
+/* Extracts the raw UTF-8 bytes of a string as a List<Int>. Unlike .chars(),
+ * this never decodes: every byte, including invalid UTF-8, is preserved. */
+/* Builds a string from one byte per List<Int> element. Invalid bytes are
+ * rejected so callers cannot create a string that silently changed contents. */
+void nova_string_from_bytes(nova_list *list, nova_str *out) {
+    if (!out) return;
+    int64_t len = list ? list->len : 0;
+    int64_t *bytes = list ? (int64_t *)list->data : NULL;
+    char *buffer = (char *)nova_alloc(len + 1);
+    for (int64_t i = 0; i < len; i++) {
+        if (bytes[i] < 0 || bytes[i] > 255) { buffer[0] = '\0'; *out = (nova_str){buffer, 0}; return; }
+        buffer[i] = (char)(unsigned char)bytes[i];
+    }
+    buffer[len] = '\0';
+    *out = (nova_str){buffer, len};
+}
+
+void nova_string_bytes(nova_str value, nova_list *result) {
+    result->data = NULL;
+    result->len = 0;
+    result->cap = 0;
+    if (!value.ptr || value.len <= 0) return;
+    for (int64_t i = 0; i < value.len; i++) {
+        int64_t byte = (unsigned char)value.ptr[i];
+        nova_list_push(result, &byte, (int64_t)sizeof(int64_t));
+    }
+}
+
 void nova_panic_overflow(int64_t line) {
     fflush(stdout);
     fprintf(stderr, "panic: integer overflow at line %lld\n", (long long)line);

@@ -63,5 +63,19 @@ else
     no "nova binary missing"
 fi
 
+if [ -x "$nova" ]; then
+    rm -rf "$tmp/archive"
+    cp -R "$root/examples/nova-tool/tests/boxes" "$tmp/archive"
+    ( cd "$tmp/archive/app" && NOVA_TOOL_BIN="$tool" "$nova" box pack "$tmp/archive/app.box" ) >/dev/null 2>&1 && ok || no "nova box pack"
+    gzip -t "$tmp/archive/app.box" 2>/dev/null && ok || no "archive is valid gzip"
+    tar -tzf "$tmp/archive/app.box" 2>/dev/null | grep -q "Box.toml" && ok || no "archive lists Box.toml"
+    mkdir -p "$tmp/archive/out"
+    tar -xzf "$tmp/archive/app.box" -C "$tmp/archive/out" 2>/dev/null && cmp -s "$tmp/archive/out/Box.toml" "$tmp/archive/app/Box.toml" && ok || no "archive extracts unchanged manifest"
+    sha=$(shasum -a 256 "$tmp/archive/app.box" | cut -d' ' -f1)
+    ( cd "$tmp/archive/app" && NOVA_TOOL_BIN="$tool" "$nova" box verify "$tmp/archive/app.box" ) 2>/dev/null | grep -q "sha256=$sha" && ok || no "nova box verify sha256"
+    ( cd "$tmp/archive/app" && NOVA_TOOL_BIN="$tool" "$nova" box pack "$tmp/archive/again.box" ) >/dev/null 2>&1
+    cmp -s "$tmp/archive/app.box" "$tmp/archive/again.box" && ok || no "archive is deterministic"
+fi
+
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]

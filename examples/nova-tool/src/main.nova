@@ -10,6 +10,7 @@ import "../../../libraries/nova-check/src/check.nova"
 import "../../../libraries/nova-boxes/src/semver.nova"
 import "../../../libraries/nova-boxes/src/resolve.nova"
 import "../../../libraries/nova-boxes/src/report.nova"
+import "../../../libraries/nova-boxes/src/archive.nova"
 
 // nova-tool: the phase-1 self-hosted toolchain, in Nova.
 //
@@ -115,6 +116,19 @@ fn main() {
         return
     }
 
+    if mode == "box-pack" {
+        let out = gui.env("NOVA_TOOL_OUT")
+        if out.len() == 0 {
+            println("nova-tool: set NOVA_TOOL_OUT")
+            return
+        }
+        println(ar_pack(rs_dirname(path), out))
+        return
+    }
+    if mode == "box-verify" {
+        println(ar_verify(path))
+        return
+    }
     if mode == "diag" {
         let d = diag_error("E0001", "unexpected token", 10, 14)
         println(diag_render(source, d))

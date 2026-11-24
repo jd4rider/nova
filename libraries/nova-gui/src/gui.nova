@@ -69,6 +69,9 @@ extern "C" fn nova_gui_close() -> Unit
 extern "C" fn nova_gui_save_png(path: String) -> Int
 
 extern "C" fn nova_fs_read(path: String) -> String
+extern "C" fn nova_fs_read_bytes(path: String) -> String
+extern "C" fn nova_fs_write_bytes(path: String, data: String) -> Int
+extern "C" fn nova_sha256_file(path: String) -> String
 extern "C" fn nova_fs_write(path: String, data: String) -> Int
 extern "C" fn nova_fs_exists(path: String) -> Int
 extern "C" fn nova_fs_is_dir(path: String) -> Int
@@ -490,6 +493,20 @@ fn read(path: String) -> String {
 
 fn write(path: String, data: String) -> Bool {
     return nova_fs_write(path, data) == 1
+}
+
+// Raw bytes, for archives and other binary formats. read_bytes keeps every
+// byte as-is; write_bytes rejects values outside 0..255.
+fn read_bytes(path: String) -> List<Int> {
+    return nova_fs_read_bytes(path).bytes()
+}
+
+fn write_bytes(path: String, data: List<Int>) -> Bool {
+    return nova_fs_write_bytes(path, data.utf8()) == 1
+}
+
+fn sha256(path: String) -> String {
+    return nova_sha256_file(path)
 }
 
 fn exists(path: String) -> Bool {

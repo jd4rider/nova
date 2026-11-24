@@ -1,0 +1,456 @@
+// Deterministic `.box` archives: a gzip stream of stored deflate blocks around
+// a ustar tar. Everything here runs in Nova on List<Int> bytes; the only host
+// primitives are read_bytes, write_bytes and sha256.
+import "../../../libraries/nova-gui/src/gui.nova" as gui
+
+fn ar_zeros(count: Int) -> List<Int> {
+    var out: List<Int> = []
+    var i = 0
+    while i < count {
+        out.push(0)
+        i = i + 1
+    }
+    return out
+}
+
+fn ar_cat(a: List<Int>, b: List<Int>) -> List<Int> {
+    var out: List<Int> = []
+    var i = 0
+    while i < a.len() {
+        out.push(a[i])
+        i = i + 1
+    }
+    var j = 0
+    while j < b.len() {
+        out.push(b[j])
+        j = j + 1
+    }
+    return out
+}
+
+fn ar_slice(a: List<Int>, start: Int, end: Int) -> List<Int> {
+    var out: List<Int> = []
+    var i = start
+    while i < end && i < a.len() {
+        out.push(a[i])
+        i = i + 1
+    }
+    return out
+}
+
+fn ar_field(text: String, width: Int) -> List<Int> {
+    let bytes = text.bytes()
+    var out: List<Int> = []
+    var i = 0
+    while i < bytes.len() && i < width {
+        out.push(bytes[i])
+        i = i + 1
+    }
+    while out.len() < width {
+        out.push(0)
+    }
+    return out
+}
+
+fn ar_octal_bytes(value: Int, width: Int) -> List<Int> {
+    var digits: List<Int> = []
+    var v = value
+    if v == 0 {
+        digits.push(48)
+    }
+    while v > 0 {
+        digits.push(48 + v % 8)
+        v = v / 8
+    }
+    var out: List<Int> = []
+    var pad = width - 1 - digits.len()
+    while pad > 0 {
+        out.push(48)
+        pad = pad - 1
+    }
+    var i = digits.len() - 1
+    while i >= 0 {
+        out.push(digits[i])
+        i = i - 1
+    }
+    out.push(0)
+    return out
+}
+
+fn ar_checksum_bytes(value: Int) -> List<Int> {
+    let digits = ar_octal_bytes(value, 7)
+    var out: List<Int> = []
+    var i = 0
+    while i < 6 {
+        out.push(digits[i])
+        i = i + 1
+    }
+    out.push(0)
+    out.push(32)
+    return out
+}
+
+fn ar_header(name: String, size: Int, is_dir: Bool) -> List<Int> {
+    var mode = 420
+    var kind = 48
+    if is_dir {
+        mode = 493
+        kind = 53
+    }
+    var h: List<Int> = []
+    h = ar_cat(h, ar_field(name, 100))
+    h = ar_cat(h, ar_octal_bytes(mode, 8))
+    h = ar_cat(h, ar_octal_bytes(0, 8))
+    h = ar_cat(h, ar_octal_bytes(0, 8))
+    h = ar_cat(h, ar_octal_bytes(size, 12))
+    h = ar_cat(h, ar_octal_bytes(0, 12))
+    h = ar_cat(h, ar_field("        ", 8))
+    h = ar_cat(h, [kind])
+    h = ar_cat(h, ar_zeros(100))
+    h = ar_cat(h, ar_field("ustar", 6))
+    h = ar_cat(h, ar_field("00", 2))
+    h = ar_cat(h, ar_zeros(32))
+    h = ar_cat(h, ar_zeros(32))
+    h = ar_cat(h, ar_octal_bytes(0, 8))
+    h = ar_cat(h, ar_octal_bytes(0, 8))
+    h = ar_cat(h, ar_zeros(155))
+    h = ar_cat(h, ar_zeros(12))
+    var sum = 0
+    var i = 0
+    while i < h.len() {
+        sum = sum + h[i]
+        i = i + 1
+    }
+    var out = ar_slice(h, 0, 148)
+    out = ar_cat(out, ar_checksum_bytes(sum))
+    out = ar_cat(out, ar_slice(h, 156, 512))
+    return out
+}
+
+fn ar_xor(a: Int, b: Int) -> Int {
+    var result = 0
+    var bit = 1
+    var x = a
+    var y = b
+    while x > 0 || y > 0 {
+        if x % 2 != y % 2 {
+            result = result + bit
+        }
+        x = x / 2
+        y = y / 2
+        bit = bit * 2
+    }
+    return result
+}
+
+fn ar_u32(value: Int) -> Int {
+    return value % 4294967296
+}
+
+fn ar_crc32(data: List<Int>) -> Int {
+    var crc = 4294967295
+    var i = 0
+    while i < data.len() {
+        crc = ar_xor(crc, data[i])
+        var k = 0
+        while k < 8 {
+            if crc % 2 == 1 {
+                crc = ar_xor(crc / 2, 3988292384)
+            } else {
+                crc = crc / 2
+            }
+            k = k + 1
+        }
+        i = i + 1
+    }
+    return ar_xor(ar_u32(crc), 4294967295)
+}
+
+fn ar_gzip(data: List<Int>) -> List<Int> {
+    var out: List<Int> = [31, 139, 8, 0, 0, 0, 0, 0, 0, 255]
+    var offset = 0
+    if data.len() == 0 {
+        out.push(1)
+        out.push(0)
+        out.push(0)
+        out.push(255)
+        out.push(255)
+    }
+    while offset < data.len() {
+        var n = data.len() - offset
+        if n > 65535 {
+            n = 65535
+        }
+        if offset + n >= data.len() {
+            out.push(1)
+        } else {
+            out.push(0)
+        }
+        out.push(n % 256)
+        out.push(n / 256)
+        let inv = 65535 - n
+        out.push(inv % 256)
+        out.push(inv / 256)
+        var k = 0
+        while k < n {
+            out.push(data[offset + k])
+            k = k + 1
+        }
+        offset = offset + n
+    }
+    let crc = ar_crc32(data)
+    out.push(crc % 256)
+    out.push((crc / 256) % 256)
+    out.push((crc / 65536) % 256)
+    out.push((crc / 16777216) % 256)
+    let size = data.len() % 4294967296
+    out.push(size % 256)
+    out.push((size / 256) % 256)
+    out.push((size / 65536) % 256)
+    out.push((size / 16777216) % 256)
+    return out
+}
+
+fn ar_gunzip(data: List<Int>) -> List<Int> {
+    var out: List<Int> = []
+    if data.len() < 18 || data[0] != 31 || data[1] != 139 || data[2] != 8 {
+        return out
+    }
+    var pos = 10
+    var done = false
+    while !done && pos + 5 <= data.len() {
+        let header = data[pos]
+        if header / 2 % 4 != 0 {
+            return []
+        }
+        let n = data[pos + 1] + data[pos + 2] * 256
+        let inv = data[pos + 3] + data[pos + 4] * 256
+        if n + inv != 65535 {
+            return []
+        }
+        pos = pos + 5
+        var k = 0
+        while k < n && pos + k < data.len() {
+            out.push(data[pos + k])
+            k = k + 1
+        }
+        pos = pos + n
+        if header % 2 == 1 {
+            done = true
+        }
+    }
+    return out
+}
+
+fn ar_skip(name: String) -> Bool {
+    if name == "." || name == ".." || name == ".git" || name == "target" || name == "Box.lock" {
+        return true
+    }
+    if name.ends_with(".box") {
+        return true
+    }
+    return false
+}
+
+fn ar_rel(prefix: String, name: String) -> String {
+    if prefix.len() == 0 {
+        return name
+    }
+    return prefix + "/" + name
+}
+
+fn ar_walk(root: String, rel: String) -> List<String> {
+    var out: List<String> = []
+    var dir = root
+    if rel.len() > 0 {
+        dir = root + "/" + rel
+    }
+    let lines = gui.list(dir).split("\n")
+    var i = 0
+    while i < lines.len() {
+        let line = lines[i]
+        if line.len() > 2 {
+            let parts = line.split("\t")
+            if parts.len() >= 2 {
+                let kind = parts[0]
+                let name = parts[1]
+                if name.len() > 0 && !ar_skip(name) {
+                    let child = ar_rel(rel, name)
+                    out.push(child)
+                    if kind == "d" {
+                        let nested = ar_walk(root, child)
+                        var j = 0
+                        while j < nested.len() {
+                            out.push(nested[j])
+                            j = j + 1
+                        }
+                    }
+                }
+            }
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn ar_cmp(a: String, b: String) -> Int {
+    let ab = a.bytes()
+    let bb = b.bytes()
+    var i = 0
+    while i < ab.len() && i < bb.len() {
+        if ab[i] != bb[i] {
+            if ab[i] < bb[i] {
+                return -1
+            }
+            return 1
+        }
+        i = i + 1
+    }
+    if ab.len() == bb.len() {
+        return 0
+    }
+    if ab.len() < bb.len() {
+        return -1
+    }
+    return 1
+}
+
+fn ar_sort(items: List<String>) -> List<String> {
+    var out: List<String> = []
+    var i = 0
+    while i < items.len() {
+        let item = items[i]
+        var next: List<String> = []
+        var placed = false
+        var j = 0
+        while j < out.len() {
+            if !placed && ar_cmp(item, out[j]) < 0 {
+                next.push(item)
+                placed = true
+            }
+            next.push(out[j])
+            j = j + 1
+        }
+        if !placed {
+            next.push(item)
+        }
+        out = next
+        i = i + 1
+    }
+    return out
+}
+
+fn ar_pack(root: String, out_path: String) -> String {
+    if !gui.exists(root + "/Box.toml") {
+        return "error: no Box.toml in ${root}"
+    }
+    let files = ar_sort(ar_walk(root, ""))
+    var tar: List<Int> = []
+    var i = 0
+    while i < files.len() {
+        let rel = files[i]
+        let full = root + "/" + rel
+        if gui.is_dir(full) {
+            let head = ar_header(rel + "/", 0, true)
+            var k = 0
+            while k < head.len() {
+                tar.push(head[k])
+                k = k + 1
+            }
+        } else {
+            let data = gui.read_bytes(full)
+            let head = ar_header(rel, data.len(), false)
+            var k = 0
+            while k < head.len() {
+                tar.push(head[k])
+                k = k + 1
+            }
+            var d = 0
+            while d < data.len() {
+                tar.push(data[d])
+                d = d + 1
+            }
+            let rem = data.len() % 512
+            if rem > 0 {
+                var pad = 512 - rem
+                while pad > 0 {
+                    tar.push(0)
+                    pad = pad - 1
+                }
+            }
+        }
+        i = i + 1
+    }
+    var end = 0
+    while end < 1024 {
+        tar.push(0)
+        end = end + 1
+    }
+    let gz = ar_gzip(tar)
+    if !gui.write_bytes(out_path, gz) {
+        return "error: cannot write ${out_path}"
+    }
+    return "packed ${out_path} bytes=${gz.len()} sha256=${gui.sha256(out_path)}"
+}
+
+fn ar_name_at(tar: List<Int>, pos: Int) -> String {
+    var bytes: List<Int> = []
+    var i = 0
+    while i < 100 && pos + i < tar.len() {
+        let value = tar[pos + i]
+        if value == 0 {
+            i = 100
+        } else {
+            bytes.push(value)
+            i = i + 1
+        }
+    }
+    return bytes.utf8()
+}
+
+fn ar_read_octal(tar: List<Int>, pos: Int, width: Int) -> Int {
+    var value = 0
+    var i = 0
+    while i < width && pos + i < tar.len() {
+        let c = tar[pos + i]
+        if c >= 48 && c <= 55 {
+            value = value * 8 + (c - 48)
+        }
+        i = i + 1
+    }
+    return value
+}
+
+fn ar_verify(path: String) -> String {
+    let raw = gui.read_bytes(path)
+    if raw.len() < 18 {
+        return "error: ${path} is too small to be a .box"
+    }
+    if raw[0] != 31 || raw[1] != 139 {
+        return "error: ${path} is not gzip"
+    }
+    let tar = ar_gunzip(raw)
+    if tar.len() == 0 {
+        return "error: ${path} has no stored deflate payload"
+    }
+    let crc = ar_crc32(tar)
+    let stored = raw[raw.len() - 8] + raw[raw.len() - 7] * 256 + raw[raw.len() - 6] * 65536 + raw[raw.len() - 5] * 16777216
+    if crc != stored {
+        return "error: ${path} failed CRC32"
+    }
+    var pos = 0
+    var count = 0
+    var lines = ""
+    while pos + 512 <= tar.len() {
+        let name = ar_name_at(tar, pos)
+        if name.len() == 0 {
+            pos = tar.len()
+        } else {
+            let size = ar_read_octal(tar, pos + 124, 12)
+            lines = lines + name + " " + size.to_string() + "\n"
+            count = count + 1
+            pos = pos + 512 + ((size + 511) / 512) * 512
+        }
+    }
+    return "entries=${count}\n${lines}sha256=${gui.sha256(path)}"
+}
