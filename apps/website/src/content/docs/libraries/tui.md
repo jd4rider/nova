@@ -101,8 +101,9 @@ Pickers:
 
 Keys:
 
-- **↑/↓** or **j/k** change the selection in the focused pane
-- **←/→** or **Tab/Shift-Tab** switch panes (translation, book, chapter, verse)
+- **↑/↓** or **j/k** move between panes (translation, book, chapter, verse)
+- **←/→** change the selection in the focused pane
+- **Tab/Shift-Tab** also move between panes
 - **Enter** loads the current selection
 - **c** loads the whole chapter regardless of the verse selection
 - **/** searches books: typing filters the list by name, **↑/↓** move between matches, **Enter** loads the chapter, **Esc** cancels

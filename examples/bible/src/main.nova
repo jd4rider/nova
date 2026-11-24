@@ -331,7 +331,7 @@ fn initial() -> Model {
         passage: "",
         reference: "",
         translation: "World English Bible",
-        status: "↑/↓ choose · ←/→ pane · enter load · c chapter · / search · : reference · esc quit",
+        status: "↑/↓ pane · ←/→ choose · enter load · c chapter · / search · : reference · esc quit",
         scroll: 0,
         width: width_for(tui.terminal_width()),
         query: "",
@@ -442,7 +442,7 @@ fn view(model: Model) -> String {
     if model.filtering {
         out = out + "  " + tui.paint(colors.muted, "type to filter books · ↑/↓ matches · enter load · esc cancel")
     } else {
-        out = out + "  " + tui.paint(colors.muted, "↑/↓ choose · ←/→ pane · enter load · c chapter · / search · : reference · esc quit")
+        out = out + "  " + tui.paint(colors.muted, "↑/↓ pane · ←/→ choose · enter load · c chapter · / search · : reference · esc quit")
     }
     return out
 }
@@ -606,17 +606,17 @@ fn on_key(model: Model, code: Int) -> (Model, bubble.Cmd) {
         next.status = "type a reference · enter to load · esc to cancel"
         return (next, bubble.Cmd.IdleCmd)
     }
-    if code == 9 || code == 1003 {
+    if code == 9 || code == 1002 || code == 106 {
         return (switch_pane(model, 1), bubble.Cmd.IdleCmd)
     }
-    if code == 1011 || code == 1004 {
+    if code == 1011 || code == 1001 || code == 107 {
         return (switch_pane(model, -1), bubble.Cmd.IdleCmd)
     }
-    if code == 1001 || code == 107 {
-        return (move_selection(model, -1), bubble.Cmd.IdleCmd)
-    }
-    if code == 1002 || code == 106 {
+    if code == 1003 {
         return (move_selection(model, 1), bubble.Cmd.IdleCmd)
+    }
+    if code == 1004 {
+        return (move_selection(model, -1), bubble.Cmd.IdleCmd)
     }
     if code == 1007 {
         var next = model
