@@ -2589,6 +2589,18 @@ impl<'a> ModuleGen<'a> {
                     Val::new(ret_ty.clone(), result)
                 }
             }
+            BuiltinMethod::StringChars => {
+                let slot = self.alloca("%nova.list");
+                self.call_void(
+                    "nova_string_chars",
+                    &[
+                        ("%nova.string".into(), recv.repr.clone()),
+                        ("ptr".into(), slot.clone()),
+                    ],
+                );
+                let result = self.load("%nova.list", &slot);
+                Val::new(ret_ty.clone(), result)
+            }
             BuiltinMethod::StringGraphemes => {
                 let slot = self.alloca("%nova.list");
                 self.call_void(
@@ -3360,6 +3372,7 @@ declare i64 @nova_string_display_width(%nova.string)
 declare %nova.string @nova_string_clip(%nova.string, i64)
 declare void @nova_string_wrap(%nova.string, i64, ptr)
 declare void @nova_string_graphemes(%nova.string, ptr)
+declare void @nova_string_chars(%nova.string, ptr)
 declare %nova.string @nova_term_take_paste()
 declare %nova.string @nova_http_get(%nova.string)
 declare %nova.string @nova_json_string(%nova.string, %nova.string)

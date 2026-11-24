@@ -57,6 +57,7 @@ Everything is immediate mode: a frame is whatever the loop draws between `begin`
 | Clipboard | `clipboard()`, `set_clipboard(text)` — the system pasteboard |
 | Terminal | `term_start(cmd, dir)`, `term_poll()`, `term_running()`, `term_clear()` — a real PTY (libc `posix_openpt` + `fork`) read by a host thread, so a child program sees a terminal |
 | Terminal input | `term_send(code)` — write a byte (`13` Enter, `127` Backspace) to the running PTY |
+| Terminal pool | `pty_open(slot, cmd, dir, cols, rows)`, `pty_poll(slot)`, `pty_running(slot)`, `pty_write(slot, code)`, `pty_write_text(slot, text)`, `pty_resize(slot, cols, rows)`, `pty_status(slot)`, `pty_close(slot)` — up to eight ptys, each a real terminal with its own window size |
 | Frame | `begin()`, `clear(color)`, `present()`, `save_png(path)`, `sleep(ms)` |
 | Shapes | `rect`, `round_rect`, `stroke`, `line`, `rect_alpha` |
 | Text | `text` (system font), `mono` (Menlo), `text_width`, `mono_width`, `advance(size)` |

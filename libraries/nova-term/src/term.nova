@@ -1,0 +1,1450 @@
+// nova-term — a VT100/ANSI terminal emulator for nova-gui programs.
+//
+// The host (crates/nova-runtime/src/gui.m) owns the pty: it forks a shell, reads
+// the master fd on a thread and hands the bytes to Nova. This file is the other
+// half: it turns those bytes into a screen.
+//
+// State lives in lists, not in scalar struct fields, because Nova parameters are
+// immutable: a helper can write `regs[i]` through a shared list, while
+// `term.cx = ...` would not compile. The screen is a ring of rows, so a linefeed
+// at the bottom copies one row instead of the whole grid, and scrollback is a
+// ring of 2000 plain-text lines. Both keep a fast shell smooth.
+//
+//   import "../nova-term/src/term.nova" as term
+//
+//   var t = term.tm_new(120, 30)
+//   term.tm_feed(t, gui.pty_poll(0))
+//   term.tm_draw(t, 8, 8, 1200, 600, 12, term.tm_palette_dark())
+//
+// Not implemented: mouse reporting, DSR replies (ESC[6n), character sets other
+// than UTF-8, and reflow on resize — a narrower grid wraps new output only.
+
+import "../../nova-gui/src/gui.nova" as gui
+
+// ---------- registers ----------
+// One list of immutable-by-convention integers, so every helper shares it.
+
+fn tm_i_cx() -> Int { return 0 }
+fn tm_i_cy() -> Int { return 1 }
+fn tm_i_sx() -> Int { return 2 }
+fn tm_i_sy() -> Int { return 3 }
+fn tm_i_fg() -> Int { return 4 }
+fn tm_i_bg() -> Int { return 5 }
+fn tm_i_flags() -> Int { return 6 }
+fn tm_i_state() -> Int { return 7 }
+fn tm_i_param() -> Int { return 8 }
+fn tm_i_hasp() -> Int { return 9 }
+fn tm_i_wrap() -> Int { return 10 }
+fn tm_i_cursor() -> Int { return 11 }
+fn tm_i_bell() -> Int { return 12 }
+fn tm_i_top() -> Int { return 13 }
+fn tm_i_bottom() -> Int { return 14 }
+fn tm_i_head() -> Int { return 15 }
+fn tm_i_alt() -> Int { return 16 }
+fn tm_i_view() -> Int { return 17 }
+fn tm_i_mhead() -> Int { return 18 }
+fn tm_i_mx() -> Int { return 19 }
+fn tm_i_my() -> Int { return 20 }
+fn tm_i_cols() -> Int { return 21 }
+fn tm_i_rows() -> Int { return 22 }
+fn tm_i_pcount() -> Int { return 23 }
+fn tm_i_shead() -> Int { return 24 }
+fn tm_i_scount() -> Int { return 25 }
+fn tm_i_mbase() -> Int { return 26 }
+
+fn tm_register_count() -> Int { return 27 }
+fn tm_param_slots() -> Int { return 16 }
+
+// String registers: title, OSC payload, private marker, final byte.
+fn tm_s_title() -> Int { return 0 }
+fn tm_s_osc() -> Int { return 1 }
+fn tm_s_private() -> Int { return 2 }
+fn tm_s_fin() -> Int { return 3 }
+
+fn tm_reg(t: Term, index: Int) -> Int {
+    if index < 0 || index >= t.regs.len() {
+        return 0
+    }
+    return t.regs[index]
+}
+
+fn tm_set_reg(t: Term, index: Int, value: Int) {
+    var regs = t.regs
+    if index >= 0 && index < regs.len() {
+        regs[index] = value
+    }
+}
+
+fn tm_str_reg(t: Term, index: Int) -> String {
+    if index < 0 || index >= t.strs.len() {
+        return ""
+    }
+    return t.strs[index]
+}
+
+fn tm_set_str(t: Term, index: Int, value: String) {
+    var strs = t.strs
+    if index >= 0 && index < strs.len() {
+        strs[index] = value
+    }
+}
+
+fn tm_cols(t: Term) -> Int {
+    return tm_reg(t, tm_i_cols())
+}
+
+fn tm_rows(t: Term) -> Int {
+    return tm_reg(t, tm_i_rows())
+}
+
+// ---------- cells ----------
+
+fn tm_has_flag(flags: Int, bit: Int) -> Bool {
+    return flags / bit % 2 == 1
+}
+
+fn tm_add_flag(flags: Int, bit: Int) -> Int {
+    if tm_has_flag(flags, bit) {
+        return flags
+    }
+    return flags + bit
+}
+
+fn tm_drop_flag(flags: Int, bit: Int) -> Int {
+    if tm_has_flag(flags, bit) {
+        return flags - bit
+    }
+    return flags
+}
+
+fn tm_bold_bit() -> Int { return 1 }
+fn tm_dim_bit() -> Int { return 2 }
+fn tm_italic_bit() -> Int { return 4 }
+fn tm_underline_bit() -> Int { return 8 }
+fn tm_inverse_bit() -> Int { return 16 }
+
+struct Cell {
+    ch: String,
+    fg: Int,
+    bg: Int,
+    flags: Int,
+}
+
+fn tm_blank_cell() -> Cell {
+    return Cell { ch: " ", fg: -1, bg: -1, flags: 0 }
+}
+
+fn tm_blank_grid(count: Int) -> List<Cell> {
+    var cells: List<Cell> = []
+    var i = 0
+    while i < count {
+        cells.push(tm_blank_cell())
+        i = i + 1
+    }
+    return cells
+}
+
+fn tm_blank_lines(count: Int) -> List<String> {
+    var lines: List<String> = []
+    var i = 0
+    while i < count {
+        lines.push("")
+        i = i + 1
+    }
+    return lines
+}
+
+fn tm_blank_ints(count: Int) -> List<Int> {
+    var values: List<Int> = []
+    var i = 0
+    while i < count {
+        values.push(0)
+        i = i + 1
+    }
+    return values
+}
+
+// ---------- palettes ----------
+
+struct Palette {
+    bg: Int,
+    fg: Int,
+    cursor: Int,
+    selection: Int,
+    rail: Int,
+    ansi: List<Int>,
+}
+
+fn tm_palette_dark() -> Palette {
+    return Palette {
+        bg: gui.rgb(24, 24, 26),
+        fg: gui.rgb(214, 214, 214),
+        cursor: gui.rgb(120, 200, 255),
+        selection: gui.rgb(4, 57, 94),
+        rail: gui.rgb(0, 120, 212),
+        ansi: [
+            gui.rgb(48, 48, 48),
+            gui.rgb(231, 76, 60),
+            gui.rgb(137, 209, 133),
+            gui.rgb(229, 192, 123),
+            gui.rgb(86, 156, 214),
+            gui.rgb(197, 134, 192),
+            gui.rgb(78, 201, 176),
+            gui.rgb(204, 204, 204),
+            gui.rgb(128, 128, 128),
+            gui.rgb(241, 76, 76),
+            gui.rgb(163, 190, 140),
+            gui.rgb(250, 214, 107),
+            gui.rgb(117, 190, 255),
+            gui.rgb(214, 157, 208),
+            gui.rgb(108, 226, 198),
+            gui.rgb(255, 255, 255),
+        ],
+    }
+}
+
+fn tm_palette_gruvbox() -> Palette {
+    return Palette {
+        bg: gui.rgb(29, 32, 33),
+        fg: gui.rgb(235, 219, 178),
+        cursor: gui.rgb(254, 128, 25),
+        selection: gui.rgb(80, 73, 69),
+        rail: gui.rgb(254, 128, 25),
+        ansi: [
+            gui.rgb(40, 40, 40),
+            gui.rgb(204, 36, 29),
+            gui.rgb(152, 151, 26),
+            gui.rgb(215, 153, 33),
+            gui.rgb(69, 133, 136),
+            gui.rgb(177, 98, 134),
+            gui.rgb(104, 157, 106),
+            gui.rgb(168, 153, 132),
+            gui.rgb(146, 131, 116),
+            gui.rgb(251, 73, 52),
+            gui.rgb(184, 187, 38),
+            gui.rgb(250, 189, 47),
+            gui.rgb(131, 165, 152),
+            gui.rgb(211, 134, 155),
+            gui.rgb(142, 192, 124),
+            gui.rgb(251, 241, 199),
+        ],
+    }
+}
+
+// ---------- lifecycle ----------
+
+fn tm_scrollback_capacity() -> Int {
+    return 2000
+}
+
+struct Term {
+    regs: List<Int>,
+    strs: List<String>,
+    cells: List<Cell>,
+    sb: List<String>,
+    marks: List<Int>,
+    params: List<Int>,
+    main_cells: List<Cell>,
+}
+
+fn tm_new(width: Int, height: Int) -> Term {
+    var c = width
+    var r = height
+    if c < 2 {
+        c = 2
+    }
+    if r < 2 {
+        r = 2
+    }
+    var regs = tm_blank_ints(tm_register_count())
+    regs[tm_i_cols()] = c
+    regs[tm_i_rows()] = r
+    regs[tm_i_bottom()] = r - 1
+    regs[tm_i_cursor()] = 1
+    var strs: List<String> = ["", "", "", ""]
+    var marks: List<Int> = []
+    return Term {
+        regs: regs,
+        strs: strs,
+        cells: tm_blank_grid(c * r),
+        sb: tm_blank_lines(tm_scrollback_capacity()),
+        marks: marks,
+        params: tm_blank_ints(tm_param_slots()),
+        main_cells: tm_blank_grid(c * r),
+    }
+}
+
+// Resizing keeps the bottom of the old screen, which is where the prompt is.
+fn tm_resize(t: Term, width: Int, height: Int) -> Term {
+    var c = width
+    var r = height
+    if c < 2 {
+        c = 2
+    }
+    if r < 2 {
+        r = 2
+    }
+    if c == tm_cols(t) && r == tm_rows(t) {
+        return t
+    }
+    var fresh = tm_new(c, r)
+    tm_set_reg(fresh, tm_i_fg(), tm_reg(t, tm_i_fg()))
+    tm_set_reg(fresh, tm_i_bg(), tm_reg(t, tm_i_bg()))
+    tm_set_reg(fresh, tm_i_flags(), tm_reg(t, tm_i_flags()))
+    tm_set_reg(fresh, tm_i_cursor(), tm_reg(t, tm_i_cursor()))
+    tm_set_str(fresh, tm_s_title(), tm_str_reg(t, tm_s_title()))
+    tm_set_reg(fresh, tm_i_scount(), tm_reg(t, tm_i_scount()))
+    tm_set_reg(fresh, tm_i_shead(), tm_reg(t, tm_i_shead()))
+    var i = 0
+    while i < tm_reg(t, tm_i_scount()) {
+        var sb = fresh.sb
+        sb[i] = tm_scroll_line(t, i)
+        i = i + 1
+    }
+    var marks = fresh.marks
+    var m = tm_reg(t, tm_i_mbase())
+    while m < t.marks.len() {
+        marks.push(t.marks[m])
+        m = m + 1
+    }
+    let keep = gui.min(r, tm_rows(t))
+    var row = 0
+    while row < keep {
+        let source = tm_rows(t) - keep + row
+        var col = 0
+        while col < c && col < tm_cols(t) {
+            tm_put_cell(fresh, r - keep + row, col, tm_cell_at(t, source, col))
+            col = col + 1
+        }
+        row = row + 1
+    }
+    tm_set_reg(fresh, tm_i_cx(), gui.min(tm_reg(t, tm_i_cx()), c - 1))
+    tm_set_reg(fresh, tm_i_cy(), r - keep + gui.min(tm_reg(t, tm_i_cy()), keep - 1))
+    return fresh
+}
+
+// ---------- cell access ----------
+
+fn tm_physical(t: Term, row: Int) -> Int {
+    var mapped = row % tm_rows(t)
+    if mapped < 0 {
+        mapped = mapped + tm_rows(t)
+    }
+    return (tm_reg(t, tm_i_head()) + mapped) % tm_rows(t)
+}
+
+fn tm_cell_at(t: Term, row: Int, col: Int) -> Cell {
+    if row < 0 || row >= tm_rows(t) || col < 0 || col >= tm_cols(t) {
+        return tm_blank_cell()
+    }
+    let index = tm_physical(t, row) * tm_cols(t) + col
+    if index < 0 || index >= t.cells.len() {
+        return tm_blank_cell()
+    }
+    return t.cells[index]
+}
+
+fn tm_put_cell(t: Term, row: Int, col: Int, value: Cell) {
+    if row < 0 || row >= tm_rows(t) || col < 0 || col >= tm_cols(t) {
+        return
+    }
+    var cells = t.cells
+    let index = tm_physical(t, row) * tm_cols(t) + col
+    if index >= 0 && index < cells.len() {
+        cells[index] = value
+    }
+}
+
+fn tm_clear_physical(t: Term, slot: Int) {
+    var cells = t.cells
+    let base = slot * tm_cols(t)
+    var col = 0
+    while col < tm_cols(t) && base + col < cells.len() {
+        cells[base + col] = tm_blank_cell()
+        col = col + 1
+    }
+}
+
+fn tm_row_text(t: Term, row: Int) -> String {
+    var out = ""
+    var col = 0
+    while col < tm_cols(t) {
+        out = out + tm_cell_at(t, row, col).ch
+        col = col + 1
+    }
+    return out.trim()
+}
+
+fn tm_screen_text(t: Term) -> String {
+    var out = ""
+    var row = 0
+    while row < tm_rows(t) {
+        out = out + tm_row_text(t, row) + "\n"
+        row = row + 1
+    }
+    return out
+}
+
+// ---------- scrollback ring ----------
+
+fn tm_scroll_line(t: Term, index: Int) -> String {
+    let count = tm_reg(t, tm_i_scount())
+    if index < 0 || index >= count {
+        return ""
+    }
+    let slot = (tm_reg(t, tm_i_shead()) + index) % tm_scrollback_capacity()
+    if slot < 0 || slot >= t.sb.len() {
+        return ""
+    }
+    return t.sb[slot]
+}
+
+fn tm_push_scrollback(t: Term, text: String) {
+    if tm_reg(t, tm_i_alt()) == 1 {
+        return
+    }
+    var sb = t.sb
+    var head = tm_reg(t, tm_i_shead())
+    var count = tm_reg(t, tm_i_scount())
+    if count >= tm_scrollback_capacity() {
+        head = (head + 1) % tm_scrollback_capacity()
+        count = tm_scrollback_capacity() - 1
+        var marks = t.marks
+        var i = 0
+        while i < marks.len() {
+            if marks[i] > 0 {
+                marks[i] = marks[i] - 1
+            }
+            i = i + 1
+        }
+    }
+    sb[(head + count) % tm_scrollback_capacity()] = text
+    tm_set_reg(t, tm_i_shead(), head)
+    tm_set_reg(t, tm_i_scount(), count + 1)
+    let trimmed = text.trim()
+    if trimmed.starts_with("$ ") || trimmed.starts_with("❯ ") || trimmed.starts_with("% ") {
+        var marks = t.marks
+        marks.push(count)
+    }
+}
+
+fn tm_scroll(term: Term, delta: Int) -> Term {
+    var view = tm_reg(term, tm_i_view()) + delta
+    if view < 0 {
+        view = 0
+    }
+    if view > tm_reg(term, tm_i_scount()) {
+        view = tm_reg(term, tm_i_scount())
+    }
+    tm_set_reg(term, tm_i_view(), view)
+    return term
+}
+
+fn tm_scroll_bottom(term: Term) -> Term {
+    tm_set_reg(term, tm_i_view(), 0)
+    return term
+}
+
+fn tm_total_lines(t: Term) -> Int {
+    return tm_reg(t, tm_i_scount()) + tm_rows(t)
+}
+
+fn tm_line_at(t: Term, absolute: Int) -> String {
+    let count = tm_reg(t, tm_i_scount())
+    if absolute < count {
+        return tm_scroll_line(t, absolute)
+    }
+    return tm_row_text(t, absolute - count)
+}
+
+fn tm_all_text(t: Term) -> String {
+    var out = ""
+    var i = 0
+    while i < tm_total_lines(t) {
+        out = out + tm_line_at(t, i) + "\n"
+        i = i + 1
+    }
+    return out
+}
+
+fn tm_cursor_absolute(t: Term) -> Int {
+    return tm_reg(t, tm_i_scount()) + tm_reg(t, tm_i_cy())
+}
+
+fn tm_find(t: Term, needle: String) -> List<Int> {
+    var hits: List<Int> = []
+    var i = 0
+    while i < tm_total_lines(t) {
+        if tm_line_at(t, i).contains(needle) {
+            hits.push(i)
+        }
+        i = i + 1
+    }
+    return hits
+}
+
+// ---------- scrolling the screen ----------
+
+fn tm_scroll_up(t: Term, count: Int) {
+    var n = count
+    while n > 0 {
+        tm_push_scrollback(t, tm_row_text(t, 0))
+        tm_set_reg(t, tm_i_head(), (tm_reg(t, tm_i_head()) + 1) % tm_rows(t))
+        tm_clear_physical(t, (tm_reg(t, tm_i_head()) + tm_rows(t) - 1) % tm_rows(t))
+        n = n - 1
+    }
+}
+
+fn tm_scroll_down(t: Term, count: Int) {
+    var n = count
+    while n > 0 {
+        tm_set_reg(t, tm_i_head(), (tm_reg(t, tm_i_head()) + tm_rows(t) - 1) % tm_rows(t))
+        tm_clear_physical(t, tm_reg(t, tm_i_head()))
+        n = n - 1
+    }
+}
+
+fn tm_region_scroll_up(t: Term, count: Int) {
+    var n = count
+    while n > 0 {
+        var row = tm_reg(t, tm_i_top())
+        while row < tm_reg(t, tm_i_bottom()) {
+            var col = 0
+            while col < tm_cols(t) {
+                tm_put_cell(t, row, col, tm_cell_at(t, row + 1, col))
+                col = col + 1
+            }
+            row = row + 1
+        }
+        var col = 0
+        while col < tm_cols(t) {
+            tm_put_cell(t, tm_reg(t, tm_i_bottom()), col, tm_blank_cell())
+            col = col + 1
+        }
+        n = n - 1
+    }
+}
+
+fn tm_region_scroll_down(t: Term, count: Int) {
+    var n = count
+    while n > 0 {
+        var row = tm_reg(t, tm_i_bottom())
+        while row > tm_reg(t, tm_i_top()) {
+            var col = 0
+            while col < tm_cols(t) {
+                tm_put_cell(t, row, col, tm_cell_at(t, row - 1, col))
+                col = col + 1
+            }
+            row = row - 1
+        }
+        var col = 0
+        while col < tm_cols(t) {
+            tm_put_cell(t, tm_reg(t, tm_i_top()), col, tm_blank_cell())
+            col = col + 1
+        }
+        n = n - 1
+    }
+}
+
+// ---------- cursor ----------
+
+fn tm_linefeed(t: Term) {
+    tm_set_reg(t, tm_i_wrap(), 0)
+    let cy = tm_reg(t, tm_i_cy())
+    if cy == tm_reg(t, tm_i_bottom()) {
+        if tm_reg(t, tm_i_top()) == 0 && tm_reg(t, tm_i_bottom()) == tm_rows(t) - 1 {
+            tm_scroll_up(t, 1)
+        } else {
+            tm_region_scroll_up(t, 1)
+        }
+    } else if cy < tm_rows(t) - 1 {
+        tm_set_reg(t, tm_i_cy(), cy + 1)
+    }
+}
+
+fn tm_carriage(t: Term) {
+    tm_set_reg(t, tm_i_cx(), 0)
+    tm_set_reg(t, tm_i_wrap(), 0)
+}
+
+fn tm_put_char(t: Term, ch: String) {
+    if tm_reg(t, tm_i_wrap()) == 1 {
+        tm_set_reg(t, tm_i_cx(), 0)
+        tm_linefeed(t)
+    }
+    tm_set_reg(t, tm_i_wrap(), 0)
+    tm_set_reg(t, tm_i_view(), 0)
+    let cell = Cell { ch: ch, fg: tm_reg(t, tm_i_fg()), bg: tm_reg(t, tm_i_bg()), flags: tm_reg(t, tm_i_flags()) }
+    tm_put_cell(t, tm_reg(t, tm_i_cy()), tm_reg(t, tm_i_cx()), cell)
+    if tm_reg(t, tm_i_cx()) >= tm_cols(t) - 1 {
+        tm_set_reg(t, tm_i_wrap(), 1)
+    } else {
+        tm_set_reg(t, tm_i_cx(), tm_reg(t, tm_i_cx()) + 1)
+    }
+}
+
+fn tm_erase_cells(t: Term, row: Int, from: Int, to: Int) {
+    var col = from
+    while col < to && col < tm_cols(t) {
+        tm_put_cell(t, row, col, tm_blank_cell())
+        col = col + 1
+    }
+}
+
+fn tm_erase_display(t: Term, mode: Int) {
+    if mode == 2 || mode == 3 {
+        var row = 0
+        while row < tm_rows(t) {
+            tm_erase_cells(t, row, 0, tm_cols(t))
+            row = row + 1
+        }
+        if mode == 3 {
+            tm_set_reg(t, tm_i_scount(), 0)
+            tm_set_reg(t, tm_i_shead(), 0)
+            tm_set_reg(t, tm_i_mbase(), t.marks.len())
+        }
+        tm_set_reg(t, tm_i_cx(), 0)
+        tm_set_reg(t, tm_i_cy(), 0)
+        tm_set_reg(t, tm_i_top(), 0)
+        tm_set_reg(t, tm_i_bottom(), tm_rows(t) - 1)
+        tm_set_reg(t, tm_i_wrap(), 0)
+        return
+    }
+    if mode == 0 {
+        tm_erase_cells(t, tm_reg(t, tm_i_cy()), tm_reg(t, tm_i_cx()), tm_cols(t))
+        var row = tm_reg(t, tm_i_cy()) + 1
+        while row < tm_rows(t) {
+            tm_erase_cells(t, row, 0, tm_cols(t))
+            row = row + 1
+        }
+    }
+    if mode == 1 {
+        var row = 0
+        while row < tm_reg(t, tm_i_cy()) {
+            tm_erase_cells(t, row, 0, tm_cols(t))
+            row = row + 1
+        }
+        tm_erase_cells(t, tm_reg(t, tm_i_cy()), 0, tm_reg(t, tm_i_cx()) + 1)
+    }
+}
+
+fn tm_erase_line(t: Term, mode: Int) {
+    if mode == 0 {
+        tm_erase_cells(t, tm_reg(t, tm_i_cy()), tm_reg(t, tm_i_cx()), tm_cols(t))
+    }
+    if mode == 1 {
+        tm_erase_cells(t, tm_reg(t, tm_i_cy()), 0, tm_reg(t, tm_i_cx()) + 1)
+    }
+    if mode == 2 {
+        tm_erase_cells(t, tm_reg(t, tm_i_cy()), 0, tm_cols(t))
+    }
+}
+
+fn tm_insert_chars(t: Term, count: Int) {
+    var col = tm_cols(t) - 1
+    while col >= tm_reg(t, tm_i_cx()) + count {
+        tm_put_cell(t, tm_reg(t, tm_i_cy()), col, tm_cell_at(t, tm_reg(t, tm_i_cy()), col - count))
+        col = col - 1
+    }
+    tm_erase_cells(t, tm_reg(t, tm_i_cy()), tm_reg(t, tm_i_cx()), tm_reg(t, tm_i_cx()) + count)
+}
+
+fn tm_delete_chars(t: Term, count: Int) {
+    var col = tm_reg(t, tm_i_cx())
+    while col + count < tm_cols(t) {
+        tm_put_cell(t, tm_reg(t, tm_i_cy()), col, tm_cell_at(t, tm_reg(t, tm_i_cy()), col + count))
+        col = col + 1
+    }
+    tm_erase_cells(t, tm_reg(t, tm_i_cy()), tm_cols(t) - count, tm_cols(t))
+}
+
+fn tm_insert_lines(t: Term, count: Int) {
+    let cy = tm_reg(t, tm_i_cy())
+    if cy < tm_reg(t, tm_i_top()) || cy > tm_reg(t, tm_i_bottom()) {
+        return
+    }
+    var n = count
+    while n > 0 {
+        var row = tm_reg(t, tm_i_bottom())
+        while row > cy {
+            var col = 0
+            while col < tm_cols(t) {
+                tm_put_cell(t, row, col, tm_cell_at(t, row - 1, col))
+                col = col + 1
+            }
+            row = row - 1
+        }
+        tm_erase_cells(t, cy, 0, tm_cols(t))
+        n = n - 1
+    }
+    tm_set_reg(t, tm_i_cx(), 0)
+}
+
+fn tm_delete_lines(t: Term, count: Int) {
+    let cy = tm_reg(t, tm_i_cy())
+    if cy < tm_reg(t, tm_i_top()) || cy > tm_reg(t, tm_i_bottom()) {
+        return
+    }
+    var n = count
+    while n > 0 {
+        var row = cy
+        while row < tm_reg(t, tm_i_bottom()) {
+            var col = 0
+            while col < tm_cols(t) {
+                tm_put_cell(t, row, col, tm_cell_at(t, row + 1, col))
+                col = col + 1
+            }
+            row = row + 1
+        }
+        tm_erase_cells(t, tm_reg(t, tm_i_bottom()), 0, tm_cols(t))
+        n = n - 1
+    }
+    tm_set_reg(t, tm_i_cx(), 0)
+}
+
+// ---------- parameters ----------
+
+fn tm_clear_params(t: Term) {
+    tm_set_reg(t, tm_i_pcount(), 0)
+    tm_set_reg(t, tm_i_param(), 0)
+    tm_set_reg(t, tm_i_hasp(), 0)
+}
+
+fn tm_push_param(t: Term, value: Int) {
+    let count = tm_reg(t, tm_i_pcount())
+    var params = t.params
+    if count >= 0 && count < params.len() {
+        params[count] = value
+    }
+    tm_set_reg(t, tm_i_pcount(), count + 1)
+}
+
+fn tm_param(t: Term, index: Int, fallback: Int) -> Int {
+    let count = tm_reg(t, tm_i_pcount())
+    if index < 0 || index >= count || index >= t.params.len() {
+        return fallback
+    }
+    let value = t.params[index]
+    if value == 0 {
+        return fallback
+    }
+    return value
+}
+
+fn tm_param_raw(t: Term, index: Int) -> Int {
+    if index < 0 || index >= t.params.len() {
+        return 0
+    }
+    return t.params[index]
+}
+
+// ---------- SGR ----------
+
+fn tm_apply_sgr(t: Term) {
+    var count = tm_reg(t, tm_i_pcount())
+    if count == 0 {
+        tm_push_param(t, 0)
+        count = 1
+    }
+    var i = 0
+    while i < count {
+        let value = tm_param_raw(t, i)
+        if value == 0 {
+            tm_set_reg(t, tm_i_fg(), -1)
+            tm_set_reg(t, tm_i_bg(), -1)
+            tm_set_reg(t, tm_i_flags(), 0)
+        }
+        if value == 1 {
+            tm_set_reg(t, tm_i_flags(), tm_add_flag(tm_reg(t, tm_i_flags()), tm_bold_bit()))
+        }
+        if value == 2 {
+            tm_set_reg(t, tm_i_flags(), tm_add_flag(tm_reg(t, tm_i_flags()), tm_dim_bit()))
+        }
+        if value == 3 {
+            tm_set_reg(t, tm_i_flags(), tm_add_flag(tm_reg(t, tm_i_flags()), tm_italic_bit()))
+        }
+        if value == 4 {
+            tm_set_reg(t, tm_i_flags(), tm_add_flag(tm_reg(t, tm_i_flags()), tm_underline_bit()))
+        }
+        if value == 7 {
+            tm_set_reg(t, tm_i_flags(), tm_add_flag(tm_reg(t, tm_i_flags()), tm_inverse_bit()))
+        }
+        if value == 22 {
+            tm_set_reg(t, tm_i_flags(), tm_drop_flag(tm_drop_flag(tm_reg(t, tm_i_flags()), tm_bold_bit()), tm_dim_bit()))
+        }
+        if value == 23 {
+            tm_set_reg(t, tm_i_flags(), tm_drop_flag(tm_reg(t, tm_i_flags()), tm_italic_bit()))
+        }
+        if value == 24 {
+            tm_set_reg(t, tm_i_flags(), tm_drop_flag(tm_reg(t, tm_i_flags()), tm_underline_bit()))
+        }
+        if value == 27 {
+            tm_set_reg(t, tm_i_flags(), tm_drop_flag(tm_reg(t, tm_i_flags()), tm_inverse_bit()))
+        }
+        if value >= 30 && value <= 37 {
+            tm_set_reg(t, tm_i_fg(), value - 30)
+        }
+        if value == 39 {
+            tm_set_reg(t, tm_i_fg(), -1)
+        }
+        if value >= 40 && value <= 47 {
+            tm_set_reg(t, tm_i_bg(), value - 40)
+        }
+        if value == 49 {
+            tm_set_reg(t, tm_i_bg(), -1)
+        }
+        if value >= 90 && value <= 97 {
+            tm_set_reg(t, tm_i_fg(), value - 90 + 8)
+        }
+        if value >= 100 && value <= 107 {
+            tm_set_reg(t, tm_i_bg(), value - 100 + 8)
+        }
+        if value == 38 || value == 48 {
+            var colour = -1
+            if i + 1 < count && tm_param_raw(t, i + 1) == 5 {
+                if i + 2 < count {
+                    colour = tm_param_raw(t, i + 2)
+                }
+                i = i + 2
+            } else if i + 1 < count && tm_param_raw(t, i + 1) == 2 {
+                if i + 4 < count {
+                    colour = 16777216 + tm_param_raw(t, i + 2) * 65536 + tm_param_raw(t, i + 3) * 256 + tm_param_raw(t, i + 4)
+                }
+                i = i + 4
+            }
+            if colour >= 0 {
+                if value == 38 {
+                    tm_set_reg(t, tm_i_fg(), colour)
+                } else {
+                    tm_set_reg(t, tm_i_bg(), colour)
+                }
+            }
+        }
+        i = i + 1
+    }
+}
+
+// ---------- modes ----------
+
+fn tm_set_scroll_region(t: Term) {
+    var top = tm_param(t, 0, 1) - 1
+    var bottom = tm_param(t, 1, tm_rows(t))
+    if top < 0 {
+        top = 0
+    }
+    if bottom > tm_rows(t) - 1 {
+        bottom = tm_rows(t) - 1
+    }
+    if bottom - top < 1 {
+        top = 0
+        bottom = tm_rows(t) - 1
+    }
+    tm_set_reg(t, tm_i_top(), top)
+    tm_set_reg(t, tm_i_bottom(), bottom)
+    tm_set_reg(t, tm_i_cx(), 0)
+    tm_set_reg(t, tm_i_cy(), top)
+}
+
+fn tm_alt_enter(t: Term) {
+    if tm_reg(t, tm_i_alt()) == 1 {
+        return
+    }
+    var saved = t.main_cells
+    var i = 0
+    while i < t.cells.len() && i < saved.len() {
+        saved[i] = t.cells[i]
+        i = i + 1
+    }
+    var cells = t.cells
+    i = 0
+    while i < cells.len() {
+        cells[i] = tm_blank_cell()
+        i = i + 1
+    }
+    tm_set_reg(t, tm_i_mhead(), tm_reg(t, tm_i_head()))
+    tm_set_reg(t, tm_i_mx(), tm_reg(t, tm_i_cx()))
+    tm_set_reg(t, tm_i_my(), tm_reg(t, tm_i_cy()))
+    tm_set_reg(t, tm_i_head(), 0)
+    tm_set_reg(t, tm_i_cx(), 0)
+    tm_set_reg(t, tm_i_cy(), 0)
+    tm_set_reg(t, tm_i_alt(), 1)
+    tm_set_reg(t, tm_i_top(), 0)
+    tm_set_reg(t, tm_i_bottom(), tm_rows(t) - 1)
+    tm_set_reg(t, tm_i_wrap(), 0)
+}
+
+fn tm_alt_leave(t: Term) {
+    if tm_reg(t, tm_i_alt()) == 0 {
+        return
+    }
+    var cells = t.cells
+    var saved = t.main_cells
+    var i = 0
+    while i < cells.len() && i < saved.len() {
+        cells[i] = saved[i]
+        i = i + 1
+    }
+    tm_set_reg(t, tm_i_head(), tm_reg(t, tm_i_mhead()))
+    tm_set_reg(t, tm_i_cx(), tm_reg(t, tm_i_mx()))
+    tm_set_reg(t, tm_i_cy(), tm_reg(t, tm_i_my()))
+    tm_set_reg(t, tm_i_alt(), 0)
+    tm_set_reg(t, tm_i_top(), 0)
+    tm_set_reg(t, tm_i_bottom(), tm_rows(t) - 1)
+    tm_set_reg(t, tm_i_wrap(), 0)
+}
+
+fn tm_dispatch_csi(t: Term) {
+    let fin = tm_str_reg(t, tm_s_fin())
+    tm_set_reg(t, tm_i_wrap(), 0)
+    if fin == "A" {
+        tm_set_reg(t, tm_i_cy(), gui.max(tm_reg(t, tm_i_top()), tm_reg(t, tm_i_cy()) - tm_param(t, 0, 1)))
+    }
+    if fin == "B" {
+        tm_set_reg(t, tm_i_cy(), gui.min(tm_reg(t, tm_i_bottom()), tm_reg(t, tm_i_cy()) + tm_param(t, 0, 1)))
+    }
+    if fin == "C" {
+        tm_set_reg(t, tm_i_cx(), gui.min(tm_cols(t) - 1, tm_reg(t, tm_i_cx()) + tm_param(t, 0, 1)))
+    }
+    if fin == "D" {
+        tm_set_reg(t, tm_i_cx(), gui.max(0, tm_reg(t, tm_i_cx()) - tm_param(t, 0, 1)))
+    }
+    if fin == "E" {
+        tm_set_reg(t, tm_i_cy(), gui.min(tm_reg(t, tm_i_bottom()), tm_reg(t, tm_i_cy()) + tm_param(t, 0, 1)))
+        tm_set_reg(t, tm_i_cx(), 0)
+    }
+    if fin == "F" {
+        tm_set_reg(t, tm_i_cy(), gui.max(tm_reg(t, tm_i_top()), tm_reg(t, tm_i_cy()) - tm_param(t, 0, 1)))
+        tm_set_reg(t, tm_i_cx(), 0)
+    }
+    if fin == "G" {
+        tm_set_reg(t, tm_i_cx(), gui.min(tm_cols(t) - 1, gui.max(0, tm_param(t, 0, 1) - 1)))
+    }
+    if fin == "d" {
+        tm_set_reg(t, tm_i_cy(), gui.min(tm_rows(t) - 1, gui.max(0, tm_param(t, 0, 1) - 1)))
+    }
+    if fin == "H" || fin == "f" {
+        tm_set_reg(t, tm_i_cy(), gui.min(tm_rows(t) - 1, gui.max(0, tm_param(t, 0, 1) - 1)))
+        tm_set_reg(t, tm_i_cx(), gui.min(tm_cols(t) - 1, gui.max(0, tm_param(t, 1, 1) - 1)))
+    }
+    if fin == "J" {
+        tm_erase_display(t, tm_param(t, 0, 0))
+    }
+    if fin == "K" {
+        tm_erase_line(t, tm_param(t, 0, 0))
+    }
+    if fin == "L" {
+        tm_insert_lines(t, tm_param(t, 0, 1))
+    }
+    if fin == "M" {
+        tm_delete_lines(t, tm_param(t, 0, 1))
+    }
+    if fin == "P" {
+        tm_delete_chars(t, tm_param(t, 0, 1))
+    }
+    if fin == "@" {
+        tm_insert_chars(t, tm_param(t, 0, 1))
+    }
+    if fin == "X" {
+        tm_erase_cells(t, tm_reg(t, tm_i_cy()), tm_reg(t, tm_i_cx()), tm_reg(t, tm_i_cx()) + tm_param(t, 0, 1))
+    }
+    if fin == "S" {
+        tm_region_scroll_up(t, tm_param(t, 0, 1))
+    }
+    if fin == "T" {
+        tm_region_scroll_down(t, tm_param(t, 0, 1))
+    }
+    if fin == "m" {
+        tm_apply_sgr(t)
+    }
+    if fin == "r" {
+        tm_set_scroll_region(t)
+    }
+    if fin == "s" {
+        tm_set_reg(t, tm_i_sx(), tm_reg(t, tm_i_cx()))
+        tm_set_reg(t, tm_i_sy(), tm_reg(t, tm_i_cy()))
+    }
+    if fin == "u" {
+        tm_set_reg(t, tm_i_cx(), tm_reg(t, tm_i_sx()))
+        tm_set_reg(t, tm_i_cy(), tm_reg(t, tm_i_sy()))
+    }
+    if fin == "h" || fin == "l" {
+        let on = fin == "h"
+        var i = 0
+        while i < tm_reg(t, tm_i_pcount()) {
+            let mode = tm_param_raw(t, i)
+            if mode == 25 {
+                tm_set_reg(t, tm_i_cursor(), 1)
+                if !on {
+                    tm_set_reg(t, tm_i_cursor(), 0)
+                }
+            }
+            if mode == 47 || mode == 1047 || mode == 1049 {
+                if on {
+                    tm_alt_enter(t)
+                } else {
+                    tm_alt_leave(t)
+                }
+            }
+            i = i + 1
+        }
+    }
+}
+
+// ---------- OSC ----------
+
+fn tm_slice_join(chars: List<String>, start: Int, stop: Int) -> String {
+    var out = ""
+    var i = start
+    while i < stop && i < chars.len() {
+        out = out + chars[i]
+        i = i + 1
+    }
+    return out
+}
+
+fn tm_finish_osc(t: Term) {
+    let value = tm_str_reg(t, tm_s_osc())
+    if value.starts_with("0;") || value.starts_with("2;") {
+        let chars = value.graphemes()
+        tm_set_str(t, tm_s_title(), tm_slice_join(chars, 2, chars.len()))
+    }
+    if value.starts_with("133;A") {
+        var marks = t.marks
+        marks.push(tm_reg(t, tm_i_scount()) + tm_reg(t, tm_i_cy()))
+    }
+    tm_set_str(t, tm_s_osc(), "")
+}
+
+// ---------- parser ----------
+
+fn tm_digit_of(ch: String) -> Int {
+    if ch == "0" {
+        return 0
+    }
+    if ch == "1" {
+        return 1
+    }
+    if ch == "2" {
+        return 2
+    }
+    if ch == "3" {
+        return 3
+    }
+    if ch == "4" {
+        return 4
+    }
+    if ch == "5" {
+        return 5
+    }
+    if ch == "6" {
+        return 6
+    }
+    if ch == "7" {
+        return 7
+    }
+    if ch == "8" {
+        return 8
+    }
+    if ch == "9" {
+        return 9
+    }
+    return -1
+}
+
+// Feeds raw pty bytes into the screen. The Term is mutated in place; the return
+// value is the same Term so callers can chain.
+fn tm_feed(term: Term, chunk: String) -> Term {
+    let chars = chunk.chars()
+    var i = 0
+    while i < chars.len() {
+        let ch = chars[i]
+        let code = tm_code_of(ch)
+        let state = tm_reg(term, tm_i_state())
+        if state == 0 {
+            if code == 27 {
+                tm_set_reg(term, tm_i_state(), 1)
+            } else if code == 13 {
+                tm_carriage(term)
+            } else if code == 10 {
+                tm_linefeed(term)
+            } else if code == 8 {
+                if tm_reg(term, tm_i_cx()) > 0 {
+                    tm_set_reg(term, tm_i_cx(), tm_reg(term, tm_i_cx()) - 1)
+                }
+                tm_set_reg(term, tm_i_wrap(), 0)
+            } else if code == 9 {
+                var next = (tm_reg(term, tm_i_cx()) / 8 + 1) * 8
+                if next > tm_cols(term) - 1 {
+                    next = tm_cols(term) - 1
+                }
+                tm_set_reg(term, tm_i_cx(), next)
+                tm_set_reg(term, tm_i_wrap(), 0)
+            } else if code == 7 {
+                tm_set_reg(term, tm_i_bell(), tm_reg(term, tm_i_bell()) + 1)
+            } else if code < 32 || code == 127 {
+                // The rest of C0 carries no glyph.
+            } else {
+                tm_put_char(term, ch)
+            }
+        } else if state == 2 {
+            let digit = tm_digit_of(ch)
+            if digit >= 0 {
+                tm_set_reg(term, tm_i_param(), tm_reg(term, tm_i_param()) * 10 + digit)
+                tm_set_reg(term, tm_i_hasp(), 1)
+            } else if ch == ";" || ch == ":" {
+                tm_push_param(term, tm_reg(term, tm_i_param()))
+                tm_set_reg(term, tm_i_param(), 0)
+                tm_set_reg(term, tm_i_hasp(), 0)
+            } else if ch == "?" && tm_reg(term, tm_i_hasp()) == 0 {
+                tm_set_str(term, tm_s_private(), "?")
+            } else if code >= 64 && code <= 126 {
+                if tm_reg(term, tm_i_hasp()) == 1 || tm_reg(term, tm_i_pcount()) > 0 {
+                    tm_push_param(term, tm_reg(term, tm_i_param()))
+                }
+                tm_set_str(term, tm_s_fin(), ch)
+                tm_dispatch_csi(term)
+                tm_set_reg(term, tm_i_state(), 0)
+                tm_clear_params(term)
+                tm_set_str(term, tm_s_private(), "")
+            } else if ch == "!" || ch == ">" || ch == " " {
+                tm_set_str(term, tm_s_private(), tm_str_reg(term, tm_s_private()) + ch)
+            }
+        } else if state == 1 {
+            if ch == "[" {
+                tm_set_reg(term, tm_i_state(), 2)
+                tm_clear_params(term)
+                tm_set_str(term, tm_s_private(), "")
+            } else if ch == "]" {
+                tm_set_reg(term, tm_i_state(), 3)
+                tm_set_str(term, tm_s_osc(), "")
+            } else if ch == "7" {
+                tm_set_reg(term, tm_i_sx(), tm_reg(term, tm_i_cx()))
+                tm_set_reg(term, tm_i_sy(), tm_reg(term, tm_i_cy()))
+                tm_set_reg(term, tm_i_state(), 0)
+            } else if ch == "8" {
+                tm_set_reg(term, tm_i_cx(), tm_reg(term, tm_i_sx()))
+                tm_set_reg(term, tm_i_cy(), tm_reg(term, tm_i_sy()))
+                tm_set_reg(term, tm_i_state(), 0)
+            } else if ch == "D" {
+                tm_linefeed(term)
+                tm_set_reg(term, tm_i_state(), 0)
+            } else if ch == "M" {
+                if tm_reg(term, tm_i_cy()) > 0 {
+                    tm_set_reg(term, tm_i_cy(), tm_reg(term, tm_i_cy()) - 1)
+                }
+                tm_set_reg(term, tm_i_state(), 0)
+            } else if ch == "(" || ch == ")" || ch == "#" {
+                tm_set_reg(term, tm_i_state(), 5)
+            } else {
+                tm_set_reg(term, tm_i_state(), 0)
+            }
+        } else if state == 3 {
+            if code == 7 {
+                tm_finish_osc(term)
+                tm_set_reg(term, tm_i_state(), 0)
+            } else if code == 27 {
+                tm_set_reg(term, tm_i_state(), 4)
+            } else {
+                tm_set_str(term, tm_s_osc(), tm_str_reg(term, tm_s_osc()) + ch)
+            }
+        } else if state == 4 {
+            if ch == "\\" {
+                tm_finish_osc(term)
+            }
+            tm_set_reg(term, tm_i_state(), 0)
+        } else if state == 5 {
+            tm_set_reg(term, tm_i_state(), 0)
+        }
+        i = i + 1
+    }
+    return term
+}
+
+// ---------- colours ----------
+
+fn tm_is_truecolour(value: Int) -> Bool {
+    return value >= 16777216
+}
+
+fn tm_colour(t: Term, value: Int, pal: Palette) -> Int {
+    if value < 0 {
+        return pal.fg
+    }
+    if tm_is_truecolour(value) {
+        return value - 16777216
+    }
+    if value < 16 {
+        if value < pal.ansi.len() {
+            return pal.ansi[value]
+        }
+        return pal.fg
+    }
+    if value < 232 {
+        let index = value - 16
+        let red = index / 36
+        let green = (index - red * 36) / 6
+        let blue = index - red * 36 - green * 6
+        return gui.rgb(red * 51, green * 51, blue * 51)
+    }
+    if value < 256 {
+        let level = (value - 232) * 10 + 8
+        return gui.rgb(level, level, level)
+    }
+    return pal.fg
+}
+
+// ---------- drawing ----------
+
+fn tm_cell_width(size: Int) -> Int {
+    return gui.advance(size)
+}
+
+fn tm_cell_height(size: Int) -> Int {
+    return size + 5
+}
+
+fn tm_draw(t: Term, x: Int, y: Int, w: Int, h: Int, size: Int, pal: Palette) {
+    let cw = tm_cell_width(size)
+    let ch = tm_cell_height(size)
+    if cw <= 0 || ch <= 0 {
+        return
+    }
+    gui.rect(x, y, w, h, pal.bg)
+    gui.clip(x, y, w, h)
+    let fit = h / ch
+    let cfit = w / cw
+    var row = 0
+    while row < fit && row < tm_rows(t) {
+        let absolute = tm_reg(t, tm_i_scount()) - tm_reg(t, tm_i_view()) + row
+        if absolute >= 0 {
+            tm_draw_row(t, absolute, x, y + row * ch, cfit, cw, size, pal)
+        }
+        row = row + 1
+    }
+    if tm_reg(t, tm_i_view()) == 0 && tm_reg(t, tm_i_cursor()) == 1 {
+        tm_draw_cursor(t, x, y, cw, ch, size, pal)
+    }
+    gui.clip_reset()
+}
+
+// One draw call per run of one colour keeps a 200-column build log cheap.
+fn tm_draw_row(t: Term, absolute: Int, x: Int, y: Int, cfit: Int, cw: Int, size: Int, pal: Palette) {
+    let count = tm_reg(t, tm_i_scount())
+    if absolute < count {
+        gui.mono(x, y + 2, tm_scroll_line(t, absolute), size, pal.fg)
+        return
+    }
+    let row = absolute - count
+    var col = 0
+    var run = ""
+    var run_fg = pal.fg
+    var run_bg = pal.bg
+    while col < tm_cols(t) && col < cfit {
+        let cell = tm_cell_at(t, row, col)
+        var fg = tm_colour(t, cell.fg, pal)
+        var bg = tm_colour(t, cell.bg, pal)
+        if tm_has_flag(cell.flags, tm_inverse_bit()) {
+            let swap = fg
+            fg = bg
+            bg = swap
+        }
+        if tm_has_flag(cell.flags, tm_bold_bit()) && cell.fg >= 0 && cell.fg < 8 {
+            fg = tm_colour(t, cell.fg + 8, pal)
+        }
+        if bg != pal.bg || fg != run_fg || run.graphemes().len() > 96 {
+            tm_flush_run(t, run, x + (col - run.graphemes().len()) * cw, y, size, run_fg, run_bg, pal)
+            run = ""
+            run_fg = fg
+            run_bg = bg
+        }
+        run = run + cell.ch
+        col = col + 1
+    }
+    tm_flush_run(t, run, x + (col - run.graphemes().len()) * cw, y, size, run_fg, run_bg, pal)
+}
+
+fn tm_flush_run(t: Term, text: String, x: Int, y: Int, size: Int, fg: Int, bg: Int, pal: Palette) {
+    if text.len() == 0 {
+        return
+    }
+    if bg != pal.bg {
+        gui.rect(x, y + 1, gui.mono_width(text, size), tm_cell_height(size) - 2, bg)
+    }
+    gui.mono(x, y + 2, text, size, fg)
+}
+
+fn tm_draw_cursor(t: Term, x: Int, y: Int, cw: Int, ch: Int, size: Int, pal: Palette) {
+    let cy = tm_reg(t, tm_i_cy())
+    let cx = tm_reg(t, tm_i_cx())
+    if cy >= tm_rows(t) || cx >= tm_cols(t) {
+        return
+    }
+    let px = x + cx * cw
+    let py = y + cy * ch
+    gui.rect_alpha(px, py + 1, cw, ch - 3, pal.cursor, 90)
+    let cell = tm_cell_at(t, cy, cx)
+    if cell.ch != " " {
+        gui.mono(px, py + 2, cell.ch, size, pal.bg)
+    }
+}
+
+// A 2px accent rail beside every prompt line, Warp style.
+fn tm_draw_rail(t: Term, x: Int, y: Int, h: Int, size: Int, pal: Palette) {
+    let ch = tm_cell_height(size)
+    var i = tm_reg(t, tm_i_mbase())
+    while i < t.marks.len() {
+        let row = t.marks[i] - (tm_reg(t, tm_i_scount()) - tm_reg(t, tm_i_view()))
+        if row >= 0 && row * ch < h {
+            gui.rect(x, y + row * ch + 2, 2, ch - 4, pal.rail)
+        }
+        i = i + 1
+    }
+}
+
+// ---------- keys ----------
+
+fn tm_printable() -> String {
+    return " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+}
+
+fn tm_code_of(ch: String) -> Int {
+    if ch.len() == 0 {
+        return 0
+    }
+    let chars = tm_printable().graphemes()
+    var i = 0
+    while i < chars.len() {
+        if chars[i] == ch {
+            return 32 + i
+        }
+        i = i + 1
+    }
+    if ch == "\u{1b}" {
+        return 27
+    }
+    if ch == "\r" {
+        return 13
+    }
+    if ch == "\n" {
+        return 10
+    }
+    if ch == "\t" {
+        return 9
+    }
+    if ch == "\u{7f}" {
+        return 127
+    }
+    return 0
+}
+
+fn tm_escape() -> String {
+    return "\u{1b}"
+}
+
+fn tm_controls() -> String {
+    return "\u{1}\u{2}\u{3}\u{4}\u{5}\u{6}\u{7}\u{8}\t\n\u{b}\u{c}\r\u{e}\u{f}\u{10}\u{11}\u{12}\u{13}\u{14}\u{15}\u{16}\u{17}\u{18}\u{19}\u{1a}\u{1b}\u{1c}\u{1d}\u{1e}\u{1f}"
+}
+
+fn tm_control_text(code: Int) -> String {
+    if code < 1 || code > 31 {
+        return ""
+    }
+    let chars = tm_controls().chars()
+    if code - 1 < chars.len() {
+        return chars[code - 1]
+    }
+    return ""
+}
+
+fn tm_code_of_text(code: Int) -> String {
+    if code < 32 || code > 126 {
+        return ""
+    }
+    let chars = tm_printable().graphemes()
+    let index = code - 32
+    if index >= 0 && index < chars.len() {
+        return chars[index]
+    }
+    return ""
+}
+
+// The bytes one key press sends, packed the way the host reports modifiers:
+// 1 command, 2 shift, 4 option, 8 control.
+fn tm_key_text(code: Int, mods: Int) -> String {
+    let command = mods % 2 == 1
+    let control = mods / 8 % 2 == 1
+    let option = mods / 4 % 2 == 1
+    if code == 13 {
+        return "\r"
+    }
+    if code == 9 {
+        return "\t"
+    }
+    if code == 127 {
+        return "\u{7f}"
+    }
+    if code == 27 {
+        return tm_escape()
+    }
+    if code == 1001 {
+        return tm_escape() + "[A"
+    }
+    if code == 1002 {
+        return tm_escape() + "[B"
+    }
+    if code == 1003 {
+        return tm_escape() + "[C"
+    }
+    if code == 1004 {
+        return tm_escape() + "[D"
+    }
+    if code == 1005 {
+        return tm_escape() + "[H"
+    }
+    if code == 1006 {
+        return tm_escape() + "[F"
+    }
+    if code == 1007 {
+        return tm_escape() + "[5~"
+    }
+    if code == 1008 {
+        return tm_escape() + "[6~"
+    }
+    if code == 1010 {
+        return tm_escape() + "[3~"
+    }
+    if command {
+        return ""
+    }
+    if control {
+        if code >= 97 && code <= 122 {
+            return tm_control_text(code - 96)
+        }
+        if code == 32 {
+            return "\u{0}"
+        }
+    }
+    if option {
+        let text = tm_code_of_text(code)
+        if text.len() > 0 {
+            return tm_escape() + text
+        }
+    }
+    return tm_code_of_text(code)
+}
+
+fn tm_title(t: Term) -> String {
+    return tm_str_reg(t, tm_s_title())
+}
+
+fn tm_view(t: Term) -> Int {
+    let slot = 17
+    if slot < t.regs.len() {
+        return t.regs[slot]
+    }
+    return 0
+}
+
+fn tm_bell_count(t: Term) -> Int {
+    return tm_reg(t, tm_i_bell())
+}

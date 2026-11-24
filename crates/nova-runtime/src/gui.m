@@ -25,6 +25,7 @@
 #include <time.h>
 #include <sys/ioctl.h>
 #include <sys/wait.h>
+#include <signal.h>
 #import <QuartzCore/QuartzCore.h>
 
 #include <math.h>
@@ -1190,51 +1191,83 @@ nova_str nova_fs_cwd(void) {
  * runs its own modal loop, which is safe here because the app's loop is the
  * main thread and nothing holds state across the call. */
 /* ------------------------------------------------------------------ */
-/* Streaming terminal (pty)                                           */
+/* Terminal pool (pty)                                                */
 /* ------------------------------------------------------------------ */
 
-/* The command runs under a real pty, so it can prompt, colourise and read
- * keystrokes. One thread drains the master fd into a locked buffer and the Nova
- * side polls it; writes go back through nova_term_send. */
-static pthread_mutex_t nova_term_lock = PTHREAD_MUTEX_INITIALIZER;
-static char *nova_term_buffer = NULL;
-static size_t nova_term_length = 0;
-static size_t nova_term_capacity = 0;
-static size_t nova_term_seen = 0;
-static int nova_term_active = 0;
-static int nova_term_master = -1;
+/* A terminal is a child under a real pty: it can prompt, colourise, read keys
+ * and see a window size. Up to eight run at once, each with its own reader
+ * thread that appends to a locked buffer. Slot 0 keeps the older single
+ * terminal API working. */
 
-static void nova_term_append(const char *data, size_t len) {
-    pthread_mutex_lock(&nova_term_lock);
-    if (nova_term_length + len + 1 > nova_term_capacity) {
-        size_t cap = nova_term_capacity ? nova_term_capacity : 8192;
-        while (cap < nova_term_length + len + 1) cap *= 2;
-        char *grown = (char *)realloc(nova_term_buffer, cap);
-        if (grown) {
-            nova_term_buffer = grown;
-            nova_term_capacity = cap;
-        }
+#define NOVA_PTY_SLOTS 8
+
+typedef struct {
+    pthread_mutex_t lock;
+    char *buffer;
+    size_t length;
+    size_t capacity;
+    size_t seen;
+    int active;
+    int master;
+    int exit_code;
+    pid_t pid;
+} nova_pty_slot;
+
+static nova_pty_slot nova_pty_pool[NOVA_PTY_SLOTS];
+static pthread_once_t nova_pty_once = PTHREAD_ONCE_INIT;
+
+static void nova_pty_setup(void) {
+    for (int i = 0; i < NOVA_PTY_SLOTS; i++) {
+        pthread_mutex_init(&nova_pty_pool[i].lock, NULL);
+        nova_pty_pool[i].buffer = NULL;
+        nova_pty_pool[i].length = 0;
+        nova_pty_pool[i].capacity = 0;
+        nova_pty_pool[i].seen = 0;
+        nova_pty_pool[i].active = 0;
+        nova_pty_pool[i].master = -1;
+        nova_pty_pool[i].exit_code = -1;
+        nova_pty_pool[i].pid = 0;
     }
-    if (nova_term_buffer && nova_term_capacity >= nova_term_length + len + 1) {
-        memcpy(nova_term_buffer + nova_term_length, data, len);
-        nova_term_length += len;
-        nova_term_buffer[nova_term_length] = '\0';
-    }
-    pthread_mutex_unlock(&nova_term_lock);
 }
 
-struct nova_term_job {
+static nova_pty_slot *nova_pty_get(int64_t slot) {
+    pthread_once(&nova_pty_once, nova_pty_setup);
+    if (slot < 0 || slot >= NOVA_PTY_SLOTS) return NULL;
+    return &nova_pty_pool[slot];
+}
+
+static void nova_pty_append(nova_pty_slot *term, const char *data, size_t len) {
+    pthread_mutex_lock(&term->lock);
+    if (term->length + len + 1 > term->capacity) {
+        size_t cap = term->capacity ? term->capacity : 8192;
+        while (cap < term->length + len + 1) cap *= 2;
+        char *grown = (char *)realloc(term->buffer, cap);
+        if (grown) {
+            term->buffer = grown;
+            term->capacity = cap;
+        }
+    }
+    if (term->buffer && term->capacity >= term->length + len + 1) {
+        memcpy(term->buffer + term->length, data, len);
+        term->length += len;
+        term->buffer[term->length] = '\0';
+    }
+    pthread_mutex_unlock(&term->lock);
+}
+
+struct nova_pty_job {
+    nova_pty_slot *term;
     int master;
     pid_t pid;
 };
 
-static void *nova_term_worker(void *arg) {
-    struct nova_term_job *job = (struct nova_term_job *)arg;
-    char chunk[4096];
+static void *nova_pty_worker(void *arg) {
+    struct nova_pty_job *job = (struct nova_pty_job *)arg;
+    char chunk[8192];
     for (;;) {
         ssize_t got = read(job->master, chunk, sizeof(chunk));
         if (got > 0) {
-            nova_term_append(chunk, (size_t)got);
+            nova_pty_append(job->term, chunk, (size_t)got);
         } else if (got == 0) {
             break;
         } else if (errno == EINTR) {
@@ -1249,16 +1282,26 @@ static void *nova_term_worker(void *arg) {
     close(job->master);
     int status = 0;
     waitpid(job->pid, &status, 0);
-    nova_gui_exit_status = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    int code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    pthread_mutex_lock(&job->term->lock);
+    job->term->active = 0;
+    job->term->master = -1;
+    job->term->exit_code = code;
+    pthread_mutex_unlock(&job->term->lock);
+    nova_gui_exit_status = code;
     free(job);
-    pthread_mutex_lock(&nova_term_lock);
-    nova_term_active = 0;
-    pthread_mutex_unlock(&nova_term_lock);
     return NULL;
 }
 
-int64_t nova_term_start(nova_str command, nova_str cwd) {
-    if (nova_term_active) return 0;
+/* Opens `command` under a fresh pty in `cwd`, sized cols x rows. Returns 1 on
+ * success; a slot that is still running is not replaced. */
+int64_t nova_pty_open(int64_t slot, nova_str command, nova_str cwd, int64_t cols, int64_t rows) {
+    nova_pty_slot *term = nova_pty_get(slot);
+    if (!term) return 0;
+    pthread_mutex_lock(&term->lock);
+    int busy = term->active;
+    pthread_mutex_unlock(&term->lock);
+    if (busy) return 0;
     char *cmd = nova_gui_cstr(command);
     char *dir = nova_gui_cstr(cwd);
     if (!cmd || !dir) {
@@ -1286,8 +1329,8 @@ int64_t nova_term_start(nova_str command, nova_str cwd) {
         return 0;
     }
     struct winsize size;
-    size.ws_row = 30;
-    size.ws_col = 120;
+    size.ws_row = (unsigned short)(rows > 0 ? rows : 30);
+    size.ws_col = (unsigned short)(cols > 0 ? cols : 120);
     size.ws_xpixel = 0;
     size.ws_ypixel = 0;
     ioctl(master, TIOCSWINSZ, &size);
@@ -1315,26 +1358,31 @@ int64_t nova_term_start(nova_str command, nova_str cwd) {
     }
     free(cmd);
     free(dir);
-    pthread_mutex_lock(&nova_term_lock);
-    nova_term_length = 0;
-    nova_term_seen = 0;
-    if (nova_term_buffer) nova_term_buffer[0] = '\0';
-    nova_term_active = 1;
-    pthread_mutex_unlock(&nova_term_lock);
-    nova_term_master = master;
-    struct nova_term_job *job = (struct nova_term_job *)malloc(sizeof(struct nova_term_job));
+    pthread_mutex_lock(&term->lock);
+    term->length = 0;
+    term->seen = 0;
+    term->exit_code = -1;
+    if (term->buffer) term->buffer[0] = '\0';
+    term->active = 1;
+    term->master = master;
+    term->pid = pid;
+    pthread_mutex_unlock(&term->lock);
+    struct nova_pty_job *job = (struct nova_pty_job *)malloc(sizeof(struct nova_pty_job));
     if (!job) {
         close(master);
-        nova_term_active = 0;
+        term->active = 0;
         return 0;
     }
+    job->term = term;
     job->master = master;
     job->pid = pid;
     pthread_t thread;
-    if (pthread_create(&thread, NULL, nova_term_worker, job) != 0) {
+    if (pthread_create(&thread, NULL, nova_pty_worker, job) != 0) {
         close(master);
         free(job);
-        nova_term_active = 0;
+        pthread_mutex_lock(&term->lock);
+        term->active = 0;
+        pthread_mutex_unlock(&term->lock);
         return 0;
     }
     pthread_detach(thread);
@@ -1342,47 +1390,137 @@ int64_t nova_term_start(nova_str command, nova_str cwd) {
 }
 
 /* Returns only the bytes produced since the last poll. */
-nova_str nova_term_poll(void) {
-    pthread_mutex_lock(&nova_term_lock);
-    size_t from = nova_term_seen;
-    size_t to = nova_term_length;
+nova_str nova_pty_poll(int64_t slot) {
+    nova_pty_slot *term = nova_pty_get(slot);
+    if (!term) return nova_gui_empty();
+    pthread_mutex_lock(&term->lock);
+    size_t from = term->seen;
+    size_t to = term->length;
     char *copy = NULL;
     size_t len = 0;
-    if (to > from && nova_term_buffer) {
+    if (to > from && term->buffer) {
         len = to - from;
         copy = (char *)malloc(len + 1);
         if (copy) {
-            memcpy(copy, nova_term_buffer + from, len);
+            memcpy(copy, term->buffer + from, len);
             copy[len] = '\0';
-            nova_term_seen = to;
+            term->seen = to;
         } else {
             len = 0;
         }
     }
-    pthread_mutex_unlock(&nova_term_lock);
+    pthread_mutex_unlock(&term->lock);
     if (!copy) return nova_gui_empty();
     nova_str result = {copy, (int64_t)len};
     return result;
 }
 
-int64_t nova_term_running(void) {
-    return nova_term_active;
+int64_t nova_pty_running(int64_t slot) {
+    nova_pty_slot *term = nova_pty_get(slot);
+    if (!term) return 0;
+    pthread_mutex_lock(&term->lock);
+    int active = term->active;
+    pthread_mutex_unlock(&term->lock);
+    return active;
 }
 
-/* One keystroke to the pty: 13 for Enter, 127 for Backspace, ASCII otherwise. */
-int64_t nova_term_send(int64_t code) {
-    if (nova_term_master < 0) return 0;
+/* One byte: 13 Enter, 127 Backspace, ASCII, or a UTF-8 lead byte. */
+int64_t nova_pty_write(int64_t slot, int64_t code) {
+    nova_pty_slot *term = nova_pty_get(slot);
+    if (!term) return 0;
+    pthread_mutex_lock(&term->lock);
+    int master = term->master;
+    pthread_mutex_unlock(&term->lock);
+    if (master < 0) return 0;
     unsigned char byte = (unsigned char)(code & 0xFF);
-    ssize_t wrote = write(nova_term_master, &byte, 1);
+    ssize_t wrote = write(master, &byte, 1);
     return wrote == 1 ? 1 : 0;
 }
 
+/* Writes a whole UTF-8 string, e.g. an escape sequence, a paste or a tab. */
+int64_t nova_pty_write_text(int64_t slot, nova_str text) {
+    nova_pty_slot *term = nova_pty_get(slot);
+    if (!term || text.len <= 0) return 0;
+    pthread_mutex_lock(&term->lock);
+    int master = term->master;
+    pthread_mutex_unlock(&term->lock);
+    if (master < 0) return 0;
+    ssize_t wrote = write(master, text.ptr, (size_t)text.len);
+    return wrote == text.len ? 1 : 0;
+}
+
+void nova_pty_resize(int64_t slot, int64_t cols, int64_t rows) {
+    nova_pty_slot *term = nova_pty_get(slot);
+    if (!term) return;
+    pthread_mutex_lock(&term->lock);
+    int master = term->master;
+    pid_t pid = term->pid;
+    pthread_mutex_unlock(&term->lock);
+    if (master < 0) return;
+    struct winsize size;
+    size.ws_row = (unsigned short)(rows > 0 ? rows : 24);
+    size.ws_col = (unsigned short)(cols > 0 ? cols : 80);
+    size.ws_xpixel = 0;
+    size.ws_ypixel = 0;
+    ioctl(master, TIOCSWINSZ, &size);
+    if (pid > 0) kill(pid, SIGWINCH);
+}
+
+void nova_pty_clear(int64_t slot) {
+    nova_pty_slot *term = nova_pty_get(slot);
+    if (!term) return;
+    pthread_mutex_lock(&term->lock);
+    term->length = 0;
+    term->seen = 0;
+    if (term->buffer) term->buffer[0] = '\0';
+    pthread_mutex_unlock(&term->lock);
+}
+
+/* Exit code of the last process in the slot, or -1 while it runs. */
+int64_t nova_pty_status(int64_t slot) {
+    nova_pty_slot *term = nova_pty_get(slot);
+    if (!term) return -1;
+    pthread_mutex_lock(&term->lock);
+    int code = term->exit_code;
+    pthread_mutex_unlock(&term->lock);
+    return code;
+}
+
+/* Asks the child to go away: SIGTERM, then the slot is reusable. */
+void nova_pty_close(int64_t slot) {
+    nova_pty_slot *term = nova_pty_get(slot);
+    if (!term) return;
+    pthread_mutex_lock(&term->lock);
+    pid_t pid = term->pid;
+    int master = term->master;
+    pthread_mutex_unlock(&term->lock);
+    if (pid > 0) kill(pid, SIGHUP);
+    if (master >= 0) close(master);
+    pthread_mutex_lock(&term->lock);
+    term->active = 0;
+    term->master = -1;
+    pthread_mutex_unlock(&term->lock);
+}
+
+/* The original single-terminal API, kept as slot 0 for existing callers. */
+int64_t nova_term_start(nova_str command, nova_str cwd) {
+    return nova_pty_open(0, command, cwd, 120, 30);
+}
+
+nova_str nova_term_poll(void) {
+    return nova_pty_poll(0);
+}
+
+int64_t nova_term_running(void) {
+    return nova_pty_running(0);
+}
+
+int64_t nova_term_send(int64_t code) {
+    return nova_pty_write(0, code);
+}
+
 void nova_term_clear(void) {
-    pthread_mutex_lock(&nova_term_lock);
-    nova_term_length = 0;
-    nova_term_seen = 0;
-    if (nova_term_buffer) nova_term_buffer[0] = '\0';
-    pthread_mutex_unlock(&nova_term_lock);
+    nova_pty_clear(0);
 }
 
 /* Clipboard access for the editor: ⌘C, ⌘X and ⌘V go through NSPasteboard. */

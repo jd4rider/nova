@@ -1,5 +1,6 @@
 import std.io { println }
 import "../../../libraries/nova-gui/src/gui.nova" as gui
+import "../../../libraries/nova-term/src/term.nova" as vt
 
 // Nova Studio, rewritten in Nova on nova-gui.
 //
@@ -584,14 +585,21 @@ struct App {
     field2_cursor: Int,
     focus: Int,
     cursors: List<Int>,
-    term: String,
+    term: vt.Term,
+    term_slot: Int,
+    term_cols: Int,
+    term_rows: Int,
     task_running: Bool,
     split: Bool,
     pane: Int,
     pane_tabs: List<Int>,
     term_focus: Bool,
-    term_input: String,
     dim: Bool,
+    tab_drag: Int,
+    refs: List<String>,
+    ref_paths: List<String>,
+    ref_lines: List<Int>,
+    ref_index: Int,
 }
 
 // ---------- workspace ----------
@@ -1067,11 +1075,12 @@ fn with_trailing_newline(text: String) -> String {
 fn run_task(app: App, kind: String) -> App {
     var app = app
     let command = nova_binary() + " " + kind + " 2>&1"
-    gui.term_clear()
     app.bottom = "terminal"
     app.panel = true
-    app.term = "$ " + command + "\n"
-    if gui.term_start(command, app.root) {
+    app.term = vt.tm_new(app.term_cols, app.term_rows)
+    vt.tm_feed(app.term, vt.tm_escape() + "[2J" + vt.tm_escape() + "[H")
+    vt.tm_feed(app.term, "\u{1b}[38;5;39m$ \u{1b}[0m" + command + "\r\n")
+    if gui.pty_open(app.term_slot, command, app.root, app.term_cols, app.term_rows) {
         app.task_running = true
         app.status = kind + " running…"
     } else {
@@ -1138,6 +1147,7 @@ fn commands() -> List<Command> {
     list.push(Command { id: "addcursor", label: "Select next occurrence", hint: "⌘D" })
     list.push(Command { id: "split", label: "Toggle split editor", hint: "⌘\\" })
     list.push(Command { id: "definition", label: "Go to definition", hint: "F12" })
+    list.push(Command { id: "references", label: "Find references", hint: "⇧F12" })
     list.push(Command { id: "about", label: "About Nova Studio", hint: "" })
     list.push(Command { id: "quit", label: "Quit", hint: "⌘Q" })
     return list
@@ -1310,6 +1320,9 @@ fn run_command(app: App, id: String) -> App {
     }
     if id == "definition" {
         return go_to_definition(next)
+    }
+    if id == "references" {
+        return find_references(next)
     }
     if id == "quit" {
         next.quit = true
@@ -2072,10 +2085,16 @@ fn draw_main(app: App, w: Int, h: Int) {
     if full < 520 {
         split = false
     }
-    draw_tabs(app, left, top, full)
-    draw_crumbs(app, left, top + tabs_height(), full)
     if split {
         let half = full / 2
+        var left_strip = app
+        left_strip.active = pane_tab(app, 0)
+        draw_tabs(left_strip, left, top, half - 1)
+        var right_strip = app
+        right_strip.active = pane_tab(app, 1)
+        draw_tabs(right_strip, left + half - 1, top, full - half + 1)
+        draw_crumbs(app, left, top + tabs_height(), half - 1)
+        draw_crumbs(app, left + half - 1, top + tabs_height(), full - half + 1)
         draw_editor(app, left, editor_top, half - 1, body_h)
         var other = app
         other.active = pane_tab(app, 1 - app.pane)
@@ -2083,6 +2102,8 @@ fn draw_main(app: App, w: Int, h: Int) {
         draw_editor(other, left + half, editor_top, full - half, body_h)
         gui.line(left + half - 1, top, left + half - 1, bottom, theme.border_strong)
     } else {
+        draw_tabs(app, left, top, full)
+        draw_crumbs(app, left, top + tabs_height(), full)
         draw_editor(app, left, editor_top, full, body_h)
     }
     if app.panel {
@@ -2163,28 +2184,23 @@ fn draw_panel(app: App, x: Int, y: Int, w: Int, h: Int) {
         gui.text(x + 12, body_y + 46, "it does not host a language server, so there are no inline diagnostics yet.", 11, theme.faint)
     }
     if app.bottom == "terminal" {
-        let lines = split_lines(app.term)
-        let capacity = (body_h - 30) / 16
-        var start = 0
-        if lines.len() > capacity && capacity > 0 {
-            start = lines.len() - capacity
+        let pal = terminal_palette(app)
+        let grid_y = body_y + 6
+        let grid_h = body_h - 34
+        vt.tm_draw(app.term, x + 14, grid_y, w - 28, grid_h, 12, pal)
+        vt.tm_draw_rail(app.term, x + 6, grid_y, grid_h, 12, pal)
+        let footer_y = body_y + body_h - 22
+        gui.rect(x, footer_y - 4, w, 26, theme.panel)
+        var state_text = "idle"
+        if gui.pty_running(app.term_slot) {
+            state_text = "running"
         }
-        var row = start
-        while row < lines.len() {
-            gui.mono(x + 12, body_y + 8 + (row - start) * 16, lines[row], 12, theme.fg)
-            row = row + 1
-        }
-        if app.term.len() == 0 {
-            gui.text(x + 12, body_y + 10, "Terminal: Build (⌘B) streams here. Click, then type.", 12, theme.muted)
-        }
-        let input_y = body_y + body_h - 22
-        gui.rect(x, input_y - 5, w, 27, theme.panel)
-        let prompt = "❯ " + app.term_input
-        gui.mono(x + 12, input_y, prompt, 12, theme.fg_bright)
+        gui.text(x + 14, footer_y, state_text, 10, theme.fg)
+        gui.text(x + 88, footer_y, "${app.term_cols}x${app.term_rows}", 10, theme.muted)
         if app.term_focus {
-            gui.rect(x + 12 + gui.mono_width(prompt, 12) + 1, input_y - 1, 2, 16, theme.fg_bright)
+            gui.text(x + w - 150, footer_y, "typing - esc returns to the editor", 10, theme.faint)
         } else {
-            gui.text(x + w - 96, input_y, "click to type", 10, theme.faint)
+            gui.text(x + w - 96, footer_y, "click to type", 10, theme.faint)
         }
     }
     if app.bottom == "docs" {
@@ -2238,6 +2254,10 @@ fn draw_status(app: App, w: Int, h: Int) {
 
 fn draw_overlay(app: App, w: Int, h: Int) {
     let theme = app.theme
+    if app.overlay == "refs" {
+        draw_references(app, w, h)
+        return
+    }
     if app.overlay == "find" {
         draw_find(app, w)
         return
@@ -3565,14 +3585,42 @@ fn report(ok: Bool, name: String) {
 
 fn poll_term(app: App) -> App {
     var app = app
-    let chunk = gui.term_poll()
+    let chunk = gui.pty_poll(app.term_slot)
     if chunk.len() > 0 {
-        app.term = app.term + chunk
+        vt.tm_feed(app.term, chunk)
     }
-    if !gui.term_running() {
+    if !gui.pty_running(app.term_slot) && app.task_running {
         app.task_running = false
+        let code = gui.pty_status(app.term_slot)
+        vt.tm_feed(app.term, "\r\n" + vt.tm_escape() + "[90m[exit " + "${code}" + "]" + vt.tm_escape() + "[0m\r\n")
     }
     return app
+}
+
+// Keeps the emulator grid and the pty window size in step with the panel.
+fn sync_term(app: App) -> App {
+    var app = app
+    let w = gui.width()
+    var left = activity_width()
+    if app.sidebar {
+        left = left + sidebar_width()
+    }
+    let cols = (w - left - 28) / gui.advance(12)
+    let rows = (panel_height() - 70) / 17
+    if cols > 20 && rows > 3 && (cols != app.term_cols || rows != app.term_rows) {
+        app.term_cols = cols
+        app.term_rows = rows
+        app.term = vt.tm_resize(app.term, cols, rows)
+        gui.pty_resize(app.term_slot, cols, rows)
+    }
+    return app
+}
+
+fn terminal_palette(app: App) -> vt.Palette {
+    if app.theme_name.contains("Gruvbox") {
+        return vt.tm_palette_gruvbox()
+    }
+    return vt.tm_palette_dark()
 }
 
 // Runs a script of synthetic events against the same handlers the window uses,
@@ -3668,7 +3716,7 @@ fn run_script(app: App, path: String) -> App {
                 report(gui.clipboard().contains(words[1]), trimmed)
             }
             if cmd == "assert_term_has" && words.len() >= 2 {
-                report(app.term.contains(words[1]), trimmed)
+                report(vt.tm_all_text(app.term).contains(words[1]), trimmed)
             }
             if cmd == "assert_rows_min" && words.len() >= 2 {
                 var count = 0
@@ -3695,6 +3743,29 @@ fn run_script(app: App, path: String) -> App {
                 }
                 report(ok, trimmed)
             }
+            if cmd == "openfile" && words.len() >= 2 {
+                var path = words[1]
+                if !path.starts_with("/") {
+                    path = app.root + "/" + path
+                }
+                app = open_file(app, path)
+            }
+            if cmd == "refs" {
+                app = find_references(app)
+            }
+            if cmd == "assert_refs" && words.len() >= 2 {
+                report(app.refs.len() == str_to_int(words[1]), trimmed)
+            }
+            if cmd == "assert_refs_min" && words.len() >= 2 {
+                report(app.refs.len() >= str_to_int(words[1]), trimmed)
+            }
+            if cmd == "assert_pane_tab" && words.len() >= 3 {
+                report(pane_tab(app, str_to_int(words[1])) == str_to_int(words[2]), trimmed)
+            }
+            if cmd == "tabdrag" && words.len() >= 3 {
+                app = click(app, str_to_int(words[1]), str_to_int(words[2]), 0)
+                app = drag(app, str_to_int(words[1]) + 300, str_to_int(words[2]))
+            }
             if cmd == "gotodef" {
                 app = go_to_definition(app)
             }
@@ -3705,25 +3776,59 @@ fn run_script(app: App, path: String) -> App {
                 report(app.split == (str_to_int(words[1]) == 1), trimmed)
             }
             if cmd == "termcmd" && words.len() >= 2 {
-                gui.term_clear()
-                app.term = ""
-                if gui.term_start(words[1], app.root) {
+                app.term = vt.tm_new(app.term_cols, app.term_rows)
+                if gui.pty_open(app.term_slot, words[1], app.root, app.term_cols, app.term_rows) {
                     app.task_running = true
                 }
             }
-            if cmd == "termtype" && words.len() >= 2 {
-                app.term_focus = true
-                let chars = words[1].graphemes()
-                var i = 0
-                while i < chars.len() {
-                    gui.term_send(char_code(chars[i]))
-                    app.term_input = app.term_input + chars[i]
-                    i = i + 1
+            if cmd == "termfeed" && words.len() >= 2 {
+                var payload = ""
+                var k = 1
+                while k < words.len() {
+                    if k > 1 {
+                        payload = payload + " "
+                    }
+                    payload = payload + words[k]
+                    k = k + 1
+                }
+                vt.tm_feed(app.term, payload.replace("<E>", vt.tm_escape()))
+            }
+            if cmd == "refdump" {
+                println("REFCOUNT " + "${app.refs.len()}" + " status=" + app.status)
+                if app.refs.len() > 0 {
+                    println("REF0 " + app.refs[0].replace(vt.tm_escape(), ""))
                 }
             }
+            if cmd == "termdump" {
+                println("DUMP [" + vt.tm_all_text(app.term).replace(vt.tm_escape(), "<E>") + "]")
+            }
+            if cmd == "termtype" && words.len() >= 2 {
+                app.term_focus = true
+                gui.pty_write_text(app.term_slot, words[1])
+            }
             if cmd == "termenter" {
-                gui.term_send(13)
-                app.term_input = ""
+                gui.pty_write_text(app.term_slot, "\r")
+            }
+            if cmd == "termkey" && words.len() >= 2 {
+                app = term_key(app, str_to_int(words[1]), 0)
+            }
+            if cmd == "termresize" && words.len() >= 3 {
+                app.term_cols = str_to_int(words[1])
+                app.term_rows = str_to_int(words[2])
+                app.term = vt.tm_resize(app.term, app.term_cols, app.term_rows)
+                gui.pty_resize(app.term_slot, app.term_cols, app.term_rows)
+            }
+            if cmd == "termclear" {
+                app.term = vt.tm_new(app.term_cols, app.term_rows)
+            }
+            if cmd == "assert_term_cell" && words.len() >= 3 {
+                report(vt.tm_cell_at(app.term, str_to_int(words[1]), str_to_int(words[2])).ch == words[3], trimmed)
+            }
+            if cmd == "assert_term_colour" && words.len() >= 4 {
+                report(vt.tm_cell_at(app.term, str_to_int(words[1]), str_to_int(words[2])).fg == str_to_int(words[3]), trimmed)
+            }
+            if cmd == "assert_term_lines" && words.len() >= 2 {
+                report(vt.tm_total_lines(app.term) == str_to_int(words[1]), trimmed)
             }
             if cmd == "assert_file_has" && words.len() >= 2 {
                 var ok = false
@@ -3787,27 +3892,189 @@ fn term_key(app: App, code: Int, mods: Int) -> App {
         return app
     }
     if mods % 2 == 1 {
-        return app
-    }
-    if code == gui.key_enter() {
-        gui.term_send(13)
-        app.term_input = ""
-        return app
-    }
-    if code == gui.key_backspace() {
-        gui.term_send(127)
-        if app.term_input.len() > 0 {
-            let chars = app.term_input.graphemes()
-            app.term_input = slice_chars(chars, 0, chars.len() - 1)
+        if code == 118 {
+            let text = gui.clipboard()
+            if text.len() > 0 {
+                gui.pty_write_text(app.term_slot, text)
+            }
+            return app
+        }
+        if code == 99 {
+            gui.set_clipboard(vt.tm_screen_text(app.term))
+            app.status = "copied screen"
+            return app
+        }
+        if code == 107 {
+            app.term = vt.tm_scroll_bottom(app.term)
+            return app
         }
         return app
     }
-    if code >= 32 && code <= 126 {
-        gui.term_send(code)
-        app.term_input = app.term_input + code_to_text(code)
+    if code == gui.key_page_up() {
+        app.term = vt.tm_scroll(app.term, 10)
         return app
     }
+    if code == gui.key_page_down() {
+        app.term = vt.tm_scroll(app.term, 0 - 10)
+        return app
+    }
+    let bytes = vt.tm_key_text(code, mods)
+    if bytes.len() > 0 {
+        gui.pty_write_text(app.term_slot, bytes)
+        app.term = vt.tm_scroll_bottom(app.term)
+    }
     return app
+}
+
+// ---------- references ----------
+
+fn refs_top() -> Int {
+    return 150
+}
+
+fn line_has_word(line: String, word: String) -> Bool {
+    let chars = line.chars()
+    let target = word.chars()
+    if target.len() == 0 {
+        return false
+    }
+    var i = 0
+    while i + target.len() <= chars.len() {
+        var same = true
+        var j = 0
+        while j < target.len() {
+            if chars[i + j] != target[j] {
+                same = false
+            }
+            j = j + 1
+        }
+        if same {
+            let before = i == 0 || !is_ident_part(chars[i - 1])
+            let after = i + target.len()
+            let after_ok = after >= chars.len() || !is_ident_part(chars[after])
+            if before && after_ok {
+                return true
+            }
+        }
+        i = i + 1
+    }
+    return false
+}
+
+fn collect_references(app: App, word: String) -> App {
+    var app = app
+    var labels: List<String> = []
+    var paths: List<String> = []
+    var lines: List<Int> = []
+    if app.active >= 0 && app.tabs.len() > 0 {
+        var tab = app.tabs[app.active]
+        var row = 0
+        while row < tab.lines.len() {
+            if line_has_word(tab.lines[row], word) {
+                labels.push(tab.name + ":" + "${row + 1}" + "  " + tab.lines[row].trim())
+                paths.push(tab.path)
+                lines.push(row)
+            }
+            row = row + 1
+        }
+    }
+    if app.files.len() == 0 {
+        app.files = collect_files(app.root, 0)
+    }
+    var i = 0
+    while i < app.files.len() {
+        let path = app.files[i]
+        var skip = false
+        if app.active >= 0 && app.tabs.len() > 0 {
+            skip = app.tabs[app.active].path == path
+        }
+        if !skip {
+            let lines_of = split_lines(gui.read(path))
+            var row = 0
+            while row < lines_of.len() {
+                if line_has_word(lines_of[row], word) {
+                    labels.push(basename(path) + ":" + "${row + 1}" + "  " + lines_of[row].trim())
+                    paths.push(path)
+                    lines.push(row)
+                }
+                row = row + 1
+            }
+        }
+        i = i + 1
+    }
+    app.refs = labels
+    app.ref_paths = paths
+    app.ref_lines = lines
+    app.ref_index = 0
+    app.overlay = "refs"
+    app.status = "${labels.len()}" + " references to " + word
+    return app
+}
+
+fn find_references(app: App) -> App {
+    var app = app
+    if app.active < 0 || app.tabs.len() == 0 {
+        return app
+    }
+    let tab = app.tabs[app.active]
+    let bounds = word_bounds(tab.lines[tab.cursor_line], tab.cursor_col)
+    let word = slice_chars(tab.lines[tab.cursor_line].graphemes(), bounds[0], bounds[1])
+    if word.len() == 0 {
+        app.status = "No symbol under caret"
+        return app
+    }
+    return collect_references(app, word)
+}
+
+fn open_reference(app: App, index: Int) -> App {
+    var app = app
+    if index < 0 || index >= app.ref_paths.len() {
+        return app
+    }
+    let path = app.ref_paths[index]
+    let line = app.ref_lines[index]
+    app.overlay = ""
+    app = open_file(app, path)
+    if app.active >= 0 && app.tabs.len() > 0 {
+        var tab = app.tabs[app.active]
+        tab.cursor_line = gui.clamp(line, 0, tab.lines.len() - 1)
+        tab.cursor_col = leading_spaces(tab.lines[tab.cursor_line])
+        tab = tab_scrolled(tab)
+        app.tabs[app.active] = tab
+    }
+    return app
+}
+
+fn draw_references(app: App, w: Int, h: Int) {
+    let theme = app.theme
+    let width = 720
+    let x = (w - width) / 2
+    let y = refs_top()
+    var height = app.refs.len() * 24 + 76
+    if height > h - y - 60 {
+        height = h - y - 60
+    }
+    gui.rect_alpha(0, 0, w, h, 0, 110)
+    gui.rect(x, y, width, height, theme.elevated)
+    gui.stroke(x, y, width, height, theme.border_strong)
+    gui.text(x + 16, y + 14, "REFERENCES", 11, theme.muted)
+    gui.text(x + width - 92, y + 12, "enter to open", 10, theme.faint)
+    let rows = (height - 60) / 24
+    var i = 0
+    while i < app.refs.len() && i < rows {
+        var row_bg = theme.elevated
+        var color = theme.fg
+        if i == app.ref_index {
+            row_bg = theme.selection
+            color = theme.fg_bright
+        }
+        gui.rect(x + 8, y + 40 + i * 24, width - 16, 22, row_bg)
+        gui.text(x + 16, y + 44 + i * 24, app.refs[i], 11, color)
+        i = i + 1
+    }
+    if app.refs.len() == 0 {
+        gui.text(x + 16, y + 44, "No references found.", 11, theme.muted)
+    }
 }
 
 // ---------- go to definition ----------
@@ -4049,6 +4316,9 @@ fn key(app: App, code: Int, mods: Int) -> App {
         return term_key(app, code, mods)
     }
     if code == gui.key_f12() {
+        if shift {
+            return find_references(app)
+        }
         return go_to_definition(app)
     }
     // Vim: normal and visual modes own the keyboard; insert mode is the plain
@@ -4106,6 +4376,28 @@ fn key(app: App, code: Int, mods: Int) -> App {
 
 fn overlay_key(app: App, code: Int, mods: Int) -> App {
     var app = app
+    if app.overlay == "refs" {
+        if code == gui.key_escape() {
+            app.overlay = ""
+            return app
+        }
+        if code == gui.key_up() {
+            if app.ref_index > 0 {
+                app.ref_index = app.ref_index - 1
+            }
+            return app
+        }
+        if code == gui.key_down() {
+            if app.ref_index + 1 < app.refs.len() {
+                app.ref_index = app.ref_index + 1
+            }
+            return app
+        }
+        if code == 13 {
+            return open_reference(app, app.ref_index)
+        }
+        return app
+    }
     if app.overlay == "find" {
         return find_key(app, code, mods)
     }
@@ -4237,6 +4529,35 @@ fn toggle_fold(app: App, line: Int) -> App {
 
 fn drag(app: App, mx: Int, my: Int) -> App {
     var app = app
+    let drag_w = gui.width()
+    var drag_left = activity_width()
+    if app.sidebar {
+        drag_left = drag_left + sidebar_width()
+    }
+    let drag_top = title_height() + tabs_height() + crumbs_height()
+    if my < drag_top {
+        if app.tab_drag >= 0 && app.tab_drag < app.tabs.len() {
+            let half = drag_left + (drag_w - drag_left) / 2
+            if !app.split && mx > half {
+                app.split = true
+                app.pane = 1
+                app.pane_tabs = [0, app.tab_drag]
+                app.term_focus = false
+                app.status = "moved " + app.tabs[app.tab_drag].name + " into a split"
+                return app
+            }
+            if app.split {
+                if mx > half {
+                    app.pane = 1
+                } else {
+                    app.pane = 0
+                }
+                return set_pane_tab(app, app.tab_drag)
+            }
+        }
+        return app
+    }
+    app.tab_drag = 0 - 1
     if app.overlay.len() > 0 {
         return app
     }
@@ -4276,6 +4597,15 @@ fn drag(app: App, mx: Int, my: Int) -> App {
 
 fn click(app: App, mx: Int, my: Int, mods: Int) -> App {
     var app = app
+    app.tab_drag = 0 - 1
+    if app.overlay == "refs" {
+        let row = (my - refs_top()) / 24
+        if row >= 0 && row < app.refs.len() {
+            return open_reference(app, row)
+        }
+        app.overlay = ""
+        return app
+    }
     let w = gui.width()
     let h = gui.height()
     if app.overlay.len() > 0 {
@@ -4356,7 +4686,16 @@ fn click(app: App, mx: Int, my: Int, mods: Int) -> App {
         left = left + sidebar_width()
     }
     if my < title_height() + tabs_height() && mx > left {
-        var tx = left
+        var strip_left = left
+        if app.split && (w - left) >= 520 {
+            if mx > left + (w - left) / 2 {
+                app.pane = 1
+                strip_left = left + (w - left) / 2 - 1
+            } else {
+                app.pane = 0
+            }
+        }
+        var tx = strip_left
         var i = 0
         while i < app.tabs.len() {
             var width = gui.mono_width(app.tabs[i].name, 12) + 62
@@ -4371,6 +4710,7 @@ fn click(app: App, mx: Int, my: Int, mods: Int) -> App {
                     app = set_pane_tab(app, i)
                     return close_tab(app)
                 }
+                app.tab_drag = i
                 return set_pane_tab(app, i)
             }
             tx = tx + width
@@ -4590,14 +4930,21 @@ fn main() {
         field2_cursor: 0,
         focus: 0,
         cursors: [],
-        term: "",
+        term: vt.tm_new(120, 24),
+        term_slot: 0,
+        term_cols: 120,
+        term_rows: 24,
         task_running: false,
         split: false,
         pane: 0,
         pane_tabs: [],
         term_focus: false,
-        term_input: "",
         dim: false,
+        tab_drag: 0 - 1,
+        refs: [],
+        ref_paths: [],
+        ref_lines: [],
+        ref_index: 0,
     }
     app.nodes = build_nodes(app.root, 0, app.expanded)
     app.plugins = load_plugins(app.root)
@@ -4621,10 +4968,11 @@ fn main() {
     }
     var dirty = true
     while running {
-        if app.task_running || gui.term_running() {
+        app = sync_term(app)
+        if app.task_running || gui.pty_running(app.term_slot) {
+            let was_running = app.task_running
             app = poll_term(app)
-            if !app.task_running {
-                app.term = app.term + "\n[finished]"
+            if was_running && !app.task_running {
                 app.status = "task finished"
             }
             dirty = true

@@ -1338,6 +1338,27 @@ void nova_string_graphemes(nova_str value, nova_list *result) {
     }
 }
 
+/* Splits text into raw Unicode scalars. Unlike nova_string_graphemes this keeps
+ * ANSI escapes as their individual bytes, which a terminal emulator needs: it
+ * is parsing the escape, not measuring styled text. */
+void nova_string_chars(nova_str value, nova_list *result) {
+    result->data = NULL;
+    result->len = 0;
+    result->cap = 0;
+    if (!value.ptr || value.len == 0) return;
+    int64_t i = 0;
+    while (i < value.len) {
+        uint32_t cp = 0;
+        int64_t next = i;
+        if (!nova_utf8_decode((const unsigned char *)value.ptr, value.len, i, &cp, &next)) {
+            next = i + 1;
+        }
+        if (next <= i) next = i + 1;
+        nova_wrap_push(result, nova_copy_str(value.ptr + i, next - i));
+        i = next;
+    }
+}
+
 void nova_panic_overflow(int64_t line) {
     fflush(stdout);
     fprintf(stderr, "panic: integer overflow at line %lld\n", (long long)line);

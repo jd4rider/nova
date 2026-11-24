@@ -45,6 +45,7 @@ pub const RUNTIME_SYMBOLS: &[&str] = &[
     "nova_string_clip",
     "nova_string_wrap",
     "nova_string_graphemes",
+    "nova_string_chars",
     "nova_term_is_tty",
     "nova_term_enter_raw",
     "nova_term_leave_raw",

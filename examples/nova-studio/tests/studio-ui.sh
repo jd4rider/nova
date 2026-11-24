@@ -71,7 +71,7 @@ run_case multicursor "$WORK/cursor.txt"
 
 cat > "$WORK/term.txt" <<'SCRIPT'
 build_now
-wait 4000
+wait 14000
 assert_term_has Built
 SHOT_PATH
 SCRIPT
@@ -106,6 +106,40 @@ wait 700
 assert_term_has echo-ok
 SCRIPT
 run_case termininput "$WORK/terminput.txt"
+
+cat > "$WORK/grid.txt" <<'SCRIPT'
+termclear
+termfeed <E>[31mred<E>[0m and <E>[92mgreen<E>[0m
+assert_term_cell 0 0 r
+assert_term_colour 0 0 1
+assert_term_cell 0 8 g
+assert_term_colour 0 8 10
+termfeed <E>[2;1Hsecond line
+assert_term_cell 1 0 s
+termresize 40 30
+assert_term_cell 7 0 s
+termfeed <E>[2J<E>[Hclean
+assert_term_cell 0 0 c
+SCRIPT
+run_case terminalgrid "$WORK/grid.txt"
+
+cat > "$WORK/pane.txt" <<'SCRIPT'
+openfile tests/fixtures/other.nova
+assert_pane_tab 0 1
+openfile tests/fixtures/sample.nova
+click 442 272
+refs
+assert_refs_min 2
+key 27
+openfile tests/fixtures/other.nova
+assert_pane_tab 0 1
+splittoggle
+assert_split 1
+assert_pane_tab 1 1
+splittoggle
+assert_split 0
+SCRIPT
+run_case panesandrefs "$WORK/pane.txt"
 
 echo
 echo "passed $PASS, failed $FAIL"

@@ -377,6 +377,7 @@ pub enum BuiltinMethod {
     StringClip,
     StringWrap,
     StringGraphemes,
+    StringChars,
     StringReplace,
     StringLower,
     OptionIsSome,

@@ -1,0 +1,813 @@
+import std.io { println }
+import "../../../libraries/nova-gui/src/gui.nova" as gui
+import "../../../libraries/nova-term/src/term.nova" as vt
+
+// Nova Terminal — a native terminal emulator written in Nova.
+//
+// Every tab is its own pty slot, parsed by libraries/nova-term into a screen of
+// coloured cells and drawn here. The frame is immediate mode: poll each live
+// pty, feed the bytes to the emulator, draw the grid, then drain one event.
+//
+//   NOVA_TERM_ROOT   folder new tabs start in (default: the working directory)
+//   NOVA_TERM_SHOT   write the first frame to a PNG and exit
+//   NOVA_TERM_SCRIPT run a scripted UI test, then exit
+
+fn tab_height() -> Int {
+    return 46
+}
+
+fn status_height() -> Int {
+    return 26
+}
+
+fn max_tabs() -> Int {
+    return 8
+}
+
+struct Tab {
+    slot: Int,
+    title: String,
+    term: vt.Term,
+    cols: Int,
+    rows: Int,
+    cwd: String,
+}
+
+struct App {
+    tabs: List<Tab>,
+    active: Int,
+    theme: gui.Theme,
+    theme_name: String,
+    palette: vt.Palette,
+    size: Int,
+    overlay: String,
+    field: String,
+    message: String,
+    hits: List<Int>,
+    hit_at: Int,
+    quit: Bool,
+}
+
+fn palette_for(name: String) -> vt.Palette {
+    if name == "Gruvbox" {
+        return vt.tm_palette_gruvbox()
+    }
+    return vt.tm_palette_dark()
+}
+
+fn default_shell() -> String {
+    let env_shell = gui.env("SHELL")
+    if env_shell.len() > 0 {
+        return env_shell
+    }
+    return "/bin/zsh"
+}
+
+fn grid_cols(app: App) -> Int {
+    let cols = (gui.width() - 28) / gui.advance(app.size)
+    if cols < 20 {
+        return 20
+    }
+    return cols
+}
+
+fn grid_rows(app: App) -> Int {
+    let rows = (gui.height() - tab_height() - status_height() - 22) / vt.tm_cell_height(app.size)
+    if rows < 4 {
+        return 4
+    }
+    return rows
+}
+
+// ---------- tabs ----------
+
+fn free_slot(app: App) -> Int {
+    var slot = 0
+    while slot < max_tabs() {
+        var used = false
+        for tab in app.tabs {
+            if tab.slot == slot && gui.pty_running(tab.slot) {
+                used = true
+            }
+        }
+        if !used {
+            return slot
+        }
+        slot = slot + 1
+    }
+    return 0
+}
+
+fn spawn(app: App) -> App {
+    var app = app
+    if app.tabs.len() >= max_tabs() {
+        app.message = "eight tabs is the limit"
+        return app
+    }
+    let slot = free_slot(app)
+    let cols = grid_cols(app)
+    let rows = grid_rows(app)
+    var tabs = app.tabs
+    var working = gui.env("NOVA_TERM_ROOT")
+    if working.len() == 0 {
+        working = gui.cwd()
+    }
+    tabs.push(Tab {
+        slot: slot,
+        title: "shell",
+        term: vt.tm_new(cols, rows),
+        cols: cols,
+        rows: rows,
+        cwd: working,
+    })
+    app.tabs = tabs
+    app.active = tabs.len() - 1
+    if gui.pty_open(slot, default_shell() + " -i", working, cols, rows) {
+        app.message = "started " + default_shell()
+    } else {
+        app.message = "could not start a shell"
+    }
+    return app
+}
+
+fn close_active(app: App) -> App {
+    var app = app
+    if app.tabs.len() == 0 {
+        return app
+    }
+    let index = app.active
+    gui.pty_close(app.tabs[index].slot)
+    var rest: List<Tab> = []
+    var i = 0
+    while i < app.tabs.len() {
+        if i != index {
+            rest.push(app.tabs[i])
+        }
+        i = i + 1
+    }
+    app.tabs = rest
+    if rest.len() == 0 {
+        app = spawn(app)
+        return app
+    }
+    if app.active >= rest.len() {
+        app.active = rest.len() - 1
+    }
+    return app
+}
+
+fn select_tab(app: App, index: Int) -> App {
+    var app = app
+    if index >= 0 && index < app.tabs.len() {
+        app.active = index
+    }
+    return app
+}
+
+// ---------- polling and sizing ----------
+
+fn poll(app: App) -> App {
+    var app = app
+    var tabs = app.tabs
+    var i = 0
+    while i < tabs.len() {
+        var tab = tabs[i]
+        let chunk = gui.pty_poll(tab.slot)
+        if chunk.len() > 0 {
+            vt.tm_feed(tab.term, chunk)
+            if tab.title == "shell" {
+                let named = vt.tm_title(tab.term)
+                if named.len() > 0 {
+                    tab.title = named
+                }
+            }
+        }
+        if !gui.pty_running(tab.slot) {
+            tab.title = tab.title
+        }
+        tabs[i] = tab
+        i = i + 1
+    }
+    app.tabs = tabs
+    return app
+}
+
+fn sync_size(app: App) -> App {
+    let cols = grid_cols(app)
+    let rows = grid_rows(app)
+    var fresh = app
+    var tabs = fresh.tabs
+    var i = 0
+    while i < tabs.len() {
+        var tab = tabs[i]
+        if tab.cols != cols || tab.rows != rows {
+            tab.cols = cols
+            tab.rows = rows
+            tab.term = vt.tm_resize(tab.term, cols, rows)
+            gui.pty_resize(tab.slot, cols, rows)
+            tabs[i] = tab
+        }
+        i = i + 1
+    }
+    fresh.tabs = tabs
+    return fresh
+}
+
+// ---------- drawing ----------
+
+fn draw_tab_bar(app: App) {
+    let theme = app.theme
+    let window_w = gui.width()
+    gui.rect(0, 0, window_w, tab_height(), theme.panel)
+    gui.line(0, tab_height() - 1, window_w, tab_height() - 1, theme.border)
+    var x = 12
+    var i = 0
+    while i < app.tabs.len() {
+        let tab = app.tabs[i]
+        let label = tab.title
+        var tab_w = gui.text_width(label, 12) + 44
+        if tab_w < 120 {
+            tab_w = 120
+        }
+        if i == app.active {
+            gui.round_rect(x, 8, tab_w, 32, 7, theme.bg)
+            gui.rect(x + 12, tab_height() - 2, tab_w - 24, 2, theme.accent)
+        } else {
+            gui.round_rect(x, 9, tab_w, 30, 7, theme.elevated)
+        }
+        var color = theme.muted
+        if i == app.active {
+            color = theme.fg_bright
+        }
+        if gui.pty_running(tab.slot) {
+            gui.rect(x + 10, 20, 6, 6, theme.green)
+        } else {
+            gui.rect(x + 10, 20, 6, 6, theme.faint)
+        }
+        gui.text(x + 22, 15, label, 12, color)
+        gui.text(x + tab_w - 20, 14, "✕", 11, theme.muted)
+        x = x + tab_w + 6
+        i = i + 1
+    }
+    let plus_x = x + 2
+    gui.round_rect(plus_x, 10, 26, 26, 7, theme.elevated)
+    gui.text(plus_x + 9, 14, "+", 14, theme.fg)
+    gui.text(window_w - 190, 16, "⌘T new   ⌘K palette", 11, theme.faint)
+}
+
+fn draw_grid(app: App) {
+    let pal = app.palette
+    let top = tab_height()
+    let window_w = gui.width()
+    let grid_h = gui.height() - tab_height() - status_height()
+    gui.rect(0, top, window_w, grid_h, pal.bg)
+    if app.tabs.len() == 0 {
+        return
+    }
+    let tab = app.tabs[app.active]
+    gui.rect(0, top, 14, grid_h, pal.bg)
+    vt.tm_draw(tab.term, 16, top + 8, window_w - 24, grid_h - 16, app.size, pal)
+    vt.tm_draw_rail(tab.term, 10, top + 8, grid_h - 16, app.size, pal)
+    var i = 0
+    while i < app.hits.len() {
+        let row = app.hits[i] - (vt.tm_total_lines(tab.term) - vt.tm_rows(tab.term) - vt.tm_view(tab.term))
+        if row >= 0 && row < vt.tm_rows(tab.term) {
+            let y = top + 8 + row * vt.tm_cell_height(app.size)
+            var color = pal.selection
+            if i == app.hit_at {
+                color = pal.cursor
+            }
+            gui.rect(0, y, 8, vt.tm_cell_height(app.size), color)
+        }
+        i = i + 1
+    }
+}
+
+fn draw_status(app: App) {
+    let theme = app.theme
+    let window_w = gui.width()
+    let y = gui.height() - status_height()
+    gui.rect(0, y, window_w, status_height(), theme.status)
+    gui.text(12, y + 6, "◈ nova-term", 11, gui.white())
+    var left = 118
+    if app.tabs.len() > 0 {
+        let tab = app.tabs[app.active]
+        gui.text(left, y + 6, tab.cwd, 11, gui.white())
+        left = left + gui.text_width(tab.cwd, 11) + 18
+    }
+    gui.text(left, y + 6, app.theme_name, 11, gui.white())
+    let dims = grid_cols(app)
+    let size_text = "${app.tabs.len()} tabs  " + "${dims}x" + "${grid_rows(app)}  " + "${app.size}pt"
+    gui.text(window_w - gui.text_width(size_text, 11) - 14, y + 6, size_text, 11, gui.white())
+    if app.message.len() > 0 {
+        gui.text(window_w - gui.text_width(size_text, 11) - gui.text_width(app.message, 11) - 32, y + 6, app.message, 11, gui.white())
+    }
+}
+
+fn commands() -> List<Command> {
+    var list: List<Command> = []
+    list.push(Command { id: "new", label: "New tab", hint: "⌘T" })
+    list.push(Command { id: "close", label: "Close tab", hint: "⌘W" })
+    list.push(Command { id: "clear", label: "Clear screen", hint: "⌘L" })
+    list.push(Command { id: "copy", label: "Copy screen", hint: "⌘C" })
+    list.push(Command { id: "paste", label: "Paste clipboard", hint: "⌘V" })
+    list.push(Command { id: "search", label: "Find in scrollback", hint: "⌘F" })
+    list.push(Command { id: "theme", label: "Toggle Dark+ / Gruvbox", hint: "" })
+    list.push(Command { id: "bigger", label: "Larger text", hint: "⌘+" })
+    list.push(Command { id: "smaller", label: "Smaller text", hint: "⌘-" })
+    list.push(Command { id: "top", label: "Scroll to top", hint: "" })
+    list.push(Command { id: "bottom", label: "Scroll to bottom", hint: "⌘K" })
+    return list
+}
+
+struct Command {
+    id: String,
+    label: String,
+    hint: String,
+}
+
+fn matching(app: App) -> List<Command> {
+    var out: List<Command> = []
+    let needle = app.field
+    for command in commands() {
+        if needle.len() == 0 || command.label.contains(needle) {
+            out.push(command)
+        }
+    }
+    return out
+}
+
+fn run_command(app: App, id: String) -> App {
+    var app = app
+    app.overlay = ""
+    app.field = ""
+    if id == "new" {
+        return spawn(app)
+    }
+    if id == "close" {
+        return close_active(app)
+    }
+    if app.tabs.len() == 0 {
+        return app
+    }
+    if id == "clear" {
+        app.tabs[app.active].term = vt.tm_new(grid_cols(app), grid_rows(app))
+        return app
+    }
+    if id == "copy" {
+        gui.set_clipboard(vt.tm_screen_text(app.tabs[app.active].term))
+        app.message = "copied the screen"
+    }
+    if id == "paste" {
+        let text = gui.clipboard()
+        if text.len() > 0 {
+            gui.pty_write_text(app.tabs[app.active].slot, text)
+        }
+    }
+    if id == "search" {
+        app.overlay = "search"
+    }
+    if id == "theme" {
+        if app.theme_name == "Dark+" {
+            app.theme_name = "Gruvbox"
+        } else {
+            app.theme_name = "Dark+"
+        }
+        app.palette = palette_for(app.theme_name)
+    }
+    if id == "bigger" && app.size < 22 {
+        app.size = app.size + 1
+    }
+    if id == "smaller" && app.size > 9 {
+        app.size = app.size - 1
+    }
+    if id == "top" {
+        app.tabs[app.active].term = vt.tm_scroll(app.tabs[app.active].term, vt.tm_total_lines(app.tabs[app.active].term))
+    }
+    if id == "bottom" {
+        app.tabs[app.active].term = vt.tm_scroll_bottom(app.tabs[app.active].term)
+    }
+    return app
+}
+
+fn draw_overlay(app: App) {
+    let theme = app.theme
+    let window_w = gui.width()
+    let window_h = gui.height()
+    let panel_w = 560
+    let x = (window_w - panel_w) / 2
+    let y = 90
+    gui.rect_alpha(0, 0, window_w, window_h, 0, 120)
+    gui.round_rect(x, y, panel_w, 52, 8, theme.elevated)
+    gui.stroke(x, y, panel_w, 52, theme.border_strong)
+    let prompt = "⌘ "
+    gui.text(x + 14, y + 16, prompt, 13, theme.muted)
+    let typed = app.field
+    gui.text(x + 38, y + 15, typed, 13, theme.fg_bright)
+    if app.overlay == "palette" {
+        let matches = matching(app)
+        var panel_h = matches.len() * 26 + 16
+        if panel_h > 420 {
+            panel_h = 420
+        }
+        gui.round_rect(x, y + 62, panel_w, panel_h, 8, theme.elevated)
+        gui.stroke(x, y + 62, panel_w, panel_h, theme.border_strong)
+        var i = 0
+        while i < matches.len() && i < 14 {
+            let row_y = y + 72 + i * 26
+            gui.text(x + 16, row_y, matches[i].label, 12, theme.fg)
+            gui.text(x + panel_w - gui.text_width(matches[i].hint, 11) - 16, row_y, matches[i].hint, 11, theme.faint)
+            i = i + 1
+        }
+    }
+    if app.overlay == "search" {
+        let count = "${app.hits.len()}" + " matches"
+        gui.text(x + panel_w - gui.text_width(count, 11) - 14, y + 18, count, 11, theme.faint)
+    }
+}
+
+fn draw(app: App) {
+    let theme = app.theme
+    gui.clear(theme.bg)
+    draw_grid(app)
+    draw_tab_bar(app)
+    draw_status(app)
+    if app.overlay.len() > 0 {
+        draw_overlay(app)
+    }
+    gui.line(0, tab_height() - 1, gui.width(), tab_height() - 1, theme.border)
+}
+
+// ---------- input ----------
+
+fn search(app: App) -> App {
+    var app = app
+    app.hits = []
+    app.hit_at = 0
+    if app.tabs.len() == 0 || app.field.len() == 0 {
+        return app
+    }
+    app.hits = vt.tm_find(app.tabs[app.active].term, app.field)
+    app.message = "${app.hits.len()}" + " matches for " + app.field
+    return app
+}
+
+fn key(app: App, code: Int, mods: Int) -> App {
+    var app = app
+    let command = mods % 2 == 1
+    if app.overlay.len() > 0 {
+        if code == gui.key_escape() {
+            app.overlay = ""
+            app.field = ""
+            return app
+        }
+        if code == gui.key_enter() {
+            if app.overlay == "palette" {
+                let matches = matching(app)
+                if matches.len() > 0 {
+                    return run_command(app, matches[0].id)
+                }
+                app.overlay = ""
+                return app
+            }
+            app.overlay = ""
+            return search(app)
+        }
+        if code == gui.key_backspace() {
+            if app.field.len() > 0 {
+                let chars = app.field.chars()
+                var trimmed = ""
+                var i = 0
+                while i + 1 < chars.len() {
+                    trimmed = trimmed + chars[i]
+                    i = i + 1
+                }
+                app.field = trimmed
+            }
+            if app.overlay == "search" {
+                app = search(app)
+            }
+            return app
+        }
+        if code >= 32 && code <= 126 {
+            app.field = app.field + vt.tm_code_of_text(code)
+            if app.overlay == "search" {
+                app = search(app)
+            }
+        }
+        return app
+    }
+    if command {
+        if code == 116 || code == 110 {
+            return spawn(app)
+        }
+        if code == 119 {
+            return close_active(app)
+        }
+        if code == 107 {
+            app.overlay = "palette"
+            app.field = ""
+            return app
+        }
+        if code == 102 {
+            app.overlay = "search"
+            app.field = ""
+            return app
+        }
+        if code == 99 {
+            return run_command(app, "copy")
+        }
+        if code == 118 {
+            return run_command(app, "paste")
+        }
+        if code == 108 {
+            return run_command(app, "clear")
+        }
+        if code == 61 || code == 43 {
+            return run_command(app, "bigger")
+        }
+        if code == 45 {
+            return run_command(app, "smaller")
+        }
+        if code >= 49 && code <= 56 {
+            return select_tab(app, code - 49)
+        }
+        return app
+    }
+    if code == gui.key_page_up() {
+        app.tabs[app.active].term = vt.tm_scroll(app.tabs[app.active].term, 10)
+        return app
+    }
+    if code == gui.key_page_down() {
+        app.tabs[app.active].term = vt.tm_scroll(app.tabs[app.active].term, 0 - 10)
+        return app
+    }
+    if app.tabs.len() == 0 {
+        return app
+    }
+    let bytes = vt.tm_key_text(code, mods)
+    if bytes.len() > 0 {
+        gui.pty_write_text(app.tabs[app.active].slot, bytes)
+        app.tabs[app.active].term = vt.tm_scroll_bottom(app.tabs[app.active].term)
+    }
+    return app
+}
+
+fn click(app: App, mx: Int, my: Int) -> App {
+    var app = app
+    if app.overlay.len() > 0 {
+        app.overlay = ""
+        app.field = ""
+        return app
+    }
+    if my < tab_height() {
+        var x = 12
+        var i = 0
+        while i < app.tabs.len() {
+            let width = gui.max(gui.text_width(app.tabs[i].title, 12) + 44, 120)
+            if mx >= x && mx < x + width {
+                if mx > x + width - 30 {
+                    app.active = i
+                    return close_active(app)
+                }
+                return select_tab(app, i)
+            }
+            x = x + width + 6
+            i = i + 1
+        }
+        return spawn(app)
+    }
+    return app
+}
+
+fn to_int(word: String) -> Int {
+    var value = 0
+    for ch in word.chars() {
+        if ch == "0" {
+            value = value * 10 + 0
+        }
+        if ch == "1" {
+            value = value * 10 + 1
+        }
+        if ch == "2" {
+            value = value * 10 + 2
+        }
+        if ch == "3" {
+            value = value * 10 + 3
+        }
+        if ch == "4" {
+            value = value * 10 + 4
+        }
+        if ch == "5" {
+            value = value * 10 + 5
+        }
+        if ch == "6" {
+            value = value * 10 + 6
+        }
+        if ch == "7" {
+            value = value * 10 + 7
+        }
+        if ch == "8" {
+            value = value * 10 + 8
+        }
+        if ch == "9" {
+            value = value * 10 + 9
+        }
+    }
+    return value
+}
+
+fn lines_of(text: String) -> List<String> {
+    var out: List<String> = []
+    var current = ""
+    for ch in text.chars() {
+        if ch == "\n" {
+            out.push(current)
+            current = ""
+        } else {
+            current = current + ch
+        }
+    }
+    if current.len() > 0 {
+        out.push(current)
+    }
+    return out
+}
+
+// ---------- scripted tests ----------
+
+fn words_of(line: String) -> List<String> {
+    var out: List<String> = []
+    var current = ""
+    for ch in line.chars() {
+        if ch == " " {
+            if current.len() > 0 {
+                out.push(current)
+                current = ""
+            }
+        } else {
+            current = current + ch
+        }
+    }
+    if current.len() > 0 {
+        out.push(current)
+    }
+    return out
+}
+
+fn truth(value: Bool) -> String {
+    if value {
+        return "PASS"
+    }
+    return "FAIL"
+}
+
+fn active_text(app: App) -> String {
+    if app.tabs.len() == 0 {
+        return ""
+    }
+    return vt.tm_all_text(app.tabs[app.active].term)
+}
+
+fn run_script(app: App, path: String) -> App {
+    var app = app
+    for entry in lines_of(gui.read(path)) {
+        let trimmed = entry.trim()
+        if trimmed.len() > 0 && !trimmed.starts_with("#") {
+            let words = words_of(trimmed)
+            let cmd = words[0]
+            if cmd == "newtab" {
+                app = spawn(app)
+            }
+            if cmd == "type" && words.len() >= 2 {
+                if app.tabs.len() > 0 {
+                    gui.pty_write_text(app.tabs[app.active].slot, words[1])
+                }
+            }
+            if cmd == "enter" {
+                if app.tabs.len() > 0 {
+                    gui.pty_write_text(app.tabs[app.active].slot, "\r")
+                }
+            }
+            if cmd == "feed" && words.len() >= 2 {
+                var payload = ""
+                var k = 1
+                while k < words.len() {
+                    if k > 1 {
+                        payload = payload + " "
+                    }
+                    payload = payload + words[k]
+                    k = k + 1
+                }
+                vt.tm_feed(app.tabs[app.active].term, payload.replace("<E>", vt.tm_escape()))
+            }
+            if cmd == "cmd" && words.len() >= 2 {
+                app = run_command(app, words[1])
+            }
+            if cmd == "wait" && words.len() >= 2 {
+                var ms = to_int(words[1])
+                while ms > 0 {
+                    gui.pump()
+                    gui.sleep(10)
+                    app = poll(app)
+                    ms = ms - 10
+                }
+            }
+            if cmd == "shot" && words.len() >= 2 {
+                gui.begin()
+                draw(app)
+                gui.present()
+                gui.save_png(words[1])
+            }
+            if cmd == "assert_has" && words.len() >= 2 {
+                println(truth(active_text(app).contains(words[1])) + " " + trimmed)
+            }
+            if cmd == "assert_tabs" && words.len() >= 2 {
+                println(truth(app.tabs.len() == to_int(words[1])) + " " + trimmed)
+            }
+            if cmd == "assert_cell" && words.len() >= 4 {
+                let cell = vt.tm_cell_at(app.tabs[app.active].term, to_int(words[1]), to_int(words[2]))
+                println(truth(cell.ch == words[3]) + " " + trimmed)
+            }
+            if cmd == "assert_colour" && words.len() >= 5 {
+                let cell = vt.tm_cell_at(app.tabs[app.active].term, to_int(words[1]), to_int(words[2]))
+                println(truth(cell.fg == to_int(words[3])) + " " + trimmed)
+            }
+            if cmd == "assert_title" && words.len() >= 2 {
+                println(truth(app.tabs[app.active].term.strs[0].contains(words[1])) + " " + trimmed)
+            }
+        }
+    }
+    return app
+}
+
+fn main() {
+    if !gui.open("Nova Terminal", 1120, 720) {
+        println("nova-term: could not open a window")
+        return
+    }
+    let theme = gui.dark()
+    var app = App {
+        tabs: [],
+        active: 0,
+        theme: theme,
+        theme_name: "Dark+",
+        palette: vt.tm_palette_dark(),
+        size: 13,
+        overlay: "",
+        field: "",
+        message: "",
+        hits: [],
+        hit_at: 0,
+        quit: false,
+    }
+    app = spawn(app)
+    let script = gui.env("NOVA_TERM_SCRIPT")
+    let shot = gui.env("NOVA_TERM_SHOT")
+    if script.len() > 0 {
+        app = run_script(app, script)
+        app.quit = true
+    }
+    var dirty = true
+    while !app.quit {
+        app = sync_size(app)
+        app = poll(app)
+        if dirty {
+            gui.begin()
+            draw(app)
+            gui.present()
+            dirty = false
+            if shot.len() > 0 {
+                gui.save_png(shot)
+                app.quit = true
+            }
+        }
+        let event = gui.next_event()
+        if event.kind == gui.event_none() {
+            gui.pump()
+            gui.sleep(8)
+            dirty = true
+        } else if event.kind == gui.event_close() {
+            app.quit = true
+        } else if event.kind == gui.event_key() {
+            app = key(app, event.code, event.mods)
+            dirty = true
+        } else if event.kind == gui.event_mouse_down() {
+            app = click(app, event.x, event.y)
+            dirty = true
+        } else if event.kind == gui.event_scroll() {
+            if app.tabs.len() > 0 && app.overlay.len() == 0 {
+                app.tabs[app.active].term = vt.tm_scroll(app.tabs[app.active].term, event.delta * 3)
+            }
+            dirty = true
+        } else if event.kind == gui.event_resize() || event.kind == gui.event_repaint() {
+            dirty = true
+        }
+    }
+    var i = 0
+    while i < app.tabs.len() {
+        gui.pty_close(app.tabs[i].slot)
+        i = i + 1
+    }
+    gui.close()
+}

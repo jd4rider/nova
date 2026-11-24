@@ -4278,6 +4278,19 @@ impl Checker {
                     );
                     self.finish(te, expected)
                 }
+                "chars" => {
+                    self.require_args(method, args, 0, span);
+                    let te = TExpr::new(
+                        TExprKind::Method {
+                            receiver: Box::new(recv),
+                            method: BuiltinMethod::StringChars,
+                            args: Vec::new(),
+                        },
+                        Type::List(Box::new(Type::String)),
+                        span,
+                    );
+                    self.finish(te, expected)
+                }
                 "graphemes" => {
                     self.require_args(method, args, 0, span);
                     let te = TExpr::new(

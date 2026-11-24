@@ -81,6 +81,15 @@ extern "C" fn nova_term_poll() -> String
 extern "C" fn nova_term_running() -> Int
 extern "C" fn nova_term_clear()
 extern "C" fn nova_term_send(code: Int) -> Int
+extern "C" fn nova_pty_open(slot: Int, command: String, cwd: String, cols: Int, rows: Int) -> Int
+extern "C" fn nova_pty_poll(slot: Int) -> String
+extern "C" fn nova_pty_running(slot: Int) -> Int
+extern "C" fn nova_pty_write(slot: Int, code: Int) -> Int
+extern "C" fn nova_pty_write_text(slot: Int, text: String) -> Int
+extern "C" fn nova_pty_resize(slot: Int, cols: Int, rows: Int)
+extern "C" fn nova_pty_clear(slot: Int)
+extern "C" fn nova_pty_status(slot: Int) -> Int
+extern "C" fn nova_pty_close(slot: Int)
 extern "C" fn nova_fs_cwd() -> String
 extern "C" fn nova_env(name: String) -> String
 extern "C" fn nova_process_run(command: String, cwd: String) -> String
@@ -532,6 +541,49 @@ fn term_clear() {
 // Sends one key byte to the pty: 13 Enter, 127 Backspace, ASCII otherwise.
 fn term_send(code: Int) -> Bool {
     return nova_term_send(code) == 1
+}
+
+// ---------- terminal pool ----------
+
+// Up to eight pty slots can run at once, each a real terminal with its own
+// window size. Each app decides what to do with them: a shell, a build task or
+// a full-screen program.
+fn pty_open(slot: Int, command: String, directory: String, cols: Int, rows: Int) -> Bool {
+    return nova_pty_open(slot, command, directory, cols, rows) == 1
+}
+
+fn pty_poll(slot: Int) -> String {
+    return nova_pty_poll(slot)
+}
+
+fn pty_running(slot: Int) -> Bool {
+    return nova_pty_running(slot) == 1
+}
+
+fn pty_write(slot: Int, code: Int) -> Bool {
+    return nova_pty_write(slot, code) == 1
+}
+
+fn pty_write_text(slot: Int, text: String) -> Bool {
+    return nova_pty_write_text(slot, text) == 1
+}
+
+// Tells the child the window changed size, so full-screen programs reflow.
+fn pty_resize(slot: Int, cols: Int, rows: Int) {
+    nova_pty_resize(slot, cols, rows)
+}
+
+fn pty_clear(slot: Int) {
+    nova_pty_clear(slot)
+}
+
+// Exit code of the slot's last process, or -1 while it is still running.
+fn pty_status(slot: Int) -> Int {
+    return nova_pty_status(slot)
+}
+
+fn pty_close(slot: Int) {
+    nova_pty_close(slot)
 }
 
 fn env(name: String) -> String {

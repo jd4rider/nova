@@ -1,0 +1,4 @@
+// second fixture: cross-file references
+fn demo_user() {
+    demo()
+}
