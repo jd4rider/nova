@@ -542,7 +542,7 @@ static CGColorRef nova_gui_color(int64_t rgb) {
         (CGFloat)(rgb & 0xFF) / 255.0,
         1.0,
     };
-    CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
     CGColorRef color = CGColorCreate(space, components);
     CGColorSpaceRelease(space);
     return color;
@@ -574,9 +574,13 @@ static CTLineRef nova_gui_make_line(nova_str text, int64_t size, int64_t mono) {
                                                  kCFStringEncodingUTF8, false);
     if (!string) return NULL;
     CTFontRef font = nova_gui_font(size, mono);
-    const void *keys[1] = { kCTFontAttributeName };
-    const void *values[1] = { font };
-    CFDictionaryRef attributes = CFDictionaryCreate(NULL, keys, values, 1,
+    /* Without this flag CTLineDraw ignores the fill colour set on the context
+     * and paints the line black, which makes every label invisible on a dark
+     * background. The line is cached per (text, size, font), so the colour has
+     * to come from the context at draw time rather than from an attribute. */
+    const void *keys[2] = { kCTFontAttributeName, kCTForegroundColorFromContextAttributeName };
+    const void *values[2] = { font, kCFBooleanTrue };
+    CFDictionaryRef attributes = CFDictionaryCreate(NULL, keys, values, 2,
                                                     &kCFTypeDictionaryKeyCallBacks,
                                                     &kCFTypeDictionaryValueCallBacks);
     CFAttributedStringRef attributed = CFAttributedStringCreate(NULL, string, attributes);
@@ -814,7 +818,6 @@ void nova_gui_text(int64_t x, int64_t y, nova_str text, int64_t size, int64_t rg
     CGContextSetFillColorWithColor(nova_ctx, color);
     /* Subpixel/light smoothing blurs light glyphs on a dark background.
      * Grayscale antialiasing keeps small text crisp instead of milky. */
-    CGContextSetShouldSmoothFonts(nova_ctx, false);
     CGContextSetTextPosition(nova_ctx, (CGFloat)x, (CGFloat)y + CTFontGetAscent(font));
     CTLineDraw(line, nova_ctx);
     CGColorRelease(color);
