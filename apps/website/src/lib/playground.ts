@@ -39,7 +39,6 @@ interface Diagnostic {
 interface CheckResponse {
   ok: boolean
   diagnostics: Diagnostic[]
-  formatted: string
   stats: {
     lines: number
     bytes: number
@@ -49,6 +48,16 @@ interface CheckResponse {
     warnings: number
   }
   version: string
+}
+
+interface NovaFmtExports {
+  memory: WebAssembly.Memory
+  nova_input_ptr: () => number | bigint
+  nova_input_set: (len: number | bigint) => void
+  nova_output_ptr: () => number | bigint
+  nova_output_len: () => number | bigint
+  nova_reset_output: () => void
+  main: () => void
 }
 
 interface NovaWasmExports {
@@ -230,6 +239,7 @@ export function mountPlayground(): void {
 
   const base = (root.dataset.base ?? '/').replace(/\/?$/, '/')
   const wasmUrl = `${base}playground/nova.wasm`
+  const fmtUrl = `${base}playground/nova-fmt.wasm`
   const initial = readInitialSource(examples)
   const tabs = Array.from(
     document.querySelectorAll<HTMLButtonElement>('[data-example]')
@@ -246,6 +256,7 @@ export function mountPlayground(): void {
 
   let wasm: NovaWasmExports | null = null
   let lastResult: CheckResponse | null = null
+  let formatter: NovaFmtExports | null = null
   let checkSequence = 0
   let debounce: number | undefined
 
@@ -276,6 +287,42 @@ export function mountPlayground(): void {
   function setStatus(message: string, kind: 'loading' | 'ready' | 'error' = 'loading') {
     status.textContent = message
     status.dataset.kind = kind
+  }
+
+  // The formatter is the Nova formatter compiled to wasm: the playground hands
+  // it the buffer, and it returns text through its output buffer.
+  function formatSource(source: string): string {
+    if (!formatter) throw new Error('The Nova formatter is not ready')
+    const bytes = new TextEncoder().encode(source)
+    if (bytes.length > 1024 * 1024) throw new Error('Source is too large to format')
+    const ptr = Number(formatter.nova_input_ptr())
+    new Uint8Array(formatter.memory.buffer, ptr, bytes.length).set(bytes)
+    formatter.nova_input_set(BigInt(bytes.length))
+    formatter.nova_reset_output()
+    formatter.main()
+    const start = Number(formatter.nova_output_ptr())
+    const length = Number(formatter.nova_output_len())
+    return new TextDecoder().decode(new Uint8Array(formatter.memory.buffer, start, length))
+  }
+
+  async function loadFormatter(url: string): Promise<NovaFmtExports> {
+    const response = await fetch(url)
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText} for ${url}`)
+    const bytes = await response.arrayBuffer()
+    const { instance } = await WebAssembly.instantiate(bytes, {})
+    const exports = instance.exports as unknown as NovaFmtExports
+    if (
+      !(exports.memory instanceof WebAssembly.Memory) ||
+      typeof exports.main !== 'function' ||
+      typeof exports.nova_input_ptr !== 'function' ||
+      typeof exports.nova_input_set !== 'function' ||
+      typeof exports.nova_output_ptr !== 'function' ||
+      typeof exports.nova_output_len !== 'function' ||
+      typeof exports.nova_reset_output !== 'function'
+    ) {
+      throw new Error('The formatter WASM module has an unexpected ABI')
+    }
+    return exports
   }
 
   function setSource(source: string): void {
@@ -456,7 +503,7 @@ export function mountPlayground(): void {
   }
 
   async function loadWasm(): Promise<void> {
-    setStatus('Loading Rust front end…')
+    setStatus('Loading the Nova front end…')
     runButton.disabled = true
     formatButton.disabled = true
     shareButton.disabled = true
@@ -474,8 +521,9 @@ export function mountPlayground(): void {
     ) {
       throw new Error('The WASM module has an unexpected ABI')
     }
+    formatter = await loadFormatter(fmtUrl)
     wasm = candidate
-    setStatus('Rust front end ready', 'ready')
+    setStatus('Nova front end ready', 'ready')
     runButton.disabled = false
     void check()
   }
@@ -522,7 +570,7 @@ export function mountPlayground(): void {
   runButton.addEventListener('click', () => void check())
   formatButton.addEventListener('click', () => {
     if (!lastResult) return
-    setSource(lastResult.formatted)
+    setSource(formatSource(view.state.doc.toString()))
     void check()
   })
   shareButton.addEventListener('click', () => void share())

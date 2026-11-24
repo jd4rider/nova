@@ -1,0 +1,12 @@
+import "../../../libraries/nova-fmt/src/fmt.nova"
+
+// The browser playground cannot run the formatter as a process, so it builds
+// this program to wasm and hands the source in through the runtime input
+// buffer. The formatted text comes back through the output buffer.
+extern "C" fn nova_input_str() -> String
+extern "C" fn nova_output_write(text: String)
+
+fn main() {
+    let source = nova_input_str()
+    nova_output_write(fmt_source(source))
+}

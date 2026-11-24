@@ -199,6 +199,172 @@ int nova_string_eq_impl(nova_str *a, nova_str *b) {
     return 1;
 }
 
+/* ------------------------------------------------------------------ */
+/* String helpers needed by the formatter and other text tooling      */
+/* ------------------------------------------------------------------ */
+
+static nova_str nova_wcopy(const char *data, long long len) {
+    char *buffer = (char *)nova_alloc(len + 1);
+    if (len > 0) memcpy(buffer, data, (usize)len);
+    buffer[len] = '\0';
+    nova_str out;
+    out.ptr = buffer;
+    out.len = len;
+    return out;
+}
+
+static int nova_wspace(unsigned char c) {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+}
+
+static long long nova_wstep(const char *text, long long len, long long at) {
+    unsigned char c = (unsigned char)text[at];
+    long long width = 1;
+    if (c >= 0xF0) {
+        width = 4;
+    } else if (c >= 0xE0) {
+        width = 3;
+    } else if (c >= 0xC0) {
+        width = 2;
+    }
+    if (at + width > len) width = 1;
+    return width;
+}
+
+void nova_string_chars_impl(nova_str *value, nova_list *result) {
+    result->data = 0;
+    result->len = 0;
+    result->cap = 0;
+    if (!value->ptr || value->len <= 0) return;
+    long long i = 0;
+    while (i < value->len) {
+        long long width = nova_wstep(value->ptr, value->len, i);
+        nova_str piece = nova_wcopy(value->ptr + i, width);
+        nova_list_push(result, &piece, (long long)sizeof(nova_str));
+        i += width;
+    }
+}
+
+void nova_string_trim_impl(nova_str *out, nova_str *value) {
+    long long start = 0;
+    long long end = value->len;
+    if (!value->ptr || value->len <= 0) {
+        *out = nova_wcopy("", 0);
+        return;
+    }
+    while (start < end && nova_wspace((unsigned char)value->ptr[start])) start++;
+    while (end > start && nova_wspace((unsigned char)value->ptr[end - 1])) end--;
+    *out = nova_wcopy(value->ptr + start, end - start);
+}
+
+void nova_string_trim_start_impl(nova_str *out, nova_str *value) {
+    long long start = 0;
+    if (!value->ptr || value->len <= 0) {
+        *out = nova_wcopy("", 0);
+        return;
+    }
+    while (start < value->len && nova_wspace((unsigned char)value->ptr[start])) start++;
+    *out = nova_wcopy(value->ptr + start, value->len - start);
+}
+
+void nova_string_trim_end_impl(nova_str *out, nova_str *value) {
+    long long end = value->len;
+    if (!value->ptr || value->len <= 0) {
+        *out = nova_wcopy("", 0);
+        return;
+    }
+    while (end > 0 && nova_wspace((unsigned char)value->ptr[end - 1])) end--;
+    *out = nova_wcopy(value->ptr, end);
+}
+
+void nova_string_split_impl(nova_str *value, nova_str *separator, nova_list *result) {
+    result->data = 0;
+    result->len = 0;
+    result->cap = 0;
+    if (!value->ptr) {
+        nova_str empty = nova_wcopy("", 0);
+        nova_list_push(result, &empty, (long long)sizeof(nova_str));
+        return;
+    }
+    if (separator->len <= 0) {
+        nova_str whole = nova_wcopy(value->ptr, value->len);
+        nova_list_push(result, &whole, (long long)sizeof(nova_str));
+        return;
+    }
+    long long start = 0;
+    long long i = 0;
+    while (i + separator->len <= value->len) {
+        int matched = 1;
+        for (long long k = 0; k < separator->len; k++) {
+            if (value->ptr[i + k] != separator->ptr[k]) {
+                matched = 0;
+                break;
+            }
+        }
+        if (matched) {
+            nova_str piece = nova_wcopy(value->ptr + start, i - start);
+            nova_list_push(result, &piece, (long long)sizeof(nova_str));
+            i += separator->len;
+            start = i;
+        } else {
+            i++;
+        }
+    }
+    nova_str tail = nova_wcopy(value->ptr + start, value->len - start);
+    nova_list_push(result, &tail, (long long)sizeof(nova_str));
+}
+
+void nova_string_join_impl(nova_str *out, nova_list *list, nova_str *separator) {
+    if (!list || list->len <= 0 || !list->data) {
+        *out = nova_wcopy("", 0);
+        return;
+    }
+    nova_str *items = (nova_str *)list->data;
+    long long total = separator->len * (list->len - 1);
+    for (long long i = 0; i < list->len; i++) total += items[i].len;
+    char *buffer = (char *)nova_alloc(total + 1);
+    long long at = 0;
+    for (long long i = 0; i < list->len; i++) {
+        if (i > 0 && separator->len > 0) {
+            memcpy(buffer + at, separator->ptr, (usize)separator->len);
+            at += separator->len;
+        }
+        if (items[i].len > 0 && items[i].ptr) {
+            memcpy(buffer + at, items[i].ptr, (usize)items[i].len);
+            at += items[i].len;
+        }
+    }
+    buffer[at] = '\0';
+    out->ptr = buffer;
+    out->len = at;
+}
+
+/* ------------------------------------------------------------------ */
+/* Input buffer                                                       */
+/* ------------------------------------------------------------------ */
+
+static char nova_input[1024 * 1024];
+static long long nova_input_len = 0;
+
+void *nova_input_ptr(void) {
+    return nova_input;
+}
+
+void nova_input_set(long long len) {
+    if (len < 0) len = 0;
+    if (len > (long long)sizeof(nova_input)) len = (long long)sizeof(nova_input);
+    nova_input_len = len;
+}
+
+void nova_output_write_impl(nova_str *value) {
+    nova_emit(value->ptr, value->len);
+}
+
+void nova_input_str_impl(nova_str *out) {
+    out->ptr = nova_input;
+    out->len = nova_input_len;
+}
+
 long long nova_output_ptr(void) {
     return (long long)(usize)nova_out;
 }

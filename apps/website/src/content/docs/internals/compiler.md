@@ -13,7 +13,6 @@ bootstrap/
   nova-sema/          resolution, local inference, typed IR
   nova-codegen-llvm/  textual LLVM IR, Clang invocation, linking
   nova-runtime/       C ABI and runtime helpers
-  nova-fmt/           conservative formatter
   nova-pkg/           manifest and lockfile
   nova-lsp/           stdio language server
   nova-wasm/          browser front end for the playground

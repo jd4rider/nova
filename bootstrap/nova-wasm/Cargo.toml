@@ -10,7 +10,6 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 nova-diag = { workspace = true }
-nova-fmt = { workspace = true }
 nova-parser = { workspace = true }
 nova-sema = { workspace = true }
 serde = { workspace = true }

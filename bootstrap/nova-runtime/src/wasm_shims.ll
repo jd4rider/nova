@@ -50,3 +50,88 @@ entry:
   %result = call i32 @nova_string_eq_impl(ptr %pa, ptr %pb)
   ret i32 %result
 }
+
+declare void @nova_string_chars_impl(ptr, ptr)
+declare void @nova_string_split_impl(ptr, ptr, ptr)
+declare void @nova_string_join_impl(ptr, ptr, ptr)
+declare void @nova_string_trim_impl(ptr, ptr)
+declare void @nova_string_trim_start_impl(ptr, ptr)
+declare void @nova_string_trim_end_impl(ptr, ptr)
+
+define void @nova_string_chars(%nova.string %s, ptr %list) {
+entry:
+  %slot = alloca %nova.string
+  store %nova.string %s, ptr %slot
+  call void @nova_string_chars_impl(ptr %slot, ptr %list)
+  ret void
+}
+
+define void @nova_string_split(%nova.string %s, %nova.string %sep, ptr %list) {
+entry:
+  %pa = alloca %nova.string
+  %pb = alloca %nova.string
+  store %nova.string %s, ptr %pa
+  store %nova.string %sep, ptr %pb
+  call void @nova_string_split_impl(ptr %pa, ptr %pb, ptr %list)
+  ret void
+}
+
+define %nova.string @nova_string_join(ptr %list, %nova.string %sep) {
+entry:
+  %out = alloca %nova.string
+  %slot = alloca %nova.string
+  store %nova.string %sep, ptr %slot
+  call void @nova_string_join_impl(ptr %out, ptr %list, ptr %slot)
+  %result = load %nova.string, ptr %out
+  ret %nova.string %result
+}
+
+define %nova.string @nova_string_trim(%nova.string %s) {
+entry:
+  %out = alloca %nova.string
+  %slot = alloca %nova.string
+  store %nova.string %s, ptr %slot
+  call void @nova_string_trim_impl(ptr %out, ptr %slot)
+  %result = load %nova.string, ptr %out
+  ret %nova.string %result
+}
+
+define %nova.string @nova_string_trim_start(%nova.string %s) {
+entry:
+  %out = alloca %nova.string
+  %slot = alloca %nova.string
+  store %nova.string %s, ptr %slot
+  call void @nova_string_trim_start_impl(ptr %out, ptr %slot)
+  %result = load %nova.string, ptr %out
+  ret %nova.string %result
+}
+
+define %nova.string @nova_string_trim_end(%nova.string %s) {
+entry:
+  %out = alloca %nova.string
+  %slot = alloca %nova.string
+  store %nova.string %s, ptr %slot
+  call void @nova_string_trim_end_impl(ptr %out, ptr %slot)
+  %result = load %nova.string, ptr %out
+  ret %nova.string %result
+}
+
+declare void @nova_input_str_impl(ptr)
+
+define %nova.string @nova_input_str() {
+entry:
+  %out = alloca %nova.string
+  call void @nova_input_str_impl(ptr %out)
+  %result = load %nova.string, ptr %out
+  ret %nova.string %result
+}
+
+declare void @nova_output_write_impl(ptr)
+
+define void @nova_output_write(%nova.string %s) {
+entry:
+  %slot = alloca %nova.string
+  store %nova.string %s, ptr %slot
+  call void @nova_output_write_impl(ptr %slot)
+  ret void
+}

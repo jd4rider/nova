@@ -7,7 +7,6 @@ members = [
     "bootstrap/nova-sema",
     "bootstrap/nova-runtime",
     "bootstrap/nova-codegen-llvm",
-    "bootstrap/nova-fmt",
     "bootstrap/nova-pkg",
     "bootstrap/nova-lsp",
     "bootstrap/nova-wasm",
@@ -28,7 +27,6 @@ nova-parser = { path = "bootstrap/nova-parser" }
 nova-sema = { path = "bootstrap/nova-sema" }
 nova-runtime = { path = "bootstrap/nova-runtime" }
 nova-codegen-llvm = { path = "bootstrap/nova-codegen-llvm" }
-nova-fmt = { path = "bootstrap/nova-fmt" }
 nova-pkg = { path = "bootstrap/nova-pkg" }
 nova-lsp = { path = "bootstrap/nova-lsp" }
 nova-wasm = { path = "bootstrap/nova-wasm" }

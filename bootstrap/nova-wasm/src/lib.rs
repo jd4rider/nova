@@ -51,7 +51,6 @@ struct Stats {
 struct CheckResponse {
     ok: bool,
     diagnostics: Vec<DiagnosticView>,
-    formatted: String,
     stats: Stats,
     version: &'static str,
 }
@@ -120,7 +119,6 @@ fn check_source(source: &str) -> CheckResponse {
             .iter()
             .map(|diagnostic| DiagnosticView::from_diagnostic(diagnostic, &index, source))
             .collect(),
-        formatted: nova_fmt::format_source(source),
         stats: Stats {
             lines: source.lines().count(),
             bytes: source.len(),
@@ -181,7 +179,7 @@ pub extern "C" fn nova_check(ptr: *const u8, len: usize) -> *const u8 {
     let source = String::from_utf8_lossy(input);
     let response = check_source(&source);
     let json = serde_json::to_vec(&response).unwrap_or_else(|_| {
-        br#"{"ok":false,"diagnostics":[],"formatted":"","stats":{"lines":0,"bytes":0,"functions":0,"structs":0,"errors":1,"warnings":0},"version":"error"}"#.to_vec()
+        br#"{"ok":false,"diagnostics":[],"stats":{"lines":0,"bytes":0,"functions":0,"structs":0,"errors":1,"warnings":0},"version":"error"}"#.to_vec()
     });
     // The result stays alive until the next check so JavaScript can copy it
     // out of linear memory. The mutex keeps the exported ABI sound even if the

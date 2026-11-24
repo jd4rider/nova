@@ -1,0 +1,17 @@
+import std.io { println }
+
+struct User {
+    name: String
+}
+
+fn greet(user: User) -> String {
+    let text = "hi"
+    if true {
+        return text
+    }
+    return text
+}
+
+fn main() {
+    println(greet(User { name: "Ada" }))
+}

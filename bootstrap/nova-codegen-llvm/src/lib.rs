@@ -183,7 +183,15 @@ pub fn compile(
                     && (line.contains("@nova_print_str(")
                         || line.contains("@nova_string_concat(")
                         || line.contains("@nova_string_eq(")
-                        || line.contains("@nova_i64_to_string(")))
+                        || line.contains("@nova_i64_to_string(")
+                        || line.contains("@nova_string_chars(")
+                        || line.contains("@nova_string_split(")
+                        || line.contains("@nova_string_join(")
+                        || line.contains("@nova_string_trim(")
+                        || line.contains("@nova_string_trim_start(")
+                        || line.contains("@nova_string_trim_end(")
+                        || line.contains("@nova_input_str(")
+                        || line.contains("@nova_output_write(")))
             })
             .collect::<Vec<_>>()
             .join("\n");
@@ -211,6 +219,8 @@ pub fn compile(
             "--export=nova_reset_output",
             "--export=nova_state_get",
             "--export=nova_state_set",
+            "--export=nova_input_ptr",
+            "--export=nova_input_set",
             "--export-memory",
         ])
         .arg(&runtime_o)

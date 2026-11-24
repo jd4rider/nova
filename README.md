@@ -151,7 +151,6 @@ bootstrap/
   nova-lsp            stdio language server
   nova-wasm           browser front-end ABI
   nova-pkg            manifests, projects and lockfiles
-  nova-fmt            conservative formatter
 ```
 
 Nova emits textual LLVM IR and invokes the host `clang`, so no system LLVM development package is required. See [ADR 0003](docs/adr/0003-llvm-backend.md).

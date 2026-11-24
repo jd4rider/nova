@@ -1,0 +1,123 @@
+// Nova parser, in Nova: the start of the parser port.
+//
+// This covers the item and statement structure of a file — imports, structs,
+// enums, impls, functions, their parameters and the nesting of statements in a
+// body. The expression grammar is still handled by the bootstrap parser, and is
+// the next piece to move here.
+
+import "../../nova-lexer/src/lexer.nova"
+
+struct PItem {
+    kind: String,
+    name: String,
+    params: Int,
+    stmts: Int,
+    depth: Int,
+}
+
+fn p_item(kind: String, name: String, params: Int, stmts: Int, depth: Int) -> PItem {
+    return PItem {
+        kind: kind,
+        name: name,
+        params: params,
+        stmts: stmts,
+        depth: depth,
+    }
+}
+
+fn p_is_item_word(word: String) -> Bool {
+    if word == "fn" || word == "struct" || word == "enum" || word == "impl" {
+        return true
+    }
+    return word == "import"
+}
+
+fn p_next_word(tokens: List<Token>, at: Int) -> String {
+    var i = at
+    while i < tokens.len() {
+        let token = tokens[i]
+        if token.kind == lx_ident() {
+            return token.text
+        }
+        if token.text == "{" || token.text == "}" || token.text == ";" {
+            return ""
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+fn p_is_stmt_word(word: String) -> Bool {
+    if word == "let" || word == "if" || word == "while" || word == "for" {
+        return true
+    }
+    return word == "return" || word == "break"
+}
+
+fn p_parse(source: String) -> List<PItem> {
+    let tokens = lx_lex(source)
+    var items: List<PItem> = []
+    var i = 0
+    while i < tokens.len() {
+        let token = tokens[i]
+        if token.kind == lx_keyword() && p_is_item_word(token.text) {
+            let kind = token.text
+            let name = p_next_word(tokens, i + 1)
+            var params = 0
+            var body_start = i + 1
+            var parens = 0
+            var commas = 0
+            var saw_arg = false
+            var found = false
+            while body_start < tokens.len() && !found {
+                let part = tokens[body_start]
+                if part.text == "{" {
+                    found = true
+                } else if part.text == "(" {
+                    parens = parens + 1
+                } else if part.text == ")" {
+                    parens = parens - 1
+                } else if parens == 1 && part.text == "," {
+                    commas = commas + 1
+                } else if parens == 1 {
+                    if part.text != "(" {
+                        saw_arg = true
+                    }
+                }
+                if !found {
+                    body_start = body_start + 1
+                }
+            }
+            if saw_arg {
+                params = commas + 1
+            }
+            var stmts = 0
+            var depth = 0
+            var level = 0
+            var closed = false
+            var k = body_start
+            while k < tokens.len() && !closed {
+                let part = tokens[k]
+                if part.text == "{" {
+                    level = level + 1
+                    if level > depth {
+                        depth = level
+                    }
+                } else if part.text == "}" {
+                    level = level - 1
+                    if level <= 0 {
+                        closed = true
+                    }
+                } else if kind == "fn" && level == 1 && p_is_stmt_word(part.text) {
+                    stmts = stmts + 1
+                }
+                k = k + 1
+            }
+            items.push(p_item(kind, name, params, stmts, depth))
+            i = k
+        } else {
+            i = i + 1
+        }
+    }
+    return items
+}

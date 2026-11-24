@@ -12,7 +12,7 @@ It is a **check and format** environment, not an interpreter. LLVM emission, Cla
 - `nova-lexer` tokenisation and diagnostics
 - `nova-parser` syntax and recovery diagnostics
 - `nova-sema` type checking, name resolution and exhaustiveness checks
-- `nova-fmt` formatting
+- `nova-fmt` formatting (the Nova formatter compiled to wasm)
 - UTF-16 line/character positions for the editor
 - The same source examples and grammar as the rest of the project
 

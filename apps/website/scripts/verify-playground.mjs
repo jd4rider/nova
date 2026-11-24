@@ -49,8 +49,28 @@ if (!valid.ok || valid.stats.functions !== 1) {
   console.error('Valid Nova source did not pass the wasm front end:', valid)
   process.exit(1)
 }
-if (!valid.formatted.includes('let answer')) {
-  console.error('Formatter output missing from wasm response:', valid)
+const fmtBytes = readFileSync(resolve(here, '../public/playground/nova-fmt.wasm'))
+const fmtModule = new WebAssembly.Module(fmtBytes)
+if (WebAssembly.Module.imports(fmtModule).length) {
+  console.error('Formatter wasm has unexpected imports')
+  process.exit(1)
+}
+const formatter = (await WebAssembly.instantiate(fmtModule, {})).exports
+const fmtInput = new TextEncoder().encode(validSource)
+const fmtPtr = Number(formatter.nova_input_ptr())
+new Uint8Array(formatter.memory.buffer, fmtPtr, fmtInput.length).set(fmtInput)
+formatter.nova_input_set(BigInt(fmtInput.length))
+formatter.nova_reset_output()
+formatter.main()
+const formatted = new TextDecoder().decode(
+  new Uint8Array(
+    formatter.memory.buffer,
+    Number(formatter.nova_output_ptr()),
+    Number(formatter.nova_output_len())
+  )
+)
+if (!formatted.includes('    let answer')) {
+  console.error('The Nova formatter produced unexpected output:', formatted)
   process.exit(1)
 }
 

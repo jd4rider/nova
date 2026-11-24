@@ -19,7 +19,7 @@ Rust one can go.
 | `nova-diag` | 334 | Diagnostic rendering, spans | Nova, phase 1 |
 | `nova-pkg` | 234 | `nova.toml`, lockfile, module graph | Nova, phase 1 |
 | `nova-wasm` | 229 | wasm32 backend | Nova, phase 5 (a backend, not a port) |
-| `nova-fmt` | 186 | Source formatter | Nova, phase 1 |
+| `nova-fmt` | 186 | Source formatter | **deleted**; Nova formatter |
 | `nova-runtime` | 98 | Thin Rust wrappers over the C runtime | Fold into the C runtime; no Rust needed |
 
 The 98 lines in `nova-runtime` are wrappers around `runtime.c` and `gui.m`;
@@ -75,7 +75,8 @@ The Nova implementations exist and are exercised by `examples/nova-tool`:
 
 | Piece | Nova file | State |
 |---|---|---|
-| Formatter | `libraries/nova-fmt/src/fmt.nova` | formats every corpus file, idempotent; `nova fmt` and the LSP run it through `nova-tool` |
+| Formatter | `libraries/nova-fmt/src/fmt.nova` | formats every corpus file, idempotent; `nova fmt`, the LSP and the wasm playground all run this implementation |
+| Parser | `libraries/nova-parser/src/parser.nova` | start of the port: items, parameters and statement nesting; expressions still in bootstrap |
 | Lexer | `libraries/nova-lexer/src/lexer.nova` | tokenizes the full 5,139-line studio file and the large-input corpus |
 | Diagnostics | `libraries/nova-diag/src/diag.nova` | renders severity, location and caret |
 | Packages (**Nova Boxes**) | `libraries/nova-boxes/src/boxes.nova` | `box.toml`, `boxes.lock`, dependency and import graphs |
@@ -95,12 +96,14 @@ at its use site, so a declaration inside a loop grew the stack on every
 iteration until it overflowed. Allocas are now collected per function and spliced
 into the entry block, which fixes large inputs for every Nova program.
 
-`nova fmt` and the LSP format through `nova-tool`, so there is one formatter
-implementation, in Nova. The `nova-fmt` crate survives only because `nova-wasm`
-(the browser playground) cannot spawn a process; removing it needs Nova wasm
-exports for a formatter entry point.
+The Rust `nova-fmt` crate is deleted. `nova fmt` and the LSP run the Nova
+formatter through `nova-tool`, and the browser playground runs it as a wasm
+module built from `examples/nova-fmt-wasm`. That needed two wasm runtime
+additions, `nova_input_ptr`/`nova_input_set` to hand source in and the existing
+output buffer to read the result back, plus value-ABI shims for `chars`, `split`,
+`join` and the trim family.
 
-Test state: `sh examples/nova-tool/tests/toolchain.sh` → **passed 95, failed 0**
+Test state: `sh examples/nova-tool/tests/toolchain.sh` → **passed 101, failed 0**
 (including formatting the studio source). No Rust crate has been deleted yet: the bootstrap
 compiler (parser, sema, codegen, CLI, LSP) is still Rust, and phases 2–4 of this
 document are what removes it.
