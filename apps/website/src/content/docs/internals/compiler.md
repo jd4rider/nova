@@ -6,7 +6,7 @@ description: From UTF-8 source to a native executable, with the actual crates an
 Nova is a Rust workspace. Compiler libraries are independent of Electron and can be used from the CLI or another editor.
 
 ```text
-crates/
+bootstrap/
   nova-diag/          spans, diagnostics, UTF-16 mapping
   nova-lexer/         tokens, comments, strings, literals
   nova-parser/        AST, recursive descent, Pratt expressions

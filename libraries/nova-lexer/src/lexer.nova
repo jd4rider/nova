@@ -102,30 +102,33 @@ fn lx_keywords() -> List<String> {
     return words
 }
 
+// Direct comparisons: the lexer runs this per character, and building a keyword
+// list per identifier is both slow and allocation-happy.
 fn lx_is_keyword(word: String) -> Bool {
-    for known in lx_keywords() {
-        if word == known {
-            return true
-        }
+    if word == "fn" || word == "let" || word == "var" || word == "if" {
+        return true
     }
-    return false
-}
-
-fn lx_in(c: String, set: String) -> Bool {
-    for known in set.chars() {
-        if c == known {
-            return true
-        }
+    if word == "else" || word == "while" || word == "for" || word == "in" {
+        return true
+    }
+    if word == "return" || word == "struct" || word == "enum" || word == "impl" {
+        return true
+    }
+    if word == "import" || word == "match" || word == "break" || word == "continue" {
+        return true
+    }
+    if word == "as" || word == "true" || word == "false" || word == "extern" {
+        return true
     }
     return false
 }
 
 fn lx_is_digit(c: String) -> Bool {
-    return lx_in(c, "0123456789")
+    return "0123456789".contains(c)
 }
 
 fn lx_is_alpha(c: String) -> Bool {
-    return lx_in(c, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_")
+    return "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_".contains(c)
 }
 
 fn lx_is_space(c: String) -> Bool {

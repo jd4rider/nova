@@ -63,10 +63,12 @@ Monaco renders text as DOM, and the lens intentionally magnifies the line plate 
 
 The right-hand panel has two tabs; toggle it with the ✦ activity-bar button, **View → Toggle AI Panel** or the command palette.
 
-- **Chat** streams from Anthropic Claude or any OpenAI-compatible endpoint (GitHub Models, OpenAI, OpenRouter, or a local Ollama/LM Studio server). Pick a preset or fill in model, base URL and key. Keys are encrypted with the OS credential store in the main process; the renderer never receives them and they are never written to the workspace. **Insert** applies a reply at the caret or replaces the selection, **Copy** copies it. The open file and any selection are attached only when you press Send with **attach** enabled. Streaming can be stopped.
-- **FreeBuff** embeds the real FreeBuff CLI in a PTY at the workspace root. FreeBuff 0.2.36 exposes an interactive TUI only (`--print` and `-p` are rejected), so Studio does not scrape its output or fabricate a headless protocol.
+- **Chat** streams from GitHub Copilot, Anthropic Claude, or any OpenAI-compatible endpoint (GitHub Models, OpenAI, OpenRouter, or a local Ollama/LM Studio server). Copilot uses the official language server's GitHub device login and needs no API key. Other providers use a preset or model, base URL and key; keys are encrypted with the OS credential store in the main process, never reach the renderer, and are never written to the workspace. **Insert** applies a reply at the caret or replaces the selection, **Copy** copies it. The open file and any selection are attached only when you press Send with **attach** enabled. Streaming can be stopped.
+- **Copilot ghost text** appears in `.nova` files while signed in. Monaco requests an inline completion at the caret; the main process forwards it to Copilot's `textDocument/inlineCompletion` and preserves Copilot's acceptance command.
+- **Edit mode** asks the model for one complete replacement file. **Review edit** opens a side-by-side Monaco diff; **Keep changes** writes the file and **Rollback** discards it. A keep refuses to overwrite an external change.
+- **FreeBuff** runs the real CLI in a PTY at the workspace root. Its screen is reconstructed with a headless terminal and exposed as an experimental scraped chat, with Raw TUI available in the bottom panel. FreeBuff 0.2.36 still has no headless or JSON mode; the scrape is labelled as such, not presented as a supported API.
 
-There is no inline ghost text, agent edit review or OAuth login. GitHub Models uses a personal access token rather than a Copilot sign-in.
+Copilot chat is Ask mode; agent tools and Copilot's multi-file approvals are not wired in. The optional `gh copilot` CLI extension can be installed from the panel and used in a terminal.
 
 ## Terminal and tasks
 

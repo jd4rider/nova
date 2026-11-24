@@ -131,7 +131,7 @@ Ada (36)
 | Public documentation and website | **Tested** | Astro check, build, link/base checks, grammar and snippet verification |
 | Unsigned desktop installers | **Published** | macOS DMG, Windows NSIS EXE, macOS CLI archive, checksums |
 | Signed/notarized releases | **Planned** | No Developer ID, notarization or Authenticode |
-| Generics, traits, closures, async, DAP | **Planned** | Explicitly rejected or absent |
+| Generics, traits, closures, async, DAP | **Partial** | Generic functions and types, static traits, `dyn Trait` dispatch, capturing closures and synchronous async; a scheduler and DAP are absent |
 
 The full matrix is in [ROADMAP.md](ROADMAP.md).
 
@@ -140,7 +140,7 @@ The full matrix is in [ROADMAP.md](ROADMAP.md).
 Nova is not an interpreter and the IDE is not the compiler. The workspace is split into focused Rust crates:
 
 ```text
-crates/
+bootstrap/
   nova-lexer          tokens, spans and diagnostics
   nova-parser         recursive descent + Pratt parser
   nova-sema           name resolution and type checking
@@ -177,13 +177,13 @@ Open a folder containing `nova.toml`. Studio provides:
 - Problems, output, tests, terminal and a built-in **Docs** tab.
 - Ripgrep search, quick open, command palette, Vim mode and persisted settings.
 - Optional visual effects: a dock-style current-line lens, typing/scroll sparkles and synthesized Web Audio SFX. All are toggleable and respect reduced motion.
-- An AI panel with the real FreeBuff CLI in a PTY and streaming chat from Claude or any OpenAI-compatible endpoint. Keys are encrypted with the OS credential store and never reach the renderer. FreeBuff 0.2.36 has no headless mode, so it is embedded rather than scraped. See [docs/freebuff.md](docs/freebuff.md).
+- An AI panel with GitHub Copilot device login, inline ghost text, Copilot/Claude/OpenAI-compatible chat, and keep/rollback diff review for proposed file edits. FreeBuff runs in a PTY and is exposed as an experimental scraped chat, with the raw TUI one click away. Keys are encrypted with the OS credential store and never reach the renderer. See [docs/freebuff.md](docs/freebuff.md).
 
 The Electron renderer has no Node access: context isolation and sandbox are on, Node integration is off, CSP is applied, navigation is blocked, paths are confined to the workspace, and preload IPC is narrow. See [ADR 0006](docs/adr/0006-electron-security.md).
 
 Prefer VS Code? The [Nova Language extension](editors/vscode/README.md) provides syntax highlighting and the same Rust LSP without the Studio shell. It is distributed as a local VSIX, not through the Marketplace.
 
-`node-pty` is optional. Without it the terminal reports **pipe mode** and FreeBuff cannot run its TUI; that limitation is shown, not hidden.
+`node-pty` is optional. Without it the terminal reports **pipe mode** and FreeBuff cannot run its TUI; that limitation is shown, not hidden. The FreeBuff chat scrape is heuristic and experimental, not a supported FreeBuff protocol.
 
 ## Website and documentation
 
@@ -208,7 +208,7 @@ The Pages workflow is [`.github/workflows/pages.yml`](.github/workflows/pages.ym
 ## Project layout
 
 ```text
-crates/            Rust compiler, CLI, formatter, LSP and package model
+bootstrap/         Rust bootstrap compiler (being replaced by Nova, phase by phase)
 editor/            Electron + React + Monaco desktop IDE
 editors/vscode/    VS Code syntax highlighting + LSP client
 apps/website/      Astro/Starlight site, docs and blog
@@ -238,8 +238,8 @@ The website checks include real compiler invocations for documentation snippets.
 
 ## Limitations
 
-- Enums support unit variants and one payload per variant, with exhaustive `match`; `String` supports `len`, `is_empty`, `to_string`, `contains`, `starts_with`, `ends_with` and `trim`. Still missing: generics, multiple payload fields per variant, traits, methods on user types, closures, async, FFI and macros.
-- No user module graph beyond standard imports.
+- `String` supports `len`, `is_empty`, `to_string`, `contains`, `starts_with`, `ends_with` and `trim`. Generic functions, structs, enums and inherent methods are monomorphised, `trait`/`impl Trait for Type` perform static conformance, `dyn Trait` boxes a copy of the value behind a per-type vtable, closures capture outer locals by value, and expression/statement macros expand by AST substitution. Still missing: real async scheduling or channels, trait impls on generic types, package resolution and a registry.
+- User modules are loaded with `import "file.nova"`, optionally aliased with `as` for qualified calls and type names. The merged namespace is flat, cycle-checked, and has no package registry.
 - Unsigned macOS/Windows installers and a macOS CLI archive are published; there are no signed/notarized builds, Intel/Linux installers, Windows CLI bundle or package registry.
 - The VS Code extension is a local, unsigned VSIX; it is not published to the VS Code Marketplace or Open VSX and has no automated Extension Host test.
 - The browser playground checks and formats only; native execution, HTTP, modules, user enums/classes and the planned library ecosystem remain unimplemented.

@@ -1,6 +1,6 @@
 # Replacing the Rust compiler with Nova
 
-The compiler is currently Rust: **17,922 lines across 16 files in 12 crates**.
+The compiler is currently Rust: **17,821 lines across 11 crates** in `bootstrap/`.
 This page is the inventory and the order in which each crate can become Nova.
 It is a bootstrapping project, not a port: the tool that compiles Nova has to be
 written in Nova, compiled by the Rust tool, and then compile itself before the
@@ -21,7 +21,6 @@ Rust one can go.
 | `nova-wasm` | 229 | wasm32 backend | Nova, phase 5 (a backend, not a port) |
 | `nova-fmt` | 186 | Source formatter | Nova, phase 1 |
 | `nova-runtime` | 98 | Thin Rust wrappers over the C runtime | Fold into the C runtime; no Rust needed |
-| `nova-stdlib` | 1 | Placeholder | Delete |
 
 The 98 lines in `nova-runtime` are wrappers around `runtime.c` and `gui.m`;
 they disappear first, since the C host already does the work.
@@ -62,6 +61,13 @@ lines and a compiler must be *exactly* as permissive as its predecessor. Phase 4
 is gated on LLVM bindings, which is the one place where C is not optional.
 Nothing here is blocked on language features — only on time and on keeping the
 test corpus green at every step.
+
+## Layout change
+
+`crates/` is gone. The remaining Rust compiler lives in `bootstrap/` and is
+built by Cargo only as the stage-0 compiler; Nova packages live in `libraries/`
+and are described by Nova Boxes. `nova-stdlib` (a 1-line placeholder) was
+deleted.
 
 ## Phase 1 status (in progress)
 

@@ -69,7 +69,7 @@ The Electron idle RSS (≈422 MiB for four processes) is a real cost and a revis
 
 ## Migration plan if the decision changes
 
-1. Keep `crates/*` independent of the desktop shell; expose only versioned CLI/LSP/DAP contracts.
+1. Keep `bootstrap/*` independent of the desktop shell; expose only versioned CLI/LSP/DAP contracts.
 2. Preserve the Monaco renderer behind a typed host bridge; Tauri can reuse it if a spike proves IME, PTY, menu and accessibility behavior.
 3. Move the selected app to `apps/studio` only when migration is real; do not churn the working `editor/` tree for layout aesthetics.
 4. Require a candidate to pass the same fixture matrix: Unicode/IME, undo, large files, diagnostics, completion, Vim, PTY resize/termination, diff review, packaging and measured startup/RSS.

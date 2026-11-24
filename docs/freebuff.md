@@ -1,38 +1,51 @@
-# FreeBuff integration and AI chat
+# FreeBuff, Copilot and AI chat
 
 ## Verified FreeBuff surface
 
 - Tested FreeBuff CLI version: **0.2.36**.
 - Documented flags: `--help`, `--version`, `--continue`, `--cwd`, `--trust-agents`.
-- The interface is an interactive terminal UI. `--print` and `-p` are rejected with `unknown option`, and piping a prompt into stdin only starts the TUI. There is **no headless or JSON mode**, so there is no response stream for Studio to read.
-- Studio probes `freebuff --help` at startup and only reports `headless` when a future version documents `--print`, `--json` or `--headless`.
+- The interface is an interactive terminal UI. `--print` and `-p` are rejected with `unknown option`, and piping a prompt into stdin only starts the TUI. There is **no headless or JSON mode**.
+- Studio still probes `freebuff --help` at startup and reports `headless` only when a future version documents `--print`, `--json` or `--headless`.
 
 ## What Nova Studio does
 
 The AI panel on the right has two tabs.
 
-- **FreeBuff** runs the real CLI in a PTY at the workspace root. Output is a genuine terminal, not a parsed or replayed transcript. Without `node-pty` the panel reports the missing TTY instead of pretending to work.
-- **Chat** streams replies from a provider the user configures:
-  - Anthropic Claude (default `claude-sonnet-4-5`).
-  - Any OpenAI-compatible endpoint, including GitHub Models (`https://models.github.ai/inference` with a GitHub token), OpenAI, OpenRouter, and a local Ollama or LM Studio server.
-- Requests run in the main process. API keys are encrypted with the OS credential store (`safeStorage`) in the app's user-data directory, are never exposed to the renderer, and are never written into the workspace.
-- When no key is stored, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` or `GITHUB_TOKEN` is used.
-- The current file and selection are attached only when the user presses Send with **attach** enabled. Nothing is uploaded automatically.
-- Streaming supports cancellation; **Insert** replaces the selection (or inserts at the caret) and **Copy** copies a reply.
+### FreeBuff
 
-## Not implemented
+- **Scraped chat** is the default. Studio runs the real `freebuff` CLI in a PTY at the workspace root, feeds its output into a headless xterm screen, filters the known TUI chrome, and exposes screen snapshots as chat messages over a small structured IPC event stream. This is a **scrape, not a FreeBuff API**. It is labelled experimental in the panel and can be replaced when FreeBuff publishes a supported protocol.
+- **Raw TUI** opens the untouched terminal in the bottom panel. Without `node-pty` the panel reports the missing TTY instead of pretending to work.
+- **New chat** restarts the FreeBuff process.
 
-- No headless FreeBuff adapter, because the CLI exposes no protocol to speak.
-- No Copilot or other OAuth login. GitHub Models is reachable with a personal access token, which is a different and documented mechanism.
-- No inline ghost text, agent edit review, usage accounting or automatic retries.
-- Chat history lives in the panel for the session only; it is not persisted.
+### Chat
+
+- **GitHub Copilot** uses the official `@github/copilot-language-server`. Sign-in is GitHub's device flow: Studio shows the one-time code, opens the verification page through the language server, and reads the authenticated user from LSP status. The server stores its own credentials; Studio never receives a Copilot token.
+- Copilot **ghost text** is enabled in `.nova` files while signed in. Monaco asks the main process for an inline completion, which forwards the current document position to `textDocument/inlineCompletion`. Copilot's acceptance telemetry command is preserved on the completion item.
+- Copilot **chat** uses the language server's `conversation/create` protocol with a work-done token. Streaming text and quota/HTTP errors from the server are shown verbatim.
+- Anthropic Claude and any OpenAI-compatible endpoint remain available. Keys are encrypted with the OS credential store (`safeStorage`), never exposed to the renderer, and never written into the workspace.
+- The optional `gh copilot` CLI extension is separate from Copilot in the editor. The panel offers **Install gh Copilot CLI** and **Check gh login**, which run real `gh` commands in a terminal.
+
+### Edit mode (keep or rollback)
+
+- Enable **edit mode** in the chat composer. The assistant is asked for one fenced block containing the complete replacement file.
+- **Review edit** opens a Monaco side-by-side diff of the current buffer against the proposal. **Keep changes** writes the file only after the diff opens; **Rollback** discards it without touching disk.
+- A keep refuses to overwrite a file that changed on disk after the proposal was made. The file and LSP document are updated after a successful keep.
+
+## Limits
+
+- The FreeBuff scrape depends on the TUI's screen layout and prompt text. It is intentionally marked experimental and may miss or include chrome after a FreeBuff change; Raw TUI is the fallback.
+- Copilot chat requires an active Copilot plan and available AI credits. Quota errors are surfaced rather than retried or hidden.
+- Copilot chat is Ask mode. Agent tools, inline-edit suggestions and Copilot's own multi-file agent approvals are not wired into Studio.
+- Chat history is session-only and is not persisted.
+- FreeBuff and Copilot run as local processes with the user's permissions. There is no automated GUI interaction test yet.
 
 ## Verification
 
-- `npm run typecheck` and `npm run build` cover the new main-process modules, preload bridge and renderer panel.
-- The streaming adapters are exercised against a local SSE server for both wire formats, including split chunks, error responses and aborts.
-- There is no automated Electron UI test yet; the panel's interaction is verified by typecheck, production build and a manual launch.
+- `npm run typecheck` and `npm run build` pass.
+- Copilot's authenticated language server was probed directly: it returned real Nova inline completions for `prin` (`print("The total is: …")`) and reported the signed-in user.
+- Copilot chat's request schema was exercised; the account's exhausted-credit error was returned by `conversation/create` and is surfaced verbatim.
+- FreeBuff was driven through a real PTY and its screen reconstructed with `@xterm/headless`. The current adapter is heuristic, as described above.
 
 ## Security notes
 
-FreeBuff runs as a local process with the user's permissions. Studio does not automate authentication or place credentials in workspace files. Chat requests are made by the main process to the endpoint the user configures; the renderer makes no network requests and the CSP still blocks `connect-src` beyond localhost. Treat repository text and model output as untrusted data.
+Copilot credentials stay with the official language server, not in Studio's settings or the workspace. FreeBuff runs as a local process with the user's permissions. Chat requests from Anthropic/OpenAI-compatible providers are made by the main process; the renderer makes no AI network requests and the CSP still blocks `connect-src` beyond localhost. Treat repository text and model output as untrusted.
