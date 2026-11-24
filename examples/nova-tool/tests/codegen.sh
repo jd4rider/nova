@@ -62,6 +62,24 @@ else
     no "mutable binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-flow.nova" "$tool")
+echo "$out" | grep -q "icmp slt i64" && ok || no "comparison lowering"
+echo "$out" | grep -q "br i1" && ok || no "conditional branch"
+printf '%s\n' "$out" > "$tmp/flow.ll"
+if clang -x ir "$tmp/flow.ll" -o "$tmp/flow" > "$tmp/flow-clang.log" 2>&1; then
+    ok
+else
+    no "clang rejects control-flow IR"
+    cat "$tmp/flow-clang.log"
+fi
+if [ -x "$tmp/flow" ]; then
+    "$tmp/flow"
+    code=$?
+    [ "$code" -eq 17 ] && ok || no "control-flow result (got $code, expected 17)"
+else
+    no "control-flow binary missing"
+fi
+
 printf 'fn main() -> Int {\n    return "x"\n}\n' > "$tmp/bad.nova"
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$tmp/bad.nova" "$tool")
 echo "$out" | grep -q "^error:" && ok || no "unsupported expression is reported"

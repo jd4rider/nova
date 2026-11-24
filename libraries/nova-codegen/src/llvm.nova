@@ -36,6 +36,7 @@ struct CgState {
 struct CgVal {
     state: CgState,
     value: String,
+    ty: String,
 }
 
 struct CgResult {
@@ -125,7 +126,17 @@ fn cg_number(text: String) -> String {
 }
 
 fn cg_val(state: CgState, value: String) -> CgVal {
-    return CgVal { state: state, value: value }
+    return CgVal { state: state, value: value, ty: "i64" }
+}
+
+fn cg_val_typed(state: CgState, value: String, ty: String) -> CgVal {
+    return CgVal { state: state, value: value, ty: ty }
+}
+
+fn cg_label(state: CgState) -> (CgState, String) {
+    let next = state.temps + 1
+    let name = "L" + state.temps.to_string()
+    return (cg_state(state, state.lines, next, state.slots, state.locals, state.terminated, state.error), name)
 }
 
 fn cg_compile(source: String) -> CgResult {
@@ -240,8 +251,100 @@ fn cg_block(ast: Ast, state: CgState, node: Int) -> CgState {
     return work
 }
 
+fn cg_if(ast: Ast, state: CgState, node: Int) -> CgState {
+    let item = ast.nodes[node]
+    let cond = cg_expr2(ast, state, a_child(ast, node, 0))
+    if cond.state.error.len() > 0 {
+        return cond.state
+    }
+    if cond.ty != "i1" {
+        return cg_error(cond.state, "if condition must be Bool")
+    }
+    var work = cond.state
+    let then_result = cg_label(work)
+    work = then_result.0
+    let then_label = then_result.1
+    let else_result = cg_label(work)
+    work = else_result.0
+    let else_label = else_result.1
+    let end_result = cg_label(work)
+    work = end_result.0
+    let end_label = end_result.1
+    work = cg_line(work, "  br i1 " + cond.value + ", label %" + then_label + ", label %" + else_label)
+    work = cg_state(work, work.lines, work.temps, work.slots, work.locals, false, work.error)
+    work = cg_line(work, then_label + ":")
+    let then_state = cg_block(ast, work, a_child(ast, node, 1))
+    let then_terminated = then_state.terminated
+    work = cg_state(then_state, then_state.lines, then_state.temps, then_state.slots, then_state.locals, false, then_state.error)
+    if !then_terminated {
+        work = cg_line(work, "  br label %" + end_label)
+    }
+    work = cg_line(work, else_label + ":")
+    var else_terminated = false
+    if item.count > 2 {
+        let other = a_child(ast, node, 2)
+        if ast.nodes[other].kind == ak_if() {
+            let nested = cg_stmt(ast, work, other)
+            else_terminated = nested.terminated
+            work = cg_state(nested, nested.lines, nested.temps, nested.slots, nested.locals, false, nested.error)
+        } else {
+            let nested = cg_block(ast, work, other)
+            else_terminated = nested.terminated
+            work = cg_state(nested, nested.lines, nested.temps, nested.slots, nested.locals, false, nested.error)
+        }
+        if !else_terminated {
+            work = cg_line(work, "  br label %" + end_label)
+        }
+    } else {
+        work = cg_line(work, "  br label %" + end_label)
+    }
+    if then_terminated && else_terminated {
+        return cg_state(work, work.lines, work.temps, work.slots, work.locals, true, work.error)
+    }
+    work = cg_line(work, end_label + ":")
+    return cg_state(work, work.lines, work.temps, work.slots, work.locals, false, work.error)
+}
+
+fn cg_while(ast: Ast, state: CgState, node: Int) -> CgState {
+    let item = ast.nodes[node]
+    let header_result = cg_label(state)
+    var work = header_result.0
+    let header = header_result.1
+    let body_result = cg_label(work)
+    work = body_result.0
+    let body = body_result.1
+    let end_result = cg_label(work)
+    work = end_result.0
+    let end_label = end_result.1
+    work = cg_line(work, "  br label %" + header)
+    work = cg_line(work, header + ":")
+    let cond = cg_expr2(ast, work, a_child(ast, node, 0))
+    if cond.state.error.len() > 0 {
+        return cond.state
+    }
+    if cond.ty != "i1" {
+        return cg_error(cond.state, "while condition must be Bool")
+    }
+    work = cg_line(cond.state, "  br i1 " + cond.value + ", label %" + body + ", label %" + end_label)
+    work = cg_line(work, body + ":")
+    let body_state = cg_block(ast, work, a_child(ast, node, 1))
+    if !body_state.terminated {
+        work = cg_line(body_state, "  br label %" + header)
+    } else {
+        work = body_state
+    }
+    work = cg_line(work, end_label + ":")
+    return cg_state(work, work.lines, work.temps, work.slots, work.locals, false, work.error)
+}
+
 fn cg_stmt(ast: Ast, state: CgState, node: Int) -> CgState {
     let item = ast.nodes[node]
+    if item.kind == ak_if() {
+        return cg_if(ast, state, node)
+    }
+    if item.kind == ak_while() {
+        return cg_while(ast, state, node)
+    }
     if item.kind == ak_let() || item.kind == ak_var() {
         let value = cg_expr2(ast, state, a_child(ast, node, 0))
         var work = value.state
@@ -336,6 +439,30 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
             let value = cg_expr2(ast, state, a_child(ast, node, 1))
             let work = cg_line(value.state, "  store i64 " + value.value + ", ptr " + state.locals[index].slot)
             return cg_val(work, value.value)
+        }
+        if op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=" {
+            let left = cg_expr2(ast, state, a_child(ast, node, 0))
+            let right = cg_expr2(ast, left.state, a_child(ast, node, 1))
+            if left.ty != "i64" || right.ty != "i64" {
+                return cg_val(cg_error(right.state, "comparison operands must be Int"), "0")
+            }
+            var pred = "eq"
+            if op == "!=" {
+                pred = "ne"
+            } else if op == "<" {
+                pred = "slt"
+            } else if op == "<=" {
+                pred = "sle"
+            } else if op == ">" {
+                pred = "sgt"
+            } else if op == ">=" {
+                pred = "sge"
+            }
+            let temp_result = cg_temp(right.state)
+            var work = temp_result.0
+            let temp = temp_result.1
+            work = cg_line(work, "  " + temp + " = icmp " + pred + " i64 " + left.value + ", " + right.value)
+            return cg_val_typed(work, temp, "i1")
         }
         let left = cg_expr2(ast, state, a_child(ast, node, 0))
         let right = cg_expr2(ast, left.state, a_child(ast, node, 1))
