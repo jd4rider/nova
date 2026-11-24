@@ -55,6 +55,9 @@ a **box**; the tooling is written in Nova and exposed through `nova box`.
    `<publisher>/<box>.json` instead of one encoded segment.
 8. **No default registry URL.** Until a registry is deployed, an unset
    `NOVA_BOXES_REGISTRY` is an error rather than a guess at someone's domain.
+9. **The compiler resolves imports through the lockfile.** `import "name"`
+   maps to a declared path dependency or a registry box pinned in `Box.lock`
+   and unpacked in the cache; no build performs a network request.
 
 ## Planned layers
 

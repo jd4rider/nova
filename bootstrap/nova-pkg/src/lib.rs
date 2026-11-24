@@ -1,7 +1,7 @@
 //! Nova project manifest handling.
 //!
-//! Supported in this build: `[package]` metadata, `[bin] path`, path
-//! dependencies and lockfile generation. Registry resolution, build scripts and
+//! Supported in this build: `[package]` metadata, `[bin] path`, path and
+//! locked registry dependencies, and lockfile generation. Build scripts and
 //! workspaces are explicitly not implemented yet.
 
 use std::collections::BTreeMap;
@@ -177,9 +177,161 @@ pub fn write_lock(root: &Path, manifest: &Manifest) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+/// Resolves every declared dependency to the source file the compiler loads
+/// for `import "<name>"`. Path dependencies are read from disk; registry
+/// dependencies must be pinned in the lockfile and already fetched into the
+/// cache, so compilation never performs a network request.
+///
+/// Package resolution stays outside the import loop: a missing box is one
+/// actionable error instead of a parse failure at the import statement.
+pub fn package_sources(
+    root: &Path,
+    manifest: &Manifest,
+) -> Result<BTreeMap<String, PathBuf>, String> {
+    let mut sources = BTreeMap::new();
+    for dependency in &manifest.dependencies {
+        let entry = match &dependency.path {
+            Some(path) => {
+                let dir = root.join(path);
+                let child = load(&dir)
+                    .map_err(|error| format!("dependency `{}`: {error}", dependency.name))?;
+                let entry = dir.join(&child.bin_path);
+                if !entry.is_file() {
+                    return Err(format!(
+                        "dependency `{}` has no entry file at {}",
+                        dependency.name,
+                        entry.display()
+                    ));
+                }
+                entry
+            }
+            None => registry_entry(root, &dependency.name)?,
+        };
+        sources.insert(dependency.name.clone(), entry);
+    }
+    Ok(sources)
+}
+
+fn registry_entry(root: &Path, name: &str) -> Result<PathBuf, String> {
+    let (publisher, package) = split_box_name(name).ok_or_else(|| {
+        format!("registry dependency `{name}` is not a canonical name (@publisher/box)")
+    })?;
+    let lock = lock_path(root);
+    let text = fs::read_to_string(&lock).map_err(|_| {
+        format!(
+            "registry dependency `{name}` needs {}; run `nova box update`",
+            lock.display()
+        )
+    })?;
+    let mut version = None;
+    for line in text.lines() {
+        let fields = quoted_fields(line);
+        if fields.len() >= 4 && fields[0] == "box" && fields[1] == name && fields[3] == "registry" {
+            version = Some(fields[2].clone());
+        }
+    }
+    let version = version
+        .ok_or_else(|| format!("`{name}` is not in {}; run `nova box update`", lock.display()))?;
+    let cache = box_cache_root()
+        .ok_or_else(|| "cannot locate the box cache; set NOVA_BOXES_CACHE".to_string())?;
+    let dir = cache
+        .join("src")
+        .join(publisher)
+        .join(package)
+        .join(&version);
+    let child = load(&dir).map_err(|error| {
+        format!(
+            "dependency `{name}` {version} is not fetched ({error}); run `nova box fetch {name}@{version}`"
+        )
+    })?;
+    let entry = dir.join(&child.bin_path);
+    if !entry.is_file() {
+        return Err(format!(
+            "dependency `{name}` {version} has no entry file at {}; run `nova box fetch {name}@{version}`",
+            entry.display()
+        ));
+    }
+    Ok(entry)
+}
+
+fn split_box_name(name: &str) -> Option<(&str, &str)> {
+    let rest = name.strip_prefix('@')?;
+    let (publisher, package) = rest.split_once('/')?;
+    if publisher.is_empty() || package.is_empty() || package.contains('/') {
+        return None;
+    }
+    Some((publisher, package))
+}
+
+fn quoted_fields(line: &str) -> Vec<String> {
+    let mut fields = Vec::new();
+    let mut current = String::new();
+    let mut quoted = false;
+    for c in line.chars() {
+        match c {
+            '"' => quoted = !quoted,
+            ' ' | '\t' if !quoted => {
+                if !current.is_empty() {
+                    fields.push(std::mem::take(&mut current));
+                }
+            }
+            _ => current.push(c),
+        }
+    }
+    if !current.is_empty() {
+        fields.push(current);
+    }
+    fields
+}
+
+/// `NOVA_BOXES_CACHE`, or the same `~/.nova/boxes` default the CLI uses.
+pub fn box_cache_root() -> Option<PathBuf> {
+    if let Ok(value) = std::env::var("NOVA_BOXES_CACHE") {
+        if !value.trim().is_empty() {
+            return Some(PathBuf::from(value));
+        }
+    }
+    std::env::var("HOME")
+        .ok()
+        .filter(|home| !home.is_empty())
+        .map(|home| Path::new(&home).join(".nova/boxes"))
+}
+
 pub fn validate_name(name: &str) -> Result<(), String> {
     if name.is_empty() {
         return Err("package name must not be empty".into());
+    }
+    // Boxes registry names are scoped and canonical: `@publisher/box`.
+    if let Some(rest) = name.strip_prefix('@') {
+        let mut parts = rest.split('/');
+        let publisher = parts.next().unwrap_or("");
+        let package = parts.next().unwrap_or("");
+        if parts.next().is_some() || publisher.is_empty() || package.is_empty() || name.len() > 64 {
+            return Err(format!(
+                "invalid package name `{name}`: use @publisher/box"
+            ));
+        }
+        for part in [publisher, package] {
+            if part
+                .chars()
+                .any(|c| !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-'))
+            {
+                return Err(format!(
+                    "invalid package name `{name}`: scoped names are lowercase ASCII letters, digits, `_` or `-`"
+                ));
+            }
+            if part
+                .chars()
+                .next()
+                .map(|c| c.is_ascii_digit())
+                .unwrap_or(false)
+            {
+                return Err(format!(
+                    "invalid package name `{name}`: a name must not start with a digit"
+                ));
+            }
+        }
+        return Ok(());
     }
     let valid = name
         .chars()
@@ -269,6 +421,39 @@ util = { path = "../util" }
         assert!(dir.join(BOX_LOCK_NAME).is_file());
         assert!(!dir.join(LOCK_NAME).is_file());
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolves_path_dependency_sources() {
+        let base = std::env::temp_dir().join(format!(
+            "nova-pkg-sources-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let app = base.join("app");
+        let lib = base.join("lib");
+        fs::create_dir_all(app.join("src")).unwrap();
+        fs::create_dir_all(lib.join("src")).unwrap();
+        fs::write(
+            app.join(BOX_MANIFEST_NAME),
+            "[package]\nname = \"app\"\n\n[dependencies]\nlib = { path = \"../lib\" }\n",
+        )
+        .unwrap();
+        fs::write(app.join("src/main.nova"), "fn main() { }\n").unwrap();
+        fs::write(
+            lib.join(BOX_MANIFEST_NAME),
+            "[package]\nname = \"lib\"\n\n[bin]\npath = \"src/lib.nova\"\n",
+        )
+        .unwrap();
+        fs::write(lib.join("src/lib.nova"), "fn answer() -> Int { return 42 }\n").unwrap();
+        let manifest = load(&app).unwrap();
+        let sources = package_sources(&app, &manifest).unwrap();
+        let resolved = fs::canonicalize(sources.get("lib").unwrap()).unwrap();
+        assert_eq!(resolved, fs::canonicalize(lib.join("src/lib.nova")).unwrap());
+        let _ = fs::remove_dir_all(&base);
     }
 
     #[test]

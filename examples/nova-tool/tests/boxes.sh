@@ -216,13 +216,15 @@ JSON
             curl -fsS "http://127.0.0.1:$port/config.json" >/dev/null 2>&1 && break
             sleep 0.1
         done
-        out=$( cd "$tmp" && NOVA_BOXES_REGISTRY="http://127.0.0.1:$port" NOVA_TOOL_BIN="$tool" "$nova" box info @nova/app )
+        out=$( cd "$tmp" && NOVA_BOXES_REGISTRY="http://127.0.0.1:$port" NOVA_BOXES_CACHE="$tmp/httpcache" NOVA_TOOL_BIN="$tool" "$nova" box info @nova/app )
         echo "$out" | grep -q "versions: 2" && ok || no "http index read"
         kill "$server" 2>/dev/null
         wait "$server" 2>/dev/null
+        out=$( cd "$tmp" && NOVA_BOXES_OFFLINE=1 NOVA_BOXES_REGISTRY="http://127.0.0.1:$port" NOVA_BOXES_CACHE="$tmp/httpcache" NOVA_TOOL_BIN="$tool" "$nova" box info @nova/app )
+        echo "$out" | grep -q "versions: 2" && ok || no "offline serves the cached index"
     fi
 
-    ( cd "$tmp" && NOVA_BOXES_OFFLINE=1 NOVA_BOXES_REGISTRY="http://127.0.0.1:9" NOVA_TOOL_BIN="$tool" "$nova" box info @nova/app ) > "$tmp/offline.log" 2>&1
+    ( cd "$tmp" && NOVA_BOXES_OFFLINE=1 NOVA_BOXES_REGISTRY="http://127.0.0.1:9" NOVA_BOXES_CACHE="$tmp/emptycache" NOVA_TOOL_BIN="$tool" "$nova" box info @nova/app ) > "$tmp/offline.log" 2>&1
     status=$?
     [ $status -ne 0 ] && grep -q "NOVA_BOXES_OFFLINE" "$tmp/offline.log" && ok || no "offline mode refuses a remote registry"
 
@@ -237,6 +239,34 @@ JSON
         ( cd "$tmp/boxproj" && "$nova" build ) > "$tmp/boxbuild.log" 2>&1 && ok || no "build a Box.toml project"
         [ -f "$tmp/boxproj/Box.lock" ] && ok || no "build writes Box.lock"
         ( cd "$tmp/boxproj" && "$nova" build --locked ) >/dev/null 2>&1 && ok || no "--locked accepts a fresh Box.lock"
+
+        # ---- Dependency imports reach the compiler ----------------------
+        mkdir -p "$tmp/dep-project/lib/src" "$tmp/dep-project/app/src"
+        printf '[package]\nname = "lib"\nversion = "1.0.0"\n\n[bin]\npath = "src/lib.nova"\n' > "$tmp/dep-project/lib/Box.toml"
+        printf 'fn answer() -> Int { return 42 }\n' > "$tmp/dep-project/lib/src/lib.nova"
+        printf '[package]\nname = "depapp"\nversion = "1.0.0"\n\n[dependencies]\nlib = { path = "../lib" }\n' > "$tmp/dep-project/app/Box.toml"
+        printf 'import std.io { println }\nimport "lib"\nfn main() { println(answer()) }\n' > "$tmp/dep-project/app/src/main.nova"
+        out=$( cd "$tmp/dep-project/app" && "$nova" run 2>&1 )
+        echo "$out" | grep -q '^42$' && ok || no "import a path dependency by name ($out)"
+
+        mkdir -p "$tmp/reglib/src" "$tmp/regapp/src"
+        printf '[package]\nname = "reglib"\nversion = "1.0.0"\n\n[bin]\npath = "src/lib.nova"\n' > "$tmp/reglib/Box.toml"
+        printf 'fn reg_answer() -> Int { return 7 }\n' > "$tmp/reglib/src/lib.nova"
+        ( cd "$tmp/reglib" && NOVA_TOOL_BIN="$tool" "$nova" box pack "$reg/files/reglib-1.0.0.box" ) >/dev/null 2>&1
+        rsha=$(shasum -a 256 "$reg/files/reglib-1.0.0.box" | cut -d' ' -f1)
+        rh=$(printf '%s' '@nova/reglib' | shasum -a 256 | cut -d' ' -f1)
+        ra=$(printf '%s' "$rh" | cut -c1-2)
+        rb=$(printf '%s' "$rh" | cut -c3-4)
+        mkdir -p "$reg/index/v1/packages/$ra/$rb/nova"
+        cat > "$reg/index/v1/packages/$ra/$rb/nova/reglib.json" <<JSON
+{"name":"@nova/reglib","versions":[{"version":"1.0.0","dependencies":[],"license":"MIT","archive":"files/reglib-1.0.0.box","sha256":"$rsha","yanked":false}]}
+JSON
+        printf '[package]\nname = "regapp"\nversion = "1.0.0"\n\n[dependencies]\n"@nova/reglib" = "^1.0.0"\n' > "$tmp/regapp/Box.toml"
+        printf 'import std.io { println }\nimport "@nova/reglib"\nfn main() { println(reg_answer()) }\n' > "$tmp/regapp/src/main.nova"
+        ( cd "$tmp/regapp" && NOVA_BOXES_REGISTRY="$reg" NOVA_BOXES_CACHE="$tmp/cache" NOVA_TOOL_BIN="$tool" "$nova" box update ) >/dev/null 2>&1
+        ( cd "$tmp/regapp" && NOVA_BOXES_REGISTRY="$reg" NOVA_BOXES_CACHE="$tmp/cache" NOVA_TOOL_BIN="$tool" "$nova" box fetch @nova/reglib ) >/dev/null 2>&1
+        out=$( cd "$tmp/regapp" && NOVA_BOXES_CACHE="$tmp/cache" "$nova" run 2>&1 )
+        echo "$out" | grep -q '^7$' && ok || no "import a fetched registry box ($out)"
     fi
 fi
 

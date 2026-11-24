@@ -1,6 +1,6 @@
 //! `nova` command line driver.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -10,7 +10,7 @@ use clap::{Parser, Subcommand};
 use nova_codegen_llvm::{compile, BuildOptions, OptLevel};
 use nova_diag::{render_all, Diagnostic};
 use nova_parser::{parse, Item, Program};
-use nova_pkg::{find_project_root, load, write_lock, Manifest, MANIFEST_NAME};
+use nova_pkg::{find_project_root, load, package_sources, write_lock, Manifest, MANIFEST_NAME};
 
 const ABI_VERSION: u32 = 1;
 use nova_sema::{check, TypedProgram};
@@ -182,7 +182,11 @@ fn project_root() -> Result<PathBuf, i32> {
     })
 }
 
-fn analyze_file(path: &Path, json: bool) -> Result<Checked, i32> {
+fn analyze_file(
+    path: &Path,
+    json: bool,
+    sources: &BTreeMap<String, PathBuf>,
+) -> Result<Checked, i32> {
     let source = fs::read_to_string(path).map_err(|e| {
         eprintln!("nova: could not read {}: {e}", path.display());
         EXIT_ERROR
@@ -191,7 +195,7 @@ fn analyze_file(path: &Path, json: bool) -> Result<Checked, i32> {
     let mut diagnostics: Vec<Diagnostic> = parsed.diagnostics;
     let mut stack = vec![path.to_path_buf()];
     let mut loaded = HashSet::new();
-    let items = match expand_path_imports(path, parsed.program.items, &mut stack, &mut loaded) {
+    let items = match expand_path_imports(path, parsed.program.items, &mut stack, &mut loaded, sources) {
         Ok(items) => items,
         Err(message) => {
             eprintln!("{message}");
@@ -231,16 +235,23 @@ fn expand_path_imports(
     items: Vec<Item>,
     stack: &mut Vec<PathBuf>,
     loaded: &mut HashSet<PathBuf>,
+    sources: &BTreeMap<String, PathBuf>,
 ) -> Result<Vec<Item>, String> {
     let mut expanded = Vec::new();
     for item in items {
         match item {
             Item::Import(import) => match &import.path {
                 Some(relative) => {
-                    let child = path
-                        .parent()
-                        .unwrap_or_else(|| Path::new("."))
-                        .join(relative);
+                    // A declared dependency name (including `@scope/box`) is
+                    // resolved through the manifest and lockfile; anything
+                    // else keeps the existing file-relative meaning.
+                    let child = match sources.get(relative) {
+                        Some(entry) => entry.clone(),
+                        None => path
+                            .parent()
+                            .unwrap_or_else(|| Path::new("."))
+                            .join(relative),
+                    };
                     let canonical = fs::canonicalize(&child).map_err(|error| {
                         format!(
                             "nova: could not resolve module `{}` ({}): {error}",
@@ -281,8 +292,13 @@ fn expand_path_imports(
                         ));
                     }
                     stack.push(canonical.clone());
-                    let mut child_items =
-                        expand_path_imports(&canonical, parsed.program.items, stack, loaded)?;
+                    let mut child_items = expand_path_imports(
+                        &canonical,
+                        parsed.program.items,
+                        stack,
+                        loaded,
+                        sources,
+                    )?;
                     stack.pop();
                     expanded.append(&mut child_items);
                     if import.alias.is_some() {
@@ -379,13 +395,13 @@ fn build_project(
         );
         return Err(EXIT_ERROR);
     }
-    if !manifest.dependencies.is_empty() {
-        eprintln!(
-            "nova build: this project declares dependencies, but package resolution is not implemented yet.\n\
-             Remove `[dependencies]` or use a path-independent project. See ROADMAP.md."
-        );
-        return Err(EXIT_UNSUPPORTED);
-    }
+    let sources = match package_sources(root, manifest) {
+        Ok(sources) => sources,
+        Err(error) => {
+            eprintln!("nova build: {error}");
+            return Err(EXIT_ERROR);
+        }
+    };
     let source_path = root.join(&manifest.bin_path);
     if !source_path.is_file() {
         eprintln!(
@@ -394,7 +410,7 @@ fn build_project(
         );
         return Err(EXIT_ERROR);
     }
-    let checked = analyze_file(&source_path, false)?;
+    let checked = analyze_file(&source_path, false, &sources)?;
     let options = build_options(root, manifest, release, emit_ir, debug, lto);
     match compile(&checked.program, &checked.source, &options) {
         Ok(artifact) => {
@@ -584,8 +600,15 @@ fn cmd_check(json: bool) -> i32 {
             return EXIT_ERROR;
         }
     };
+    let sources = match package_sources(&root, &manifest) {
+        Ok(sources) => sources,
+        Err(error) => {
+            eprintln!("nova check: {error}");
+            return EXIT_ERROR;
+        }
+    };
     let source_path = root.join(&manifest.bin_path);
-    match analyze_file(&source_path, json) {
+    match analyze_file(&source_path, json, &sources) {
         Ok(_) => {
             if !json {
                 println!("Checked {} — no errors.", source_path.display());
@@ -622,6 +645,13 @@ fn cmd_test(filter: Option<&str>) -> i32 {
             return EXIT_ERROR;
         }
     };
+    let sources = match package_sources(&root, &manifest) {
+        Ok(sources) => sources,
+        Err(error) => {
+            eprintln!("nova test: {error}");
+            return EXIT_ERROR;
+        }
+    };
     let tests_dir = root.join("tests");
     if !tests_dir.is_dir() {
         eprintln!("nova test: no tests/ directory");
@@ -637,7 +667,7 @@ fn cmd_test(filter: Option<&str>) -> i32 {
     let mut passed = 0usize;
     let mut failed = 0usize;
     for file in files {
-        let checked = match analyze_file(&file, false) {
+        let checked = match analyze_file(&file, false, &sources) {
             Ok(checked) => checked,
             Err(_) => {
                 failed += 1;

@@ -66,7 +66,25 @@ fn rg_read(root: String, relative: String) -> String {
         }
         return gui.read(path)
     }
-    return http_get(target)
+    let cache = rg_cache_root()
+    var cached = ""
+    if cache.len() > 0 {
+        cached = cache + "/" + relative
+    }
+    if gui.env("NOVA_BOXES_OFFLINE").trim() == "1" {
+        if cached.len() > 0 && gui.exists(cached) && !gui.is_dir(cached) {
+            return gui.read(cached)
+        }
+        return ""
+    }
+    let body = http_get(target)
+    if body.len() > 0 && cached.len() > 0 {
+        let parent = rs_dirname(cached)
+        if ar_mkdirs(parent) {
+            gui.write(cached, body)
+        }
+    }
+    return body
 }
 
 fn rg_lower(text: String) -> String {
@@ -241,11 +259,11 @@ fn rg_check_registry(root: String) -> String {
     if root.len() == 0 {
         return "error: NOVA_BOXES_REGISTRY is not set and no first-party registry is deployed yet; point it at a mirror root"
     }
-    if !rg_is_local(root) && gui.env("NOVA_BOXES_OFFLINE").trim() == "1" {
-        return "error: NOVA_BOXES_OFFLINE is set but the registry is remote (" + root + ")"
-    }
     let text = rg_read(root, "config.json")
     if text.len() == 0 {
+        if !rg_is_local(root) && gui.env("NOVA_BOXES_OFFLINE").trim() == "1" {
+            return "error: NOVA_BOXES_OFFLINE is set and there is no cached copy of " + rg_join(root, "config.json") + "; run an online command first"
+        }
         return "error: cannot read " + rg_join(root, "config.json")
     }
     let doc = js_parse(text)

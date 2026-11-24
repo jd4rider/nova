@@ -15,10 +15,11 @@ Status is evidence-based: a milestone is only marked done when its tests pass.
 | Manifest editing | done | `add`/`remove` keep other lines and comments |
 | Registry-backed `update` | done | `Box.lock` records versions, sources and SHA-256 |
 | Yank warning on update | done | an existing lock pinning a yanked version is reported |
-| Compiler manifest and lockfile | partial | `nova build` reads `Box.toml`, writes/requires `Box.lock`; deps still refuse |
+| Compiler manifest and lockfile | done | reads `Box.toml`, writes/requires `Box.lock` |
+| Dependency imports | done | `import "name"` from a path dep and a fetched registry box |
 | `.box` archive pack/verify/unpack | done | gzip/tar/SHA-256/traversal tests |
 | Cache and `fetch` | done | SHA-256 verified fetch unpacks into the cache |
-| Offline mode | done | `NOVA_BOXES_OFFLINE=1` refuses a remote registry |
+| Offline mode | done | `NOVA_BOXES_OFFLINE=1` serves cached records and refuses the rest |
 | Registry publishing (reviewed PR) | not started | — |
 | Studio and language-server integration | not started | — |
 | Website catalogue | not started | — |
@@ -41,9 +42,11 @@ nova box remove NAME             # remove a dependency from Box.toml
 nova box update                   # resolve path and registry deps into Box.lock
 ```
 
-Path dependencies are resolved from `Box.toml`/`nova.toml`; version-only
-dependencies are still rejected by local resolution because fetching requires a
-registry record. Registry commands read a mirror:
+Path dependencies are resolved from `Box.toml`/`nova.toml`. A program imports a
+dependency by its declared name (`import "util"`, `import "@nova/reglib"`); a
+registry box must be pinned by `nova box update` and unpacked by
+`nova box fetch` first, because compilation never uses the network. Registry
+commands read a mirror:
 
 ```
 NOVA_BOXES_REGISTRY=/path/to/mirror nova box info @nova/app
@@ -58,9 +61,9 @@ guess.
 
 ## Next
 
-1. Compiler import resolution from fetched boxes: `nova build` still refuses
-   any `[dependencies]` and cannot load a registry box by name.
-2. Cached index records so `info`/`search` work without re-reading the mirror.
-3. Nova Studio box panel and language-server completion for registry names.
-4. Website catalogue page generated from the same index.
-5. Reviewed publishing workflow, after the repository and Pages exist.
+1. Transitive import maps: builds map direct dependencies, not every box in
+   the lock, and there is no cache refresh command.
+2. Nova Studio box panel and language-server completion for registry names.
+3. Website catalogue page generated from the same index.
+4. Reviewed publishing workflow, after the repository and Pages exist.
+5. Archive compression; `.box` is still stored-deflate gzip.
