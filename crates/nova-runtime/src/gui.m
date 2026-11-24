@@ -428,6 +428,10 @@ static void nova_gui_build_menu(void) {
     NSMenuItem *file_item = [[NSMenuItem alloc] init];
     [menubar addItem:file_item];
     NSMenu *file = [[NSMenu alloc] initWithTitle:@"File"];
+    nova_gui_menu_item(file, @"Open File…", @"o", command, NOVA_MOD_COMMAND, 'o');
+    nova_gui_menu_item(file, @"Open Folder…", @"O", command | NSEventModifierFlagShift,
+                       NOVA_MOD_COMMAND | NOVA_MOD_SHIFT, 'O');
+    [file addItem:[NSMenuItem separatorItem]];
     nova_gui_menu_item(file, @"Go to File…", @"p", command, NOVA_MOD_COMMAND, 'p');
     nova_gui_menu_item(file, @"Close Tab", @"w", command, NOVA_MOD_COMMAND, 'w');
     [file addItem:[NSMenuItem separatorItem]];
@@ -1176,6 +1180,33 @@ nova_str nova_fs_cwd(void) {
 /* Native open panel: mode 0 picks a file, mode 1 picks a folder. The panel
  * runs its own modal loop, which is safe here because the app's loop is the
  * main thread and nothing holds state across the call. */
+/* Clipboard access for the editor: ⌘C, ⌘X and ⌘V go through NSPasteboard. */
+nova_str nova_gui_clipboard_get(void) {
+    @autoreleasepool {
+        NSString *text = [[NSPasteboard generalPasteboard] stringForType:NSPasteboardTypeString];
+        if (!text) return nova_gui_empty();
+        const char *utf8 = [text UTF8String];
+        size_t len = strlen(utf8);
+        char *copy = (char *)malloc(len + 1);
+        if (!copy) return nova_gui_empty();
+        memcpy(copy, utf8, len + 1);
+        nova_str result = {copy, (int64_t)len};
+        return result;
+    }
+}
+
+void nova_gui_clipboard_set(nova_str text) {
+    @autoreleasepool {
+        char *utf8 = nova_gui_cstr(text);
+        if (!utf8) return;
+        NSString *value = [[NSString alloc] initWithUTF8String:utf8];
+        free(utf8);
+        NSPasteboard *board = [NSPasteboard generalPasteboard];
+        [board clearContents];
+        if (value) [board setString:value forType:NSPasteboardTypeString];
+    }
+}
+
 nova_str nova_gui_panel(int64_t mode) {
     @autoreleasepool {
         if (!NSApp) return nova_gui_empty();

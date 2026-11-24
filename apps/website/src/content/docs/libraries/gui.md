@@ -54,6 +54,7 @@ Everything is immediate mode: a frame is whatever the loop draws between `begin`
 |---|---|
 | Window | `open(title, w, h)`, `close()`, `is_open()`, `width()`, `height()`, `set_title(text)` |
 | Pickers | `pick_file()`, `pick_folder()` — native `NSOpenPanel`, returns `""` on cancel |
+| Clipboard | `clipboard()`, `set_clipboard(text)` — the system pasteboard |
 | Frame | `begin()`, `clear(color)`, `present()`, `save_png(path)`, `sleep(ms)` |
 | Shapes | `rect`, `round_rect`, `stroke`, `line`, `rect_alpha` |
 | Text | `text` (system font), `mono` (Menlo), `text_width`, `mono_width`, `advance(size)` |

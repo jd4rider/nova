@@ -24,7 +24,7 @@ NOVA_STUDIO_ROOT="$(cd ../.. && pwd)" \
 | `NOVA_STUDIO_SHOT` | Writes the first frame to a PNG and exits. Used for verification. |
 | `NOVA_STUDIO_TASK` | Runs `build`, `check` or `test` at launch. Used for verification. |
 
-`⌘O` opens a file and `⇧⌘O` opens a folder through the native macOS panel, so the workspace comes from the picker when `NOVA_STUDIO_ROOT` is unset. Point `NOVA_BIN` at a freshly built compiler: a stale `nova` on `PATH` will produce real compiler errors in the output panel.
+The **File** menu carries **Open File…** (`⌘O`) and **Open Folder…** (`⇧⌘O`), both opening the native macOS panel; the workspace therefore comes from the picker when `NOVA_STUDIO_ROOT` is unset. Point `NOVA_BIN` at a freshly built compiler: a stale `nova` on `PATH` will produce real compiler errors in the output panel.
 
 ## Install as an application
 
@@ -58,6 +58,9 @@ The bundle is unsigned. A locally built app is not quarantined, but copying it t
 - **Explorer.** Real directory listing of the workspace, directories first, lazy expansion, click to open a file, active file highlighted.
 - **Tabs.** Dirty state, close button, active-tab accent, per-tab scroll and caret position.
 - **Editor.** Line numbers, current-line highlight, indent guides, bracket-pair matching under the caret, a gutter marker on declarations, the enclosing `fn` marked along the left edge and named in the breadcrumb, and a minimap down the right edge. Syntax highlighting follows Dark+ scopes: block and line comments, strings with escapes, numbers, declarations, control flow, types and function names.
+- **Selection and clipboard.** Drag to select, `⇧`-click to extend, `⌘A` selects all, and `⌘C` / `⌘X` / `⌘V` go through the system clipboard. Typing or `Delete` replaces the selection.
+- **Find and replace.** `⌘F` opens an in-editor bar: type to highlight every match, `Enter`/`⇧Enter` to step, `Tab` to the replace field, `⌘Enter` to replace all.
+- **Folding.** Declaration lines (`fn`, `struct`, `impl`, `enum`) get a gutter marker; click it to collapse the block, which shows `⋯ n lines`, and click the `+` to reopen.
 - **Vim mode.** On by default and toggled from Settings or the palette. NORMAL, INSERT and VISUAL, with `h j k l`, `w b e`, `0 $`, `gg G`, `x`, `dd`, `yy`, `p`, `u`, `i a I A o O`, `v`. The status bar shows the mode and NORMAL draws a block caret.
 - **Zoom and effects.** `⌘+`/`⌘-`/`⌘0` resize the editor; typing throws a short-lived spark trail at the caret.
 - **Icons.** Material-style file and folder icons, coloured by type, and vector activity-bar icons, all drawn with line primitives because nova-gui ships no icon font.
@@ -78,7 +81,8 @@ These are gaps, not hidden behaviour:
 - **No integrated terminal.** Run launches Terminal instead of embedding a PTY.
 - **No AI panel.** No Copilot, no FreeBuff chat, no diff review. The host cannot stream a network response.
 - **No search across files.** Quick open and the palette exist; workspace search does not.
-- **No selection, multi-cursor, find/replace or code folding.** Undo exists (80 snapshots per buffer) and Vim's linewise visual mode covers coarse selection, but there is no mouse selection or `⌘F`.
+- **No multi-cursor.** Selection, clipboard, find/replace and folding exist; multiple simultaneous carets do not.
+- **Folding is declaration-level only.** `fn`, `struct`, `impl` and `enum` blocks fold; arbitrary brace regions do not.
 - **Unclosed dirty tabs are discarded** on close instead of prompting.
 - **Settings are not persisted** between launches.
 - **Plugin contributions are commands only.** See [Plugins](../plugins/) for the manifest format and its limits.
@@ -91,6 +95,10 @@ These are gaps, not hidden behaviour:
 | Open file / folder | `⌘O` / `⇧⌘O` |
 | Save / Save all | `⌘S` / `⇧⌘S` |
 | Zoom in / out / reset | `⌘+` / `⌘-` / `⌘0` |
+| Find / replace | `⌘F` |
+| Copy / cut / paste | `⌘C` / `⌘X` / `⌘V` |
+| Select all | `⌘A` |
+| Fold or unfold a block | click the gutter marker |
 | Build / Check | `⌘B` / `⇧⌘B` |
 | Build and run in Terminal | `⌘R` |
 | Close tab | `⌘W` |

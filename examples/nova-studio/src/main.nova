@@ -523,6 +523,10 @@ struct Tab {
     cursor_col: Int,
     scroll: Int,
     undo: List<String>,
+    folds: List<Int>,
+    sel_line: Int,
+    sel_col: Int,
+    selecting: Bool,
 }
 
 struct Command {
@@ -576,6 +580,9 @@ struct App {
     anim: Int,
     minimap: Bool,
     plugins: List<Plugin>,
+    field2: String,
+    field2_cursor: Int,
+    focus: Int,
 }
 
 // ---------- workspace ----------
@@ -727,7 +734,8 @@ fn project_name(root: String) -> String {
 fn active_tab(app: App) -> Tab {
     if app.active < 0 || app.active >= app.tabs.len() {
         var no_undo: List<String> = []
-        return Tab { path: "", name: "", lines: [""], dirty: false, cursor_line: 0, cursor_col: 0, scroll: 0, undo: no_undo }
+        var no_folds: List<Int> = []
+        return Tab { path: "", name: "", lines: [""], dirty: false, cursor_line: 0, cursor_col: 0, scroll: 0, undo: no_undo, folds: no_folds, sel_line: 0, sel_col: 0, selecting: false }
     }
     return app.tabs[app.active]
 }
@@ -748,6 +756,7 @@ fn open_file(app: App, path: String) -> App {
     let text = gui.read(path)
     var tabs = app.tabs
     var no_undo: List<String> = []
+    var no_folds: List<Int> = []
     tabs.push(Tab {
         path: path,
         name: basename(path),
@@ -757,6 +766,10 @@ fn open_file(app: App, path: String) -> App {
         cursor_col: 0,
         scroll: 0,
         undo: no_undo,
+        folds: no_folds,
+        sel_line: 0,
+        sel_col: 0,
+        selecting: false,
     })
     app.tabs = tabs
     app.active = tabs.len() - 1
@@ -828,6 +841,7 @@ fn edit_insert(app: App, value: String) -> App {
     if app.active < 0 {
         return app
     }
+    app = clear_selection(app)
     app = snapshot(app)
     var tab = app.tabs[app.active]
     let chars = tab.lines[tab.cursor_line].graphemes()
@@ -847,6 +861,7 @@ fn edit_newline(app: App) -> App {
     if app.active < 0 {
         return app
     }
+    app = clear_selection(app)
     app = snapshot(app)
     var tab = app.tabs[app.active]
     let chars = tab.lines[tab.cursor_line].graphemes()
@@ -866,6 +881,9 @@ fn edit_backspace(app: App) -> App {
     var app = app
     if app.active < 0 {
         return app
+    }
+    if app.tabs[app.active].selecting {
+        return clear_selection(app)
     }
     app = snapshot(app)
     var tab = app.tabs[app.active]
@@ -896,6 +914,9 @@ fn edit_delete(app: App) -> App {
     var app = app
     if app.active < 0 {
         return app
+    }
+    if app.tabs[app.active].selecting {
+        return clear_selection(app)
     }
     app = snapshot(app)
     var tab = app.tabs[app.active]
@@ -982,11 +1003,15 @@ fn edit_end(app: App) -> App {
 fn tab_scrolled(tab: Tab) -> Tab {
     var tab = tab
     let visible = (gui.height() - title_height() - status_height() - tabs_height() - crumbs_height()) / line_height(13)
-    if tab.cursor_line < tab.scroll {
-        tab.scroll = tab.cursor_line
-    }
-    if tab.cursor_line >= tab.scroll + visible {
-        tab.scroll = tab.cursor_line - visible + 1
+    let rows = visible_rows(tab)
+    let row = row_of(rows, tab.cursor_line)
+    if row >= 0 {
+        if row < tab.scroll {
+            tab.scroll = row
+        }
+        if row >= tab.scroll + visible {
+            tab.scroll = row - visible + 1
+        }
     }
     if tab.scroll < 0 {
         tab.scroll = 0
@@ -1606,27 +1631,44 @@ fn draw_crumbs(app: App, x: Int, y: Int, w: Int) {
 fn draw_welcome(app: App, x: Int, y: Int, w: Int, h: Int) {
     let theme = app.theme
     let left = x + 52
-    var top = y + 46
-    gui.text(left, top, "✦", 20, gui.rgb(90, 200, 255))
-    gui.text(left, top + 26, "Nova Studio", 32, theme.fg_bright)
-    gui.text(left, top + 68, "A workbench for the Nova language, written in Nova.", 13, theme.muted)
-    top = top + 110
-    gui.text(left, top, "START", 13, theme.fg_bright)
-    let rows_list: List<String> = [
-        "Open a file from the explorer          ▤",
-        "Go to file                             ⌘P",
-        "Command palette                        ⇧⌘P",
-        "Build                                  ⌘B",
-        "Build and run in Terminal              ⌘R",
-        "Toggle sidebar / panel                 ⇧⌘E / ⌘`",
-        "Settings                               ⌘,",
+    let top = y + 46
+    gui.text(left, top, "✦", 18, gui.rgb(90, 200, 255))
+    gui.text(left, top + 26, "Nova Studio", 30, theme.fg_bright)
+    gui.text(left, top + 66, "A workbench for the Nova language, written in Nova.", 13, theme.muted)
+    // Two aligned columns, the way VS Code's welcome page lays out actions and
+    // recent entries: labels left, shortcut chords right-aligned on a shared edge.
+    let start_top = top + 112
+    let key_right = left + 300
+    gui.text(left, start_top, "START", 11, theme.muted)
+    let labels: List<String> = [
+        "Open File…",
+        "Open Folder…",
+        "Go to File",
+        "Command Palette",
+        "Find in File",
+        "Build",
+        "Run in Terminal",
+        "Settings",
     ]
+    let keys: List<String> = ["⌘O", "⇧⌘O", "⌘P", "⇧⌘P", "⌘F", "⌘B", "⌘R", "⌘,"]
     var i = 0
-    while i < rows_list.len() {
-        gui.text(left, top + 24 + i * 24, rows_list[i], 13, theme.link)
+    while i < labels.len() {
+        let ry = start_top + 26 + i * 24
+        gui.text(left, ry, labels[i], 13, theme.link)
+        gui.text(key_right - gui.text_width(keys[i], 11), ry + 1, keys[i], 11, theme.faint)
         i = i + 1
     }
-    gui.text(left, top + 24 + rows_list.len() * 24 + 16, "The compiler, engine and this window are all Nova.", 12, theme.muted)
+    let col2 = left + 420
+    gui.text(col2, start_top, "RECENT", 11, theme.muted)
+    if app.tabs.len() == 0 {
+        gui.text(col2, start_top + 26, "No open files", 13, theme.faint)
+    }
+    var row = 0
+    while row < app.tabs.len() && row < 6 {
+        gui.text(col2, start_top + 26 + row * 24, app.tabs[row].name, 13, theme.link)
+        row = row + 1
+    }
+    gui.text(left, start_top + 26 + labels.len() * 24 + 18, "The compiler, engine and this window are all Nova.", 12, theme.muted)
 }
 
 fn leading_spaces(text: String) -> Int {
@@ -1771,7 +1813,8 @@ fn draw_minimap(app: App, x: Int, y: Int, w: Int, h: Int) {
         return
     }
     let tab = app.tabs[app.active]
-    let total = tab.lines.len()
+    let rows = visible_rows(tab)
+    let total = rows.len()
     if total <= 0 {
         return
     }
@@ -1785,7 +1828,7 @@ fn draw_minimap(app: App, x: Int, y: Int, w: Int, h: Int) {
     var i = 0
     while i < total {
         if i % stride == 0 {
-            let text = tab.lines[i]
+            let text = tab.lines[rows[i]]
             let indent = leading_spaces(text)
             let len = text.graphemes().len() - indent
             var bar = len * 3 / 2
@@ -1794,7 +1837,7 @@ fn draw_minimap(app: App, x: Int, y: Int, w: Int, h: Int) {
             }
             if bar > 1 {
                 var color = theme.faint
-                if i == tab.cursor_line {
+                if rows[i] == tab.cursor_line {
                     color = theme.link
                 }
                 gui.rect(x + 6 + indent * 2 / 3, y + i * h / total, bar, 2, color)
@@ -1828,26 +1871,38 @@ fn draw_editor(app: App, x: Int, y: Int, w: Int, h: Int) {
     }
     let text_w = w - minimap
     let adv = gui.mono_width(" ", size)
-    let span = fn_range(tab.lines, tab.cursor_line)
-    gui.clip(x, y, text_w, h)
-    // The whole function the caret sits in, marked along the left edge.
-    if span.len() == 2 {
-        let start_row = span[0] - tab.scroll
-        let end_row = span[1] - tab.scroll
-        let top = y + start_row * lh
-        var height = (end_row - start_row + 1) * lh
-        if height < lh {
-            height = lh
-        }
-        gui.rect_alpha(x, top, 3, height, theme.accent, 120)
+    let rows = visible_rows(tab)
+    let span = selection_span(tab)
+    var matches: List<Int> = []
+    if app.overlay == "find" && app.field.len() > 0 {
+        matches = all_matches(tab, app.field)
     }
-    var block = block_before(tab.lines, tab.scroll)
+    let query_len = app.field.graphemes().len()
+    var first_line = row_line(rows, tab.scroll)
+    if first_line < 0 {
+        first_line = 0
+    }
+    gui.clip(x, y, text_w, h)
+    let fspan = fn_range(tab.lines, tab.cursor_line)
+    if fspan.len() == 2 {
+        let start_row = row_of(rows, fspan[0])
+        let end_row = row_of(rows, fspan[1])
+        if start_row >= 0 && end_row >= 0 {
+            let top = y + (start_row - tab.scroll) * lh
+            var height = (end_row - start_row + 1) * lh
+            if height < lh {
+                height = lh
+            }
+            gui.rect_alpha(x, top, 3, height, theme.accent, 120)
+        }
+    }
+    var block = block_before(tab.lines, first_line)
     var row = 0
     while row < rows_visible {
-        let index = tab.scroll + row
-        if index < tab.lines.len() {
+        let index = row_line(rows, tab.scroll + row)
+        if index >= 0 {
             let ly = y + row * lh
-            let text = tab.lines[index]
+            let line_text = tab.lines[index]
             var marked = index == tab.cursor_line
             if app.vim && app.mode == "visual" {
                 let low = gui.min(app.anchor, tab.cursor_line)
@@ -1859,7 +1914,28 @@ fn draw_editor(app: App, x: Int, y: Int, w: Int, h: Int) {
             if marked {
                 gui.rect(x, ly, text_w, lh, theme.elevated)
             }
-            let indent = leading_spaces(text)
+            if !span.empty && index >= span.l0 && index <= span.l1 {
+                let chars = line_text.graphemes()
+                var c0 = 0
+                var c1 = chars.len()
+                if index == span.l0 {
+                    c0 = gui.clamp(span.c0, 0, chars.len())
+                }
+                if index == span.l1 {
+                    c1 = gui.clamp(span.c1, 0, chars.len())
+                }
+                if c1 > c0 {
+                    gui.rect_alpha(x + gutter_width() + c0 * adv, ly, (c1 - c0) * adv, lh, theme.accent, 120)
+                }
+            }
+            var m = 0
+            while m + 1 < matches.len() {
+                if matches[m] == index && query_len > 0 {
+                    gui.rect_alpha(x + gutter_width() + matches[m + 1] * adv, ly, query_len * adv, lh, theme.yellow, 80)
+                }
+                m = m + 2
+            }
+            let indent = leading_spaces(line_text)
             var guide = 4
             while guide <= indent {
                 gui.rect_alpha(x + gutter_width() + guide * adv, ly, 1, lh, theme.border_strong, 90)
@@ -1872,17 +1948,24 @@ fn draw_editor(app: App, x: Int, y: Int, w: Int, h: Int) {
                 number_color = theme.link
             }
             gui.mono(x + gutter_width() - 12 - number_width, ly + 3, number, size, number_color)
-            let trimmed = text.trim()
-            if trimmed.starts_with("fn ") || trimmed.starts_with("struct ") || trimmed.starts_with("impl ") || trimmed.starts_with("enum ") {
-                gui.rect(x + gutter_width() - 30, ly + 8, 4, 4, theme.faint)
+            let trimmed = line_text.trim()
+            let is_decl = trimmed.starts_with("fn ") || trimmed.starts_with("struct ") || trimmed.starts_with("impl ") || trimmed.starts_with("enum ")
+            if is_decl {
+                gui.rect(x + gutter_width() - 34, ly + 9, 7, 1, theme.faint)
+                if has_int(tab.folds, index) {
+                    gui.rect(x + gutter_width() - 31, ly + 6, 1, 7, theme.faint)
+                    let hidden = fold_end(tab.lines, index) - index
+                    let folded_label = "⋯ " + "${hidden}" + " lines"
+                    gui.text(x + gutter_width() + 4, ly + 3, folded_label, size, theme.faint)
+                }
             }
-            let lex = draw_code(x + gutter_width(), ly + 3, text, size, theme, block)
+            let lex = draw_code(x + gutter_width(), ly + 3, line_text, size, theme, block)
             block = lex.block
         }
         row = row + 1
     }
-    // Bracket pair under the caret.
-    if tab.cursor_line >= tab.scroll && tab.cursor_line < tab.scroll + rows_visible {
+    let caret_row = row_of(rows, tab.cursor_line)
+    if caret_row >= tab.scroll && caret_row < tab.scroll + rows_visible {
         let line = tab.lines[tab.cursor_line]
         let chars = line.graphemes()
         var at = tab.cursor_col
@@ -1892,31 +1975,33 @@ fn draw_editor(app: App, x: Int, y: Int, w: Int, h: Int) {
         if at >= 0 && at < chars.len() {
             let partner = bracket_partner(line, at)
             if partner >= 0 {
-                let ly = y + (tab.cursor_line - tab.scroll) * lh
+                let ly = y + (caret_row - tab.scroll) * lh
                 gui.stroke(x + gutter_width() + at * adv - 1, ly + 1, adv + 2, lh - 2, theme.border_strong)
                 gui.stroke(x + gutter_width() + partner * adv - 1, ly + 1, adv + 2, lh - 2, theme.border_strong)
             }
         }
     }
-    let line_chars = tab.lines[tab.cursor_line].graphemes()
-    let prefix = slice_chars(line_chars, 0, gui.clamp(tab.cursor_col, 0, line_chars.len()))
-    let caret_x = x + gutter_width() + gui.mono_width(prefix, size)
-    let caret_y = y + (tab.cursor_line - tab.scroll) * lh + 3
-    var typing = true
-    if app.vim && app.mode != "insert" {
-        typing = false
-    }
-    if typing {
-        gui.rect(caret_x, caret_y, 2, size + 3, theme.fg_bright)
-    } else {
-        let under = slice_chars(line_chars, gui.clamp(tab.cursor_col, 0, line_chars.len()), gui.clamp(tab.cursor_col + 1, 0, line_chars.len()))
-        var cell = gui.mono_width(under, size)
-        if cell < 7 {
-            cell = 7
+    if caret_row >= 0 && caret_row >= tab.scroll && caret_row < tab.scroll + rows_visible {
+        let line_chars = tab.lines[tab.cursor_line].graphemes()
+        let prefix = slice_chars(line_chars, 0, gui.clamp(tab.cursor_col, 0, line_chars.len()))
+        let caret_x = x + gutter_width() + gui.mono_width(prefix, size)
+        let caret_y = y + (caret_row - tab.scroll) * lh + 3
+        var typing = true
+        if app.vim && app.mode != "insert" {
+            typing = false
         }
-        gui.rect_alpha(caret_x, caret_y, cell, size + 3, theme.fg_bright, 120)
+        if typing {
+            gui.rect(caret_x, caret_y, 2, size + 3, theme.fg_bright)
+        } else {
+            let under = slice_chars(line_chars, gui.clamp(tab.cursor_col, 0, line_chars.len()), gui.clamp(tab.cursor_col + 1, 0, line_chars.len()))
+            var cell = gui.mono_width(under, size)
+            if cell < 7 {
+                cell = 7
+            }
+            gui.rect_alpha(caret_x, caret_y, cell, size + 3, theme.fg_bright, 120)
+        }
+        draw_sparks(app, caret_x + 2, caret_y)
     }
-    draw_sparks(app, caret_x + 2, caret_y)
     gui.clip_reset()
     draw_minimap(app, x + text_w, y, minimap, h)
 }
@@ -2064,6 +2149,10 @@ fn draw_status(app: App, w: Int, h: Int) {
 
 fn draw_overlay(app: App, w: Int, h: Int) {
     let theme = app.theme
+    if app.overlay == "find" {
+        draw_find(app, w)
+        return
+    }
     gui.rect_alpha(0, 0, w, h, 0, 110)
     if app.overlay == "about" {
         draw_about(app, w)
@@ -2618,6 +2707,493 @@ fn vim_key(app: App, code: Int) -> App {
     return app
 }
 
+// ---------- selection, clipboard, find, folding ----------
+
+struct Span {
+    l0: Int,
+    c0: Int,
+    l1: Int,
+    c1: Int,
+    empty: Bool,
+}
+
+fn has_int(items: List<Int>, value: Int) -> Bool {
+    var i = 0
+    while i < items.len() {
+        if items[i] == value {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+fn selection_span(tab: Tab) -> Span {
+    var l0 = tab.sel_line
+    var c0 = tab.sel_col
+    var l1 = tab.cursor_line
+    var c1 = tab.cursor_col
+    if l0 > l1 || (l0 == l1 && c0 > c1) {
+        l0 = tab.cursor_line
+        c0 = tab.cursor_col
+        l1 = tab.sel_line
+        c1 = tab.sel_col
+    }
+    let empty = l0 == l1 && c0 == c1
+    return Span { l0: l0, c0: c0, l1: l1, c1: c1, empty: empty }
+}
+
+fn selected_text(tab: Tab) -> String {
+    let span = selection_span(tab)
+    if span.empty {
+        return ""
+    }
+    var out = ""
+    var line = span.l0
+    while line <= span.l1 {
+        let chars = tab.lines[line].graphemes()
+        var from = 0
+        if line == span.l0 {
+            from = gui.clamp(span.c0, 0, chars.len())
+        }
+        var to = chars.len()
+        if line == span.l1 {
+            to = gui.clamp(span.c1, 0, chars.len())
+        }
+        out = out + slice_chars(chars, from, to)
+        if line < span.l1 {
+            out = out + "\n"
+        }
+        line = line + 1
+    }
+    return out
+}
+
+fn select_all(app: App) -> App {
+    var app = app
+    if app.active < 0 || app.tabs.len() == 0 {
+        return app
+    }
+    var tab = app.tabs[app.active]
+    tab.sel_line = 0
+    tab.sel_col = 0
+    tab.cursor_line = tab.lines.len() - 1
+    tab.cursor_col = tab.lines[tab.cursor_line].graphemes().len()
+    tab.selecting = true
+    app.tabs[app.active] = tab
+    return app
+}
+
+fn copy_selection(app: App) -> App {
+    var app = app
+    if app.active < 0 || app.tabs.len() == 0 {
+        return app
+    }
+    let text = selected_text(app.tabs[app.active])
+    if text.len() > 0 {
+        gui.set_clipboard(text)
+        app.status = "Copied " + "${text.graphemes().len()}" + " chars"
+    }
+    return app
+}
+
+fn cut_selection(app: App) -> App {
+    var app = copy_selection(app)
+    if app.active < 0 || app.tabs.len() == 0 {
+        return app
+    }
+    if app.tabs[app.active].selecting {
+        app = snapshot(app)
+        app = delete_selection(app)
+        app.status = "Cut"
+    }
+    return app
+}
+
+fn paste_clipboard(app: App) -> App {
+    var app = app
+    let text = gui.clipboard()
+    if text.len() == 0 {
+        return app
+    }
+    if app.active < 0 || app.tabs.len() == 0 {
+        return app
+    }
+    app = clear_selection(app)
+    return insert_text(app, text)
+}
+
+fn insert_text(app: App, text: String) -> App {
+    let parts = split_lines(text)
+    if parts.len() <= 1 {
+        return edit_insert(app, text)
+    }
+    var app = edit_insert(app, parts[0])
+    var i = 1
+    while i < parts.len() {
+        app = edit_newline(app)
+        app = edit_insert(app, parts[i])
+        i = i + 1
+    }
+    return app
+}
+
+fn delete_selection(app: App) -> App {
+    var app = app
+    if app.active < 0 || app.tabs.len() == 0 {
+        return app
+    }
+    var tab = app.tabs[app.active]
+    let span = selection_span(tab)
+    if span.empty {
+        tab.selecting = false
+        app.tabs[app.active] = tab
+        return app
+    }
+    let first = tab.lines[span.l0].graphemes()
+    let last = tab.lines[span.l1].graphemes()
+    let head = slice_chars(first, 0, gui.clamp(span.c0, 0, first.len()))
+    let tail = slice_chars(last, gui.clamp(span.c1, 0, last.len()), last.len())
+    let merged = head + tail
+    var out: List<String> = []
+    var i = 0
+    while i < tab.lines.len() {
+        if i == span.l0 {
+            out.push(merged)
+        } else {
+            if i < span.l0 || i > span.l1 {
+                out.push(tab.lines[i])
+            }
+        }
+        i = i + 1
+    }
+    tab.lines = out
+    tab.cursor_line = span.l0
+    tab.cursor_col = head.graphemes().len()
+    tab.sel_line = tab.cursor_line
+    tab.sel_col = tab.cursor_col
+    tab.selecting = false
+    tab.dirty = true
+    app.tabs[app.active] = tab
+    return app
+}
+
+fn clear_selection(app: App) -> App {
+    var app = app
+    if app.active < 0 || app.tabs.len() == 0 {
+        return app
+    }
+    if !app.tabs[app.active].selecting {
+        return app
+    }
+    app = snapshot(app)
+    return delete_selection(app)
+}
+
+// ---------- find ----------
+
+fn find_in_line(line: String, query: String, from: Int) -> Int {
+    let chars = line.graphemes()
+    let q = query.graphemes()
+    if q.len() == 0 {
+        return -1
+    }
+    var i = from
+    while i + q.len() <= chars.len() {
+        var same = true
+        var j = 0
+        while j < q.len() && same {
+            if chars[i + j] != q[j] {
+                same = false
+            } else {
+                j = j + 1
+            }
+        }
+        if same {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+// Every match as flattened [line, col] pairs.
+fn all_matches(tab: Tab, query: String) -> List<Int> {
+    var out: List<Int> = []
+    if query.len() == 0 {
+        return out
+    }
+    var i = 0
+    while i < tab.lines.len() {
+        var at = find_in_line(tab.lines[i], query, 0)
+        while at >= 0 {
+            out.push(i)
+            out.push(at)
+            at = find_in_line(tab.lines[i], query, at + 1)
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn find_step(app: App, dir: Int) -> App {
+    var app = app
+    if app.active < 0 || app.tabs.len() == 0 {
+        return app
+    }
+    var tab = app.tabs[app.active]
+    let list = all_matches(tab, app.field)
+    if list.len() == 0 {
+        app.status = "No results"
+        return app
+    }
+    var pick = 0
+    if dir < 0 {
+        pick = list.len() - 2
+    }
+    var i = 0
+    while i < list.len() {
+        let line = list[i]
+        let col = list[i + 1]
+        let after = line > tab.cursor_line || (line == tab.cursor_line && col > tab.cursor_col)
+        let before = line < tab.cursor_line || (line == tab.cursor_line && col < tab.cursor_col)
+        if dir > 0 && after {
+            pick = i
+            i = list.len()
+        } else {
+            if dir < 0 && before {
+                pick = i
+            }
+            i = i + 2
+        }
+    }
+    tab.cursor_line = list[pick]
+    tab.sel_line = list[pick]
+    tab.sel_col = list[pick + 1]
+    tab.cursor_col = list[pick + 1] + app.field.graphemes().len()
+    tab.selecting = true
+    tab = tab_scrolled(tab)
+    app.tabs[app.active] = tab
+    app.status = "Match " + "${pick / 2 + 1}" + " of " + "${list.len() / 2}"
+    return app
+}
+
+fn replace_all(app: App) -> App {
+    var app = app
+    if app.active < 0 || app.tabs.len() == 0 || app.field.len() == 0 {
+        return app
+    }
+    app = snapshot(app)
+    var tab = app.tabs[app.active]
+    let count = all_matches(tab, app.field).len() / 2
+    var lines: List<String> = []
+    var i = 0
+    while i < tab.lines.len() {
+        lines.push(tab.lines[i].replace(app.field, app.field2))
+        i = i + 1
+    }
+    tab.lines = lines
+    tab.dirty = true
+    tab.selecting = false
+    app.tabs[app.active] = tab
+    app.status = "Replaced " + "${count}"
+    return app
+}
+
+struct FieldText {
+    value: String,
+    cursor: Int,
+}
+
+fn field_type(value: String, cursor: Int, ch: String) -> FieldText {
+    let chars = value.graphemes()
+    let at = gui.clamp(cursor, 0, chars.len())
+    return FieldText { value: slice_chars(chars, 0, at) + ch + slice_chars(chars, at, chars.len()), cursor: at + 1 }
+}
+
+fn field_back(value: String, cursor: Int) -> FieldText {
+    let chars = value.graphemes()
+    let at = gui.clamp(cursor, 0, chars.len())
+    if at == 0 {
+        return FieldText { value: value, cursor: 0 }
+    }
+    return FieldText { value: slice_chars(chars, 0, at - 1) + slice_chars(chars, at, chars.len()), cursor: at - 1 }
+}
+
+fn find_key(app: App, code: Int, mods: Int) -> App {
+    var app = app
+    let command = mods % 2 == 1
+    let shift = (mods / 2) % 2 == 1
+    if code == gui.key_escape() {
+        app.overlay = ""
+        return app
+    }
+    if code == gui.key_tab() {
+        app.focus = 1 - app.focus
+        return app
+    }
+    if code == gui.key_enter() {
+        if command && app.focus == 1 {
+            return replace_all(app)
+        }
+        if shift {
+            return find_step(app, -1)
+        }
+        return find_step(app, 1)
+    }
+    if app.focus == 1 {
+        if code == gui.key_backspace() {
+            let next = field_back(app.field2, app.field2_cursor)
+            app.field2 = next.value
+            app.field2_cursor = next.cursor
+            return app
+        }
+        if code == gui.key_left() {
+            app.field2_cursor = gui.clamp(app.field2_cursor - 1, 0, app.field2.graphemes().len())
+            return app
+        }
+        if code == gui.key_right() {
+            app.field2_cursor = gui.clamp(app.field2_cursor + 1, 0, app.field2.graphemes().len())
+            return app
+        }
+        if !command && code >= 32 && code <= 126 {
+            let next = field_type(app.field2, app.field2_cursor, code_to_text(code))
+            app.field2 = next.value
+            app.field2_cursor = next.cursor
+        }
+        return app
+    }
+    if code == gui.key_backspace() {
+        let next = field_back(app.field, app.field_cursor)
+        app.field = next.value
+        app.field_cursor = next.cursor
+        return app
+    }
+    if code == gui.key_left() {
+        app.field_cursor = gui.clamp(app.field_cursor - 1, 0, app.field.graphemes().len())
+        return app
+    }
+    if code == gui.key_right() {
+        app.field_cursor = gui.clamp(app.field_cursor + 1, 0, app.field.graphemes().len())
+        return app
+    }
+    if !command && code >= 32 && code <= 126 {
+        let next = field_type(app.field, app.field_cursor, code_to_text(code))
+        app.field = next.value
+        app.field_cursor = next.cursor
+    }
+    return app
+}
+
+fn find_click(app: App, mx: Int, my: Int, w: Int, h: Int) -> App {
+    var app = app
+    let width = 460
+    let x = w - width - 28
+    let y = title_height() + tabs_height() + crumbs_height() + 6
+    if mx > x && mx < x + width - 76 && my > y + 4 && my < y + 26 {
+        app.focus = 0
+        return app
+    }
+    if mx > x && mx < x + width - 76 && my > y + 38 && my < y + 60 {
+        app.focus = 1
+        return app
+    }
+    if mx > x + width - 68 && mx < x + width - 12 && my > y + 38 && my < y + 60 {
+        return replace_all(app)
+    }
+    if mx < x || mx > x + width || my < y || my > y + 78 {
+        app.overlay = ""
+    }
+    return app
+}
+
+fn draw_find(app: App, w: Int) {
+    let theme = app.theme
+    let width = 460
+    let x = w - width - 28
+    let y = title_height() + tabs_height() + crumbs_height() + 6
+    gui.rect(x, y, width, 78, theme.panel)
+    gui.stroke(x, y, width, 78, theme.border_strong)
+    gui.text(x + 12, y + 9, "Find", 11, theme.muted)
+    gui.rect(x + 56, y + 4, width - 140, 22, theme.bg)
+    gui.stroke(x + 56, y + 4, width - 140, 22, theme.border_strong)
+    gui.text(x + 62, y + 7, app.field, 12, theme.fg_bright)
+    if app.focus == 0 {
+        let at = slice_chars(app.field.graphemes(), 0, gui.clamp(app.field_cursor, 0, app.field.graphemes().len()))
+        gui.rect(x + 62 + gui.mono_width(at, 12), y + 6, 1, 18, theme.accent)
+    }
+    let total = all_matches(active_tab(app), app.field).len() / 2
+    gui.text(x + width - 76, y + 9, "${total}", 10, theme.muted)
+    gui.text(x + 12, y + 43, "Replace", 11, theme.muted)
+    gui.rect(x + 56, y + 38, width - 140, 22, theme.bg)
+    gui.stroke(x + 56, y + 38, width - 140, 22, theme.border_strong)
+    gui.text(x + 62, y + 41, app.field2, 12, theme.fg_bright)
+    if app.focus == 1 {
+        let at2 = slice_chars(app.field2.graphemes(), 0, gui.clamp(app.field2_cursor, 0, app.field2.graphemes().len()))
+        gui.rect(x + 62 + gui.mono_width(at2, 12), y + 40, 1, 18, theme.accent)
+    }
+    gui.rect(x + width - 68, y + 38, 56, 22, theme.accent)
+    gui.text(x + width - 56, y + 43, "All", 11, theme.fg_bright)
+}
+
+// ---------- folding ----------
+
+fn fold_end(lines: List<String>, start: Int) -> Int {
+    var depth = 0
+    var i = start
+    while i < lines.len() {
+        let chars = lines[i].graphemes()
+        var j = 0
+        while j < chars.len() {
+            if chars[j] == "{" {
+                depth = depth + 1
+            }
+            if chars[j] == "}" {
+                depth = depth - 1
+            }
+            j = j + 1
+        }
+        if depth <= 0 && i > start {
+            return i
+        }
+        i = i + 1
+    }
+    return start
+}
+
+// Line indices that are actually drawn, skipping folded blocks.
+fn visible_rows(tab: Tab) -> List<Int> {
+    var rows: List<Int> = []
+    var i = 0
+    while i < tab.lines.len() {
+        rows.push(i)
+        if has_int(tab.folds, i) {
+            i = fold_end(tab.lines, i) + 1
+        } else {
+            i = i + 1
+        }
+    }
+    return rows
+}
+
+fn row_line(rows: List<Int>, row: Int) -> Int {
+    if row < 0 || row >= rows.len() {
+        return -1
+    }
+    return rows[row]
+}
+
+fn row_of(rows: List<Int>, line: Int) -> Int {
+    var i = 0
+    while i < rows.len() {
+        if rows[i] == line {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
 // ---------- input ----------
 
 // Which control the pointer is over, coarsely: two positions with the same key
@@ -2673,8 +3249,11 @@ fn handle(app: App, event: gui.Event) -> App {
         app.mouse_y = event.y
         return app
     }
+    if event.kind == gui.event_drag() {
+        return drag(app, event.x, event.y)
+    }
     if event.kind == gui.event_mouse_down() {
-        return click(app, event.x, event.y)
+        return click(app, event.x, event.y, event.mods)
     }
     if event.kind == gui.event_scroll() {
         return scroll(app, event.delta, event.x, event.y)
@@ -2749,6 +3328,23 @@ fn key(app: App, code: Int, mods: Int) -> App {
             }
             return app
         }
+        if code == 102 {
+            app.overlay = "find"
+            app.focus = 0
+            return app
+        }
+        if code == 99 {
+            return copy_selection(app)
+        }
+        if code == 120 {
+            return cut_selection(app)
+        }
+        if code == 118 {
+            return paste_clipboard(app)
+        }
+        if code == 97 {
+            return select_all(app)
+        }
         // Editor zoom, like ⌘+ / ⌘- / ⌘0 in VS Code.
         if code == 61 || code == 43 || code == 69 {
             app.size = gui.clamp(app.size + 1, 10, 22)
@@ -2819,6 +3415,9 @@ fn key(app: App, code: Int, mods: Int) -> App {
 
 fn overlay_key(app: App, code: Int, mods: Int) -> App {
     var app = app
+    if app.overlay == "find" {
+        return find_key(app, code, mods)
+    }
     let command = mods % 2 == 1
     if code == gui.key_escape() {
         app.overlay = ""
@@ -2903,7 +3502,8 @@ fn scroll(app: App, delta: Int, mx: Int, my: Int) -> App {
     }
     if app.active >= 0 && app.tabs.len() > 0 && mx > left {
         var tab = app.tabs[app.active]
-        tab.scroll = gui.clamp(tab.scroll - steps, 0, tab.lines.len())
+        let rows = visible_rows(tab)
+        tab.scroll = gui.clamp(tab.scroll - steps, 0, rows.len())
         app.tabs[app.active] = tab
     }
     return app
@@ -2916,7 +3516,46 @@ fn if_set(flag: Bool, value: Int, other: Int) -> Int {
     return other
 }
 
-fn click(app: App, mx: Int, my: Int) -> App {
+fn drag(app: App, mx: Int, my: Int) -> App {
+    var app = app
+    if app.overlay.len() > 0 {
+        return app
+    }
+    let h = gui.height()
+    var left = activity_width()
+    if app.sidebar {
+        left = left + sidebar_width()
+    }
+    let editor_top = title_height() + tabs_height() + crumbs_height()
+    var editor_bottom = h - status_height()
+    if app.panel {
+        editor_bottom = editor_bottom - panel_height()
+    }
+    if app.active < 0 || app.tabs.len() == 0 || my < editor_top || my > editor_bottom || mx < left {
+        return app
+    }
+    var tab = app.tabs[app.active]
+    let rows = visible_rows(tab)
+    let row = tab.scroll + (my - editor_top) / line_height(app.size)
+    var line = tab.lines.len() - 1
+    if row >= 0 && row < rows.len() {
+        line = rows[row]
+    }
+    var col = (mx - left - gutter_width()) / gui.mono_width(" ", app.size)
+    if col < 0 {
+        col = 0
+    }
+    tab.cursor_line = gui.clamp(line, 0, tab.lines.len() - 1)
+    tab.cursor_col = gui.clamp(col, 0, tab.lines[tab.cursor_line].graphemes().len())
+    tab.selecting = true
+    tab = tab_scrolled(tab)
+    app.tabs[app.active] = tab
+    app.mouse_x = mx
+    app.mouse_y = my
+    return app
+}
+
+fn click(app: App, mx: Int, my: Int, mods: Int) -> App {
     var app = app
     let w = gui.width()
     let h = gui.height()
@@ -3028,19 +3667,51 @@ fn click(app: App, mx: Int, my: Int) -> App {
         editor_bottom = editor_bottom - panel_height()
     }
     if app.active >= 0 && my > editor_top && my < editor_bottom && mx > left {
-        let tab = app.tabs[app.active]
-        if my < title_height() + tabs_height() + crumbs_height() {
-            return app
+        var tab = app.tabs[app.active]
+        let rows = visible_rows(tab)
+        let row = tab.scroll + (my - editor_top) / line_height(app.size)
+        var line = tab.lines.len() - 1
+        if row >= 0 && row < rows.len() {
+            line = rows[row]
         }
-        let size = app.size
-        let lh = line_height(size)
-        let line = tab.scroll + (my - editor_top) / lh
+        // The gutter fold marker: a minus when open, a plus when collapsed.
+        if mx > left + gutter_width() - 38 && mx < left + gutter_width() - 20 {
+            let trimmed = tab.lines[line].trim()
+            let is_decl = trimmed.starts_with("fn ") || trimmed.starts_with("struct ") || trimmed.starts_with("impl ") || trimmed.starts_with("enum ")
+            if is_decl {
+                var folds = tab.folds
+                if has_int(folds, line) {
+                    var kept: List<Int> = []
+                    var k = 0
+                    while k < folds.len() {
+                        if folds[k] != line {
+                            kept.push(folds[k])
+                        }
+                        k = k + 1
+                    }
+                    folds = kept
+                } else {
+                    folds.push(line)
+                }
+                tab.folds = folds
+                app.tabs[app.active] = tab
+                return app
+            }
+        }
         var next = app
         var picked = tab
         picked.cursor_line = gui.clamp(line, 0, tab.lines.len() - 1)
-        let advance = gui.advance(size)
-        let column = (mx - left - gutter_width()) / advance
+        var column = (mx - left - gutter_width()) / gui.mono_width(" ", app.size)
+        if column < 0 {
+            column = 0
+        }
         picked.cursor_col = gui.clamp(column, 0, picked.lines[picked.cursor_line].graphemes().len())
+        picked.selecting = true
+        let shift = (mods / 2) % 2 == 1
+        if !shift {
+            picked.sel_line = picked.cursor_line
+            picked.sel_col = picked.cursor_col
+        }
         next.tabs[next.active] = picked
         return next
     }
@@ -3068,6 +3739,9 @@ fn click(app: App, mx: Int, my: Int) -> App {
 
 fn overlay_click(app: App, mx: Int, my: Int, w: Int, h: Int) -> App {
     var app = app
+    if app.overlay == "find" {
+        return find_click(app, mx, my, w, h)
+    }
     if app.overlay == "settings" {
         let card = 520
         let x = (w - card) / 2
@@ -3188,6 +3862,9 @@ fn main() {
         anim: 0,
         minimap: true,
         plugins: [],
+        field2: "",
+        field2_cursor: 0,
+        focus: 0,
     }
     app.nodes = build_nodes(app.root, 0, app.expanded)
     app.plugins = load_plugins(app.root)

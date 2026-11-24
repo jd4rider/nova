@@ -74,6 +74,8 @@ extern "C" fn nova_fs_exists(path: String) -> Int
 extern "C" fn nova_fs_is_dir(path: String) -> Int
 extern "C" fn nova_fs_list(path: String) -> String
 extern "C" fn nova_gui_panel(mode: Int) -> String
+extern "C" fn nova_gui_clipboard_get() -> String
+extern "C" fn nova_gui_clipboard_set(text: String)
 extern "C" fn nova_fs_cwd() -> String
 extern "C" fn nova_env(name: String) -> String
 extern "C" fn nova_process_run(command: String, cwd: String) -> String
@@ -487,6 +489,15 @@ fn pick_file() -> String {
 
 fn pick_folder() -> String {
     return nova_gui_panel(1)
+}
+
+// The system clipboard, shared with every other application.
+fn clipboard() -> String {
+    return nova_gui_clipboard_get()
+}
+
+fn set_clipboard(text: String) {
+    nova_gui_clipboard_set(text)
 }
 
 fn env(name: String) -> String {
