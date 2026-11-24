@@ -4,11 +4,22 @@
 // flushing stdout. Rendering is plain ANSI text, so the output is just a string
 // that any terminal (or a test harness) can inspect.
 //
-// The library deliberately does not claim raw-mode input, Unicode display
-// width, or Windows support. See the website page at /libraries/tui/.
+// Raw-mode input, terminal size, mouse and bracketed paste come from the
+// native runtime; layout is grapheme-cluster aware. Windows remains untested.
+// See the website page at /libraries/tui/.
 
 extern "C" fn usleep(usec: Int) -> Unit
 extern "C" fn fflush(stream: Int) -> Int
+extern "C" fn nova_term_is_tty() -> Int
+extern "C" fn nova_term_enter_raw() -> Int
+extern "C" fn nova_term_leave_raw() -> Int
+extern "C" fn nova_term_width() -> Int
+extern "C" fn nova_term_height() -> Int
+extern "C" fn nova_term_read_key(timeout: Int) -> Int
+extern "C" fn nova_term_mouse_x() -> Int
+extern "C" fn nova_term_mouse_y() -> Int
+extern "C" fn nova_term_paste_len() -> Int
+extern "C" fn nova_term_paste_next() -> Int
 
 struct Style {
     fg: Int
@@ -58,6 +69,45 @@ struct Progress {
     label_style: Style
 }
 
+struct TerminalSize {
+    width: Int
+    height: Int
+}
+
+enum Key {
+    Up,
+    Down,
+    Left,
+    Right,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    Delete,
+    Insert,
+    BackTab,
+    Enter,
+    Tab,
+    Backspace,
+    Escape,
+    Quit,
+    Resize,
+    MouseLeft,
+    MouseMiddle,
+    MouseRight,
+    MouseRelease,
+    WheelUp,
+    WheelDown,
+    WheelLeft,
+    WheelRight,
+    DragLeft,
+    DragMiddle,
+    DragRight,
+    Paste,
+    Char(Int),
+    Timeout
+}
+
 // ---------- strings and styling ----------
 
 fn style(fg: Int, bg: Int, bold: Bool, dim: Bool) -> Style {
@@ -99,10 +149,15 @@ fn repeat(text: String, count: Int) -> String {
 }
 
 fn pad(text: String, width: Int) -> String {
-    if text.len() >= width {
+    let visible = text.display_width()
+    if visible >= width {
         return text
     }
-    return text + repeat(" ", width - text.len())
+    return text + repeat(" ", width - visible)
+}
+
+fn fit(text: String, width: Int) -> String {
+    return pad(text.clip(width), width)
 }
 
 fn badge(label: String, fill: Style) -> String {
@@ -113,10 +168,11 @@ fn rule(label: String, width: Int, color: Style) -> String {
     if label.len() == 0 {
         return paint(color, repeat("─", width))
     }
-    if label.len() + 4 >= width {
+    let visible = label.display_width()
+    if visible + 4 >= width {
         return paint(color, repeat("─", width))
     }
-    return paint(color, "── " + label + " " + repeat("─", width - label.len() - 4))
+    return paint(color, "── " + label + " " + repeat("─", width - visible - 4))
 }
 
 // ---------- terminal control ----------
@@ -157,6 +213,167 @@ fn flush() {
     fflush(0)
 }
 
+fn is_tty() -> Bool {
+    return nova_term_is_tty() == 1
+}
+
+fn enter_raw() -> Bool {
+    return nova_term_enter_raw() == 1
+}
+
+fn leave_raw() -> Bool {
+    return nova_term_leave_raw() == 1
+}
+
+fn terminal_width() -> Int {
+    return nova_term_width()
+}
+
+fn terminal_height() -> Int {
+    return nova_term_height()
+}
+
+fn terminal_size() -> TerminalSize {
+    return TerminalSize { width: terminal_width(), height: terminal_height() }
+}
+
+fn read_key(timeout_ms: Int) -> Int {
+    return nova_term_read_key(timeout_ms)
+}
+
+fn mouse_x() -> Int {
+    return nova_term_mouse_x()
+}
+
+fn mouse_y() -> Int {
+    return nova_term_mouse_y()
+}
+
+fn paste_len() -> Int {
+    return nova_term_paste_len()
+}
+
+fn paste_next() -> Int {
+    return nova_term_paste_next()
+}
+
+fn paste_text() -> String {
+    return term_paste()
+}
+
+fn mouse_on() -> String {
+    return "\u{1b}[?1000h\u{1b}[?1002h\u{1b}[?1006h"
+}
+
+fn mouse_off() -> String {
+    return "\u{1b}[?1000l\u{1b}[?1002l\u{1b}[?1006l"
+}
+
+fn paste_on() -> String {
+    return "\u{1b}[?2004h"
+}
+
+fn paste_off() -> String {
+    return "\u{1b}[?2004l"
+}
+
+fn decode_key(code: Int) -> Key {
+    if code < 0 {
+        return Timeout
+    }
+    if code == 1001 {
+        return Up
+    }
+    if code == 1002 {
+        return Down
+    }
+    if code == 1003 {
+        return Right
+    }
+    if code == 1004 {
+        return Left
+    }
+    if code == 1005 {
+        return Home
+    }
+    if code == 1006 {
+        return End
+    }
+    if code == 1007 {
+        return PageUp
+    }
+    if code == 1008 {
+        return PageDown
+    }
+    if code == 1009 {
+        return Delete
+    }
+    if code == 1010 {
+        return Insert
+    }
+    if code == 1011 {
+        return BackTab
+    }
+    if code == 1020 {
+        return Resize
+    }
+    if code == 3000 {
+        return Paste
+    }
+    if code == 2000 {
+        return MouseLeft
+    }
+    if code == 2001 {
+        return MouseMiddle
+    }
+    if code == 2002 {
+        return MouseRight
+    }
+    if code == 2003 {
+        return MouseRelease
+    }
+    if code == 2004 {
+        return WheelUp
+    }
+    if code == 2005 {
+        return WheelDown
+    }
+    if code == 2006 {
+        return WheelLeft
+    }
+    if code == 2007 {
+        return WheelRight
+    }
+    if code == 2010 {
+        return DragLeft
+    }
+    if code == 2011 {
+        return DragMiddle
+    }
+    if code == 2012 {
+        return DragRight
+    }
+    if code == 3 {
+        return Quit
+    }
+    if code == 13 {
+        return Enter
+    }
+    if code == 10 {
+        return Enter
+    }
+    if code == 9 {
+        return Tab
+    }
+    if code == 127 {
+        return Backspace
+    }
+    if code == 27 {
+        return Escape
+    }
+    return Char(code)
+}
+
 // ---------- components ----------
 
 fn panel(title: String, lines: List<String>, width: Int, colors: Theme) -> Panel {
@@ -166,14 +383,15 @@ fn panel(title: String, lines: List<String>, width: Int, colors: Theme) -> Panel
 impl Panel {
     fn render(self) -> String {
         let inner = self.width - 4;
-        let fill = self.width - 5 - self.title.len();
+        let title = self.title.clip(self.width - 5);
+        let fill = self.width - 5 - title.display_width();
         var out = paint(self.border, "╭─ ");
-        out = out + paint(self.title_style, self.title);
+        out = out + paint(self.title_style, title);
         out = out + paint(self.border, " " + repeat("─", fill) + "╮");
         out = out + "\n";
         for line in self.lines {
             out = out + paint(self.border, "│ ");
-            out = out + paint(self.body, pad(line, inner));
+            out = out + paint(self.body, fit(line, inner));
             out = out + paint(self.border, " │");
             out = out + "\n";
         }
@@ -214,7 +432,7 @@ impl Table {
         var header_line = "";
         var column = 0;
         for header in self.headers {
-            header_line = header_line + pad(header, self.widths[column]) + "  ";
+            header_line = header_line + fit(header, self.widths[column]) + "  ";
             column += 1;
         }
         out = out + paint(self.header, header_line) + "\n";
@@ -223,7 +441,7 @@ impl Table {
             var line = "";
             var index = 0;
             for cell in item.cells {
-                line = line + pad(cell, self.widths[index]) + "  ";
+                line = line + fit(cell, self.widths[index]) + "  ";
                 index += 1;
             }
             out = out + paint(self.cell, line) + "\n";
@@ -254,7 +472,7 @@ fn render_progress(value: Progress) -> String {
     }
     let bar = paint(value.filled, repeat("█", filled))
     let rest = paint(value.empty, repeat("░", value.width - filled))
-    return paint(value.label_style, pad(value.label, 14)) + bar + rest + " " + "${percent}%"
+    return paint(value.label_style, fit(value.label, 14)) + " " + bar + rest + " " + "${percent}%"
 }
 
 impl Progress {
@@ -280,4 +498,8 @@ fn banner(title: String, subtitle: String, width: Int, colors: Theme) -> String 
     out = out + paint(colors.muted, "    " + subtitle) + "\n"
     out = out + rule("", width, colors.muted)
     return out
+}
+
+fn text_panel(title: String, text: String, width: Int, colors: Theme) -> Panel {
+    return panel(title, text.wrap(width - 4), width, colors)
 }

@@ -1,5 +1,6 @@
 //! `nova` command line driver.
 
+use std::collections::HashSet;
 use std::fs;
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -180,7 +181,8 @@ fn analyze_file(path: &Path, json: bool) -> Result<Checked, i32> {
     let parsed = parse(&source);
     let mut diagnostics: Vec<Diagnostic> = parsed.diagnostics;
     let mut stack = vec![path.to_path_buf()];
-    let items = match expand_path_imports(path, parsed.program.items, &mut stack) {
+    let mut loaded = HashSet::new();
+    let items = match expand_path_imports(path, parsed.program.items, &mut stack, &mut loaded) {
         Ok(items) => items,
         Err(message) => {
             eprintln!("{message}");
@@ -219,6 +221,7 @@ fn expand_path_imports(
     path: &Path,
     items: Vec<Item>,
     stack: &mut Vec<PathBuf>,
+    loaded: &mut HashSet<PathBuf>,
 ) -> Result<Vec<Item>, String> {
     let mut expanded = Vec::new();
     for item in items {
@@ -242,6 +245,16 @@ fn expand_path_imports(
                             child.display()
                         ));
                     }
+                    // A module imported by two files (directly and through an
+                    // intermediate import) is expanded once; its items live in
+                    // one flat namespace, so a second copy would clash.
+                    if loaded.contains(&canonical) {
+                        if import.alias.is_some() {
+                            expanded.push(Item::Import(import.clone()));
+                        }
+                        continue;
+                    }
+                    loaded.insert(canonical.clone());
                     let child_source = fs::read_to_string(&canonical).map_err(|error| {
                         format!("nova: could not read {}: {error}", child.display())
                     })?;
@@ -260,7 +273,7 @@ fn expand_path_imports(
                     }
                     stack.push(canonical.clone());
                     let mut child_items =
-                        expand_path_imports(&canonical, parsed.program.items, stack)?;
+                        expand_path_imports(&canonical, parsed.program.items, stack, loaded)?;
                     stack.pop();
                     expanded.append(&mut child_items);
                     if import.alias.is_some() {

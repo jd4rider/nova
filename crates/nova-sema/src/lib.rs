@@ -161,6 +161,14 @@ fn collect_block_names(block: &ast::Block, out: &mut HashSet<String>, bound: &mu
     }
 }
 
+/// Last segment of a dotted name: `Key` for `bubble.Event.Key`.
+fn last_segment(path: &str) -> &str {
+    match path.rsplit_once('.') {
+        Some((_, tail)) => tail,
+        None => path,
+    }
+}
+
 fn collect_pattern_names(pattern: &ast::Pattern, out: &mut HashSet<String>) {
     match &pattern.kind {
         PatternKind::Bind(name) => {
@@ -634,6 +642,37 @@ impl Checker {
                 );
             }
         }
+    }
+
+    /// Drops a leading `module.` from a path when `module` is an imported
+    /// alias that is not shadowed by a value.
+    fn strip_module_path<'a>(&self, path: &'a str) -> &'a str {
+        if let Some((head, rest)) = path.split_once('.') {
+            if self.modules.contains(head) && self.lookup(head).is_none() {
+                return rest;
+            }
+        }
+        path
+    }
+
+    /// Recognises `module.Type.Variant` in expression position, where the
+    /// parser produced a chain of field accesses rooted at a module alias.
+    fn qualified_variant(expr: &ast::Expr) -> Option<(String, String)> {
+        let ExprKind::Field { base, name, .. } = &expr.kind else {
+            return None;
+        };
+        let ExprKind::Field {
+            base: root,
+            name: _,
+            ..
+        } = &base.kind
+        else {
+            return None;
+        };
+        let ExprKind::Ident(module) = &root.kind else {
+            return None;
+        };
+        Some((module.clone(), name.clone()))
     }
 
     fn lookup_variant(&self, name: &str) -> Option<(String, u32, Vec<Type>)> {
@@ -2209,6 +2248,20 @@ impl Checker {
                 method_span,
                 args,
             } => {
+                if let ExprKind::Field {
+                    base: root,
+                    name: _,
+                    ..
+                } = &receiver.kind
+                {
+                    if let ExprKind::Ident(module) = &root.kind {
+                        if self.modules.contains(module) && self.lookup(module).is_none() {
+                            let callee =
+                                ast::Expr::new(ExprKind::Ident(method.clone()), *method_span);
+                            return self.check_call(&callee, args, span, expected);
+                        }
+                    }
+                }
                 if let ExprKind::Ident(alias) = &receiver.kind {
                     if self.modules.contains(alias) && self.lookup(alias).is_none() {
                         let callee = ast::Expr::new(ExprKind::Ident(method.clone()), *method_span);
@@ -2222,6 +2275,18 @@ impl Checker {
                 name,
                 name_span,
             } => {
+                if let ExprKind::Field {
+                    base: root,
+                    name: _,
+                    ..
+                } = &base.kind
+                {
+                    if let ExprKind::Ident(module) = &root.kind {
+                        if self.modules.contains(module) && self.lookup(module).is_none() {
+                            return self.check_ident(name, *name_span, expected);
+                        }
+                    }
+                }
                 let checked_base = self.check_expr(base, None);
                 let ty = if let Type::Struct(struct_name) = &checked_base.ty {
                     if let Some(def) = self.structs.get(struct_name) {
@@ -2742,6 +2807,12 @@ impl Checker {
         span: Span,
         expected: Option<&Type>,
     ) -> TExpr {
+        if let Some((module, variant)) = Self::qualified_variant(callee) {
+            if self.modules.contains(&module) && self.lookup(&module).is_none() {
+                let rewritten = ast::Expr::new(ExprKind::Ident(variant), callee.span);
+                return self.check_call(&rewritten, args, span, expected);
+            }
+        }
         let ExprKind::Ident(name) = &callee.kind else {
             return self.check_fn_value_call(callee, args, span, expected);
         };
@@ -3419,6 +3490,8 @@ impl Checker {
     ) -> TExpr {
         let expected_count = match builtin {
             BuiltinFn::AssertEq => 2,
+            BuiltinFn::TermPaste => 0,
+            BuiltinFn::JsonString => 2,
             _ => 1,
         };
         if args.len() != expected_count {
@@ -3490,6 +3563,72 @@ impl Checker {
                             args: checked,
                         },
                         Type::Never,
+                        span,
+                    ),
+                    expected,
+                )
+            }
+            BuiltinFn::TermPaste => self.finish(
+                TExpr::new(
+                    TExprKind::Builtin {
+                        kind: builtin,
+                        args: Vec::new(),
+                    },
+                    Type::String,
+                    span,
+                ),
+                expected,
+            ),
+            BuiltinFn::CharString => {
+                let value = args
+                    .first()
+                    .map(|a| self.check_expr(&a.value, Some(&Type::Int)))
+                    .unwrap_or_else(|| TExpr::new(TExprKind::Unit, Type::Error, span));
+                self.finish(
+                    TExpr::new(
+                        TExprKind::Builtin {
+                            kind: builtin,
+                            args: vec![value],
+                        },
+                        Type::String,
+                        span,
+                    ),
+                    expected,
+                )
+            }
+            BuiltinFn::HttpGet => {
+                let url = args
+                    .first()
+                    .map(|a| self.check_expr(&a.value, Some(&Type::String)))
+                    .unwrap_or_else(|| TExpr::new(TExprKind::Unit, Type::Error, span));
+                self.finish(
+                    TExpr::new(
+                        TExprKind::Builtin {
+                            kind: builtin,
+                            args: vec![url],
+                        },
+                        Type::String,
+                        span,
+                    ),
+                    expected,
+                )
+            }
+            BuiltinFn::JsonString => {
+                let source = args
+                    .first()
+                    .map(|a| self.check_expr(&a.value, Some(&Type::String)))
+                    .unwrap_or_else(|| TExpr::new(TExprKind::Unit, Type::Error, span));
+                let key = args
+                    .get(1)
+                    .map(|a| self.check_expr(&a.value, Some(&Type::String)))
+                    .unwrap_or_else(|| TExpr::new(TExprKind::Unit, Type::Error, span));
+                self.finish(
+                    TExpr::new(
+                        TExprKind::Builtin {
+                            kind: builtin,
+                            args: vec![source, key],
+                        },
+                        Type::String,
                         span,
                     ),
                     expected,
@@ -3955,6 +4094,36 @@ impl Checker {
                     );
                     self.finish(te, expected)
                 }
+                "replace" => {
+                    self.require_args(method, args, 2, span);
+                    let argument = args
+                        .iter()
+                        .map(|a| self.check_expr(&a.value, Some(&Type::String)))
+                        .collect();
+                    let te = TExpr::new(
+                        TExprKind::Method {
+                            receiver: Box::new(recv),
+                            method: BuiltinMethod::StringReplace,
+                            args: argument,
+                        },
+                        Type::String,
+                        span,
+                    );
+                    self.finish(te, expected)
+                }
+                "lower" => {
+                    self.require_args(method, args, 0, span);
+                    let te = TExpr::new(
+                        TExprKind::Method {
+                            receiver: Box::new(recv),
+                            method: BuiltinMethod::StringLower,
+                            args: Vec::new(),
+                        },
+                        Type::String,
+                        span,
+                    );
+                    self.finish(te, expected)
+                }
                 "trim" => {
                     self.require_args(method, args, 0, span);
                     let te = TExpr::new(
@@ -3964,6 +4133,58 @@ impl Checker {
                             args: Vec::new(),
                         },
                         Type::String,
+                        span,
+                    );
+                    self.finish(te, expected)
+                }
+                "display_width" => {
+                    self.require_args(method, args, 0, span);
+                    let te = TExpr::new(
+                        TExprKind::Method {
+                            receiver: Box::new(recv),
+                            method: BuiltinMethod::StringDisplayWidth,
+                            args: Vec::new(),
+                        },
+                        Type::Int,
+                        span,
+                    );
+                    self.finish(te, expected)
+                }
+                "clip" | "wrap" => {
+                    self.require_args(method, args, 1, span);
+                    let argument = args
+                        .first()
+                        .map(|a| self.check_expr(&a.value, Some(&Type::Int)))
+                        .map(|e| vec![e])
+                        .unwrap_or_default();
+                    let (builtin, result_ty) = if method == "clip" {
+                        (BuiltinMethod::StringClip, Type::String)
+                    } else {
+                        (
+                            BuiltinMethod::StringWrap,
+                            Type::List(Box::new(Type::String)),
+                        )
+                    };
+                    let te = TExpr::new(
+                        TExprKind::Method {
+                            receiver: Box::new(recv),
+                            method: builtin,
+                            args: argument,
+                        },
+                        result_ty,
+                        span,
+                    );
+                    self.finish(te, expected)
+                }
+                "graphemes" => {
+                    self.require_args(method, args, 0, span);
+                    let te = TExpr::new(
+                        TExprKind::Method {
+                            receiver: Box::new(recv),
+                            method: BuiltinMethod::StringGraphemes,
+                            args: Vec::new(),
+                        },
+                        Type::List(Box::new(Type::String)),
                         span,
                     );
                     self.finish(te, expected)
@@ -4186,6 +4407,7 @@ impl Checker {
         span: Span,
         expected: Option<&Type>,
     ) -> TExpr {
+        let name = self.strip_module_path(name);
         let target = if self.structs.contains_key(name) {
             Some(name.to_string())
         } else if self.struct_templates.contains_key(name) {
@@ -4534,7 +4756,7 @@ impl Checker {
                 name_span,
                 fields,
             } => match scrutinee {
-                Type::Option(payload) => match name.as_str() {
+                Type::Option(payload) => match last_segment(name) {
                     "Some" => {
                         coverage.some = true;
                         let id = self.bind_payload(
@@ -4566,7 +4788,7 @@ impl Checker {
                         TPattern::Wildcard
                     }
                 },
-                Type::Result(ok, err) => match name.as_str() {
+                Type::Result(ok, err) => match last_segment(name) {
                     "Ok" => {
                         coverage.ok = true;
                         let id =
@@ -4589,21 +4811,22 @@ impl Checker {
                     }
                 },
                 Type::Enum(enum_name) => {
-                    let found = self.enum_variant(enum_name, name);
+                    let variant = last_segment(name).to_string();
+                    let found = self.enum_variant(enum_name, &variant);
                     let Some((tag, payload_tys)) = found else {
                         self.diagnostics.push(Diagnostic::error(
                             "E0311",
-                            format!("`{name}` is not a variant of `{enum_name}`"),
+                            format!("`{variant}` is not a variant of `{enum_name}`"),
                             *name_span,
                         ));
                         return TPattern::Wildcard;
                     };
-                    coverage.variants.insert(name.clone());
+                    coverage.variants.insert(variant.clone());
                     if fields.len() != payload_tys.len() {
                         self.diagnostics.push(Diagnostic::error(
                             "E0311",
                             format!(
-                                "`{name}` pattern expects {} payload field{}, found {}",
+                                "`{variant}` pattern expects {} payload field{}, found {}",
                                 payload_tys.len(),
                                 if payload_tys.len() == 1 { "" } else { "s" },
                                 fields.len()
@@ -4618,7 +4841,7 @@ impl Checker {
                             payload_ty,
                             *name_span,
                             pattern.span,
-                            name,
+                            &variant,
                         ));
                     }
                     TPattern::Enum { tag, bindings }
@@ -5532,6 +5755,34 @@ fn main() {
     let user = User { name: "Ada" }
     println(util.add(2, 3))
     println(label(user))
+    }
+"#,
+        );
+        assert!(errors(&result).is_empty(), "{:#?}", result.diagnostics);
+    }
+
+    #[test]
+    fn resolves_qualified_imported_items() {
+        let result = check_src(
+            r#"import "util.nova" as util
+
+struct User {
+    name: String
+}
+
+enum Mode {
+    Idle
+    Named(String)
+}
+
+fn main() {
+    let user = util.User { name: "Ada" }
+    let mode = util.Mode.Named(user.name)
+    let value = match mode {
+        util.Mode.Idle => 0,
+        util.Mode.Named(name) => name.len()
+    }
+    println(value)
 }
 "#,
         );

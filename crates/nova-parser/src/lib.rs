@@ -1480,15 +1480,31 @@ impl Parser {
     }
 
     fn looks_like_struct_lit(&self) -> bool {
-        // Caller has verified the current token is `{`.
-        if !self.check(&TokenKind::LBrace) {
+        self.looks_like_struct_lit_at(0)
+    }
+
+    /// Checks whether the token `offset` places ahead starts a struct literal.
+    /// Used for `module.Type { ... }`, where the brace is not at offset 0.
+    fn looks_like_struct_lit_at(&self, offset: usize) -> bool {
+        if !matches!(self.peek_at(offset).kind, TokenKind::LBrace) {
             return false;
         }
-        if matches!(self.peek_at(1).kind, TokenKind::RBrace) {
+        // Newlines may separate `{` from the first field.
+        let mut index = offset + 1;
+        while matches!(self.peek_at(index).kind, TokenKind::Newline) {
+            index += 1;
+        }
+        if matches!(self.peek_at(index).kind, TokenKind::RBrace) {
             return true;
         }
-        matches!(self.peek_at(1).kind, TokenKind::Ident(_))
-            && matches!(self.peek_at(2).kind, TokenKind::Colon)
+        if !matches!(self.peek_at(index).kind, TokenKind::Ident(_)) {
+            return false;
+        }
+        index += 1;
+        while matches!(self.peek_at(index).kind, TokenKind::Newline) {
+            index += 1;
+        }
+        matches!(self.peek_at(index).kind, TokenKind::Colon)
     }
 
     fn parse_primary(&mut self) -> Expr {
@@ -1521,6 +1537,17 @@ impl Parser {
             }
             TokenKind::Ident(name) => {
                 self.advance();
+                if self.disallow_struct_lit == 0
+                    && matches!(self.peek().kind, TokenKind::Dot)
+                    && matches!(self.peek_at(1).kind, TokenKind::Ident(_))
+                    && self.looks_like_struct_lit_at(2)
+                {
+                    self.advance();
+                    if let Some((part, _)) = self.expect_ident("in a qualified type name") {
+                        let qualified = format!("{name}.{part}");
+                        return self.parse_struct_lit(qualified, token.span);
+                    }
+                }
                 if self.check(&TokenKind::LBrace)
                     && self.disallow_struct_lit == 0
                     && self.looks_like_struct_lit()
@@ -1887,6 +1914,17 @@ impl Parser {
             }
             TokenKind::Ident(name) => {
                 self.advance();
+                let mut path = vec![name];
+                while matches!(self.peek().kind, TokenKind::Dot)
+                    && matches!(self.peek_at(1).kind, TokenKind::Ident(_))
+                {
+                    self.advance();
+                    if let Some((part, _)) = self.expect_ident("in a qualified variant path") {
+                        path.push(part);
+                    }
+                }
+                let qualified = path.len() > 1;
+                let name = path.join(".");
                 if self.check(&TokenKind::LParen) {
                     self.advance();
                     self.delimiter_depth += 1;
@@ -1914,6 +1952,15 @@ impl Parser {
                             fields,
                         },
                         span: span.merge(Span::new(end, end)),
+                    }
+                } else if qualified {
+                    Pattern {
+                        kind: PatternKind::Variant {
+                            name,
+                            name_span: span,
+                            fields: Vec::new(),
+                        },
+                        span,
                     }
                 } else {
                     Pattern {

@@ -1,0 +1,174 @@
+// bubble.nova — an Elm-architecture runtime for nova-tui.
+//
+// The app owns a Model, an update function and a view function. The runtime
+// owns everything else: raw mode, the alternate screen, mouse and bracketed
+// paste protocols, resize polling, the redraw loop, tick timing and cleanup.
+//
+// This is the shape of Go's Bubble Tea, not a port of it. Nova has no async
+// commands, so update returns the next command synchronously.
+//
+//   enum Event { Key(Int), Mouse(Int, Int, Int), Paste(String), Resize(Int, Int), Tick }
+//   enum Cmd   { Idle, Quit, After(Int) }
+//
+// import "bubble.nova" as bubble
+// import "tui.nova" as tui
+
+import std.io { print }
+import "tui.nova" as tui
+
+// Constructors are global in this Nova build, so the names carry their enum
+// to avoid colliding with `tui.Key` and the app's own enums.
+enum Event {
+    KeyEvent(Int)
+    MouseEvent(Int, Int, Int)
+    PasteEvent(String)
+    ResizeEvent(Int, Int)
+    TickEvent
+}
+
+enum Cmd {
+    IdleCmd
+    QuitCmd
+    AfterCmd(Int)
+}
+
+struct Settings {
+    mouse: Bool
+    paste: Bool
+    alternate_screen: Bool
+    tick_ms: Int
+}
+
+fn settings(tick_ms: Int) -> Settings {
+    return Settings { mouse: true, paste: true, alternate_screen: true, tick_ms: tick_ms }
+}
+
+fn plain() -> Settings {
+    return Settings { mouse: false, paste: false, alternate_screen: false, tick_ms: -1 }
+}
+
+fn halted(cmd: Cmd) -> Bool {
+    match cmd {
+        QuitCmd => true
+        IdleCmd => false
+        AfterCmd(_) => false
+    }
+}
+
+fn wait_ms(cmd: Cmd, fallback: Int) -> Int {
+    match cmd {
+        AfterCmd(ms) => ms
+        IdleCmd => fallback
+        QuitCmd => fallback
+    }
+}
+
+fn run<M>(
+    init: M,
+    update: fn(M, Event) -> (M, Cmd),
+    view: fn(M) -> String,
+    config: Settings
+) {
+    if !tui.is_tty() {
+        print(view(init) + "\n")
+        print("\n")
+        print(tui.paint(tui.theme().muted, "  no TTY: rendered one frame and exited") + "\n")
+        return
+    }
+    if !tui.enter_raw() {
+        print("nova-tui: could not enter raw mode\n")
+        return
+    }
+
+    print(tui.hide_cursor())
+    if config.alternate_screen {
+        print(tui.enter_alternate())
+    }
+    if config.mouse {
+        print(tui.mouse_on())
+    }
+    if config.paste {
+        print(tui.paste_on())
+    }
+
+    var model = init
+    var running = true
+    var timeout = config.tick_ms
+
+    while running {
+        print(tui.clear())
+        print(tui.home())
+        print(view(model) + "\n")
+        tui.flush()
+
+        let code = tui.read_key(timeout)
+        var event = TickEvent
+
+        if code == -2 {
+            running = false
+        } else if code != -1 {
+            if code == 1020 {
+                let size = tui.terminal_size()
+                event = ResizeEvent(size.width, size.height)
+            } else if code == 3000 {
+                event = PasteEvent(tui.paste_text())
+            } else if code >= 2000 && code <= 2012 {
+                event = MouseEvent(code, tui.mouse_x(), tui.mouse_y())
+            } else {
+                event = KeyEvent(code)
+            }
+        }
+
+        if running {
+            let step = update(model, event)
+            model = step.0
+            if halted(step.1) {
+                running = false
+            } else {
+                timeout = wait_ms(step.1, -1)
+            }
+        }
+    }
+
+    if config.paste {
+        print(tui.paste_off())
+    }
+    if config.mouse {
+        print(tui.mouse_off())
+    }
+    print(tui.show_cursor())
+    if config.alternate_screen {
+        print(tui.leave_alternate())
+    }
+    tui.leave_raw()
+}
+
+// ---------- helpers ----------
+
+// Maps a mouse row onto a list index. Returns -1 when the click is outside the
+// rows, which is the usual "ignore it" case for a list panel.
+fn row_hit(row: Int, first_row: Int, count: Int) -> Int {
+    let index = row - first_row
+    if index < 0 || index >= count {
+        return -1
+    }
+    return index
+}
+
+fn previous_index(index: Int) -> Int {
+    if index > 0 {
+        return index - 1
+    }
+    return 0
+}
+
+fn next_index(index: Int, count: Int) -> Int {
+    if index + 1 < count {
+        return index + 1
+    }
+    return index
+}
+
+fn is_quit_key(code: Int) -> Bool {
+    return code == 113 || code == 81 || code == 3 || code == 27
+}

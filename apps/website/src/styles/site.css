@@ -336,3 +336,36 @@ h1, h2, h3 { line-height: 1.1; letter-spacing: -0.035em; margin: 0; }
   html { scroll-behavior: auto; }
   *, *::before, *::after { transition: none !important; }
 }
+
+/* Nova TUI showcase */
+.tui-terminal {
+  background: #1d2021;
+  border: 1px solid #3c3836;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+}
+.tui-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #282828;
+  border-bottom: 1px solid #3c3836;
+}
+.tui-title { margin-left: 6px; font-family: var(--mono); font-size: 12px; color: #a89984; }
+.tui-screen {
+  margin: 0;
+  padding: 16px 18px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #ebdbb2;
+  overflow-x: auto;
+  white-space: pre;
+}
+.tui-caption { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 12px; font-size: 13px; color: #a89984; }
+.tui-caption code { color: var(--yellow); background: none; padding: 0; }
+.tui-list { margin: 8px 0 14px; padding-left: 18px; line-height: 1.9; }
+.tui-note { font-size: 13px; color: #a89984; }
+@media (max-width: 720px) { .tui-screen { font-size: 10.5px; } }

@@ -283,6 +283,10 @@ pub enum BuiltinFn {
     Assert,
     AssertEq,
     Panic,
+    TermPaste,
+    HttpGet,
+    JsonString,
+    CharString,
 }
 
 impl BuiltinFn {
@@ -294,6 +298,10 @@ impl BuiltinFn {
             "assert" => BuiltinFn::Assert,
             "assert_eq" => BuiltinFn::AssertEq,
             "panic" => BuiltinFn::Panic,
+            "term_paste" => BuiltinFn::TermPaste,
+            "http_get" => BuiltinFn::HttpGet,
+            "json_string" => BuiltinFn::JsonString,
+            "char_string" => BuiltinFn::CharString,
             _ => return None,
         })
     }
@@ -306,6 +314,10 @@ impl BuiltinFn {
             BuiltinFn::Assert => "assert",
             BuiltinFn::AssertEq => "assert_eq",
             BuiltinFn::Panic => "panic",
+            BuiltinFn::TermPaste => "term_paste",
+            BuiltinFn::HttpGet => "http_get",
+            BuiltinFn::JsonString => "json_string",
+            BuiltinFn::CharString => "char_string",
         }
     }
 }
@@ -331,6 +343,12 @@ pub enum BuiltinMethod {
     StringStartsWith,
     StringEndsWith,
     StringTrim,
+    StringDisplayWidth,
+    StringClip,
+    StringWrap,
+    StringGraphemes,
+    StringReplace,
+    StringLower,
     OptionIsSome,
     OptionIsNone,
     OptionUnwrapOr,

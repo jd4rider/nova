@@ -1,0 +1,307 @@
+---
+import SiteLayout from '../layouts/SiteLayout.astro'
+import { href } from '../lib/url'
+import { highlightNova } from '../lib/highlight'
+import { bibleScreen, demoScreen } from '../data/tui-screens'
+
+const CUBE = [0, 95, 135, 175, 215, 255]
+
+function color256(index: number): string {
+  if (index < 16) {
+    const base = [
+      '#1d2021', '#cc241d', '#98971a', '#d79921', '#458588', '#b16286', '#689d6a', '#a89984',
+      '#928374', '#fb4934', '#b8bb26', '#fabd2f', '#83a598', '#d3869b', '#8ec07c', '#ebdbb2'
+    ]
+    return base[index] ?? '#ebdbb2'
+  }
+  if (index < 232) {
+    const value = index - 16
+    const r = CUBE[Math.floor(value / 36) % 6]
+    const g = CUBE[Math.floor(value / 6) % 6]
+    const b = CUBE[value % 6]
+    return `rgb(${r}, ${g}, ${b})`
+  }
+  const level = 8 + (index - 232) * 10
+  return `rgb(${level}, ${level}, ${level})`
+}
+
+function escapeHtml(text: string): string {
+  return text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+}
+
+// Renders the SGR subset the runtime emits: bold, dim, 256-colour fg/bg and reset.
+function ansiToHtml(source: string): string {
+  const text = source.replaceAll('\r\n', '\n').replaceAll('\r', '')
+  let out = ''
+  let fg: string | null = null
+  let bg: string | null = null
+  let bold = false
+  let dim = false
+  let index = 0
+
+  const flush = (chunk: string) => {
+    if (!chunk) return
+    const styles: string[] = []
+    if (fg) styles.push(`color:${fg}`)
+    if (bg) styles.push(`background:${bg}`)
+    if (bold) styles.push('font-weight:600')
+    if (dim) styles.push('opacity:.68')
+    out += styles.length
+      ? `<span style="${styles.join(';')}">${escapeHtml(chunk)}</span>`
+      : escapeHtml(chunk)
+  }
+
+  while (index < text.length) {
+    if (text[index] === '\u001b' && text[index + 1] === '[') {
+      const end = text.indexOf('m', index)
+      if (end === -1) break
+      const params = text
+        .slice(index + 2, end)
+        .split(';')
+        .map((part) => Number(part || '0'))
+      for (let i = 0; i < params.length; i += 1) {
+        const code = params[i]
+        if (code === 0) {
+          fg = null
+          bg = null
+          bold = false
+          dim = false
+        } else if (code === 1) bold = true
+        else if (code === 2) dim = true
+        else if (code === 22) {
+          bold = false
+          dim = false
+        } else if (code === 39) fg = null
+        else if (code === 49) bg = null
+        else if (code === 38 && params[i + 1] === 5) {
+          fg = color256(params[i + 2] ?? 252)
+          i += 2
+        } else if (code === 48 && params[i + 1] === 5) {
+          bg = color256(params[i + 2] ?? 236)
+          i += 2
+        } else if (code >= 30 && code <= 37) {
+          fg = color256(code - 30)
+        } else if (code >= 90 && code <= 97) {
+          fg = color256(code - 90 + 8)
+        }
+      }
+      index = end + 1
+      continue
+    }
+    let next = index
+    while (next < text.length && text[next] !== '\u001b') next += 1
+    flush(text.slice(index, next))
+    index = next
+  }
+  return out
+}
+
+const sample = `import "../../libraries/nova-tui/src/bubble.nova" as bubble
+
+struct Model {
+    count: Int
+}
+
+fn update(model: Model, event: bubble.Event) -> (Model, bubble.Cmd) {
+    return match event {
+        bubble.Event.KeyEvent(code) => on_key(model, code),
+        bubble.Event.TickEvent => (Model { count: model.count + 1 }, bubble.Cmd.AfterCmd(250)),
+        bubble.Event.MouseEvent(_, _, _) => (model, bubble.Cmd.IdleCmd),
+        bubble.Event.PasteEvent(_) => (model, bubble.Cmd.IdleCmd),
+        bubble.Event.ResizeEvent(_, _) => (model, bubble.Cmd.IdleCmd)
+    }
+}
+
+fn view(model: Model) -> String {
+    return "ticks: \${model.count}"
+}
+
+fn main() {
+    bubble.run(Model { count: 0 }, update, view, bubble.settings(250))
+}`
+const highlighted = await highlightNova(sample)
+
+const mappings = [
+  ['tea.Model', 'your struct'],
+  ['tea.Msg', 'bubble.Event'],
+  ['tea.Cmd', 'bubble.Cmd'],
+  ['tea.NewProgram(...).Run()', 'bubble.run(init, update, view, settings)'],
+  ['tea.KeyMsg / MouseMsg', 'Event.KeyEvent / Event.MouseEvent'],
+  ['tea.WindowSizeMsg', 'Event.ResizeEvent(width, height)'],
+  ['tea.Tick', 'Cmd.AfterCmd(milliseconds)'],
+  ['tea.Quit', 'Cmd.QuitCmd']
+] as const
+
+const limits = [
+  ['Commands are synchronous', 'update returns a command; there is no goroutine or async runtime, so a fetch blocks the frame.'],
+  ['One event stream', 'key, mouse, paste and resize arrive from the same read, so there are no independent subscriptions.'],
+  ['Text input is scrolled, not edited', 'the Bible example appends characters and backspaces the last cluster; there is no cursor, selection or word motion.'],
+  ['Variant names are global', 'Nova constructors share one namespace today, so Bubble prefixes its variants (KeyEvent, IdleCmd) to avoid collisions.'],
+  ['Windows is untested', 'the POSIX runtime is what these captures prove.']
+] as const
+---
+
+<SiteLayout
+  title="Nova TUI"
+  path="tui"
+  description="A terminal UI toolkit and Elm-style runtime written in Nova, with a Bible reader that calls a free API."
+>
+  <section class="page-hero">
+    <div class="wrap">
+      <span class="eyebrow"><span class="status-dot"></span> ANSI · Unicode-aware · no dependencies</span>
+      <h1>Terminal apps that<br /><span style="color: var(--yellow)">feel like Nova.</span></h1>
+      <p>
+        Nova TUI is a Charm-style toolkit written in Nova itself: panels, tables, progress bars, spinners and
+        screen control, plus a Bubble Tea-style runtime with one model, one update function and one view function.
+        Everything below is a real capture from a binary built with the repository compiler.
+      </p>
+      <div class="hero-actions" style="margin-top: 26px;">
+        <a class="button primary" href={href('libraries/tui/')}>Read the guide</a>
+        <a class="button" href="https://github.com/jd4rider/nova/tree/main/examples/bible" rel="noreferrer">Bible app source</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head">
+        <div>
+          <div class="kicker">Live from examples/bible</div>
+          <h2>A Bible reader in a terminal.</h2>
+          <p class="section-intro">
+            Pick a translation, book, chapter and verse with the arrow keys, search books by name with
+            <code>/</code>, or press <code>c</code> for the whole chapter. The app fetches the passage from
+            <code>bible-api.com</code> — free, no key — then wraps and scrolls it. This frame was captured through a
+            PTY after a real network round trip.
+          </p>
+        </div>
+      </div>
+      <div class="tui-terminal">
+        <div class="tui-bar">
+          <span class="window-dot"></span><span class="window-dot"></span><span class="window-dot"></span>
+          <span class="tui-title">nova-bible · 100×30</span>
+        </div>
+        <pre class="tui-screen" set:html={ansiToHtml(bibleScreen)}></pre>
+      </div>
+      <div class="tui-caption">
+        <span><code>↑/↓</code> choose</span>
+        <span><code>←/→</code> pane</span>
+        <span><code>enter</code> load</span>
+        <span><code>c</code> whole chapter</span>
+        <span><code>/</code> search books</span>
+        <span><code>:</code> reference</span>
+        <span><code>click</code> focus picker</span>
+        <span><code>wheel</code> move or scroll</span>
+        <span><code>esc</code> quit</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head">
+        <div>
+          <div class="kicker">The same runtime</div>
+          <h2>Model, update, view.</h2>
+          <p class="section-intro">
+            The dashboard below runs the identical loop: a tick drives the spinner, the wheel and clicks move the
+            selection, paste reports grapheme clusters, and a resize reflows the layout.
+          </p>
+        </div>
+      </div>
+      <div class="grid-2" style="align-items: start;">
+        <div class="tui-terminal">
+          <div class="tui-bar">
+            <span class="window-dot"></span><span class="window-dot"></span><span class="window-dot"></span>
+            <span class="tui-title">tui-demo · 90×30</span>
+          </div>
+          <pre class="tui-screen" set:html={ansiToHtml(demoScreen)}></pre>
+        </div>
+        <div class="card" style="padding: 22px;">
+          <h3 style="margin-top: 0;">What the loop owns</h3>
+          <ul class="tui-list">
+            <li>Raw mode, cursor hiding and alternate-screen entry/exit</li>
+            <li>Mouse and bracketed-paste protocols, disabled on the way out</li>
+            <li>Resize polling inside <code>read_key</code>, so a blocked read still wakes</li>
+            <li>Tick timing from <code>Cmd.AfterCmd(ms)</code></li>
+            <li>One redraw per event, then <code>fflush</code></li>
+          </ul>
+          <p class="tui-note">
+            The app never touches escape sequences. It returns a <code>String</code> from <code>view</code> and the
+            runtime paints it.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head">
+        <div>
+          <div class="kicker">Bubble Tea habits, Nova spelling</div>
+          <h2>Same shape, fewer moving parts.</h2>
+          <p class="section-intro">
+            If you have written a Bubble Tea app, the mapping is direct. What is missing is stated below rather
+            than simulated.
+          </p>
+        </div>
+      </div>
+      <div class="card" style="padding: 8px 18px;">
+        <table class="status-table">
+          <thead><tr><th>Bubble Tea</th><th>Nova TUI</th></tr></thead>
+          <tbody>
+            {mappings.map(([tea, nova]) => (
+              <tr><td><code>{tea}</code></td><td><code>{nova}</code></td></tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap grid-2" style="align-items: start;">
+      <div>
+        <div class="kicker">The whole app</div>
+        <h2 style="font-size: clamp(26px, 3.4vw, 38px); margin-bottom: 14px;">No framework boilerplate.</h2>
+        <p class="section-intro">
+          A tick, a key handler and a view. The runtime supplies the terminal; Nova supplies the rest.
+          <code>http_get</code>, <code>json_string</code>, <code>replace</code> and <code>char_string</code> are
+          runtime builtins, so the Bible app needs no package for networking.
+        </p>
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span class="window-dot"></span><span class="window-dot"></span><span class="window-dot"></span>
+          <span class="code-file">examples/tui/src/main.nova</span>
+        </div>
+        <Fragment set:html={highlighted} />
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head">
+        <div>
+          <div class="kicker">Limits</div>
+          <h2>What this is not.</h2>
+        </div>
+      </div>
+      <div class="grid-2" style="align-items: start;">
+        {limits.map(([title, body]) => (
+          <article class="card">
+            <h3>{title}</h3>
+            <p>{body}</p>
+          </article>
+        ))}
+      </div>
+      <p class="notice" style="margin-top: 22px;">
+        <strong>Verification.</strong> The captures come from PTY runs on macOS: the wheel, click, paste, resize and
+        quit paths were asserted, and the Bible frame followed a live <code>bible-api.com</code> request. Windows
+        console handling exists in the runtime but is not exercised here.
+      </p>
+    </div>
+  </section>
+</SiteLayout>

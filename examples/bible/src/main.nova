@@ -1,0 +1,722 @@
+import std.io { println }
+import "../../../libraries/nova-tui/src/bubble.nova" as bubble
+import "../../../libraries/nova-tui/src/tui.nova" as tui
+
+// A terminal Bible reader with pickers for translation, book, chapter and
+// verse. Pressing Enter loads the selection from bible-api.com (free, no key);
+// choosing "whole" (or pressing c) loads the entire chapter.
+//
+// The request is synchronous, so the frame blocks for the length of the fetch.
+
+struct Model {
+    pane: Int
+    versions: List<String>
+    labels: List<String>
+    version_index: Int
+    books: List<String>
+    chapter_counts: List<Int>
+    book_index: Int
+    chapter_index: Int
+    verse_index: Int
+    verse_count: Int
+    passage: String
+    reference: String
+    translation: String
+    status: String
+    scroll: Int
+    width: Int
+    query: String
+    editing: Bool
+    filter: String
+    filtering: Bool
+    saved_book: Int
+}
+
+// ---------- panes ----------
+
+fn pane_version() -> Int {
+    return 0
+}
+
+fn pane_book() -> Int {
+    return 1
+}
+
+fn pane_chapter() -> Int {
+    return 2
+}
+
+fn pane_verse() -> Int {
+    return 3
+}
+
+fn pane_count() -> Int {
+    return 4
+}
+
+// ---------- data ----------
+
+fn version_ids() -> List<String> {
+    return ["web", "kjv", "asv", "bbe", "darby", "ylt", "drb", "oeb-us"]
+}
+
+fn version_labels() -> List<String> {
+    return ["WEB", "KJV", "ASV", "BBE", "DARBY", "YLT", "DRB", "OEB"]
+}
+
+fn book_names() -> List<String> {
+    return [
+        "genesis", "exodus", "leviticus", "numbers", "deuteronomy",
+        "joshua", "judges", "ruth", "1 samuel", "2 samuel",
+        "1 kings", "2 kings", "1 chronicles", "2 chronicles",
+        "ezra", "nehemiah", "esther", "job", "psalms", "proverbs",
+        "ecclesiastes", "song of solomon", "isaiah", "jeremiah",
+        "lamentations", "ezekiel", "daniel", "hosea", "joel", "amos",
+        "obadiah", "jonah", "micah", "nahum", "habakkuk", "zephaniah",
+        "haggai", "zechariah", "malachi", "matthew", "mark", "luke",
+        "john", "acts", "romans", "1 corinthians", "2 corinthians",
+        "galatians", "ephesians", "philippians", "colossians",
+        "1 thessalonians", "2 thessalonians", "1 timothy", "2 timothy",
+        "titus", "philemon", "hebrews", "james", "1 peter", "2 peter",
+        "1 john", "2 john", "3 john", "jude", "revelation"
+    ]
+}
+
+fn book_titles() -> List<String> {
+    return [
+        "Genesis", "Exodus", "Leviticus", "Numbers", "Deuteronomy",
+        "Joshua", "Judges", "Ruth", "1 Samuel", "2 Samuel",
+        "1 Kings", "2 Kings", "1 Chronicles", "2 Chronicles",
+        "Ezra", "Nehemiah", "Esther", "Job", "Psalms", "Proverbs",
+        "Ecclesiastes", "Song of Solomon", "Isaiah", "Jeremiah",
+        "Lamentations", "Ezekiel", "Daniel", "Hosea", "Joel", "Amos",
+        "Obadiah", "Jonah", "Micah", "Nahum", "Habakkuk", "Zephaniah",
+        "Haggai", "Zechariah", "Malachi", "Matthew", "Mark", "Luke",
+        "John", "Acts", "Romans", "1 Corinthians", "2 Corinthians",
+        "Galatians", "Ephesians", "Philippians", "Colossians",
+        "1 Thessalonians", "2 Thessalonians", "1 Timothy", "2 Timothy",
+        "Titus", "Philemon", "Hebrews", "James", "1 Peter", "2 Peter",
+        "1 John", "2 John", "3 John", "Jude", "Revelation"
+    ]
+}
+
+// Chapters per book, aligned with book_names().
+fn chapter_counts() -> List<Int> {
+    return [
+        50, 40, 27, 36, 34,
+        24, 21, 4, 31, 24,
+        22, 25, 29, 36,
+        10, 13, 10, 42, 150, 31,
+        12, 8, 66, 52,
+        5, 48, 12, 14, 3, 9,
+        1, 4, 7, 3, 3, 3,
+        2, 14, 4, 28, 16, 24,
+        21, 28, 16, 16, 13,
+        6, 6, 4, 4,
+        5, 3, 6, 4,
+        3, 1, 13, 5, 5, 3,
+        5, 1, 1, 1, 22
+    ]
+}
+
+// ---------- helpers ----------
+
+fn width_for(columns: Int) -> Int {
+    var width = 76
+    if columns - 2 < width {
+        width = columns - 2
+    }
+    if width < 48 {
+        width = 48
+    }
+    return width
+}
+
+fn clip_index(value: Int, low: Int, high: Int) -> Int {
+    if value < low {
+        return low
+    }
+    if value > high {
+        return high
+    }
+    return value
+}
+
+fn chapter_labels(count: Int) -> List<String> {
+    var items: List<String> = []
+    var i = 1
+    while i <= count {
+        items.push("${i}")
+        i = i + 1
+    }
+    return items
+}
+
+fn verse_labels(count: Int) -> List<String> {
+    var items: List<String> = ["whole"]
+    var i = 1
+    while i <= count {
+        items.push("${i}")
+        i = i + 1
+    }
+    return items
+}
+
+fn count_verses(body: String) -> Int {
+    let marker = "\"verse\""
+    let stripped = body.replace(marker, "")
+    return (body.len() - stripped.len()) / marker.len()
+}
+
+// ---------- book search ----------
+
+fn matches(model: Model, index: Int) -> Bool {
+    if model.filter.len() == 0 {
+        return true
+    }
+    return model.books[index].contains(model.filter.lower())
+}
+
+fn match_count(model: Model) -> Int {
+    var total = 0
+    var i = 0
+    while i < model.books.len() {
+        if matches(model, i) {
+            total = total + 1
+        }
+        i = i + 1
+    }
+    return total
+}
+
+fn first_match(model: Model, from: Int) -> Int {
+    var i = from
+    while i < model.books.len() {
+        if matches(model, i) {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+fn next_match(model: Model, delta: Int) -> Int {
+    var i = model.book_index + delta
+    while i >= 0 && i < model.books.len() {
+        if matches(model, i) {
+            return i
+        }
+        i = i + delta
+    }
+    return model.book_index
+}
+
+fn search_status(model: Model) -> String {
+    let total = match_count(model)
+    if total == 1 {
+        return "search: " + model.filter + " · 1 book"
+    }
+    return "search: " + model.filter + " · ${total} books"
+}
+
+fn filtered_titles(model: Model) -> List<String> {
+    var items: List<String> = []
+    var i = 0
+    while i < model.books.len() {
+        if matches(model, i) {
+            items.push(book_titles()[i])
+        }
+        i = i + 1
+    }
+    return items
+}
+
+fn book_items(model: Model) -> List<String> {
+    if model.filter.len() == 0 {
+        return book_titles()
+    }
+    return filtered_titles(model)
+}
+
+fn book_cursor(model: Model) -> Int {
+    if model.filter.len() == 0 {
+        return model.book_index
+    }
+    var position = 0
+    var i = 0
+    while i < model.book_index {
+        if matches(model, i) {
+            position = position + 1
+        }
+        i = i + 1
+    }
+    return position
+}
+
+fn current_reference(model: Model) -> String {
+    let book = model.books[model.book_index]
+    let chapter = model.chapter_index + 1
+    if model.verse_index <= 0 {
+        return book + " " + "${chapter}"
+    }
+    return book + " " + "${chapter}" + ":" + "${model.verse_index}"
+}
+
+fn current_title(model: Model) -> String {
+    let book = book_titles()[model.book_index]
+    let chapter = model.chapter_index + 1
+    if model.verse_index <= 0 {
+        return book + " " + "${chapter}" + " · whole chapter"
+    }
+    return book + " " + "${chapter}" + ":" + "${model.verse_index}"
+}
+
+fn fetch(model: Model, reference: String) -> Model {
+    var next = model
+    let encoded = reference.trim().replace(" ", "+")
+    if encoded.len() == 0 {
+        next.status = "type a reference first, e.g. john 3:16"
+        return next
+    }
+    let version = model.versions[model.version_index]
+    next.status = "fetching " + reference.trim() + " …"
+    let body = http_get("https://bible-api.com/" + encoded + "?translation=" + version)
+    if body.len() == 0 {
+        next.status = "request failed · check curl and the network"
+        return next
+    }
+    let text = json_string(body, "text")
+    if text.len() == 0 {
+        next.status = "no passage found for \"" + reference.trim() + "\""
+        return next
+    }
+    let name = json_string(body, "translation_name")
+    next.reference = json_string(body, "reference")
+    // Verse breaks arrive as newlines; the panel renders one line at a time.
+    next.passage = text.trim().replace("\r\n", "\n").replace("\n", " ").replace("\r", " ")
+    if name.len() > 0 {
+        next.translation = name
+    }
+    next.verse_count = count_verses(body)
+    if next.verse_count < 1 {
+        next.verse_count = 1
+    }
+    next.scroll = 0
+    if next.verse_count == 1 {
+        next.status = "loaded 1 verse · ${next.passage.graphemes().len()} characters"
+    } else {
+        next.status = "loaded ${next.verse_count} verses · ${next.passage.graphemes().len()} characters"
+    }
+    return next
+}
+
+fn load(model: Model) -> Model {
+    return fetch(model, current_reference(model))
+}
+
+fn initial() -> Model {
+    let versions = version_ids()
+    let books = book_names()
+    return Model {
+        pane: pane_book(),
+        versions: versions,
+        labels: version_labels(),
+        version_index: 0,
+        books: books,
+        chapter_counts: chapter_counts(),
+        book_index: 42,
+        chapter_index: 2,
+        verse_index: 0,
+        verse_count: 0,
+        passage: "",
+        reference: "",
+        translation: "World English Bible",
+        status: "↑/↓ choose · ←/→ pane · enter load · c chapter · / search · : reference · esc quit",
+        scroll: 0,
+        width: width_for(tui.terminal_width()),
+        query: "",
+        editing: false,
+        filter: "",
+        filtering: false,
+        saved_book: 42
+    }
+}
+
+// ---------- view ----------
+
+fn window_items(items: List<String>, selected: Int, span: Int, focused: Bool, colors: Theme) -> String {
+    var start = selected - span / 2
+    if start < 0 {
+        start = 0
+    }
+    if start + span > items.len() {
+        start = items.len() - span
+    }
+    if start < 0 {
+        start = 0
+    }
+    var out = ""
+    var i = start
+    while i < items.len() && i < start + span {
+        if i == selected {
+            out = out + tui.paint(colors.success, "[" + items[i] + "]")
+        } else {
+            out = out + " " + tui.paint(colors.muted, items[i]) + " "
+        }
+        out = out + " "
+        i = i + 1
+    }
+    return out
+}
+
+fn picker_line(label: String, items: List<String>, selected: Int, focused: Bool, colors: Theme) -> String {
+    var out = ""
+    if focused {
+        out = out + tui.paint(colors.accent, "▸ ")
+    } else {
+        out = out + "  "
+    }
+    let padded = tui.paint(colors.text, label) + "  "
+    out = out + padded
+    out = out + window_items(items, selected, 5, focused, colors)
+    return out
+}
+
+fn view(model: Model) -> String {
+    let colors = tui.theme()
+    let width = model.width
+    var out = tui.banner(
+        "NOVA BIBLE",
+        "a terminal study app in Nova, reading bible-api.com",
+        width,
+        colors
+    )
+    out = out + "\n"
+    out = out + "  " + tui.badge(model.versions[model.version_index].replace("web", "WEB").replace("kjv", "KJV").replace("asv", "ASV").replace("bbe", "BBE").replace("darby", "DARBY").replace("ylt", "YLT").replace("drb", "DRB").replace("oeb-us", "OEB"), colors.accent)
+    if model.reference.len() > 0 {
+        out = out + " " + tui.paint(colors.text, model.reference)
+    } else {
+        out = out + " " + tui.paint(colors.text, current_title(model))
+    }
+    out = out + "  " + tui.paint(colors.muted, model.translation) + "\n\n"
+
+    var pickers: List<String> = []
+    if model.filtering {
+        pickers.push(tui.paint(colors.accent, "▸ search   ") + tui.paint(colors.text, model.filter + "▏") + "  " + tui.paint(colors.muted, "${match_count(model)} books"))
+    }
+    pickers.push(picker_line("version", model.labels, model.version_index, model.pane == pane_version(), colors))
+    pickers.push(picker_line("book", book_items(model), book_cursor(model), model.pane == pane_book(), colors))
+    pickers.push(picker_line("chapter", chapter_labels(model.chapter_counts[model.book_index]), model.chapter_index, model.pane == pane_chapter(), colors))
+    pickers.push(picker_line("verse", verse_labels(model.verse_count), model.verse_index, model.pane == pane_verse(), colors))
+    out = out + tui.panel("PICKERS", pickers, width, colors).render()
+    out = out + "\n\n"
+
+    let lines = model.passage.wrap(width - 4)
+    var visible: List<String> = []
+    var index = 0
+    while index < 10 && model.scroll + index < lines.len() {
+        visible.push(lines[model.scroll + index])
+        index = index + 1
+    }
+    var title = "PASSAGE"
+    if model.reference.len() > 0 {
+        title = "PASSAGE · " + model.reference
+    }
+    out = out + tui.panel(title, visible, width, colors).render()
+    if lines.len() > 0 {
+        var first = model.scroll + 1
+        var last = model.scroll + visible.len()
+        if last > lines.len() {
+            last = lines.len()
+        }
+        out = out + "\n  " + tui.paint(colors.muted, "lines ${first}-${last} of ${lines.len()}")
+    }
+    out = out + "\n\n"
+
+    if model.editing {
+        out = out + "  " + tui.paint(colors.text, "reference: ")
+        out = out + tui.paint(colors.accent, model.query)
+        out = out + tui.paint(colors.muted, "▏") + "\n"
+    }
+    out = out + "  " + tui.paint(colors.muted, model.status) + "\n"
+    if model.filtering {
+        out = out + "  " + tui.paint(colors.muted, "type to filter books · ↑/↓ matches · enter load · esc cancel")
+    } else {
+        out = out + "  " + tui.paint(colors.muted, "↑/↓ choose · ←/→ pane · enter load · c chapter · / search · : reference · esc quit")
+    }
+    return out
+}
+
+// ---------- update ----------
+
+fn move_selection(model: Model, delta: Int) -> Model {
+    var next = model
+    if model.pane == pane_version() {
+        next.version_index = clip_index(model.version_index + delta, 0, model.versions.len() - 1)
+        next.status = "translation: " + model.labels[next.version_index].trim()
+    } else if model.pane == pane_book() {
+        next.book_index = clip_index(model.book_index + delta, 0, model.books.len() - 1)
+        next.chapter_index = clip_index(model.chapter_index, 0, model.chapter_counts[next.book_index] - 1)
+        next.verse_index = 0
+        next.status = "book: " + book_titles()[next.book_index]
+    } else if model.pane == pane_chapter() {
+        next.chapter_index = clip_index(model.chapter_index + delta, 0, model.chapter_counts[model.book_index] - 1)
+        next.verse_index = 0
+        next.status = "chapter: ${next.chapter_index + 1}"
+    } else {
+        next.verse_index = clip_index(model.verse_index + delta, 0, model.verse_count)
+        if next.verse_index == 0 {
+            next.status = "verse: whole chapter"
+        } else {
+            next.status = "verse: ${next.verse_index}"
+        }
+    }
+    return next
+}
+
+fn switch_pane(model: Model, delta: Int) -> Model {
+    var next = model
+    next.pane = clip_index(model.pane + delta, 0, pane_count() - 1)
+    if next.pane == pane_version() {
+        next.status = "translation picker"
+    } else if next.pane == pane_book() {
+        next.status = "book picker"
+    } else if next.pane == pane_chapter() {
+        next.status = "chapter picker"
+    } else {
+        next.status = "verse picker · 0 loads the whole chapter"
+    }
+    return next
+}
+
+fn on_editing(model: Model, code: Int) -> (Model, bubble.Cmd) {
+    var next = model
+    if code == 27 {
+        next.editing = false
+        next.status = "back to the pickers"
+        return (next, bubble.Cmd.IdleCmd)
+    }
+    if code == 13 {
+        next.editing = false
+        return (fetch(next, next.query), bubble.Cmd.IdleCmd)
+    }
+    if code == 127 {
+        let width = model.query.display_width()
+        if width > 0 {
+            next.query = model.query.clip(width - 1)
+        }
+        return (next, bubble.Cmd.IdleCmd)
+    }
+    if code >= 32 && code <= 126 {
+        next.query = model.query + char_string(code)
+        next.status = "typing a reference · enter to load"
+    }
+    return (next, bubble.Cmd.IdleCmd)
+}
+
+fn on_filter(model: Model, code: Int) -> (Model, bubble.Cmd) {
+    var next = model
+    if code == 27 {
+        next.filtering = false
+        next.filter = ""
+        next.book_index = clip_index(model.saved_book, 0, model.books.len() - 1)
+        next.chapter_index = clip_index(model.chapter_index, 0, model.chapter_counts[next.book_index] - 1)
+        next.verse_index = 0
+        next.status = "search cancelled"
+        return (next, bubble.Cmd.IdleCmd)
+    }
+    if code == 13 {
+        next.filtering = false
+        next.filter = ""
+        return (load(next), bubble.Cmd.IdleCmd)
+    }
+    if code == 127 {
+        let width = model.filter.display_width()
+        if width > 0 {
+            next.filter = model.filter.clip(width - 1)
+        }
+        let found = first_match(next, 0)
+        if found >= 0 {
+            next.book_index = found
+            next.chapter_index = 0
+            next.verse_index = 0
+        }
+        next.status = search_status(next)
+        return (next, bubble.Cmd.IdleCmd)
+    }
+    if code == 1001 {
+        next.book_index = next_match(model, -1)
+        next.chapter_index = 0
+        next.verse_index = 0
+        next.status = search_status(next)
+        return (next, bubble.Cmd.IdleCmd)
+    }
+    if code == 1002 {
+        next.book_index = next_match(model, 1)
+        next.chapter_index = 0
+        next.verse_index = 0
+        next.status = search_status(next)
+        return (next, bubble.Cmd.IdleCmd)
+    }
+    if code >= 32 && code <= 126 {
+        next.filter = model.filter + char_string(code)
+        let found = first_match(next, 0)
+        if found >= 0 {
+            next.book_index = found
+            next.chapter_index = 0
+            next.verse_index = 0
+        }
+        next.status = search_status(next)
+        return (next, bubble.Cmd.IdleCmd)
+    }
+    return (next, bubble.Cmd.IdleCmd)
+}
+
+fn on_key(model: Model, code: Int) -> (Model, bubble.Cmd) {
+    if model.editing {
+        return on_editing(model, code)
+    }
+    if model.filtering {
+        return on_filter(model, code)
+    }
+    if code == 27 || code == 3 || code == 113 {
+        return (model, bubble.Cmd.QuitCmd)
+    }
+    if code == 13 {
+        return (load(model), bubble.Cmd.IdleCmd)
+    }
+    if code == 99 {
+        var next = model
+        next.verse_index = 0
+        next.editing = false
+        return (load(next), bubble.Cmd.IdleCmd)
+    }
+    if code == 47 {
+        var next = model
+        next.filtering = true
+        next.filter = ""
+        next.saved_book = model.book_index
+        next.status = "type to filter books · ↑/↓ matches · enter load · esc cancel"
+        return (next, bubble.Cmd.IdleCmd)
+    }
+    if code == 58 {
+        var next = model
+        next.editing = true
+        next.query = ""
+        next.status = "type a reference · enter to load · esc to cancel"
+        return (next, bubble.Cmd.IdleCmd)
+    }
+    if code == 9 || code == 1003 {
+        return (switch_pane(model, 1), bubble.Cmd.IdleCmd)
+    }
+    if code == 1011 || code == 1004 {
+        return (switch_pane(model, -1), bubble.Cmd.IdleCmd)
+    }
+    if code == 1001 || code == 107 {
+        return (move_selection(model, -1), bubble.Cmd.IdleCmd)
+    }
+    if code == 1002 || code == 106 {
+        return (move_selection(model, 1), bubble.Cmd.IdleCmd)
+    }
+    if code == 1007 {
+        var next = model
+        next.scroll = clip_index(model.scroll - 5, 0, next.scroll)
+        return (next, bubble.Cmd.IdleCmd)
+    }
+    if code == 1008 {
+        var next = model
+        next.scroll = model.scroll + 5
+        return (next, bubble.Cmd.IdleCmd)
+    }
+    return (model, bubble.Cmd.IdleCmd)
+}
+
+fn pane_name(pane: Int) -> String {
+    if pane == pane_version() {
+        return "translation"
+    }
+    if pane == pane_book() {
+        return "book"
+    }
+    if pane == pane_chapter() {
+        return "chapter"
+    }
+    return "verse"
+}
+
+// Row of the first picker row: banner (3) + blank + header + blank + border.
+fn picker_top(model: Model) -> Int {
+    if model.filtering {
+        return 9
+    }
+    return 8
+}
+
+fn pane_for_row(model: Model, row: Int) -> Int {
+    if model.filtering && row == 8 {
+        return model.pane
+    }
+    let offset = row - picker_top(model)
+    if offset < 0 || offset >= pane_count() {
+        return -1
+    }
+    return offset
+}
+
+fn on_mouse(model: Model, code: Int, x: Int, y: Int) -> (Model, bubble.Cmd) {
+    var next = model
+    if code == 2000 || code == 2001 || code == 2002 {
+        let pane = pane_for_row(model, y)
+        if pane >= 0 {
+            next.pane = pane
+            next.status = "focused the " + pane_name(pane) + " picker"
+        } else {
+            next.status = "click at ${x},${y} · the wheel scrolls the passage"
+        }
+        return (next, bubble.Cmd.IdleCmd)
+    }
+    if code == 2004 || code == 2005 {
+        if y <= picker_top(model) + pane_count() - 1 {
+            let delta = 1
+            if code == 2004 {
+                return (move_selection(model, -1), bubble.Cmd.IdleCmd)
+            }
+            return (move_selection(model, delta), bubble.Cmd.IdleCmd)
+        }
+        if code == 2004 {
+            next.scroll = clip_index(model.scroll - 1, 0, model.scroll)
+        } else {
+            next.scroll = model.scroll + 1
+        }
+    }
+    return (next, bubble.Cmd.IdleCmd)
+}
+
+fn on_paste(model: Model, text: String) -> (Model, bubble.Cmd) {
+    var next = model
+    next.editing = true
+    next.query = text.trim().replace("\n", " ")
+    next.status = "pasted a reference · enter to load"
+    return (next, bubble.Cmd.IdleCmd)
+}
+
+fn on_resize(model: Model, width: Int, height: Int) -> (Model, bubble.Cmd) {
+    var next = model
+    next.width = width_for(width)
+    next.status = "resized to ${width}x${height}"
+    return (next, bubble.Cmd.IdleCmd)
+}
+
+fn update(model: Model, event: bubble.Event) -> (Model, bubble.Cmd) {
+    return match event {
+        bubble.Event.KeyEvent(code) => on_key(model, code),
+        bubble.Event.MouseEvent(code, x, y) => on_mouse(model, code, x, y),
+        bubble.Event.PasteEvent(text) => on_paste(model, text),
+        bubble.Event.ResizeEvent(width, height) => on_resize(model, width, height),
+        bubble.Event.TickEvent => (model, bubble.Cmd.IdleCmd)
+    }
+}
+
+fn main() {
+    bubble.run(initial(), update, view, bubble.settings(-1))
+}

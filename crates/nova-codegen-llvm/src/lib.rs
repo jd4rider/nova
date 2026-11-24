@@ -2039,6 +2039,41 @@ impl<'a> ModuleGen<'a> {
                 }
                 self.unit()
             }
+            BuiltinFn::TermPaste => {
+                let result = self.call_value("%nova.string", "nova_term_take_paste", &[]);
+                Val::new(Type::String, result)
+            }
+            BuiltinFn::CharString => {
+                let code = self.gen_expr(&args[0]);
+                let result = self.call_value(
+                    "%nova.string",
+                    "nova_codepoint_to_string",
+                    &[("i64".into(), code.repr)],
+                );
+                Val::new(Type::String, result)
+            }
+            BuiltinFn::HttpGet => {
+                let url = self.gen_expr(&args[0]);
+                let result = self.call_value(
+                    "%nova.string",
+                    "nova_http_get",
+                    &[("%nova.string".into(), url.repr)],
+                );
+                Val::new(Type::String, result)
+            }
+            BuiltinFn::JsonString => {
+                let source = self.gen_expr(&args[0]);
+                let key = self.gen_expr(&args[1]);
+                let result = self.call_value(
+                    "%nova.string",
+                    "nova_json_string",
+                    &[
+                        ("%nova.string".into(), source.repr),
+                        ("%nova.string".into(), key.repr),
+                    ],
+                );
+                Val::new(Type::String, result)
+            }
             BuiltinFn::Panic => {
                 let Some(arg) = args.first() else {
                     return self.unit();
@@ -2276,6 +2311,34 @@ impl<'a> ModuleGen<'a> {
                 self.emit(format!("{result} = icmp ne i32 {raw}, 0"));
                 Val::new(Type::Bool, result)
             }
+            BuiltinMethod::StringReplace => {
+                let Some(from) = args.first() else {
+                    return self.unit();
+                };
+                let Some(to) = args.get(1) else {
+                    return self.unit();
+                };
+                let from = self.gen_expr(from);
+                let to = self.gen_expr(to);
+                let result = self.call_value(
+                    "%nova.string",
+                    "nova_string_replace",
+                    &[
+                        ("%nova.string".into(), recv.repr.clone()),
+                        ("%nova.string".into(), from.repr),
+                        ("%nova.string".into(), to.repr),
+                    ],
+                );
+                Val::new(Type::String, result)
+            }
+            BuiltinMethod::StringLower => {
+                let result = self.call_value(
+                    "%nova.string",
+                    "nova_string_lower",
+                    &[("%nova.string".into(), recv.repr.clone())],
+                );
+                Val::new(Type::String, result)
+            }
             BuiltinMethod::StringTrim => {
                 let result = self.call_value(
                     "%nova.string",
@@ -2283,6 +2346,58 @@ impl<'a> ModuleGen<'a> {
                     &[("%nova.string".into(), recv.repr.clone())],
                 );
                 Val::new(Type::String, result)
+            }
+            BuiltinMethod::StringDisplayWidth => {
+                let result = self.call_value(
+                    "i64",
+                    "nova_string_display_width",
+                    &[("%nova.string".into(), recv.repr.clone())],
+                );
+                Val::new(Type::Int, result)
+            }
+            BuiltinMethod::StringClip | BuiltinMethod::StringWrap => {
+                let Some(width_expr) = args.first() else {
+                    return self.unit();
+                };
+                let width = self.gen_expr(width_expr);
+                if self.terminated {
+                    return self.unit();
+                }
+                if method == BuiltinMethod::StringClip {
+                    let result = self.call_value(
+                        "%nova.string",
+                        "nova_string_clip",
+                        &[
+                            ("%nova.string".into(), recv.repr.clone()),
+                            ("i64".into(), width.repr),
+                        ],
+                    );
+                    Val::new(Type::String, result)
+                } else {
+                    let slot = self.alloca("%nova.list");
+                    self.call_void(
+                        "nova_string_wrap",
+                        &[
+                            ("%nova.string".into(), recv.repr.clone()),
+                            ("i64".into(), width.repr),
+                            ("ptr".into(), slot.clone()),
+                        ],
+                    );
+                    let result = self.load("%nova.list", &slot);
+                    Val::new(ret_ty.clone(), result)
+                }
+            }
+            BuiltinMethod::StringGraphemes => {
+                let slot = self.alloca("%nova.list");
+                self.call_void(
+                    "nova_string_graphemes",
+                    &[
+                        ("%nova.string".into(), recv.repr.clone()),
+                        ("ptr".into(), slot.clone()),
+                    ],
+                );
+                let result = self.load("%nova.list", &slot);
+                Val::new(ret_ty.clone(), result)
             }
             BuiltinMethod::ToString => self.to_string_value(recv),
         }
@@ -3039,6 +3154,16 @@ declare i32 @nova_string_contains(%nova.string, %nova.string)
 declare i32 @nova_string_starts_with(%nova.string, %nova.string)
 declare i32 @nova_string_ends_with(%nova.string, %nova.string)
 declare %nova.string @nova_string_trim(%nova.string)
+declare i64 @nova_string_display_width(%nova.string)
+declare %nova.string @nova_string_clip(%nova.string, i64)
+declare void @nova_string_wrap(%nova.string, i64, ptr)
+declare void @nova_string_graphemes(%nova.string, ptr)
+declare %nova.string @nova_term_take_paste()
+declare %nova.string @nova_http_get(%nova.string)
+declare %nova.string @nova_json_string(%nova.string, %nova.string)
+declare %nova.string @nova_string_replace(%nova.string, %nova.string, %nova.string)
+declare %nova.string @nova_codepoint_to_string(i64)
+declare %nova.string @nova_string_lower(%nova.string)
 declare %nova.string @nova_i64_to_string(i64)
 declare %nova.string @nova_f64_to_string(double)
 declare %nova.string @nova_bool_to_string(i32)
@@ -3271,6 +3396,92 @@ fn main() {
             String::from_utf8_lossy(&run.stderr)
         );
         assert_eq!(stdout.trim_end(), "10\ntrue\ntrue\ntrue\nfalse\ntrue");
+        let _ = fs::remove_file(&artifact.executable);
+    }
+
+    #[test]
+    fn compiles_unicode_width_clip_and_wrap() {
+        let source = r#"import std.io { println }
+
+fn main() {
+    println("hello".display_width())
+    println("日本".display_width())
+    println("a\u{0301}".display_width())
+    println("日本".clip(2))
+    let red = "\u{1b}[31mred\u{1b}[0m"
+    println(red.display_width())
+    println(red.clip(2).display_width())
+    println("👋".display_width())
+    let lines = "one two three".wrap(7)
+    println(lines.len())
+    for line in lines {
+        println(line)
+    }
+    println("e\u{301}x".graphemes().len())
+    println("👨‍👩‍👧".graphemes().len())
+    println("👨‍👩‍👧".display_width())
+    println("🇺🇸".display_width())
+}
+"#;
+        let program = typed(source);
+        let output = temp_output("unicode-text");
+        let artifact = compile(
+            &program,
+            source,
+            &BuildOptions {
+                output: output.clone(),
+                opt_level: OptLevel::O2,
+                ..Default::default()
+            },
+        )
+        .expect("native compile");
+        let run = Command::new(&artifact.executable).output().unwrap();
+        assert!(
+            run.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&run.stdout),
+            "5\n4\n1\n日\n3\n2\n2\n2\none two\nthree\n2\n1\n2\n2\n"
+        );
+        let _ = fs::remove_file(&artifact.executable);
+    }
+
+    #[test]
+    fn compiles_terminal_size_apis() {
+        let source = r#"import std.io { println }
+
+extern "C" fn nova_term_is_tty() -> Int
+extern "C" fn nova_term_width() -> Int
+extern "C" fn nova_term_height() -> Int
+
+fn main() {
+    println(nova_term_is_tty())
+    println(term_paste().len())
+    println(nova_term_width() > 0)
+    println(nova_term_height() > 0)
+}
+"#;
+        let program = typed(source);
+        let output = temp_output("terminal-size");
+        let artifact = compile(
+            &program,
+            source,
+            &BuildOptions {
+                output: output.clone(),
+                opt_level: OptLevel::O2,
+                ..Default::default()
+            },
+        )
+        .expect("native compile");
+        let run = Command::new(&artifact.executable).output().unwrap();
+        assert!(
+            run.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&run.stdout), "0\n0\ntrue\ntrue\n");
         let _ = fs::remove_file(&artifact.executable);
     }
 
@@ -3819,6 +4030,45 @@ fn main() {
             String::from_utf8_lossy(&run.stderr)
         );
         assert_eq!(String::from_utf8_lossy(&run.stdout), "5\nab\n9\nblank\n");
+        let _ = fs::remove_file(&artifact.executable);
+    }
+
+    #[test]
+    fn compiles_json_replace_and_char_builtins() {
+        let source = r#"import std.io { print, println }
+
+fn main() {
+    let body = "{\"reference\":\"John 3:16\",\"text\":\"For God so loved\\nthe world\"}"
+    println(json_string(body, "reference"))
+    println(json_string(body, "text"))
+    println("a-b-c".replace("-", "+"))
+    println("MiXeD".lower())
+    print(char_string(65))
+    println("")
+}
+"#;
+        let program = typed(source);
+        let output = temp_output("json-builtins");
+        let artifact = compile(
+            &program,
+            source,
+            &BuildOptions {
+                output: output.clone(),
+                opt_level: OptLevel::O2,
+                ..Default::default()
+            },
+        )
+        .expect("native compile");
+        let run = Command::new(&artifact.executable).output().unwrap();
+        assert!(
+            run.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&run.stdout),
+            "John 3:16\nFor God so loved\nthe world\na+b+c\nmixed\nA\n"
+        );
         let _ = fs::remove_file(&artifact.executable);
     }
 

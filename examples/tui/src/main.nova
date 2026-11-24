@@ -1,60 +1,158 @@
-import std.io { print, println }
+import std.io { println }
+import "../../../libraries/nova-tui/src/bubble.nova" as bubble
 import "../../../libraries/nova-tui/src/tui.nova" as tui
 
-fn dashboard(colors: Theme) -> String {
+// The whole app is a model, an update function and a view function. The
+// runtime in bubble.nova handles raw mode, protocols, ticking and cleanup.
+
+struct Model {
+    selected: Int
+    ticks: Int
+    status: String
+    notes: String
+    width: Int
+}
+
+fn feature_items() -> List<String> {
+    return [
+        "Elm-style model, update and view",
+        "tick-driven animation",
+        "bordered panels and titles",
+        "Unicode-aware width and clipping",
+        "grapheme-aware wrapping",
+        "tables, badges and rules",
+        "progress bars and spinners",
+        "mouse click hit-testing",
+        "bracketed paste and resize"
+    ]
+}
+
+fn width_for(columns: Int) -> Int {
+    var width = 64
+    if columns - 2 < width {
+        width = columns - 2
+    }
+    if width < 48 {
+        width = 48
+    }
+    return width
+}
+
+fn initial() -> Model {
+    return Model {
+        selected: 0,
+        ticks: 0,
+        status: "ready · arrows or j/k move",
+        notes: "",
+        width: width_for(tui.terminal_width())
+    }
+}
+
+fn view(model: Model) -> String {
+    let colors = tui.theme()
+    let width = model.width
     var out = tui.banner(
         "NOVA TUI",
-        "a Charm-style terminal toolkit written in Nova",
-        62,
+        "a Bubble-style terminal app written in Nova",
+        width,
         colors
     )
     out = out + "\n"
-
-    var features: List<String> = [
-        "bordered panels and titles",
-        "colored 256-color text",
-        "tables, badges and rules",
-        "progress bars and spinners",
-        "alternate-screen helpers",
-        "no runtime dependencies"
-    ]
-    out = out + tui.list_panel("RENDERED IN NOVA", features, 0, 62, colors).render()
+    out = out + "  " + tui.spinner_line("frame ${model.ticks} · model → update → view", model.ticks, colors) + "\n\n"
+    out = out + tui.list_panel("FEATURES", feature_items(), model.selected, width, colors).render()
     out = out + "\n\n"
 
     let headers: List<String> = ["component", "status", "shape"]
     var rows: List<Row> = []
-    rows.push(row(["Panel", "ready", "width-aware"]))
-    rows.push(row(["Table", "ready", "list<row>"]))
-    rows.push(row(["Progress", "ready", "integer math"]))
-    rows.push(row(["Spinner", "ready", "10 frames"]))
+    rows.push(row(["Runtime", "ready", "update loop"]))
+    rows.push(row(["Ticker", "ready", "timed redraw"]))
+    rows.push(row(["Input", "ready", "keys + paste"]))
+    rows.push(row(["Mouse", "ready", "click + wheel"]))
+    rows.push(row(["Resize", "ready", "live size"]))
     out = out + tui.table(headers, rows, [14, 10, 18], colors).render()
     out = out + "\n\n"
 
-    out = out + tui.progress("native build", 100, 100, 34, colors).render() + "\n"
-    out = out + tui.progress("docs coverage", 80, 100, 34, colors).render() + "\n"
-    out = out + tui.progress("raw input", 0, 100, 34, colors).render() + "\n\n"
-
-    out = out + "  " + tui.badge("TESTED", colors.success)
-    out = out + " " + tui.badge("EXPERIMENTAL", colors.warning)
-    out = out + "  " + tui.paint(colors.muted, "ANSI 256 · UTF-8 box drawing") + "\n"
+    out = out + tui.progress("frames", model.ticks % 100, 100, 30, colors).render() + "\n\n"
+    out = out + "  " + tui.badge("BUBBLE", colors.success)
+    out = out + " " + tui.badge("ANSI 256", colors.accent)
+    out = out + "  " + tui.paint(colors.muted, "${width} columns") + "\n"
+    out = out + "  " + tui.paint(colors.text, model.status) + "\n"
+    if model.notes.len() > 0 {
+        out = out + "  " + tui.paint(colors.muted, "pasted: " + model.notes.clip(width - 12)) + "\n"
+    }
+    out = out + "  " + tui.paint(colors.muted, "↑/↓ j/k · enter select · wheel · click · paste · q quit")
     return out
 }
 
-fn main() {
-    let colors = tui.theme()
-    print(tui.hide_cursor())
-    print(tui.clear())
-
-    var frame = 0
-    while frame < 12 {
-        print("\r  " + tui.spinner_line("compiling dashboard...", frame, colors))
-        tui.flush()
-        tui.sleep_ms(70)
-        frame += 1
+fn on_key(model: Model, code: Int) -> (Model, bubble.Cmd) {
+    var next = model
+    var command = bubble.Cmd.IdleCmd
+    if code == 1001 || code == 107 {
+        next.selected = bubble.previous_index(model.selected)
+        next.status = "moved up"
+    } else if code == 1002 || code == 106 {
+        next.selected = bubble.next_index(model.selected, feature_items().len())
+        next.status = "moved down"
+    } else if code == 13 {
+        next.status = "selected: " + feature_items()[model.selected]
+    } else if bubble.is_quit_key(code) {
+        command = bubble.Cmd.QuitCmd
+    } else {
+        next.status = "key code ${code}"
     }
-    print("\r" + tui.repeat(" ", 48) + "\r")
+    return (next, command)
+}
 
-    println(dashboard(colors))
-    println("  " + tui.paint(colors.muted, "Press Ctrl-C to exit; keyboard events are not implemented."))
-    print(tui.show_cursor())
+fn on_mouse(model: Model, code: Int, x: Int, y: Int) -> (Model, bubble.Cmd) {
+    var next = model
+    if code == 2004 {
+        next.selected = bubble.previous_index(model.selected)
+        next.status = "wheel up"
+    } else if code == 2005 {
+        next.selected = bubble.next_index(model.selected, feature_items().len())
+        next.status = "wheel down"
+    } else if code == 2000 || code == 2001 || code == 2002 {
+        let index = bubble.row_hit(y, 8, feature_items().len())
+        if index >= 0 {
+            next.selected = index
+            next.status = "clicked ${feature_items()[index]} at ${x},${y}"
+        } else {
+            next.status = "click at column ${x}, row ${y}"
+        }
+    }
+    return (next, bubble.Cmd.IdleCmd)
+}
+
+fn on_paste(model: Model, text: String) -> (Model, bubble.Cmd) {
+    var next = model
+    next.notes = text.trim()
+    next.status = "pasted ${text.graphemes().len()} characters"
+    return (next, bubble.Cmd.IdleCmd)
+}
+
+fn on_resize(model: Model, width: Int, height: Int) -> (Model, bubble.Cmd) {
+    var next = model
+    next.width = width_for(width)
+    next.status = "resized to ${width}x${height}"
+    return (next, bubble.Cmd.IdleCmd)
+}
+
+fn on_tick(model: Model) -> (Model, bubble.Cmd) {
+    var next = model
+    next.ticks = model.ticks + 1
+    return (next, bubble.Cmd.AfterCmd(160))
+}
+
+fn update(model: Model, event: bubble.Event) -> (Model, bubble.Cmd) {
+    return match event {
+        bubble.Event.KeyEvent(code) => on_key(model, code),
+        bubble.Event.MouseEvent(code, x, y) => on_mouse(model, code, x, y),
+        bubble.Event.PasteEvent(text) => on_paste(model, text),
+        bubble.Event.ResizeEvent(width, height) => on_resize(model, width, height),
+        bubble.Event.TickEvent => on_tick(model)
+    }
+}
+
+fn main() {
+    bubble.run(initial(), update, view, bubble.settings(160))
 }
