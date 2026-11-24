@@ -63,8 +63,8 @@ Previously recorded: `sh examples/nova-tool/tests/boxes.sh` → passed 64, faile
 
 ## Commit history
 
+- `e9d9e4a` — native codegen path in Nova, durable continuation state.
 - `47302b6` — AST-based semantic checker in Nova.
 - `983fd6a` — full-corpus AST parser regression gate.
 - `93d61dc` — full-corpus AST parsing.
 - `1735f70` — first Nova AST/parser slice.
-- Codegen checkpoint commit: see branch HEAD after this checkpoint.

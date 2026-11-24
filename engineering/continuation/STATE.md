@@ -4,8 +4,8 @@ Updated: 2026-11-24
 Master directive: owner-supplied (2026-11-24); requirements tracked in
 `engineering/continuation/ROADMAP.md` and `TASKS.md`.
 Repository / branch: `nova` / `selfhost/pure-nova`
-HEAD: `47302b6` plus the uncommitted codegen checkpoint described below.
-Working tree: the codegen checkpoint is uncommitted; pre-existing unrelated
+HEAD: `e9d9e4a` (native codegen checkpoint).
+Working tree: clean for the self-hosting files; pre-existing unrelated
 `editor/` and playground changes are still untouched.
 
 Active milestone: `CODEGEN-01` — Nova LLVM IR lowering and native execution
