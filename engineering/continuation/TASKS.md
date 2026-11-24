@@ -28,9 +28,9 @@ and integration gate pass. The full matrix is `PARITY.md`.
   `while`, `icmp`, labels; loop/branch binary exits 17.
 - CODEGEN-01.05 — Immutable-binding SSA lowering: **VERIFIED**. No `alloca` for
   params/`let`; mutable fixture exits 2.
-- CODEGEN-01.04 — Runtime ABI alignment: **READY**. Match the Rust hidden
-  environment pointer and entry wrapper for Int/Unit; remove the temporary ABI
-  only after parity tests.
+- CODEGEN-01.04 — Runtime ABI alignment: **PARTIAL**. Int signatures/calls now
+  use `ptr %arg_env`, `nova_user_<index>` symbols and the `@main` wrapper;
+  Unit/void, strings/lists and runtime-call ABI remain. Evidence: 15/0.
 - CODEGEN-01.06 — Strings, lists, maps, sets, structs, enums, tuples, arrays,
   Option/Result: **TODO**.
 - CODEGEN-01.07 — Overflow, division-by-zero, bounds and alignment checks:

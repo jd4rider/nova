@@ -3,7 +3,7 @@
 Updated: 2026-11-24
 Master directive: owner-supplied; parity matrix in `engineering/continuation/`.
 Repository / branch: `nova` / `selfhost/pure-nova`
-HEAD: Int-ABI checkpoint (see `git log`); prior `98c1ded`.
+HEAD: `8092f97` (Int ABI); prior `98c1ded`.
 Working tree: self-hosting files have the uncommitted ABI checkpoint; unrelated
 `editor/` and playground changes remain untouched.
 
