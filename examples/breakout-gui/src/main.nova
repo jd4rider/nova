@@ -103,6 +103,20 @@ fn handle(app: App, event: gui.Event) -> App {
     return app
 }
 
+// Speed without a sign: the ball moves in both directions, the HUD should not
+// flip between -3 and 3.
+fn pace(game: Game) -> Int {
+    var vx = game.vx
+    if vx < 0 {
+        vx = -vx
+    }
+    var vy = game.vy
+    if vy < 0 {
+        vy = -vy
+    }
+    return (vx + vy) / 1000
+}
+
 fn brick_color(row: Int, theme: gui.Theme) -> Int {
     let index = brick_colour(row)
     if index == 0 {
@@ -153,7 +167,7 @@ fn draw_ball(game: Game, theme: gui.Theme) {
     let bx = field_x() + ball_px_x(game)
     let by = field_y() + ball_px_y(game)
     let radius = ball_size() / 2
-    gui.rect_alpha(bx - radius - 9, by - radius - 9, radius * 2 + 18, radius * 2 + 18, theme.accent, 60)
+    gui.round_rect(bx - radius - 4, by - radius - 4, radius * 2 + 8, radius * 2 + 8, radius + 4, theme.selection)
     gui.round_rect(bx - radius - 2, by - radius - 2, radius * 2 + 4, radius * 2 + 4, radius + 2, gui.rgb(220, 240, 255))
     gui.round_rect(bx - radius, by - radius, radius * 2, radius * 2, radius, gui.white())
 }
@@ -175,7 +189,7 @@ fn draw_game(app: App) {
     gui.text(24 + gui.text_width("NOVA", 20) + 10, 26, "BREAKOUT", 20, theme.accent)
     gui.text(24, 58, "a game engine demo — physics, colour, fixed step", 11, theme.faint)
 
-    let score_text = "score ${game.score}   rally ${game.rally}   ${ball_px_speed(game)} px/tick"
+    let score_text = "score ${game.score}   rally ${game.rally}   ${pace(game)} px/tick"
     gui.text(window_w() - 24 - gui.text_width(score_text, 13), 30, score_text, 13, theme.fg)
 
     var hearts = ""
