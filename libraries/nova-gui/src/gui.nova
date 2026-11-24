@@ -56,6 +56,7 @@ extern "C" fn nova_gui_advance(size: Int, mono: Int) -> Int
 extern "C" fn nova_gui_clip(x: Int, y: Int, w: Int, h: Int) -> Unit
 extern "C" fn nova_gui_clip_reset() -> Unit
 extern "C" fn nova_gui_present() -> Unit
+extern "C" fn nova_gui_pump() -> Unit
 extern "C" fn nova_gui_next_event() -> Int
 extern "C" fn nova_gui_event_code() -> Int
 extern "C" fn nova_gui_event_x() -> Int
@@ -337,6 +338,12 @@ fn begin() {
 
 fn present() {
     nova_gui_present()
+}
+
+// Drains input and lets AppKit finish deferred work without redrawing. Call it
+// on idle iterations: a window whose events are never pumped freezes.
+fn pump() {
+    nova_gui_pump()
 }
 
 fn clear(color: Int) {

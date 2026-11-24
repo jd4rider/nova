@@ -285,6 +285,8 @@ pub fn compile(
             "CoreGraphics",
             "-framework",
             "ImageIO",
+            "-framework",
+            "QuartzCore",
         ]);
     }
     if options.debug {

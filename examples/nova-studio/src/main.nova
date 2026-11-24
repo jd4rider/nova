@@ -794,6 +794,14 @@ fn run_task(app: App, kind: String) -> App {
     var app = app
     let nova = nova_binary()
     let command = nova + " " + kind
+    // Show the work before blocking on the compiler: the host runs tasks
+    // synchronously, so the window cannot repaint until the task returns.
+    app.status = kind + " running…"
+    app.bottom = "output"
+    app.panel = true
+    gui.begin()
+    draw(app)
+    gui.present()
     let output = gui.run(command, app.root)
     let status = gui.exit_status()
     var text = "$ " + command + "\n"
@@ -809,6 +817,10 @@ fn run_task(app: App, kind: String) -> App {
 fn run_project(app: App) -> App {
     var app = app
     let nova = nova_binary()
+    app.status = "building…"
+    gui.begin()
+    draw(app)
+    gui.present()
     let built = gui.run(nova + " build", app.root)
     let status = gui.exit_status()
     if status != 0 {
@@ -1925,6 +1937,9 @@ fn main() {
         }
         let event = gui.next_event()
         if event.kind == gui.event_none() {
+            // Idle iterations still pump AppKit: without this the window stops
+            // committing and macOS shows the app as unresponsive.
+            gui.pump()
             gui.sleep(8)
         } else {
             app = handle(app, event)

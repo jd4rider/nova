@@ -18,6 +18,7 @@
 #import <Cocoa/Cocoa.h>
 #import <CoreText/CoreText.h>
 #import <ImageIO/ImageIO.h>
+#import <QuartzCore/QuartzCore.h>
 
 #include <math.h>
 #include <stdint.h>
@@ -402,6 +403,9 @@ int64_t nova_gui_open(nova_str title, int64_t width, int64_t height) {
         [nova_window makeKeyAndOrderFront:nil];
         [nova_window makeFirstResponder:nova_view];
         [NSApp activateIgnoringOtherApps:YES];
+        /* One turn so the window is ordered and its first frame can commit. */
+        [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode
+                                 beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
 
         NSScreen *screen = [nova_window screen];
         nova_scale = screen ? (int64_t)lround(screen.backingScaleFactor) : 1;
@@ -568,7 +572,11 @@ void nova_gui_clip_reset(void) {
     CGContextSetLineWidth(nova_ctx, 1.0);
 }
 
-void nova_gui_present(void) {
+/* Drains the platform queue and gives AppKit one turn to finish deferred work.
+ * A program that only pumps when it draws will go unresponsive the moment it
+ * idles, and a window whose layer transaction never commits stays blank, so
+ * this is called on every iteration of a Nova loop, not only on redraws. */
+void nova_gui_pump(void) {
     @autoreleasepool {
         for (;;) {
             NSEvent *event = [NSApp nextEventMatchingMask:NSEventMaskAny
@@ -578,13 +586,23 @@ void nova_gui_present(void) {
             if (!event) break;
             [NSApp sendEvent:event];
         }
+        /* `[NSDate date]` as the deadline means: run what is ready, never block. */
+        [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate date]];
+    }
+}
+
+void nova_gui_present(void) {
+    nova_gui_pump();
+    @autoreleasepool {
         if (!nova_ctx || !nova_view) return;
         if (nova_image) {
             CGImageRelease(nova_image);
             nova_image = NULL;
         }
         nova_image = CGBitmapContextCreateImage(nova_ctx);
+        [nova_view setNeedsDisplay:YES];
         [nova_view display];
+        [CATransaction flush];
     }
 }
 

@@ -66,6 +66,24 @@ Everything is immediate mode: a frame is whatever the loop draws between `begin`
 
 `present()` pumps the platform queue with `nextEventMatchingMask:` and sends each event, then blits the framebuffer into the view. Printable keys arrive as their Unicode scalar; everything else uses the codes above, which match `nova-tui` where the two overlap.
 
+**An idle loop must still call `pump()`.** `pump` drains events without redrawing; `present` drains and redraws. A program that only touches AppKit when it draws stops answering the window server the moment it goes idle, and its layer transaction never commits — macOS then shows a blank window with a spinning cursor. The pattern is:
+
+```nova
+while running {
+    if dirty {
+        gui.begin()
+        draw()
+        gui.present()
+        dirty = false
+    } else {
+        gui.pump()
+        gui.sleep(8)
+    }
+    let event = gui.next_event()
+    // handle one event, set dirty
+}
+```
+
 ## Workspace access and tasks
 
 Nova's standard library is still a placeholder — `std.io` and `std.core` only — so a GUI program that edits a project needs files and processes from somewhere. The macOS host provides them:
