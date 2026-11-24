@@ -80,6 +80,16 @@ else
     no "control-flow binary missing"
 fi
 
+out=$(NOVA_TOOL=build-ir NOVA_TOOL_OUT="$tmp/built" NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-sample.nova" "$tool")
+echo "$out" | grep -q "^built " && ok || no "Nova tool invokes clang"
+if [ -x "$tmp/built" ]; then
+    "$tmp/built"
+    code=$?
+    [ "$code" -eq 9 ] && ok || no "Nova-built binary result (got $code, expected 9)"
+else
+    no "Nova-built binary missing"
+fi
+
 printf 'fn main() -> Int {\n    return "x"\n}\n' > "$tmp/bad.nova"
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$tmp/bad.nova" "$tool")
 echo "$out" | grep -q "^error:" && ok || no "unsupported expression is reported"

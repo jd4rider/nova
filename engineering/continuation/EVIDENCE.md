@@ -43,7 +43,7 @@ Result: PASS — passed 4, failed 0.
 sh examples/nova-tool/tests/codegen.sh
 ```
 
-Result: PASS — passed 15, failed 0.
+Result: PASS — passed 17, failed 0.
 
 - Straight-line Int module: no `alloca` for immutable params/`let`.
 - Mutable module compiles and exits 2.
@@ -51,10 +51,12 @@ Result: PASS — passed 15, failed 0.
 - Immutable arithmetic module exits 9.
 - ABI assertions: `define i64 @nova_user_0(ptr %arg_env, ...)`, direct call
   `@nova_user_0(ptr null, ...)`, and `@main` calls the entry with `ptr null`.
+- `NOVA_TOOL=build-ir` invokes clang, checks status and produces a native binary;
+  the test executes that Nova-built binary.
 - Host clang accepted every module; Mach-O confirmed on this host.
 
-Limit: the test invokes clang; `nova-tool emit-ir` only emits IR. This is not a
-compiler-speed measurement and not the seed runtime ABI.
+Limit: ABI parity is Int-only; `emit-ir` remains IR-only. This is not a
+compiler-speed measurement.
 
 ## Parity audit
 
@@ -66,6 +68,7 @@ and cancellation are absent even in Rust.
 
 ## Commit history
 
+- build-ir checkpoint — branch HEAD.
 - `8092f97` — Int ABI alignment.
 - `98c1ded` — native control flow and parity matrix.
 - `0fa226f` — SSA immutable bindings and performance gate.

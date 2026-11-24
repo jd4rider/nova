@@ -21,7 +21,7 @@ baseline suite was not rerun in this session. Status: `VERIFIED`, `PARTIAL`,
 | Structs, enums, tuples, arrays | Rust runtime | TODO | CODEGEN-01.06 |
 | Option/Result/error propagation | Rust runtime | TODO | CODEGEN-01.06 |
 | FFI and runtime ABI | Rust codegen + `runtime/` | PARTIAL — seed-shaped `ptr %arg_env`, `nova_user_<index>` symbols and entry wrapper for Int; strings/lists/Unit ABI TODO | CODEGEN-01.04 |
-| Clang linking from the compiler | Rust CLI | TODO — the test invokes clang, not the Nova tool | CODEGEN-01.09 |
+| Clang linking from the compiler | Rust CLI | VERIFIED for the Int slice — `build-ir` invokes clang with quoted paths and checks status | CODEGEN-01.09 |
 | Optimization parity | Rust LLVM pipeline | TODO | CODEGEN-01.10 |
 | Differential Rust/Nova tests | — | TODO | DIFF-01.01, DIFF-01.02 |
 | Stage 1/2/3 bootstrap | Rust seed | TODO | BOOT-02.01–03 |
@@ -53,9 +53,9 @@ workspace indexing and cancellation are absent even in Rust.
 
 - AST parser: `tests/parser.sh` → 50/0, 29-file corpus.
 - Body sema: `tests/sema-ast.sh` → 9/0.
-- Int codegen: `tests/codegen.sh` → 15/0; SSA params/`let`; seed-shaped
-  `ptr %arg_env`/`nova_user_N` ABI; native results 9, 2 and 17; Mach-O confirmed
-  on this host.
+- Int codegen: `tests/codegen.sh` → 17/0; SSA params/`let`; seed-shaped
+  `ptr %arg_env`/`nova_user_N` ABI; `build-ir` invokes clang; native results 9,
+  2 and 17; Mach-O confirmed on this host.
 
 ## Rule
 

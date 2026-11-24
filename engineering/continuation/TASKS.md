@@ -30,15 +30,16 @@ and integration gate pass. The full matrix is `PARITY.md`.
   params/`let`; mutable fixture exits 2.
 - CODEGEN-01.04 — Runtime ABI alignment: **PARTIAL**. Int signatures/calls now
   use `ptr %arg_env`, `nova_user_<index>` symbols and the `@main` wrapper;
-  Unit/void, strings/lists and runtime-call ABI remain. Evidence: 15/0.
+  Unit/void, strings/lists and runtime-call ABI remain. Evidence: 17/0.
 - CODEGEN-01.06 — Strings, lists, maps, sets, structs, enums, tuples, arrays,
   Option/Result: **TODO**.
 - CODEGEN-01.07 — Overflow, division-by-zero, bounds and alignment checks:
   **TODO**.
 - CODEGEN-01.08 — `for`, `match`, `break`/`continue`, short-circuit booleans:
   **TODO**.
-- CODEGEN-01.09 — Clang invocation and linking from the Nova tool: **READY**,
-  depends on the Int ABI subset and host process surface.
+- CODEGEN-01.09 — Clang invocation and linking from the Nova tool: **VERIFIED**.
+  `build-ir` writes IR, invokes clang with quoted paths, checks exit status and
+  produces a native binary. Evidence: `tests/codegen.sh` → 17/0.
 - CODEGEN-01.10 — Optimization pipeline parity: **TODO**.
 
 ## CLI-01 — Self-hosted driver

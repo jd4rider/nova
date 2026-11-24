@@ -23,6 +23,18 @@ import "../../../libraries/nova-boxes/src/registry.nova"
 // NOVA_TOOL_PATH to the file to inspect. `fmt` writes to NOVA_TOOL_OUT when it
 // is set, which is how the corpus test checks idempotence.
 
+fn nt_shell_quote(text: String) -> String {
+    var out = "'"
+    for c in text.chars() {
+        if c == "'" {
+            out = out + "'" + "\\" + "'" + "'"
+        } else {
+            out = out + c
+        }
+    }
+    return out + "'"
+}
+
 fn main() {
     let mode = gui.env("NOVA_TOOL")
     let path = gui.env("NOVA_TOOL_PATH")
@@ -193,6 +205,36 @@ fn main() {
         } else {
             println(result.ir)
         }
+        return
+    }
+
+    if mode == "build-ir" {
+        let result = cg_compile(source)
+        if result.error.len() > 0 {
+            println("error: " + result.error)
+            return
+        }
+        let target = gui.env("NOVA_TOOL_OUT")
+        if target.len() == 0 {
+            println("error: set NOVA_TOOL_OUT to the output binary")
+            return
+        }
+        let ir_path = target + ".ll"
+        if !gui.write(ir_path, result.ir) {
+            println("error: cannot write " + ir_path)
+            return
+        }
+        let command = "clang -x ir " + nt_shell_quote(ir_path) + " -o " + nt_shell_quote(target)
+        let output = gui.run(command, gui.cwd())
+        let status = gui.exit_status()
+        if status != 0 {
+            println("error: clang failed with status " + status.to_string())
+            if output.len() > 0 {
+                println(output)
+            }
+            return
+        }
+        println("built " + target)
         return
     }
 
