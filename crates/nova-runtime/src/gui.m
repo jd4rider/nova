@@ -19,6 +19,12 @@
 #import <CoreText/CoreText.h>
 #import <ImageIO/ImageIO.h>
 #include <pthread.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <termios.h>
+#include <time.h>
+#include <sys/ioctl.h>
+#include <sys/wait.h>
 #import <QuartzCore/QuartzCore.h>
 
 #include <math.h>
@@ -63,6 +69,7 @@ typedef struct {
 #define NOVA_KEY_END 1006
 #define NOVA_KEY_PAGE_UP 1007
 #define NOVA_KEY_PAGE_DOWN 1008
+#define NOVA_KEY_F12 1009
 
 /* Modifier bits: 1 command, 2 shift, 4 option, 8 control. */
 #define NOVA_MOD_COMMAND 1
@@ -212,6 +219,7 @@ static int64_t nova_gui_modifiers(NSEventModifierFlags flags) {
         case 119: code = NOVA_KEY_END; break;
         case 116: code = NOVA_KEY_PAGE_UP; break;
         case 121: code = NOVA_KEY_PAGE_DOWN; break;
+        case 111: code = NOVA_KEY_F12; break;
         default: break;
     }
     if (code == 0) {
@@ -1182,18 +1190,19 @@ nova_str nova_fs_cwd(void) {
  * runs its own modal loop, which is safe here because the app's loop is the
  * main thread and nothing holds state across the call. */
 /* ------------------------------------------------------------------ */
-/* Streaming terminal                                                 */
+/* Streaming terminal (pty)                                           */
 /* ------------------------------------------------------------------ */
 
-/* A command runs on a detached thread that appends to a shared buffer; the
- * Nova side polls, so the window keeps painting while the command runs. A
- * locked buffer is the whole synchronisation: one producer, one consumer. */
+/* The command runs under a real pty, so it can prompt, colourise and read
+ * keystrokes. One thread drains the master fd into a locked buffer and the Nova
+ * side polls it; writes go back through nova_term_send. */
 static pthread_mutex_t nova_term_lock = PTHREAD_MUTEX_INITIALIZER;
 static char *nova_term_buffer = NULL;
 static size_t nova_term_length = 0;
 static size_t nova_term_capacity = 0;
 static size_t nova_term_seen = 0;
 static int nova_term_active = 0;
+static int nova_term_master = -1;
 
 static void nova_term_append(const char *data, size_t len) {
     pthread_mutex_lock(&nova_term_lock);
@@ -1215,17 +1224,32 @@ static void nova_term_append(const char *data, size_t len) {
 }
 
 struct nova_term_job {
-    FILE *pipe;
+    int master;
+    pid_t pid;
 };
 
 static void *nova_term_worker(void *arg) {
     struct nova_term_job *job = (struct nova_term_job *)arg;
     char chunk[4096];
-    size_t got;
-    while ((got = fread(chunk, 1, sizeof(chunk), job->pipe)) > 0) {
-        nova_term_append(chunk, got);
+    for (;;) {
+        ssize_t got = read(job->master, chunk, sizeof(chunk));
+        if (got > 0) {
+            nova_term_append(chunk, (size_t)got);
+        } else if (got == 0) {
+            break;
+        } else if (errno == EINTR) {
+            continue;
+        } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            struct timespec pause = {0, 1000000};
+            nanosleep(&pause, NULL);
+        } else {
+            break;
+        }
     }
-    pclose(job->pipe);
+    close(job->master);
+    int status = 0;
+    waitpid(job->pid, &status, 0);
+    nova_gui_exit_status = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
     free(job);
     pthread_mutex_lock(&nova_term_lock);
     nova_term_active = 0;
@@ -1242,39 +1266,75 @@ int64_t nova_term_start(nova_str command, nova_str cwd) {
         free(dir);
         return 0;
     }
-    size_t size = strlen(cmd) + strlen(dir) + 32;
-    char *full = (char *)malloc(size);
-    if (!full) {
+    int master = posix_openpt(O_RDWR | O_NOCTTY);
+    if (master < 0) {
         free(cmd);
         free(dir);
         return 0;
     }
-    snprintf(full, size, "cd '%s' && %s 2>&1", dir, cmd);
+    if (grantpt(master) != 0 || unlockpt(master) != 0) {
+        close(master);
+        free(cmd);
+        free(dir);
+        return 0;
+    }
+    const char *slave_name = ptsname(master);
+    if (!slave_name) {
+        close(master);
+        free(cmd);
+        free(dir);
+        return 0;
+    }
+    struct winsize size;
+    size.ws_row = 30;
+    size.ws_col = 120;
+    size.ws_xpixel = 0;
+    size.ws_ypixel = 0;
+    ioctl(master, TIOCSWINSZ, &size);
+    fcntl(master, F_SETFL, fcntl(master, F_GETFL, 0) | O_NONBLOCK);
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        close(master);
+        free(cmd);
+        free(dir);
+        return 0;
+    }
+    if (pid == 0) {
+        setsid();
+        int slave = open(slave_name, O_RDWR);
+        if (slave < 0) _exit(127);
+        ioctl(slave, TIOCSCTTY, 0);
+        dup2(slave, 0);
+        dup2(slave, 1);
+        dup2(slave, 2);
+        if (slave > 2) close(slave);
+        if (chdir(dir) != 0) _exit(127);
+        execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
+        _exit(127);
+    }
     free(cmd);
     free(dir);
-    FILE *pipe = popen(full, "r");
-    free(full);
-    if (!pipe) return 0;
     pthread_mutex_lock(&nova_term_lock);
     nova_term_length = 0;
     nova_term_seen = 0;
     if (nova_term_buffer) nova_term_buffer[0] = '\0';
     nova_term_active = 1;
     pthread_mutex_unlock(&nova_term_lock);
+    nova_term_master = master;
     struct nova_term_job *job = (struct nova_term_job *)malloc(sizeof(struct nova_term_job));
     if (!job) {
-        pclose(pipe);
+        close(master);
         nova_term_active = 0;
         return 0;
     }
-    job->pipe = pipe;
+    job->master = master;
+    job->pid = pid;
     pthread_t thread;
     if (pthread_create(&thread, NULL, nova_term_worker, job) != 0) {
-        pclose(pipe);
+        close(master);
         free(job);
-        pthread_mutex_lock(&nova_term_lock);
         nova_term_active = 0;
-        pthread_mutex_unlock(&nova_term_lock);
         return 0;
     }
     pthread_detach(thread);
@@ -1307,6 +1367,14 @@ nova_str nova_term_poll(void) {
 
 int64_t nova_term_running(void) {
     return nova_term_active;
+}
+
+/* One keystroke to the pty: 13 for Enter, 127 for Backspace, ASCII otherwise. */
+int64_t nova_term_send(int64_t code) {
+    if (nova_term_master < 0) return 0;
+    unsigned char byte = (unsigned char)(code & 0xFF);
+    ssize_t wrote = write(nova_term_master, &byte, 1);
+    return wrote == 1 ? 1 : 0;
 }
 
 void nova_term_clear(void) {

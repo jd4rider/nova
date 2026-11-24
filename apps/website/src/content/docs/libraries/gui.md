@@ -55,7 +55,8 @@ Everything is immediate mode: a frame is whatever the loop draws between `begin`
 | Window | `open(title, w, h)`, `close()`, `is_open()`, `width()`, `height()`, `set_title(text)` |
 | Pickers | `pick_file()`, `pick_folder()` — native `NSOpenPanel`, returns `""` on cancel |
 | Clipboard | `clipboard()`, `set_clipboard(text)` — the system pasteboard |
-| Terminal | `term_start(cmd, dir)`, `term_poll()`, `term_running()`, `term_clear()` — async command output on a host thread |
+| Terminal | `term_start(cmd, dir)`, `term_poll()`, `term_running()`, `term_clear()` — a real PTY (libc `posix_openpt` + `fork`) read by a host thread, so a child program sees a terminal |
+| Terminal input | `term_send(code)` — write a byte (`13` Enter, `127` Backspace) to the running PTY |
 | Frame | `begin()`, `clear(color)`, `present()`, `save_png(path)`, `sleep(ms)` |
 | Shapes | `rect`, `round_rect`, `stroke`, `line`, `rect_alpha` |
 | Text | `text` (system font), `mono` (Menlo), `text_width`, `mono_width`, `advance(size)` |

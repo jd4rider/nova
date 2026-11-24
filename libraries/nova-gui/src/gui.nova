@@ -80,6 +80,7 @@ extern "C" fn nova_term_start(command: String, cwd: String) -> Int
 extern "C" fn nova_term_poll() -> String
 extern "C" fn nova_term_running() -> Int
 extern "C" fn nova_term_clear()
+extern "C" fn nova_term_send(code: Int) -> Int
 extern "C" fn nova_fs_cwd() -> String
 extern "C" fn nova_env(name: String) -> String
 extern "C" fn nova_process_run(command: String, cwd: String) -> String
@@ -278,6 +279,10 @@ fn key_page_up() -> Int {
 
 fn key_page_down() -> Int {
     return 1008
+}
+
+fn key_f12() -> Int {
+    return 1009
 }
 
 fn mod_command() -> Int {
@@ -522,6 +527,11 @@ fn term_running() -> Bool {
 
 fn term_clear() {
     nova_term_clear()
+}
+
+// Sends one key byte to the pty: 13 Enter, 127 Backspace, ASCII otherwise.
+fn term_send(code: Int) -> Bool {
+    return nova_term_send(code) == 1
 }
 
 fn env(name: String) -> String {

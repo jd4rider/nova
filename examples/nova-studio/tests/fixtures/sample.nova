@@ -1,7 +1,11 @@
-// scripted UI test fixture: selection, find, folding, multi-cursor
+// scripted UI test fixture: selection, find, folding, multi-cursor, definitions
 fn demo() {
     let alpha = "needle-here-yes"
     let beta = "hello"
     let gamma = "hello"
     return alpha
+}
+
+fn caller() {
+    demo()
 }

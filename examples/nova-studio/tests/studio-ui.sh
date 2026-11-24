@@ -47,13 +47,13 @@ SCRIPT
 run_case find "$WORK/find.txt"
 
 cat > "$WORK/fold.txt" <<'SCRIPT'
-assert_rows_min 6
+assert_rows_min 10
 click 364 120
 assert_fold 1
-assert_rows_max 4
+assert_rows_max 8
 click 364 120
 assert_fold 0
-assert_rows_min 6
+assert_rows_min 10
 SCRIPT
 run_case fold "$WORK/fold.txt"
 
@@ -77,6 +77,35 @@ SHOT_PATH
 SCRIPT
 sed -i '' "s|SHOT_PATH|shot $WORK/term.png|" "$WORK/term.txt"
 run_case terminal "$WORK/term.txt"
+
+cat > "$WORK/goto.txt" <<'SCRIPT'
+click 442 272
+key 1009
+assert_cursor 1 3
+assert_file_has sample
+assert_line_has 1 fn
+SCRIPT
+run_case gotodefinition "$WORK/goto.txt"
+
+cat > "$WORK/split.txt" <<'SCRIPT'
+splittoggle
+assert_split 1
+click 900 200
+assert_split 1
+splittoggle
+assert_split 0
+SCRIPT
+run_case split "$WORK/split.txt"
+
+cat > "$WORK/terminput.txt" <<'SCRIPT'
+termcmd cat
+wait 400
+termtype echo-ok
+termenter
+wait 700
+assert_term_has echo-ok
+SCRIPT
+run_case termininput "$WORK/terminput.txt"
 
 echo
 echo "passed $PASS, failed $FAIL"
