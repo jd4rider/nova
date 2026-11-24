@@ -2887,6 +2887,9 @@ fn has_int(items: List<Int>, value: Int) -> Bool {
 }
 
 fn selection_span(tab: Tab) -> Span {
+    if !tab.selecting {
+        return Span { l0: 0, c0: 0, l1: 0, c1: 0, empty: true }
+    }
     var l0 = tab.sel_line
     var c0 = tab.sel_col
     var l1 = tab.cursor_line

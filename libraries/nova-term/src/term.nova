@@ -66,7 +66,9 @@ fn tm_s_private() -> Int { return 2 }
 fn tm_s_fin() -> Int { return 3 }
 
 fn tm_reg(t: Term, index: Int) -> Int {
-    if index < 0 || index >= t.regs.len() {
+    /* A corrupt or stale list header must never reach the runtime's list
+     * accessor: clamp against the declared size as well as the live length. */
+    if index < 0 || index >= t.regs.len() || t.regs.len() > tm_register_count() {
         return 0
     }
     return t.regs[index]
@@ -74,13 +76,13 @@ fn tm_reg(t: Term, index: Int) -> Int {
 
 fn tm_set_reg(t: Term, index: Int, value: Int) {
     var regs = t.regs
-    if index >= 0 && index < regs.len() {
+    if index >= 0 && index < regs.len() && regs.len() <= tm_register_count() {
         regs[index] = value
     }
 }
 
 fn tm_str_reg(t: Term, index: Int) -> String {
-    if index < 0 || index >= t.strs.len() {
+    if index < 0 || index >= t.strs.len() || t.strs.len() > 8 {
         return ""
     }
     return t.strs[index]
@@ -743,7 +745,7 @@ fn tm_param(t: Term, index: Int, fallback: Int) -> Int {
 }
 
 fn tm_param_raw(t: Term, index: Int) -> Int {
-    if index < 0 || index >= t.params.len() {
+    if index < 0 || index >= t.params.len() || t.params.len() > tm_param_slots() {
         return 0
     }
     return t.params[index]
@@ -1510,6 +1512,10 @@ fn tm_view(t: Term) -> Int {
         return t.regs[slot]
     }
     return 0
+}
+
+fn tm_sb_len(t: Term) -> Int {
+    return t.sb.len()
 }
 
 fn tm_backlog(t: Term) -> Int {

@@ -217,69 +217,87 @@ fn sync_size(app: App) -> App {
 
 // ---------- drawing ----------
 
+fn elide(text: String, size: Int, max_w: Int) -> String {
+    let chars = text.chars()
+    if gui.text_width(text, size) <= max_w {
+        return text
+    }
+    var out = ""
+    var used = 0
+    var i = 0
+    while i < chars.len() && used < max_w - 12 {
+        out = out + chars[i]
+        used = used + gui.text_width(chars[i], size)
+        i = i + 1
+    }
+    return out + "…"
+}
+
+fn tab_width_of(title: String) -> Int {
+    return gui.max(gui.text_width(title, 12) + 62, 132)
+}
+
 fn draw_tab_bar(app: App) {
     let theme = app.theme
     let window_w = gui.width()
     gui.rect(0, 0, window_w, tab_height(), theme.panel)
     gui.line(0, tab_height() - 1, window_w, tab_height() - 1, theme.border)
-    var x = 12
+    var x = 14
     var i = 0
     while i < app.tabs.len() {
         let tab = app.tabs[i]
-        let label = tab.title
-        var tab_w = gui.text_width(label, 12) + 44
-        if tab_w < 120 {
-            tab_w = 120
-        }
+        let tab_w = tab_width_of(tab.title)
         if i == app.active {
-            gui.round_rect(x, 8, tab_w, 32, 7, theme.bg)
-            gui.rect(x + 12, tab_height() - 2, tab_w - 24, 2, theme.accent)
+            gui.round_rect(x, 8, tab_w, 30, 8, theme.bg)
+            gui.rect(x + 12, tab_height() - 3, tab_w - 24, 2, theme.accent)
         } else {
-            gui.round_rect(x, 9, tab_w, 30, 7, theme.elevated)
+            gui.round_rect(x, 9, tab_w, 28, 8, theme.elevated)
         }
         var color = theme.muted
         if i == app.active {
             color = theme.fg_bright
         }
         if gui.pty_running(tab.slot) {
-            gui.rect(x + 10, 20, 6, 6, theme.green)
+            gui.rect(x + 14, 21, 6, 6, theme.green)
         } else {
-            gui.rect(x + 10, 20, 6, 6, theme.faint)
+            gui.rect(x + 14, 21, 6, 6, theme.faint)
         }
-        gui.text(x + 22, 15, label, 12, color)
-        gui.text(x + tab_w - 20, 14, "✕", 11, theme.muted)
-        x = x + tab_w + 6
+        gui.text(x + 28, 15, elide(tab.title, 12, tab_w - 66), 12, color)
+        gui.text(x + tab_w - 24, 15, "✕", 11, theme.faint)
+        x = x + tab_w + 8
         i = i + 1
     }
-    let plus_x = x + 2
-    gui.round_rect(plus_x, 10, 26, 26, 7, theme.elevated)
-    gui.text(plus_x + 9, 14, "+", 14, theme.fg)
-    gui.text(window_w - 190, 16, "⌘T new   ⌘K palette", 11, theme.faint)
+    gui.round_rect(x + 2, 11, 24, 24, 8, theme.elevated)
+    gui.text(x + 10, 14, "+", 13, theme.muted)
+    gui.text(window_w - 168, 16, "⌘T new   ⌘K palette", 11, theme.faint)
 }
 
 fn draw_grid(app: App) {
     let pal = app.palette
     let top = tab_height()
     let window_w = gui.width()
-    let grid_h = gui.height() - tab_height() - status_height()
-    gui.rect(0, top, window_w, grid_h, pal.bg)
+    let pad_x = 18
+    let pad_y = 14
+    let content_h = gui.height() - tab_height() - status_height() - pad_y * 2
+    gui.rect(0, top, window_w, gui.height() - top - status_height(), pal.bg)
     if app.tabs.len() == 0 || app.active < 0 || app.active >= app.tabs.len() {
         return
     }
     let tab = app.tabs[app.active]
-    gui.rect(0, top, 14, grid_h, pal.bg)
-    vt.tm_draw(tab.term, 16, top + 8, window_w - 24, grid_h - 16, app.size, pal)
-    vt.tm_draw_rail(tab.term, 10, top + 8, grid_h - 16, app.size, pal)
+    let grid_x = pad_x + 14
+    let grid_y = top + pad_y
+    vt.tm_draw(tab.term, grid_x, grid_y, window_w - grid_x - pad_x, content_h, app.size, pal)
+    vt.tm_draw_rail(tab.term, pad_x, grid_y, content_h, app.size, pal)
     var i = 0
     while i < app.hits.len() {
         let row = app.hits[i] - (vt.tm_total_lines(tab.term) - vt.tm_rows(tab.term) - vt.tm_view(tab.term))
         if row >= 0 && row < vt.tm_rows(tab.term) {
-            let y = top + 8 + row * vt.tm_cell_height(app.size)
+            let y = grid_y + row * vt.tm_cell_height(app.size)
             var color = pal.selection
             if i == app.hit_at {
                 color = pal.cursor
             }
-            gui.rect(0, y, 8, vt.tm_cell_height(app.size), color)
+            gui.rect(pad_x - 6, y, 3, vt.tm_cell_height(app.size), color)
         }
         i = i + 1
     }
@@ -289,22 +307,25 @@ fn draw_status(app: App) {
     let theme = app.theme
     let window_w = gui.width()
     let y = gui.height() - status_height()
-    gui.rect(0, y, window_w, status_height(), theme.status)
-    gui.text(12, y + 6, "◈ nova-term", 11, gui.white())
-    var left = 118
+    gui.rect(0, y, window_w, status_height(), theme.panel)
+    gui.line(0, y, window_w, y, theme.border)
+    gui.text(14, y + 6, "◈", 11, theme.accent)
+    gui.text(30, y + 6, "nova-term", 11, theme.fg)
+    var left = 116
     if app.tabs.len() > 0 && app.active >= 0 && app.active < app.tabs.len() {
         let tab = app.tabs[app.active]
-        gui.text(left, y + 6, tab.cwd, 11, gui.white())
-        left = left + gui.text_width(tab.cwd, 11) + 18
+        let where = elide(tab.cwd, 11, 300)
+        gui.text(left, y + 6, where, 11, theme.muted)
+        left = left + gui.text_width(where, 11) + 16
     }
-    gui.text(left, y + 6, app.theme_name, 11, gui.white())
-    let family = gui.mono_font()
-    gui.text(left + 84, y + 6, family, 11, gui.white())
+    gui.text(left, y + 6, app.theme_name, 11, theme.muted)
+    left = left + gui.text_width(app.theme_name, 11) + 16
+    gui.text(left, y + 6, elide(gui.mono_font(), 11, 220), 11, theme.muted)
     let dims = grid_cols(app)
-    let size_text = "${app.tabs.len()} tabs  " + "${dims}x" + "${grid_rows(app)}  " + "${app.size}pt"
-    gui.text(window_w - gui.text_width(size_text, 11) - 14, y + 6, size_text, 11, gui.white())
+    let size_text = "${app.tabs.len()} tabs  ${dims}x${grid_rows(app)}  ${app.size}pt"
+    gui.text(window_w - gui.text_width(size_text, 11) - 14, y + 6, size_text, 11, theme.muted)
     if app.message.len() > 0 {
-        gui.text(window_w - gui.text_width(size_text, 11) - gui.text_width(app.message, 11) - 32, y + 6, app.message, 11, gui.white())
+        gui.text(window_w - 380, y + 6, elide(app.message, 11, 240), 11, theme.accent)
     }
 }
 
@@ -583,7 +604,7 @@ fn click(app: App, mx: Int, my: Int) -> App {
         var x = 12
         var i = 0
         while i < app.tabs.len() {
-            let width = gui.max(gui.text_width(app.tabs[i].title, 12) + 44, 120)
+            let width = tab_width_of(app.tabs[i].title)
             if mx >= x && mx < x + width {
                 if mx > x + width - 30 {
                     app.active = i
@@ -695,6 +716,9 @@ fn run_script(app: App, path: String) -> App {
         if trimmed.len() > 0 && !trimmed.starts_with("#") {
             let words = words_of(trimmed)
             let cmd = words[0]
+            if cmd == "click" && words.len() >= 3 {
+                app = click(app, to_int(words[1]), to_int(words[2]))
+            }
             if cmd == "newtab" {
                 app = spawn(app)
             }
@@ -758,6 +782,12 @@ fn run_script(app: App, path: String) -> App {
                     want = true
                 }
                 println(truth(vt.tm_alt_on(app.tabs[app.active].term) == want) + " " + trimmed)
+            }
+            if cmd == "assert_sb" {
+                println(truth(vt.tm_sb_len(app.tabs[app.active].term) > 1000) + " " + trimmed)
+            }
+            if cmd == "assert_sbcap" {
+                println(truth(vt.tm_sb_len(app.tabs[app.active].term) == vt.tm_scrollback_capacity()) + " " + trimmed)
             }
             if cmd == "fontname" {
                 println("FONT " + gui.mono_font())

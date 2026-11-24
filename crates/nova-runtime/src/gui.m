@@ -1671,6 +1671,9 @@ nova_str nova_gui_panel(int64_t mode) {
         [panel setAllowsMultipleSelection:NO];
         [panel setCanCreateDirectories:YES];
         [panel setTitle:(mode == 1 ? @"Open Folder" : @"Open File")];
+        /* A borderless Nova window can leave the app inactive, and an inactive
+         * app's modal panel never comes forward: activate first. */
+        [NSApp activateIgnoringOtherApps:YES];
         if ([panel runModal] != NSModalResponseOK) return nova_gui_empty();
         NSURL *url = [[panel URLs] firstObject];
         if (!url || ![url path]) return nova_gui_empty();
