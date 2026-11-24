@@ -16,7 +16,7 @@ import SiteLayout from '../layouts/SiteLayout.astro'
         <p class="notice danger"><strong>Do not cite this page as evidence of performance parity.</strong> The compiler is an early vertical slice using a new runtime and checked arithmetic. No representative suite exists.</p>
         <h2>What is verified</h2>
         <ul>
-          <li><code>cargo test --workspace</code>: 72 tests passing across lexer, parser, sema, formatter, package, LSP, native codegen and the browser front end.</li>
+          <li><code>cargo test --workspace</code> passes across the Rust bootstrap: lexer, parser, sema, package, LSP, native codegen and the browser front end.</li>
           <li>Native executables are built through LLVM/Clang and executed in codegen tests.</li>
           <li>Studio typecheck and production build pass.</li>
         </ul>

@@ -1,6 +1,11 @@
 # 🦀 Nova
 
-**A statically typed programming language with a Rust compiler, an LLVM native backend, a language server, a desktop IDE and a VS Code extension.**
+**A statically typed programming language with a Rust bootstrap compiler, an LLVM native backend, a language server, a desktop IDE, a VS Code extension and a Nova package manager.**
+
+The compiler and language server are still the Rust bootstrap in `bootstrap/`.
+The formatter, diagnostics and Nova Boxes are Nova implementations in
+`libraries/`, run through `nova-tool`; the compiler is not self-hosted yet. See
+[the migration plan](docs/rust-migration.md).
 
 [![CI](https://github.com/jd4rider/nova/actions/workflows/ci.yml/badge.svg)](https://github.com/jd4rider/nova/actions/workflows/ci.yml)
 [![Website and GitHub Pages](https://github.com/jd4rider/nova/actions/workflows/pages.yml/badge.svg)](https://github.com/jd4rider/nova/actions/workflows/pages.yml)
@@ -123,6 +128,7 @@ Ada (36)
 | Type checking, structs, enums, Option/Result, match, string predicates | **Tested** | `cargo test --workspace` |
 | LLVM native codegen, checked arithmetic, bounds | **Tested** | Native codegen tests |
 | CLI, formatter, manifests, project scaffolding | **Tested / implemented** | `nova --help`, integration tests |
+| Nova Boxes: manifests, SemVer, resolution, archives, fetch | **Implemented** | `examples/nova-tool/tests/boxes.sh` (64 assertions); publishing planned |
 | Rust LSP over stdio | **Implemented** | Diagnostics, completion, hover, definition, symbols, formatting |
 | VS Code extension | **Implemented** | VSIX installs; shared grammar and live `nova lsp` transcript verified |
 | Browser playground | **Implemented** | Real front end compiled to WASM; valid/invalid ABI tests and static route verified |
@@ -144,7 +150,6 @@ bootstrap/
   nova-lexer          tokens, spans and diagnostics
   nova-parser         recursive descent + Pratt parser
   nova-sema           name resolution and type checking
-  nova-ir             typed intermediate representation
   nova-codegen-llvm   textual LLVM IR emission
   nova-cli            build, run, check, test, fmt, lsp, tree
   nova-lsp            stdio language server
@@ -236,7 +241,7 @@ The website checks include real compiler invocations for documentation snippets.
 
 ## Limitations
 
-- `String` supports `len`, `is_empty`, `to_string`, `contains`, `starts_with`, `ends_with` and `trim`. Generic functions, structs, enums and inherent methods are monomorphised, `trait`/`impl Trait for Type` perform static conformance, `dyn Trait` boxes a copy of the value behind a per-type vtable, closures capture outer locals by value, and expression/statement macros expand by AST substitution. Still missing: real async scheduling or channels, trait impls on generic types, package resolution and a registry.
+- `String` supports `len`, `is_empty`, `to_string`, `contains`, `starts_with`, `ends_with` and `trim`. Generic functions, structs, enums and inherent methods are monomorphised, `trait`/`impl Trait for Type` perform static conformance, `dyn Trait` boxes a copy of the value behind a per-type vtable, closures capture outer locals by value, and expression/statement macros expand by AST substitution. Still missing: real async scheduling or channels, trait impls on generic types, and registry publishing.
 - User modules are loaded with `import "file.nova"`, optionally aliased with `as` for qualified calls and type names. The merged namespace is flat, cycle-checked, and has no package registry.
 - Unsigned macOS/Windows installers and a macOS CLI archive are published; there are no signed/notarized builds, Intel/Linux installers, Windows CLI bundle or package registry.
 - The VS Code extension is a local, unsigned VSIX; it is not published to the VS Code Marketplace or Open VSX and has no automated Extension Host test.

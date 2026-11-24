@@ -80,7 +80,8 @@ The Nova implementations exist and are exercised by `examples/nova-tool`:
 | Semantic checks | `libraries/nova-check/src/check.nova` | declaration-level: duplicate items, duplicate parameters, unknown type names |
 | Lexer | `libraries/nova-lexer/src/lexer.nova` | tokenizes the full 5,139-line studio file and the large-input corpus |
 | Diagnostics | `libraries/nova-diag/src/diag.nova` | renders severity, location and caret |
-| Packages (**Nova Boxes**) | `libraries/nova-boxes/src/boxes.nova` | `box.toml`, `boxes.lock`, dependency and import graphs |
+| Packages (**Nova Boxes**) | `libraries/nova-boxes/src/*.nova` | `Box.toml`, `Box.lock`, SemVer, path/registry resolution, dependency graphs |
+| Archives and registry | `libraries/nova-boxes/src/archive.nova`, `registry.nova`, `json.nova` | deterministic `.box` pack/verify/unpack, sparse index reads, `search`/`info`/`fetch`, offline cache |
 
 Language gaps found while porting and fixed in the toolchain (sema + LLVM codegen
 + C runtime), because they belong in Nova rather than in workarounds:
@@ -108,7 +109,9 @@ Phase-2 suites: `tests/expr.sh` (expression trees), `tests/sema.sh`
 (declaration checks), and `apps/website/scripts/test-playground-format.mjs`
 (the browser formatter wasm, output and idempotence).
 
-Test state: `sh examples/nova-tool/tests/toolchain.sh` → **passed 105, failed 0**
-(including formatting the studio source). No Rust crate has been deleted yet: the bootstrap
-compiler (parser, sema, codegen, CLI, LSP) is still Rust, and phases 2–4 of this
-document are what removes it.
+Test state: `sh examples/nova-tool/tests/toolchain.sh` → **passed 117, failed 0**
+(including formatting the studio source), and `sh examples/nova-tool/tests/boxes.sh`
+→ **passed 64, failed 0**. No Rust crate has been deleted yet: the bootstrap
+compiler (lexer, parser, sema, codegen, CLI, LSP) is still Rust, and phases 2–4
+of this document are what removes it. `nova fmt` runs the Nova formatter, and
+`nova box` runs Nova Boxes; neither makes the compiler self-hosted.

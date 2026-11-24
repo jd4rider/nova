@@ -17,8 +17,9 @@ const statusRows = features.slice(0, 6)
         <span class="eyebrow"><span class="status-dot"></span> Early vertical slice · macOS arm64</span>
         <h1>Native speed.<br /><span class="accent">Readable code.</span></h1>
         <p class="lede">
-          Nova is a statically typed language with Python-like ergonomics and a Rust toolchain that emits
-          real native executables. Predictable semantics, precise diagnostics, no hidden conversions.
+          Nova is a statically typed language with Python-like ergonomics, a Rust bootstrap compiler that
+          emits real native executables, and a growing Nova toolchain. Predictable semantics, precise
+          diagnostics, no hidden conversions.
         </p>
         <div class="hero-actions">
           <a class="button primary" href={href('getting-started/installation/')}>Get started <span aria-hidden="true">→</span></a>
@@ -27,11 +28,11 @@ const statusRows = features.slice(0, 6)
           <a class="button" href={href('studio')}>Explore Nova Studio</a>
         </div>
         <ul class="proof">
-          <li>72 compiler tests passing</li>
+          <li>Rust bootstrap compiler</li>
           <li>LLVM native backend</li>
           <li>Static docs, no live server</li>
         </ul>
-        <div class="rust-pill" style="margin-top: 20px;"><RustCrab /><span>Compiler + LSP written in Rust</span></div>
+        <div class="rust-pill" style="margin-top: 20px;"><RustCrab /><span>Rust bootstrap compiler + LSP · Nova formatter and Boxes</span></div>
       </div>
       <div class="code-card">
         <div class="code-head">
@@ -55,7 +56,7 @@ Ada is 36
         <div>
           <div class="kicker">Engineering posture</div>
           <h2>Boring where it counts.</h2>
-          <p class="section-intro">The compiler is a real Rust pipeline, the backend is LLVM through the host Clang, and the IDE is a maintained Monaco workbench. Unfinished features are rejected or labeled, never simulated.</p>
+          <p class="section-intro">The bootstrap compiler is a real Rust pipeline, the backend is LLVM through the host Clang, and the package manager and formatter are already Nova. Unfinished features are rejected or labeled, never simulated.</p>
         </div>
       </div>
       <div class="grid-3">
@@ -69,7 +70,7 @@ Ada is 36
           <div class="card-icon" aria-hidden="true">IR</div>
           <h3>Native pipeline</h3>
           <p>Lexing, parsing, semantic checking, typed IR, textual LLVM IR and a small C runtime. The LLVM verifier runs; programs link with the platform toolchain.</p>
-          <div class="meta">cargo test --workspace · 72 passing</div>
+          <div class="meta">cargo test --workspace · bootstrap suite</div>
         </article>
         <article class="card">
           <div class="card-icon" aria-hidden="true">▤</div>
@@ -78,7 +79,7 @@ Ada is 36
           <div class="meta">TypeScript strict · production build passes</div>
         </article>
       </div>
-      <p class="section-intro" style="margin-top: 22px;">Prefer your own editor? The <a href={href('toolchain/vscode/')}>Nova Language extension</a> brings the shared grammar and Rust LSP into VS Code.</p>
+      <p class="section-intro" style="margin-top: 22px;">Prefer your own editor? The <a href={href('toolchain/vscode/')}>Nova Language extension</a> brings the shared grammar and the Rust language server into VS Code.</p>
     </div>
   </section>
 

@@ -29,8 +29,9 @@ fn main() {
     <header class="page-hero">
       <span class="eyebrow"><span class="status-dot"></span> Launch note · November 2026</span>
       <h1>Nova is a native language<br />with a <span style="color: var(--yellow)">Rust spine.</span></h1>
-      <p class="lede">Nova is not an interpreter with a pretty editor attached. It is a statically typed language whose Rust toolchain lexes, parses, checks and emits LLVM IR, then links a real executable. Here is what that means, and what it does not mean yet.</p>
-      <div class="rust-pill"><RustCrab /><span>Compiler, CLI and LSP written in Rust</span></div>
+      <p class="lede">Nova is not an interpreter with a pretty editor attached. It is a statically typed language whose Rust bootstrap compiler lexes, parses, checks and emits LLVM IR, then links a real executable. Here is what that means, and what it does not mean yet.</p>
+      <div class="rust-pill"><RustCrab /><span>Rust bootstrap compiler and LSP</span></div>
+      <p class="notice"><strong>Update, November 2026:</strong> the compiler and language server are still the Rust bootstrap. Nova now implements the formatter, Nova Boxes and a growing set of compiler tools. The [compiler pipeline page](../internals/compiler/) describes the exact split; the migration plan is in the repository.</p>
     </header>
 
     <section class="wrap">
@@ -49,16 +50,19 @@ fn main() {
         <h2>Why Rust is the boring, correct choice</h2>
         <p>The compiler is a long-lived process that reads untrusted source, builds large intermediate structures and has to fail without corrupting state. Rust gives us exhaustive matching over syntax nodes, ownership without a garbage collector, zero-cost abstractions and an ecosystem that treats command-line tools and language servers as first-class citizens.</p>
         <p>It also makes the boundaries explicit. The workspace is split into focused crates rather than one heroic binary:</p>
-        <pre><code>crates/
+        <pre><code>bootstrap/
   nova-lexer      tokens and spans
   nova-parser     recursive descent + Pratt parsing
   nova-sema       name resolution and type checking
-  nova-ir         typed intermediate representation
-  nova-codegen-llvm  LLVM IR emission
-  nova-runtime    native runtime support
-  nova-cli        build, run, check, test, fmt, lsp
+  nova-codegen-llvm  textual LLVM IR + Clang
+  nova-cli        build, run, check, test, lsp
   nova-lsp        stdio language server
-  nova-pkg        manifests and projects</code></pre>
+  nova-pkg        manifests, lockfile, imports
+  nova-wasm       browser front end
+
+libraries/        Nova implementations
+  nova-fmt        formatter
+  nova-boxes      package manager</code></pre>
         <p>Rust is not a marketing sticker here. It is why the compiler can be tested in isolation and why the language server can reuse the same front end as the command-line compiler without a second implementation drifting out of sync.</p>
 
         <h2>The first working vertical slice</h2>

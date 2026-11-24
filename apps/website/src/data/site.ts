@@ -1,6 +1,6 @@
 export const siteName = 'Nova'
 export const siteDescription =
-  'A native-compiled programming language with explicit semantics, a Rust toolchain, a browser playground, the Nova Studio desktop IDE and a VS Code extension.'
+  'A native-compiled programming language with explicit semantics, a Rust bootstrap compiler, Nova package tooling, a browser playground, the Nova Studio desktop IDE and a VS Code extension.'
 
 export const links = {
   github: import.meta.env.PUBLIC_GITHUB_URL ?? 'https://github.com/jd4rider/nova',

@@ -6,7 +6,7 @@
   <text x="164" y="122" font-family="system-ui, sans-serif" font-size="42" font-weight="750" fill="#ebdbb2">Nova</text>
   <text x="72" y="300" font-family="system-ui, sans-serif" font-size="76" font-weight="780" fill="#ebdbb2">Native speed.</text>
   <text x="72" y="392" font-family="system-ui, sans-serif" font-size="76" font-weight="780" fill="#fabd2f">Readable code.</text>
-  <text x="72" y="478" font-family="system-ui, sans-serif" font-size="28" fill="#a89984">A statically typed language with a Rust toolchain, LLVM backend and Studio IDE.</text>
+  <text x="72" y="478" font-family="system-ui, sans-serif" font-size="28" fill="#a89984">A statically typed language with a Rust bootstrap compiler, LLVM backend, Nova tooling and Studio IDE.</text>
   <rect x="72" y="516" width="225" height="42" rx="21" fill="#32302f" stroke="#504945"/>
   <text x="184" y="543" font-family="monospace" font-size="16" fill="#b8bb26" text-anchor="middle">early vertical slice</text>
 </svg>

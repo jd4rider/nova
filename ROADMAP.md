@@ -14,7 +14,7 @@ Status means: **tested** = covered by automated tests and passing; **implemented
 | Integer overflow traps, division by zero | tested | Runtime abort with message |
 | Pattern matching | tested | Option/Result, literals, bindings, tuple patterns and user enum variants with multiple payload fields |
 | String predicates and trimming | tested | `contains`, `starts_with`, `ends_with`, `trim` lower to runtime helpers; native codegen test executes them |
-| Modules/imports | tested | `import "util.nova"` flattens relative source files with cycle checks; `import "util.nova" as util` adds qualified calls and type names. The underlying namespace is still flat, so duplicate unqualified names remain errors; packages are not implemented |
+| Modules/imports | tested | `import "util.nova"` flattens relative source files with cycle checks; `import "util"` and `import "@publisher/box"` resolve declared dependencies through `Box.toml` and `Box.lock`. The underlying namespace is still flat, so duplicate unqualified names remain errors; only direct dependencies are mapped |
 | Generics | tested | Generic functions, structs, enums and inherent methods are monomorphised on demand from concrete annotations; trait impls on generic types and type-parameter-annotated locals remain unsupported |
 | User enums | tested | Unit or multi-payload variants; nominal tagged heap payload, exhaustive `match`; native codegen test |
 | `impl` methods | tested | Inherent methods on structs/enums and on generic types (`impl<T> Pair<T>`) with an explicit `self` receiver; no static methods or trait impls on generic types |
@@ -39,7 +39,8 @@ Status means: **tested** = covered by automated tests and passing; **implemented
 | VS Code extension | implemented | Shared TextMate grammar and language client; VSIX packaged and installed, live `nova lsp` transcript verified; no Extension Host automation |
 | Browser playground | implemented | Real lexer, parser, sema and formatter compiled to WASM; static route and ABI tests pass; check/format only |
 | LSP incremental sync, rename, references, semantic tokens, code actions, cancellation | planned | Not advertised |
-| Package registry, publishing, checksums | planned | |
+| Nova Boxes: manifests, SemVer, path/registry resolution, deterministic archives | implemented | `examples/nova-tool/tests/boxes.sh` (64 assertions), including SHA-256 verified fetch and registry reads |
+| Registry publishing, signing and provenance | planned | Reviewed-PR protocol is designed in `docs/boxes/REGISTRY_PROTOCOL.md`; no workflow publishes |
 | Benchmarks and performance claims | planned | No benchmark evidence; directive performance targets are aspirations only |
 | Astro 7 + Starlight public website and docs | tested | `npm run check`, production build, root/project-base link checks, grammar scopes, checked snippets |
 | GitHub Pages workflow | implemented | Public repository and verified deployment at https://jd4rider.github.io/nova/ |

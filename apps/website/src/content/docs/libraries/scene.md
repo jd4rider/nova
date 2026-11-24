@@ -1,3 +1,7 @@
+---
+title: Scene layer
+description: Dynamic collisions, stable entity ids and the Nova scene editor.
+---
 
 ## Dynamic collisions and the editor
 

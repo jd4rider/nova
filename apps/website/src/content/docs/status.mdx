@@ -18,7 +18,8 @@ import MilestoneList from '../../components/MilestoneList.astro'
 
 ## Verification snapshot
 
-- Compiler: `cargo test --workspace` — 72 tests, including the browser front-end ABI tests; the pre-playground suite had five consecutive clean runs after the temporary-directory race fix.
+- Compiler: `cargo test --workspace` passes for the Rust bootstrap, including the browser front-end ABI tests. The compiler and LSP are not self-hosted.
+- Nova tooling: `examples/nova-tool/tests/toolchain.sh` (117 assertions) and `boxes.sh` (64 assertions) cover the Nova formatter, lexer, parser, checks, archives and registry reads.
 - Editor: `npm run typecheck`, `npm run build` and DMG/NSIS packaging pass. The installed Homebrew app was not GUI-automated.
 - VS Code extension: TypeScript typecheck, VSIX packaging, `code --install-extension` and a live `nova lsp` transcript (initialize, open buffer, `E0308`, shutdown) pass. Extension Host interaction is not automated.
 - Browser playground: `cargo test -p nova-wasm`, a zero-import WASM ABI test, valid/invalid source checks and the static route pass. Native execution and GUI/browser interaction are not automated.

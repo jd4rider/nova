@@ -1,20 +1,21 @@
 ---
 title: Projects and dependencies
-description: Manifest, lockfile and the current local-only dependency model.
+description: Box.toml, Box.lock and how path and registry dependencies reach a build.
 ---
 
 ## Layout
 
 ```text
 my-project/
-  nova.toml
-  nova.lock
+  Box.toml
+  Box.lock
   src/main.nova
   tests/
   target/
 ```
 
-`nova.toml` declares the package, binary and dependencies. The manifest parser and lockfile are tested in `crates/nova-pkg`. Local path dependencies are supported; a registry, publishing, checksums, workspaces and offline cache are **planned**.
+`Box.toml` is the Nova Boxes manifest. `nova.toml` is still accepted for older
+projects; `Box.toml` wins when both exist.
 
 ```toml
 [package]
@@ -26,19 +27,67 @@ path = "src/main.nova"
 
 [dependencies]
 util = { path = "../util" }
+"@nova/reglib" = "^1.0.0"
 ```
 
-## Lockfile
+A dependency is imported by its declared name, using the dependency's own
+`[bin] path` as the entry file:
 
-The lockfile records resolved local dependencies so repeated builds use the same graph. Do not hand-edit it. No remote package is installed merely by opening a folder.
+```nova
+import "util"
+import "@nova/reglib"
+```
+
+The manifest parser is `bootstrap/nova-pkg`; package behavior itself lives in
+Nova in `libraries/nova-boxes`.
+
+## Commands
+
+```sh
+nova box add '@nova/reglib@^1.0.0'   # edit Box.toml
+nova box remove '@nova/reglib'
+nova box update                       # resolve path and registry deps into Box.lock
+nova box fetch '@nova/reglib'         # verify and unpack into the cache
+nova box search math
+nova box info '@nova/reglib'
+nova box tree / check / lock / metadata
+nova box pack / verify / unpack
+```
+
+## Lockfile and imports
+
+`nova box update` writes `Box.lock` with the chosen version, source and SHA-256
+for every registry box. `nova build` reads that pin and the unpacked copy under
+`NOVA_BOXES_CACHE` (default `~/.nova/boxes`), so compilation never performs a
+network request. `nova build --locked` requires the lockfile to exist.
+
+Only direct dependencies are added to the compiler's import map. Transitive
+boxes are recorded in the lock but must be imported through a direct
+dependency's own source.
+
+## Registry
+
+The registry is static data: `config.json`, `index/v1/catalogue.json` and one
+record per box under `index/v1/packages/<aa>/<bb>/<publisher>/<box>.json`.
+Reads work against a local mirror (`/path` or `file://`) or an HTTPS root set
+with `NOVA_BOXES_REGISTRY`. There is no default registry URL because no
+first-party registry is deployed yet.
+
+`NOVA_BOXES_OFFLINE=1` serves previously cached records and refuses anything
+that was never fetched; archive downloads still need the network or a mirror.
 
 ## Security
 
-- Dependency installation is not triggered by the IDE on folder open.
-- There are no build scripts from a registry.
-- No signature, provenance or checksum verification exists for a public registry because no public registry exists.
-- Do not treat the current path-dependency model as a supply-chain security boundary.
+- Fetched archives are verified by SHA-256 before extraction, and paths are
+  checked against the destination.
+- No signature or provenance verification exists, and publishing is not
+  implemented.
+- Folder open does not install dependencies, and there are no registry build
+  scripts.
+- Checksums establish integrity, not authorship.
 
 ## Planned
 
-Registry resolution with semver, dev dependencies, workspaces, checksums, archive traversal prevention, explicit trust for build scripts, publishing and provenance are future milestones. The [status page](../../status/) tracks them.
+Reviewed publishing (a pull request validated by CI, rebuilt from the reviewed
+commit), transitive import maps, cache refresh and signed provenance are future
+work. See the [status page](../../status/).

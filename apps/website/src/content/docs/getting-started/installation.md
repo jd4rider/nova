@@ -54,6 +54,11 @@ If VS Code cannot find `nova`, set `nova.serverPath` to the binary's absolute pa
 
 You do **not** need a system LLVM installation. Nova emits textual LLVM IR and asks the host Clang to optimize, verify and link it. The backend tradeoff is recorded in ADR `0003-llvm-backend.md` in the repository.
 
+The compiler and language server are the Rust bootstrap in `bootstrap/`. The
+formatter, diagnostics and package manager (Nova Boxes) are Nova programs in
+`libraries/`, run through `nova-tool`; the compiler is not self-hosted yet. See
+[Compiler pipeline](../../internals/compiler/) for the exact split.
+
 ## Build from source
 
 ```sh
