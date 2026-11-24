@@ -19,6 +19,16 @@ description: The small standard-library surface currently implemented by Nova, a
 | `http_get(url)` | Fetch a URL with the host `curl` (no shell) and return the body, or `""` on failure. Blocks; POSIX only. |
 | `json_string(json, key)` | Decode the last `"key": "value"` string in a JSON document, with escapes. Not a JSON parser. |
 | `char_string(code)` | One-character `String` from a Unicode scalar, for text entry from key codes. |
+| `http_listen(port)` | Bind a blocking HTTP/1.1 listener on `127.0.0.1:port`. `0` on success, `-1` on failure. POSIX only. |
+| `http_accept()` | Parse the next request and block until one arrives. `1` on success, `-1` on error. |
+| `http_method()` | Method of the current request, e.g. `"GET"`. |
+| `http_path()` | Path of the current request, without the query string. |
+| `http_query()` | Raw query string, e.g. `"id=3&mood=calm"`. |
+| `http_body()` | Body of the current request, up to 4 MiB. |
+| `http_header(name)` | Header value by case-insensitive name, or `""`. |
+| `http_form(name)` | Body field (or query parameter when the body is empty), percent-decoded. |
+| `http_respond(status, content_type, body)` | Write a response with `Content-Length` and `Connection: close`, then close the client. |
+| `http_close()` | Close the listener; `0` when one was open. |
 
 Builtins are available to checked programs; `import std.io { println }` and `import std.core { assert }` are recognized. User files can also be loaded with path imports, documented under Modules.
 
@@ -49,4 +59,4 @@ Formatting, math, iterators, filesystem/path/env/process/time, a real JSON parse
 
 ## Errors and platform
 
-Runtime failures abort with a source location. There is no exception recovery, filesystem API or networking API to document yet. Allocation is process-lifetime; see [Memory model](../language/memory/).
+Runtime failures abort with a source location. There is no exception recovery or filesystem/path/env API yet; `http_get` and the `http_*` server builtins are the only networking surface, and both are POSIX only. Allocation is process-lifetime; see [Memory model](../language/memory/).

@@ -1,0 +1,71 @@
+// Templ-style HTML: templates are typed Nova functions that return strings,
+// and every value goes through `escape` unless it is wrapped in `raw`.
+//
+// HTMX is first class: `hx_get`/`hx_post`/`hx_trigger` build the attributes
+// without stringly-typed duplication, and `page` wires the library in.
+
+fn escape(value: String) -> String {
+    var out = value.replace("&", "&amp;")
+    out = out.replace("<", "&lt;")
+    out = out.replace(">", "&gt;")
+    out = out.replace("\"", "&quot;")
+    out = out.replace("'", "&#39;")
+    return out
+}
+
+// Marks markup as trusted. Never pass user input here.
+fn raw(markup: String) -> String {
+    return markup
+}
+
+fn attr(name: String, value: String) -> String {
+    return " " + name + "=\"" + escape(value) + "\""
+}
+
+fn flag(name: String) -> String {
+    return " " + name
+}
+
+fn el(tag: String, attrs: String, children: String) -> String {
+    return "<" + tag + attrs + ">" + children + "</" + tag + ">"
+}
+
+fn empty_el(tag: String, attrs: String) -> String {
+    return "<" + tag + attrs + ">"
+}
+
+// A plain text node, escaped.
+fn node(value: String) -> String {
+    return escape(value)
+}
+
+fn hx_get(url: String, target: String, swap: String) -> String {
+    return html_hx("get", url, target, swap)
+}
+
+fn hx_post(url: String, target: String, swap: String) -> String {
+    return html_hx("post", url, target, swap)
+}
+
+fn html_hx(method: String, url: String, target: String, swap: String) -> String {
+    return attr("hx-" + method, url) + attr("hx-target", target) + attr("hx-swap", swap)
+}
+
+fn hx_trigger(value: String) -> String {
+    return attr("hx-trigger", value)
+}
+
+fn hx_confirm(message: String) -> String {
+    return attr("hx-confirm", message)
+}
+
+// A full document. `head` is raw markup for extra meta tags, styles or scripts.
+fn document(title: String, head: String, body: String) -> String {
+    var out = "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
+    out = out + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
+    out = out + "<title>" + escape(title) + "</title>\n"
+    out = out + "<script src=\"https://unpkg.com/htmx.org@2.0.4\" defer></script>\n"
+    out = out + head
+    out = out + "\n</head>\n<body>\n" + body + "\n</body>\n</html>"
+    return out
+}

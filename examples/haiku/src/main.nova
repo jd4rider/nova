@@ -1,0 +1,296 @@
+import std.io { println }
+import "../../../libraries/nova-web/src/web.nova" as web
+import "../../../libraries/nova-web/src/router.nova" as router
+import "../../../libraries/nova-web/src/html.nova" as html
+
+// Nova Haiku Wall: a small HTMX app served by the nova-web framework.
+//
+// The wall lives in memory and is threaded through the request loop, so the
+// server has no hidden globals. Three HTMX interactions drive it:
+//   - the compose form appends a card without a reload (hx-swap=afterbegin)
+//   - the heart button replaces one card (hx-swap=outerHTML)
+//   - the wall polls /wall every 8 seconds so other visitors' posts appear
+//
+// Run `nova build` then `./target/nova/nova-haiku`, and open
+// http://127.0.0.1:8080.
+
+struct Haiku {
+    id: Int
+    author: String
+    one: String
+    two: String
+    three: String
+    mood: String
+    likes: Int
+}
+
+struct Wall {
+    haikus: List<Haiku>
+    next_id: Int
+}
+
+fn styles() -> String {
+    var out = "body{margin:0;background:#0b0f0c;color:#c8f7d4;font:16px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;}"
+    out = out + "body:before{content:'';position:fixed;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,rgba(0,255,120,.04) 0 1px,transparent 1px 3px);}"
+    out = out + ".wrap{max-width:820px;margin:0 auto;padding:40px 20px 80px;position:relative;}"
+    out = out + ".masthead h1{font-size:clamp(28px,7vw,56px);letter-spacing:.08em;margin:0 0 8px;color:#7dffb0;text-shadow:0 0 24px rgba(60,255,140,.35);}"
+    out = out + ".masthead h1 span{color:#ffd479;}"
+    out = out + ".tag{margin:0 0 24px;color:#6f9f80;}"
+    out = out + ".stats{display:flex;gap:24px;border:1px solid #1d3a28;padding:12px 16px;margin:0 0 20px;background:#0e1712;}"
+    out = out + ".stats b{color:#ffd479;font-size:22px;}"
+    out = out + ".prompt{margin:0 0 22px;color:#8fd3a5;}"
+    out = out + ".prompt b{color:#7dffb0;}"
+    out = out + ".compose{display:grid;gap:10px;border:1px solid #1d3a28;background:#0e1712;padding:18px;margin:0 0 32px;}"
+    out = out + ".compose .row{display:flex;gap:10px;flex-wrap:wrap;}"
+    out = out + "input,select,textarea{background:#09120c;border:1px solid #245235;color:#c8f7d4;padding:10px 12px;font:inherit;flex:1;min-width:120px;}"
+    out = out + "input:focus,select:focus,button:focus{outline:1px solid #7dffb0;}"
+    out = out + "button{cursor:pointer;background:#7dffb0;color:#08120b;border:0;padding:10px 18px;font:inherit;font-weight:700;}"
+    out = out + "button:hover{background:#a6ffc8;}"
+    out = out + ".wall{display:grid;gap:16px;}"
+    out = out + ".card{border:1px solid #1d3a28;background:#0e1712;padding:18px 20px;position:relative;}"
+    out = out + ".card:after{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:#7dffb0;opacity:.5;}"
+    out = out + ".meta{display:flex;justify-content:space-between;align-items:center;margin:0 0 10px;color:#6f9f80;font-size:13px;}"
+    out = out + ".by{color:#8fd3a5;}"
+    out = out + ".mood{border:1px solid #245235;padding:2px 8px;font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:#ffd479;}"
+    out = out + ".line{margin:0;font-size:19px;letter-spacing:.01em;}"
+    out = out + ".line:nth-child(3){padding-left:1.5em;}"
+    out = out + ".line:nth-child(4){padding-left:3em;}"
+    out = out + ".foot{margin-top:14px;display:flex;justify-content:flex-end;}"
+    out = out + ".like button{background:transparent;border:1px solid #245235;color:#ffd479;padding:6px 12px;font-weight:400;}"
+    out = out + ".like button:hover{background:#182a1d;}"
+    out = out + ".flash{border:1px solid #7a3b3b;background:#1d1010;color:#ffb3b3;padding:12px 16px;margin:0 0 16px;}"
+    out = out + ".empty{border:1px dashed #245235;padding:28px;text-align:center;color:#6f9f80;}"
+    out = out + ".foot-note{margin-top:48px;color:#4c6b58;font-size:13px;}"
+    out = out + "a{color:#7dffb0;}"
+    return out
+}
+
+fn head() -> String {
+    return "<style>" + styles() + "</style>"
+}
+
+fn mood_badge(mood: String) -> String {
+    var text = mood
+    if text == "" {
+        text = "calm"
+    }
+    return "<span class=\"mood\">" + html.node(text) + "</span>"
+}
+
+fn card(h: Haiku) -> String {
+    let id_text = "${h.id}"
+    let likes_text = "${h.likes}"
+    var like = "<form class=\"like\" "
+    like = like + html.hx_post("/like?id=" + id_text, "#haiku-" + id_text, "outerHTML")
+    like = like + "><button type=\"submit\" title=\"send a heart\">♥ " + likes_text + "</button></form>"
+    var lines = "<p class=\"line\">" + html.node(h.one) + "</p>"
+    lines = lines + "<p class=\"line\">" + html.node(h.two) + "</p>"
+    lines = lines + "<p class=\"line\">" + html.node(h.three) + "</p>"
+    var out = "<article class=\"card\" id=\"haiku-" + id_text + "\">"
+    out = out + "<div class=\"meta\"><span class=\"by\">@" + html.node(h.author) + "</span>"
+    out = out + mood_badge(h.mood) + "</div>"
+    out = out + lines
+    out = out + "<div class=\"foot\">" + like + "</div></article>"
+    return out
+}
+
+fn wall_list(wall: Wall) -> String {
+    if wall.haikus.len() == 0 {
+        return "<div class=\"empty\">no haiku yet. be the first voice on the wall.</div>"
+    }
+    var out = ""
+    for h in wall.haikus {
+        out = out + card(h)
+    }
+    return out
+}
+
+fn hearts(wall: Wall) -> Int {
+    var total = 0
+    for h in wall.haikus {
+        total = total + h.likes
+    }
+    return total
+}
+
+fn prompt_for(wall: Wall) -> String {
+    let prompts: List<String> = ["a bug you forgave", "the last train home", "something you almost said", "a smell from childhood", "the moon through a window", "a compile that finally passed"]
+    var index = wall.haikus.len()
+    while index >= prompts.len() {
+        index = index - prompts.len()
+    }
+    return prompts[index]
+}
+
+fn stats(wall: Wall) -> String {
+    let count = wall.haikus.len()
+    let total = hearts(wall)
+    var out = "<div class=\"stats\"><span><b>" + "${count}" + "</b> haiku</span>"
+    out = out + "<span><b>" + "${total}" + "</b> hearts</span>"
+    out = out + "<span><b>3</b> lines each</span></div>"
+    return out
+}
+
+fn compose() -> String {
+    var action = html.hx_post("/haikus", "#wall", "afterbegin")
+    action = action + " hx-on::after-request=\"if(event.detail.successful) this.reset()\""
+    var out = "<form class=\"compose\" " + action + ">"
+    out = out + "<div class=\"row\"><input name=\"author\" placeholder=\"your handle (optional)\" maxlength=\"24\">"
+    out = out + "<select name=\"mood\"><option value=\"calm\">calm</option><option value=\"hopeful\">hopeful</option>"
+    out = out + "<option value=\"chaotic\">chaotic</option><option value=\"sleepy\">sleepy</option></select></div>"
+    out = out + "<input name=\"one\" placeholder=\"five syllables, give or take\" maxlength=\"60\">"
+    out = out + "<input name=\"two\" placeholder=\"seven syllables, no pressure\" maxlength=\"60\">"
+    out = out + "<input name=\"three\" placeholder=\"five again, then hit post\" maxlength=\"60\">"
+    out = out + "<div class=\"row\"><button type=\"submit\">pin it to the wall</button>"
+    out = out + "<span style=\"color:#6f9f80;align-self:center\">HTMX swaps the new card in without a reload</span></div></form>"
+    return out
+}
+
+fn footer_note() -> String {
+    return "<p class=\"foot-note\">Served by <b>nova-web</b>, a web framework written in Nova, in one process with no framework runtime. State is threaded through the request loop, so the wall is a plain struct. This page polls <code>/wall</code> every 8s; the compose and heart buttons answer with fragments.</p>"
+}
+
+fn render_page(wall: Wall) -> web.Response {
+    var body = "<div class=\"wrap\"><header class=\"masthead\"><h1>NOVA <span>HAIKU</span> WALL</h1>"
+    body = body + "<p class=\"tag\">five · seven · five, served by a server written in Nova</p></header>"
+    body = body + stats(wall)
+    body = body + "<p class=\"prompt\">tonight's prompt → <b>" + prompt_for(wall) + "</b></p>"
+    body = body + compose()
+    body = body + "<section id=\"wall\" class=\"wall\" "
+    body = body + html.hx_get("/wall", "#wall", "innerHTML")
+    body = body + html.hx_trigger("every 8s")
+    body = body + ">" + wall_list(wall) + "</section>"
+    body = body + footer_note() + "</div>"
+    return web.html(html.document("Nova Haiku Wall", head(), body))
+}
+
+fn seed() -> Wall {
+    var haikus: List<Haiku> = []
+    haikus.push(Haiku {
+        id: 1,
+        author: "ada",
+        one: "a socket wakes up",
+        two: "the terminal hums in green",
+        three: "someone says hello",
+        mood: "calm",
+        likes: 3,
+    })
+    haikus.push(Haiku {
+        id: 2,
+        author: "grace",
+        one: "compiler at dusk",
+        two: "every warning forgiven",
+        three: "the build finally runs",
+        mood: "hopeful",
+        likes: 7,
+    })
+    return Wall { haikus: haikus, next_id: 3 }
+}
+
+fn health(req: web.Request) -> web.Response {
+    return web.text("ok")
+}
+
+fn favicon(req: web.Request) -> web.Response {
+    return web.no_content()
+}
+
+fn create(req: web.Request, wall: Wall) -> (web.Response, Wall) {
+    let author = web.form("author").trim()
+    let one = web.form("one").trim()
+    let two = web.form("two").trim()
+    let three = web.form("three").trim()
+    let mood = web.form("mood").trim()
+    if one == "" && two == "" && three == "" {
+        return (web.response(422, "text/html; charset=utf-8", "<p class=\"flash\">a haiku needs at least one line.</p>"), wall)
+    }
+    var name = author
+    if name == "" {
+        name = "anonymous"
+    }
+    var chosen = mood
+    if chosen == "" {
+        chosen = "calm"
+    }
+    let haiku = Haiku {
+        id: wall.next_id,
+        author: name,
+        one: one,
+        two: two,
+        three: three,
+        mood: chosen,
+        likes: 0,
+    }
+    var haikus = wall.haikus
+    haikus.push(haiku)
+    return (web.created(card(haiku)), Wall { haikus: haikus, next_id: wall.next_id + 1 })
+}
+
+fn like(req: web.Request, wall: Wall) -> (web.Response, Wall) {
+    let target = web.form("id").trim()
+    var updated: List<Haiku> = []
+    var liked = Haiku { id: 0, author: "", one: "", two: "", three: "", mood: "", likes: 0 }
+    var found = false
+    for h in wall.haikus {
+        if "${h.id}" == target {
+            let bumped = Haiku {
+                id: h.id,
+                author: h.author,
+                one: h.one,
+                two: h.two,
+                three: h.three,
+                mood: h.mood,
+                likes: h.likes + 1,
+            }
+            updated.push(bumped)
+            liked = bumped
+            found = true
+        } else {
+            updated.push(h)
+        }
+    }
+    if found == false {
+        return (web.not_found(), wall)
+    }
+    return (web.html(card(liked)), Wall { haikus: updated, next_id: wall.next_id })
+}
+
+fn handle(req: web.Request, wall: Wall, routes: router.Router) -> (web.Response, Wall) {
+    if router.matches(routes, req) {
+        return (router.dispatch(routes, req), wall)
+    }
+    if req.method == "GET" && req.path == "/" {
+        return (render_page(wall), wall)
+    }
+    if req.method == "GET" && req.path == "/wall" {
+        return (web.html(wall_list(wall)), wall)
+    }
+    if req.method == "POST" && req.path == "/haikus" {
+        return create(req, wall)
+    }
+    if req.method == "POST" && req.path == "/like" {
+        return like(req, wall)
+    }
+    return (web.not_found(), wall)
+}
+
+fn main() {
+    let wall = seed()
+    var routes = router.router()
+    routes = router.get(routes, "/healthz", health)
+    routes = router.get(routes, "/favicon.ico", favicon)
+
+    if web.start(8080) == false {
+        println("nova-haiku: could not bind 127.0.0.1:8080 (is something else using it?)")
+        return
+    }
+    println("")
+    println("  ✦ NOVA HAIKU WALL ✦")
+    println("  http://127.0.0.1:8080")
+    println("  ctrl+c to stop")
+    println("")
+    let served = web.run(wall, |req: web.Request, state: Wall| -> (web.Response, Wall) {
+        return handle(req, state, routes)
+    })
+    println("served ${served} requests")
+}

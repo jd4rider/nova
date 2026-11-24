@@ -3492,6 +3492,16 @@ impl Checker {
             BuiltinFn::AssertEq => 2,
             BuiltinFn::TermPaste => 0,
             BuiltinFn::JsonString => 2,
+            BuiltinFn::HttpListen => 1,
+            BuiltinFn::HttpHeader => 1,
+            BuiltinFn::HttpForm => 1,
+            BuiltinFn::HttpRespond => 3,
+            BuiltinFn::HttpAccept
+            | BuiltinFn::HttpMethod
+            | BuiltinFn::HttpPath
+            | BuiltinFn::HttpQuery
+            | BuiltinFn::HttpBody
+            | BuiltinFn::HttpClose => 0,
             _ => 1,
         };
         if args.len() != expected_count {
@@ -3629,6 +3639,90 @@ impl Checker {
                             args: vec![source, key],
                         },
                         Type::String,
+                        span,
+                    ),
+                    expected,
+                )
+            }
+            BuiltinFn::HttpListen => {
+                let port = args
+                    .first()
+                    .map(|a| self.check_expr(&a.value, Some(&Type::Int)))
+                    .unwrap_or_else(|| TExpr::new(TExprKind::Unit, Type::Error, span));
+                self.finish(
+                    TExpr::new(
+                        TExprKind::Builtin {
+                            kind: builtin,
+                            args: vec![port],
+                        },
+                        Type::Int,
+                        span,
+                    ),
+                    expected,
+                )
+            }
+            BuiltinFn::HttpAccept | BuiltinFn::HttpClose => self.finish(
+                TExpr::new(
+                    TExprKind::Builtin {
+                        kind: builtin,
+                        args: Vec::new(),
+                    },
+                    Type::Int,
+                    span,
+                ),
+                expected,
+            ),
+            BuiltinFn::HttpMethod
+            | BuiltinFn::HttpPath
+            | BuiltinFn::HttpQuery
+            | BuiltinFn::HttpBody => self.finish(
+                TExpr::new(
+                    TExprKind::Builtin {
+                        kind: builtin,
+                        args: Vec::new(),
+                    },
+                    Type::String,
+                    span,
+                ),
+                expected,
+            ),
+            BuiltinFn::HttpHeader | BuiltinFn::HttpForm => {
+                let name = args
+                    .first()
+                    .map(|a| self.check_expr(&a.value, Some(&Type::String)))
+                    .unwrap_or_else(|| TExpr::new(TExprKind::Unit, Type::Error, span));
+                self.finish(
+                    TExpr::new(
+                        TExprKind::Builtin {
+                            kind: builtin,
+                            args: vec![name],
+                        },
+                        Type::String,
+                        span,
+                    ),
+                    expected,
+                )
+            }
+            BuiltinFn::HttpRespond => {
+                let status = args
+                    .first()
+                    .map(|a| self.check_expr(&a.value, Some(&Type::Int)))
+                    .unwrap_or_else(|| TExpr::new(TExprKind::Unit, Type::Error, span));
+                let content_type = args
+                    .get(1)
+                    .map(|a| self.check_expr(&a.value, Some(&Type::String)))
+                    .unwrap_or_else(|| TExpr::new(TExprKind::Unit, Type::Error, span));
+                let body = args
+                    .get(2)
+                    .map(|a| self.check_expr(&a.value, Some(&Type::String)))
+                    .unwrap_or_else(|| TExpr::new(TExprKind::Unit, Type::Error, span));
+                self.finish(
+                    TExpr::new(
+                        TExprKind::Builtin {
+                            kind: builtin,
+                            args: vec![status, content_type, body],
+                        },
+                        Type::Int,
                         span,
                     ),
                     expected,

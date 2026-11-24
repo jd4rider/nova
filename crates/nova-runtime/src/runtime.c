@@ -25,10 +25,14 @@
 #include <windows.h>
 #else
 #include <poll.h>
+#include <signal.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #endif
 
 typedef struct {
@@ -667,6 +671,353 @@ nova_str nova_json_string(nova_str json, nova_str key) {
     free(out);
     return result;
 }
+
+/* ------------------------------------------------------------------ */
+/* HTTP server                                                        */
+/* ------------------------------------------------------------------ */
+
+/* A single-threaded, blocking HTTP/1.1 server bound to 127.0.0.1. One request
+ * is held at a time: nova_http_accept parses it, the program reads it through
+ * the http_* builtins, and nova_http_respond writes the response and closes the
+ * connection. Request bodies are capped at 4 MiB. POSIX only; the Windows
+ * stubs report failure so a program can print a useful message. */
+
+#if defined(_WIN32)
+int64_t nova_http_listen(int64_t port) {
+    (void)port;
+    return -1;
+}
+int64_t nova_http_accept(void) { return -1; }
+int64_t nova_http_close(void) { return -1; }
+nova_str nova_http_method(void) { return nova_copy_str("", 0); }
+nova_str nova_http_path(void) { return nova_copy_str("", 0); }
+nova_str nova_http_query(void) { return nova_copy_str("", 0); }
+nova_str nova_http_body(void) { return nova_copy_str("", 0); }
+nova_str nova_http_header(nova_str name) {
+    (void)name;
+    return nova_copy_str("", 0);
+}
+nova_str nova_http_form(nova_str name) {
+    (void)name;
+    return nova_copy_str("", 0);
+}
+int64_t nova_http_respond(int64_t status, nova_str content_type, nova_str body) {
+    (void)status;
+    (void)content_type;
+    (void)body;
+    return -1;
+}
+#else
+
+#include <ctype.h>
+
+static int nova_srv_fd = -1;
+static int nova_srv_client = -1;
+static nova_str nova_srv_method = {NULL, 0};
+static nova_str nova_srv_path = {NULL, 0};
+static nova_str nova_srv_query = {NULL, 0};
+static nova_str nova_srv_body = {NULL, 0};
+static nova_str nova_srv_headers = {NULL, 0};
+
+int64_t nova_http_close(void);
+
+static int nova_srv_ci_eq(const char *a, int64_t alen, const char *b, int64_t blen) {
+    if (alen != blen) return 0;
+    for (int64_t i = 0; i < alen; i++) {
+        if (tolower((unsigned char)a[i]) != tolower((unsigned char)b[i])) return 0;
+    }
+    return 1;
+}
+
+static int64_t nova_srv_send_all(int fd, const char *data, int64_t len) {
+    int64_t sent = 0;
+    while (sent < len) {
+        ssize_t n = send(fd, data + sent, (size_t)(len - sent), 0);
+        if (n <= 0) return -1;
+        sent += n;
+    }
+    return sent;
+}
+
+static const char *nova_srv_reason(int64_t status) {
+    switch (status) {
+        case 200: return "OK";
+        case 201: return "Created";
+        case 202: return "Accepted";
+        case 204: return "No Content";
+        case 301: return "Moved Permanently";
+        case 302: return "Found";
+        case 303: return "See Other";
+        case 304: return "Not Modified";
+        case 307: return "Temporary Redirect";
+        case 308: return "Permanent Redirect";
+        case 400: return "Bad Request";
+        case 401: return "Unauthorized";
+        case 403: return "Forbidden";
+        case 404: return "Not Found";
+        case 405: return "Method Not Allowed";
+        case 409: return "Conflict";
+        case 418: return "I'm a teapot";
+        case 422: return "Unprocessable Content";
+        case 429: return "Too Many Requests";
+        case 500: return "Internal Server Error";
+        case 503: return "Service Unavailable";
+        default: return "OK";
+    }
+}
+
+int64_t nova_http_listen(int64_t port) {
+    nova_http_close();
+    signal(SIGPIPE, SIG_IGN);
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+    int reuse = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons((uint16_t)port);
+    addr.sin_addr.s_addr = htonl(0x7f000001U);
+    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0 || listen(fd, 16) != 0) {
+        close(fd);
+        return -1;
+    }
+    nova_srv_fd = fd;
+    return 0;
+}
+
+static int64_t nova_srv_content_length(const char *headers, int64_t len) {
+    int64_t i = 0;
+    while (i < len) {
+        int64_t start = i;
+        while (i < len && headers[i] != '\r' && headers[i] != '\n') i++;
+        int64_t stop = i;
+        while (i < len && (headers[i] == '\r' || headers[i] == '\n')) i++;
+        const char *colon = memchr(headers + start, ':', (size_t)(stop - start));
+        if (!colon) continue;
+        int64_t name_len = colon - (headers + start);
+        if (!nova_srv_ci_eq(headers + start, name_len, "Content-Length", 14)) continue;
+        const char *value = colon + 1;
+        const char *value_end = headers + stop;
+        while (value < value_end && (*value == ' ' || *value == '\t')) value++;
+        int64_t number = 0;
+        while (value < value_end && *value >= '0' && *value <= '9') {
+            number = number * 10 + (*value - '0');
+            value++;
+        }
+        return number;
+    }
+    return 0;
+}
+
+int64_t nova_http_accept(void) {
+    if (nova_srv_fd < 0) return -1;
+    int client = accept(nova_srv_fd, NULL, NULL);
+    if (client < 0) return -1;
+
+    int64_t cap = 8192;
+    int64_t len = 0;
+    char *buf = (char *)nova_alloc(cap);
+    buf[0] = '\0';
+    char *head_end = NULL;
+    while (len < 1048576) {
+        if (len + 65537 > cap) {
+            cap = (len + 65537) * 2;
+            char *grown = (char *)realloc(buf, (size_t)cap);
+            if (!grown) {
+                close(client);
+                free(buf);
+                nova_die_oom();
+            }
+            buf = grown;
+        }
+        ssize_t got = recv(client, buf + len, (size_t)(cap - len - 1), 0);
+        if (got <= 0) break;
+        len += got;
+        buf[len] = '\0';
+        head_end = strstr(buf, "\r\n\r\n");
+        if (head_end) break;
+    }
+    if (!head_end) {
+        close(client);
+        free(buf);
+        return -1;
+    }
+
+    char *line_end = strstr(buf, "\r\n");
+    char *first_space = line_end ? memchr(buf, ' ', (size_t)(line_end - buf)) : NULL;
+    char *second_space = first_space
+        ? memchr(first_space + 1, ' ', (size_t)(line_end - first_space - 1))
+        : NULL;
+    if (!line_end || !first_space || !second_space) {
+        close(client);
+        free(buf);
+        return -1;
+    }
+
+    const char *target = first_space + 1;
+    int64_t target_len = second_space - target;
+    const char *question = memchr(target, '?', (size_t)target_len);
+    int64_t path_len = question ? question - target : target_len;
+    const char *query = question ? question + 1 : target + target_len;
+    int64_t query_len = question ? target_len - path_len - 1 : 0;
+
+    int64_t headers_len = head_end - (line_end + 2);
+    int64_t need = nova_srv_content_length(line_end + 2, headers_len);
+    if (need < 0) need = 0;
+    if (need > 4194304) need = 4194304;
+
+    const char *body_start = head_end + 4;
+    int64_t have = len - (body_start - buf);
+    int64_t copied = have < need ? have : need;
+    char *body_buf = (char *)nova_alloc(need + 1);
+    if (copied > 0) memcpy(body_buf, body_start, (size_t)copied);
+    while (copied < need) {
+        ssize_t got = recv(client, body_buf + copied, (size_t)(need - copied), 0);
+        if (got <= 0) break;
+        copied += got;
+    }
+    body_buf[copied] = '\0';
+
+    nova_srv_method = nova_copy_str(buf, first_space - buf);
+    nova_srv_path = nova_copy_str(target, path_len);
+    nova_srv_query = nova_copy_str(query, query_len);
+    nova_srv_headers = nova_copy_str(line_end + 2, headers_len);
+    nova_srv_body = nova_copy_str(body_buf, copied);
+
+    free(body_buf);
+    free(buf);
+    nova_srv_client = client;
+    return 1;
+}
+
+nova_str nova_http_method(void) {
+    return nova_copy_str(nova_srv_method.ptr ? nova_srv_method.ptr : "", nova_srv_method.len);
+}
+
+nova_str nova_http_path(void) {
+    return nova_copy_str(nova_srv_path.ptr ? nova_srv_path.ptr : "", nova_srv_path.len);
+}
+
+nova_str nova_http_query(void) {
+    return nova_copy_str(nova_srv_query.ptr ? nova_srv_query.ptr : "", nova_srv_query.len);
+}
+
+nova_str nova_http_body(void) {
+    return nova_copy_str(nova_srv_body.ptr ? nova_srv_body.ptr : "", nova_srv_body.len);
+}
+
+nova_str nova_http_header(nova_str name) {
+    const char *headers = nova_srv_headers.ptr;
+    int64_t len = nova_srv_headers.len;
+    if (!headers || !name.ptr) return nova_copy_str("", 0);
+    int64_t i = 0;
+    while (i < len) {
+        int64_t start = i;
+        while (i < len && headers[i] != '\r' && headers[i] != '\n') i++;
+        int64_t stop = i;
+        while (i < len && (headers[i] == '\r' || headers[i] == '\n')) i++;
+        const char *colon = memchr(headers + start, ':', (size_t)(stop - start));
+        if (!colon) continue;
+        int64_t name_len = colon - (headers + start);
+        if (!nova_srv_ci_eq(headers + start, name_len, name.ptr, name.len)) continue;
+        const char *value = colon + 1;
+        const char *value_end = headers + stop;
+        while (value < value_end && (*value == ' ' || *value == '\t')) value++;
+        while (value_end > value && (value_end[-1] == ' ' || value_end[-1] == '\t')) value_end--;
+        return nova_copy_str(value, value_end - value);
+    }
+    return nova_copy_str("", 0);
+}
+
+static int nova_srv_hex(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+static nova_str nova_srv_decode(const char *src, int64_t len) {
+    char *out = (char *)nova_alloc(len + 1);
+    int64_t written = 0;
+    for (int64_t i = 0; i < len; i++) {
+        char c = src[i];
+        if (c == '+') {
+            out[written++] = ' ';
+            continue;
+        }
+        if (c == '%' && i + 2 < len) {
+            int high = nova_srv_hex(src[i + 1]);
+            int low = nova_srv_hex(src[i + 2]);
+            if (high >= 0 && low >= 0) {
+                out[written++] = (char)((high << 4) | low);
+                i += 2;
+                continue;
+            }
+        }
+        out[written++] = c;
+    }
+    nova_str result = nova_copy_str(out, written);
+    free(out);
+    return result;
+}
+
+nova_str nova_http_form(nova_str name) {
+    const char *src = nova_srv_body.len > 0 ? nova_srv_body.ptr : nova_srv_query.ptr;
+    int64_t len = nova_srv_body.len > 0 ? nova_srv_body.len : nova_srv_query.len;
+    if (!src || !name.ptr) return nova_copy_str("", 0);
+    int64_t i = 0;
+    while (i < len) {
+        int64_t start = i;
+        while (i < len && src[i] != '&') i++;
+        int64_t stop = i;
+        if (i < len) i++;
+        const char *equals = memchr(src + start, '=', (size_t)(stop - start));
+        int64_t key_len = equals ? equals - (src + start) : stop - start;
+        if (!nova_srv_ci_eq(src + start, key_len, name.ptr, name.len)) continue;
+        if (!equals) return nova_copy_str("", 0);
+        int64_t value_len = stop - (equals - src) - 1;
+        return nova_srv_decode(equals + 1, value_len);
+    }
+    return nova_copy_str("", 0);
+}
+
+int64_t nova_http_respond(int64_t status, nova_str content_type, nova_str body) {
+    if (nova_srv_client < 0) return -1;
+    char header[512];
+    int written = snprintf(
+        header,
+        sizeof(header),
+        "HTTP/1.1 %lld %s\r\nContent-Type: %.*s\r\nContent-Length: %lld\r\nConnection: close\r\n\r\n",
+        (long long)status,
+        nova_srv_reason(status),
+        (int)content_type.len,
+        content_type.ptr ? content_type.ptr : "",
+        (long long)body.len
+    );
+    if (written < 0 || written >= (int)sizeof(header)) {
+        close(nova_srv_client);
+        nova_srv_client = -1;
+        return -1;
+    }
+    int ok = nova_srv_send_all(nova_srv_client, header, written) >= 0;
+    if (ok && body.len > 0) ok = nova_srv_send_all(nova_srv_client, body.ptr, body.len) >= 0;
+    close(nova_srv_client);
+    nova_srv_client = -1;
+    return ok ? 0 : -1;
+}
+
+int64_t nova_http_close(void) {
+    if (nova_srv_client >= 0) {
+        close(nova_srv_client);
+        nova_srv_client = -1;
+    }
+    if (nova_srv_fd < 0) return -1;
+    close(nova_srv_fd);
+    nova_srv_fd = -1;
+    return 0;
+}
+#endif
 
 /* 2000..2002 press, 2003 release, 2004/2005 wheel up/down, 2006/2007 wheel
  * left/right, 2010..2012 drag. Modifier bits are ignored. */

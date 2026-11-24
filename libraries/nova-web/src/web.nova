@@ -1,0 +1,134 @@
+// A small Express/Fiber-style web toolkit for Nova, built on the native
+// http_* builtins. One request is handled at a time and state is threaded
+// through the handler, so the whole app is plain, testable Nova code.
+
+struct Request {
+    method: String
+    path: String
+    query: String
+    body: String
+}
+
+struct Response {
+    status: Int
+    content_type: String
+    body: String
+}
+
+fn response(status: Int, content_type: String, body: String) -> Response {
+    return Response { status: status, content_type: content_type, body: body }
+}
+
+fn html(body: String) -> Response {
+    return response(200, "text/html; charset=utf-8", body)
+}
+
+fn text(body: String) -> Response {
+    return response(200, "text/plain; charset=utf-8", body)
+}
+
+fn json(body: String) -> Response {
+    return response(200, "application/json; charset=utf-8", body)
+}
+
+fn created(body: String) -> Response {
+    return response(201, "text/html; charset=utf-8", body)
+}
+
+fn not_found() -> Response {
+    return response(
+        404,
+        "text/html; charset=utf-8",
+        "<!doctype html><meta charset=\"utf-8\"><title>404</title><h1>404</h1><p>No route matched this request.</p>"
+    )
+}
+
+fn server_error(message: String) -> Response {
+    return response(
+        500,
+        "text/html; charset=utf-8",
+        "<!doctype html><meta charset=\"utf-8\"><title>500</title><h1>500</h1><p>"
+            + message
+            + "</p>"
+    )
+}
+
+fn no_content() -> Response {
+    return response(204, "text/plain; charset=utf-8", "")
+}
+
+// True when HTMX sent the request, so a handler can answer with a fragment
+// instead of a full page.
+fn is_htmx() -> Bool {
+    return http_header("HX-Request") == "true"
+}
+
+// The form field from the request body, or the query parameter of the same
+// name when the body is empty. Percent escapes and `+` are decoded by the
+// runtime.
+fn form(name: String) -> String {
+    return http_form(name)
+}
+
+fn header(name: String) -> String {
+    return http_header(name)
+}
+
+// Binds the server. Returns false when the port is taken or the platform has
+// no socket support.
+fn start(port: Int) -> Bool {
+    return http_listen(port) == 0
+}
+
+// Blocks for the next request. A request with an empty method means the
+// connection ended, which stops the loop.
+fn next() -> Request {
+    let ready = http_accept()
+    if ready != 1 {
+        return Request { method: "", path: "", query: "", body: "" }
+    }
+    return Request {
+        method: http_method(),
+        path: http_path(),
+        query: http_query(),
+        body: http_body(),
+    }
+}
+
+fn send(res: Response) -> Bool {
+    return http_respond(res.status, res.content_type, res.body) == 0
+}
+
+fn stop() -> Bool {
+    return http_close() == 0
+}
+
+// Accepts and answers requests until the listener closes. Each handler returns
+// the next state, the same shape as an update function in a UI loop.
+fn run<S>(state: S, step: fn(Request, S) -> (Response, S)) -> Int {
+    var current = state
+    var served = 0
+    var running = true
+    while running {
+        let req = next()
+        if req.method == "" {
+            running = false
+        } else {
+            let pair = step(req, current)
+            current = pair.1
+            if send(pair.0) {
+                served = served + 1
+            } else {
+                running = false
+            }
+        }
+    }
+    return served
+}
+
+fn serve<S>(port: Int, state: S, step: fn(Request, S) -> (Response, S)) -> Int {
+    if start(port) == false {
+        return -1
+    }
+    return run(state, step)
+}

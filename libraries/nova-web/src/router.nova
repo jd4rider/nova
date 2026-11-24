@@ -1,0 +1,51 @@
+// Exact-path routing for nova-web. Routes are matched in registration order on
+// method and path; query strings are not part of the path.
+
+import "web.nova" as web
+
+struct Route {
+    method: String
+    path: String
+    handler: fn(web.Request) -> web.Response
+}
+
+struct Router {
+    routes: List<Route>
+}
+
+fn router() -> Router {
+    return Router { routes: [] }
+}
+
+fn add(router: Router, method: String, path: String, handler: fn(web.Request) -> web.Response) -> Router {
+    var routes = router.routes
+    routes.push(Route { method: method, path: path, handler: handler })
+    return Router { routes: routes }
+}
+
+fn get(router: Router, path: String, handler: fn(web.Request) -> web.Response) -> Router {
+    return add(router, "GET", path, handler)
+}
+
+fn post(router: Router, path: String, handler: fn(web.Request) -> web.Response) -> Router {
+    return add(router, "POST", path, handler)
+}
+
+fn matches(router: Router, req: web.Request) -> Bool {
+    for route in router.routes {
+        if route.method == req.method && route.path == req.path {
+            return true
+        }
+    }
+    return false
+}
+
+fn dispatch(router: Router, req: web.Request) -> web.Response {
+    for route in router.routes {
+        if route.method == req.method && route.path == req.path {
+            let handler = route.handler
+            return handler(req)
+        }
+    }
+    return web.not_found()
+}

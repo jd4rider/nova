@@ -2074,6 +2074,69 @@ impl<'a> ModuleGen<'a> {
                 );
                 Val::new(Type::String, result)
             }
+            BuiltinFn::HttpListen => {
+                let port = self.gen_expr(&args[0]);
+                let result =
+                    self.call_value("i64", "nova_http_listen", &[("i64".into(), port.repr)]);
+                Val::new(Type::Int, result)
+            }
+            BuiltinFn::HttpAccept => {
+                let result = self.call_value("i64", "nova_http_accept", &[]);
+                Val::new(Type::Int, result)
+            }
+            BuiltinFn::HttpClose => {
+                let result = self.call_value("i64", "nova_http_close", &[]);
+                Val::new(Type::Int, result)
+            }
+            BuiltinFn::HttpMethod => {
+                let result = self.call_value("%nova.string", "nova_http_method", &[]);
+                Val::new(Type::String, result)
+            }
+            BuiltinFn::HttpPath => {
+                let result = self.call_value("%nova.string", "nova_http_path", &[]);
+                Val::new(Type::String, result)
+            }
+            BuiltinFn::HttpQuery => {
+                let result = self.call_value("%nova.string", "nova_http_query", &[]);
+                Val::new(Type::String, result)
+            }
+            BuiltinFn::HttpBody => {
+                let result = self.call_value("%nova.string", "nova_http_body", &[]);
+                Val::new(Type::String, result)
+            }
+            BuiltinFn::HttpHeader => {
+                let name = self.gen_expr(&args[0]);
+                let result = self.call_value(
+                    "%nova.string",
+                    "nova_http_header",
+                    &[("%nova.string".into(), name.repr)],
+                );
+                Val::new(Type::String, result)
+            }
+            BuiltinFn::HttpForm => {
+                let name = self.gen_expr(&args[0]);
+                let result = self.call_value(
+                    "%nova.string",
+                    "nova_http_form",
+                    &[("%nova.string".into(), name.repr)],
+                );
+                Val::new(Type::String, result)
+            }
+            BuiltinFn::HttpRespond => {
+                let status = self.gen_expr(&args[0]);
+                let content_type = self.gen_expr(&args[1]);
+                let body = self.gen_expr(&args[2]);
+                let result = self.call_value(
+                    "i64",
+                    "nova_http_respond",
+                    &[
+                        ("i64".into(), status.repr),
+                        ("%nova.string".into(), content_type.repr),
+                        ("%nova.string".into(), body.repr),
+                    ],
+                );
+                Val::new(Type::Int, result)
+            }
             BuiltinFn::Panic => {
                 let Some(arg) = args.first() else {
                     return self.unit();
@@ -3164,6 +3227,16 @@ declare %nova.string @nova_json_string(%nova.string, %nova.string)
 declare %nova.string @nova_string_replace(%nova.string, %nova.string, %nova.string)
 declare %nova.string @nova_codepoint_to_string(i64)
 declare %nova.string @nova_string_lower(%nova.string)
+declare i64 @nova_http_listen(i64)
+declare i64 @nova_http_accept()
+declare i64 @nova_http_close()
+declare %nova.string @nova_http_method()
+declare %nova.string @nova_http_path()
+declare %nova.string @nova_http_query()
+declare %nova.string @nova_http_body()
+declare %nova.string @nova_http_header(%nova.string)
+declare %nova.string @nova_http_form(%nova.string)
+declare i64 @nova_http_respond(i64, %nova.string, %nova.string)
 declare %nova.string @nova_i64_to_string(i64)
 declare %nova.string @nova_f64_to_string(double)
 declare %nova.string @nova_bool_to_string(i32)
@@ -4068,6 +4141,46 @@ fn main() {
         assert_eq!(
             String::from_utf8_lossy(&run.stdout),
             "John 3:16\nFor God so loved\nthe world\na+b+c\nmixed\nA\n"
+        );
+        let _ = fs::remove_file(&artifact.executable);
+    }
+
+    #[test]
+    fn compiles_http_server_builtins() {
+        let source = r#"import std.io { println }
+
+fn main() {
+    println("[" + http_method() + "]")
+    println("[" + http_path() + "]")
+    println("[" + http_query() + "]")
+    println("[" + http_body() + "]")
+    println("[" + http_header("HX-Request") + "]")
+    println("[" + http_form("name") + "]")
+    println("${http_listen(0)}")
+    println("${http_close()}")
+}
+"#;
+        let program = typed(source);
+        let output = temp_output("http-server-builtins");
+        let artifact = compile(
+            &program,
+            source,
+            &BuildOptions {
+                output: output.clone(),
+                opt_level: OptLevel::O2,
+                ..Default::default()
+            },
+        )
+        .expect("native compile");
+        let run = Command::new(&artifact.executable).output().unwrap();
+        assert!(
+            run.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&run.stdout),
+            "[]\n[]\n[]\n[]\n[]\n[]\n0\n0\n"
         );
         let _ = fs::remove_file(&artifact.executable);
     }

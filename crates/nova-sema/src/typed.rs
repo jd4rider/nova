@@ -287,6 +287,16 @@ pub enum BuiltinFn {
     HttpGet,
     JsonString,
     CharString,
+    HttpListen,
+    HttpAccept,
+    HttpMethod,
+    HttpPath,
+    HttpQuery,
+    HttpBody,
+    HttpHeader,
+    HttpForm,
+    HttpRespond,
+    HttpClose,
 }
 
 impl BuiltinFn {
@@ -302,6 +312,16 @@ impl BuiltinFn {
             "http_get" => BuiltinFn::HttpGet,
             "json_string" => BuiltinFn::JsonString,
             "char_string" => BuiltinFn::CharString,
+            "http_listen" => BuiltinFn::HttpListen,
+            "http_accept" => BuiltinFn::HttpAccept,
+            "http_method" => BuiltinFn::HttpMethod,
+            "http_path" => BuiltinFn::HttpPath,
+            "http_query" => BuiltinFn::HttpQuery,
+            "http_body" => BuiltinFn::HttpBody,
+            "http_header" => BuiltinFn::HttpHeader,
+            "http_form" => BuiltinFn::HttpForm,
+            "http_respond" => BuiltinFn::HttpRespond,
+            "http_close" => BuiltinFn::HttpClose,
             _ => return None,
         })
     }
@@ -318,6 +338,16 @@ impl BuiltinFn {
             BuiltinFn::HttpGet => "http_get",
             BuiltinFn::JsonString => "json_string",
             BuiltinFn::CharString => "char_string",
+            BuiltinFn::HttpListen => "http_listen",
+            BuiltinFn::HttpAccept => "http_accept",
+            BuiltinFn::HttpMethod => "http_method",
+            BuiltinFn::HttpPath => "http_path",
+            BuiltinFn::HttpQuery => "http_query",
+            BuiltinFn::HttpBody => "http_body",
+            BuiltinFn::HttpHeader => "http_header",
+            BuiltinFn::HttpForm => "http_form",
+            BuiltinFn::HttpRespond => "http_respond",
+            BuiltinFn::HttpClose => "http_close",
         }
     }
 }
