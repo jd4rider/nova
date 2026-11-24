@@ -8,23 +8,25 @@ Status means: **tested** = covered by automated tests and passing; **implemented
 |---|---|---|
 | UTF-8 lexer, Uniocde identifiers, spans, comments, raw strings | tested | `cargo test -p nova-lexer` |
 | Recursive-descent + Pratt parser, recovery, interpolation | tested | `cargo test -p nova-parser` |
-| Name resolution, local inference, signatures, match exhaustiveness | tested | 22 sema tests; no generics/traits/closures |
+| Name resolution, local inference, signatures, match exhaustiveness | tested | 22 sema tests plus native tests for generics, traits and closures |
 | Scalars, `String`, `List`, structs, Option, Result, `?` | tested | Native codegen tests |
 | `let`/`var`, if/while/for, ranges, assignment, `+=` family | tested | Checked overflow, bounds checks |
 | Integer overflow traps, division by zero | tested | Runtime abort with message |
-| Pattern matching | tested | Option/Result, literals, bindings and user enum variants; one payload per variant |
+| Pattern matching | tested | Option/Result, literals, bindings, tuple patterns and user enum variants with multiple payload fields |
 | String predicates and trimming | tested | `contains`, `starts_with`, `ends_with`, `trim` lower to runtime helpers; native codegen test executes them |
-| Modules/imports | experimental | Parsed and resolved for std imports only; no user module graph or path imports |
-| Generics | planned | `first<T>` syntax not accepted by sema |
-| User enums | tested | Unit variants or one payload; nominal type, tagged heap payload, exhaustive `match`; native codegen test |
-| Traits, impls, methods | planned | |
-| Closures/first-class functions | planned | |
-| Async/await, tasks, channels | planned | No scheduler |
-| FFI / `extern "C"` | planned | |
+| Modules/imports | tested | `import "util.nova"` flattens relative source files with cycle checks; `import "util.nova" as util` adds qualified calls and type names. The underlying namespace is still flat, so duplicate unqualified names remain errors; packages are not implemented |
+| Generics | tested | Generic functions, structs, enums and inherent methods are monomorphised on demand from concrete annotations; trait impls on generic types and type-parameter-annotated locals remain unsupported |
+| User enums | tested | Unit or multi-payload variants; nominal tagged heap payload, exhaustive `match`; native codegen test |
+| `impl` methods | tested | Inherent methods on structs/enums and on generic types (`impl<T> Pair<T>`) with an explicit `self` receiver; no static methods or trait impls on generic types |
+| Tuples, fixed arrays, slices | tested | Tuple construction/access/patterns/mutation, `[T; N]` bounds-checked indexing, borrowed `Slice<T>` from `.as_slice()`; no tuple `let` destructuring |
+| Traits | tested | `trait`, static `impl Trait for Type`, and `dyn Trait` objects that box a copy of the value and dispatch through a per-type vtable; trait impls on generic types remain unsupported |
+| Closures/first-class functions | tested | Capturing closures by value, nested captures, closures returned from functions and `fn(...) -> T` function values; mutable captures and escaping-lifetime analysis are not supported |
+| Async/await, tasks, channels | experimental | `async fn`/`await` run synchronously; no scheduler, tasks or channels |
+| FFI / `extern "C"` | tested | Scalar-only C ABI (Bool/Int/Float/Char/Unit) validated at compile time, declarations emitted `nounwind`, values passed by copy; no pointer ownership transfer or unwinding across the boundary |
 | Debug info and DAP | planned | No DWARF emission yet |
 | Incremental compilation | planned | Artifacts cached only per invocation |
-| `Map`, `Set`, tuples, fixed-width ints, arrays/slices | planned | List and scalar i64/f64/bool/char exist |
-| Defer, named/default arguments, macros | planned | |
+| `Map`, `Set`, fixed-width ints | tested/partial | Hashed `Map`/`Set` (open addressing, FNV-1a) with Int/Bool/Char/String keys; fixed-width ints remain planned |
+| Defer, named/default arguments, macros | partial | Expression and statement macros expand by AST substitution; `defer` and named/default arguments remain planned |
 
 ## Tooling
 
@@ -76,11 +78,10 @@ Status means: **tested** = covered by automated tests and passing; **implemented
 2. Run time-boxed Tauri 2 and native Rust spikes; update ADR 0001 with real measurements.
 3. Keep the live Pages deployment verified; add a custom domain and signed release artifacts only with explicit owner authorization.
 4. Implement LSP incremental document sync and cancellation.
-5. Implement user modules and path-based imports.
-6. Add generics and user enums, then traits.
-7. Add DWARF debug info and a DAP adapter only after verifying emitted information.
-8. Add benchmark harness with recorded hardware and honest comparisons.
-9. Implement user modules and file linking, then scaffold templates beyond the single binary project.
-10. Implement user enums, classes/traits, generics and methods with typed tests and codegen.
-11. Add `std.http` with HTTPS, package resolution and a documented security boundary.
-12. Build real Nova libraries and TUI/GUI/WASM framework packages only after modules, packaging and native/runtime abstractions exist.
+5. Add package dependencies and registry resolution on top of aliased modules.
+6. Add DWARF debug info and a DAP adapter only after verifying emitted information.
+7. Add benchmark harness with recorded hardware and honest comparisons.
+8. Implement user modules and file linking, then scaffold templates beyond the single binary project.
+9. Add real async scheduling with tasks and channels.
+10. Add `std.http` with HTTPS, package resolution and a documented security boundary.
+11. Build real Nova libraries and TUI/GUI/WASM framework packages only after modules, packaging and native/runtime abstractions exist.

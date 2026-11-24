@@ -8,7 +8,7 @@ use std::process::Command;
 use clap::{Parser, Subcommand};
 use nova_codegen_llvm::{compile, BuildOptions, OptLevel};
 use nova_diag::{render_all, Diagnostic};
-use nova_parser::parse;
+use nova_parser::{parse, Item, Program};
 use nova_pkg::{find_project_root, load, write_lock, Manifest, MANIFEST_NAME};
 use nova_sema::{check, TypedProgram};
 
@@ -177,7 +177,102 @@ fn analyze_file(path: &Path, json: bool) -> Result<Checked, i32> {
         eprintln!("nova: could not read {}: {e}", path.display());
         EXIT_ERROR
     })?;
-    analyze_source(&source, path, json)
+    let parsed = parse(&source);
+    let mut diagnostics: Vec<Diagnostic> = parsed.diagnostics;
+    let mut stack = vec![path.to_path_buf()];
+    let items = match expand_path_imports(path, parsed.program.items, &mut stack) {
+        Ok(items) => items,
+        Err(message) => {
+            eprintln!("{message}");
+            return Err(EXIT_ERROR);
+        }
+    };
+    let program = Program {
+        items,
+        span: parsed.program.span,
+    };
+    let checked = check(&program);
+    diagnostics.extend(checked.diagnostics);
+    let errors = diagnostics.iter().filter(|d| d.is_error()).count();
+    if json {
+        match serde_json::to_string_pretty(&diagnostics) {
+            Ok(text) => println!("{text}"),
+            Err(error) => eprintln!("nova: could not serialise diagnostics: {error}"),
+        }
+    } else if !diagnostics.is_empty() {
+        eprint!(
+            "{}",
+            render_all(&path.display().to_string(), &source, &diagnostics)
+        );
+    }
+    if errors > 0 {
+        Err(EXIT_ERROR)
+    } else {
+        Ok(Checked {
+            source,
+            program: checked.program,
+        })
+    }
+}
+
+fn expand_path_imports(
+    path: &Path,
+    items: Vec<Item>,
+    stack: &mut Vec<PathBuf>,
+) -> Result<Vec<Item>, String> {
+    let mut expanded = Vec::new();
+    for item in items {
+        match item {
+            Item::Import(import) => match &import.path {
+                Some(relative) => {
+                    let child = path
+                        .parent()
+                        .unwrap_or_else(|| Path::new("."))
+                        .join(relative);
+                    let canonical = fs::canonicalize(&child).map_err(|error| {
+                        format!(
+                            "nova: could not resolve module `{}` ({}): {error}",
+                            relative,
+                            child.display()
+                        )
+                    })?;
+                    if stack.contains(&canonical) {
+                        return Err(format!(
+                            "nova: cyclic module import involving `{}`",
+                            child.display()
+                        ));
+                    }
+                    let child_source = fs::read_to_string(&canonical).map_err(|error| {
+                        format!("nova: could not read {}: {error}", child.display())
+                    })?;
+                    let parsed = parse(&child_source);
+                    let errors: Vec<&Diagnostic> = parsed
+                        .diagnostics
+                        .iter()
+                        .filter(|diagnostic| diagnostic.is_error())
+                        .collect();
+                    if !errors.is_empty() {
+                        return Err(render_all(
+                            &child.display().to_string(),
+                            &child_source,
+                            &parsed.diagnostics,
+                        ));
+                    }
+                    stack.push(canonical.clone());
+                    let mut child_items =
+                        expand_path_imports(&canonical, parsed.program.items, stack)?;
+                    stack.pop();
+                    expanded.append(&mut child_items);
+                    if import.alias.is_some() {
+                        expanded.push(Item::Import(import.clone()));
+                    }
+                }
+                None => expanded.push(Item::Import(import)),
+            },
+            other => expanded.push(other),
+        }
+    }
+    Ok(expanded)
 }
 
 fn analyze_source(source: &str, path: &Path, json: bool) -> Result<Checked, i32> {

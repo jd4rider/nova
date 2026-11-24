@@ -161,6 +161,11 @@ impl Parser {
                 TokenKind::KwFn
                     | TokenKind::KwStruct
                     | TokenKind::KwEnum
+                    | TokenKind::KwImpl
+                    | TokenKind::KwTrait
+                    | TokenKind::KwExtern
+                    | TokenKind::KwMacro
+                    | TokenKind::KwAsync
                     | TokenKind::KwImport
                     | TokenKind::At
                     | TokenKind::KwPub
@@ -215,26 +220,18 @@ impl Parser {
 
             let before = self.pos;
             let item = match self.peek().kind {
-                TokenKind::KwFn => self.parse_fn(is_pub, is_test).map(Item::Fn),
+                TokenKind::KwFn => self.parse_fn(is_pub, is_test, None).map(Item::Fn),
                 TokenKind::KwStruct => self.parse_struct().map(Item::Struct),
                 TokenKind::KwEnum => self.parse_enum().map(Item::Enum),
+                TokenKind::KwImpl => self.parse_impl().map(Item::Impl),
                 TokenKind::KwImport => self.parse_import().map(Item::Import),
-                TokenKind::KwImpl | TokenKind::KwTrait => {
-                    let span = self.peek().span;
-                    self.error(
-                        "E0101",
-                        "impl blocks and traits are not implemented in this build",
-                        span,
-                    );
+                TokenKind::KwTrait => self.parse_trait().map(Item::Trait),
+                TokenKind::KwExtern => self.parse_extern().map(Item::Extern),
+                TokenKind::KwMacro => self.parse_macro().map(Item::Macro),
+                TokenKind::KwAsync => {
                     self.advance();
-                    // Skip the body if present so later items still parse.
-                    while !self.at_eof() && !self.check(&TokenKind::LBrace) {
-                        self.advance();
-                    }
-                    if self.check(&TokenKind::LBrace) {
-                        self.skip_balanced_braces();
-                    }
-                    None
+                    self.skip_newlines();
+                    self.parse_fn(is_pub, is_test, None).map(Item::Fn)
                 }
                 ref other => {
                     let found = other.describe();
@@ -319,7 +316,268 @@ impl Parser {
         params
     }
 
-    fn parse_fn(&mut self, is_pub: bool, is_test: bool) -> Option<FnDecl> {
+    fn parse_type_args(&mut self) -> Vec<TypeExpr> {
+        let mut args = Vec::new();
+        if !self.check(&TokenKind::Lt) {
+            return args;
+        }
+        self.advance();
+        self.delimiter_depth += 1;
+        loop {
+            self.skip_newlines();
+            if self.check(&TokenKind::Gt) {
+                self.advance();
+                break;
+            }
+            args.push(self.parse_type());
+            self.skip_newlines();
+            if self.eat(&TokenKind::Comma).is_some() {
+                continue;
+            }
+            if self.eat(&TokenKind::Gt).is_some() {
+                break;
+            }
+            let span = self.peek().span;
+            self.error("E0104", "expected `,` or `>` in type argument list", span);
+            break;
+        }
+        self.delimiter_depth = self.delimiter_depth.saturating_sub(1);
+        args
+    }
+
+    fn parse_extern(&mut self) -> Option<ExternFnDecl> {
+        let start = self.peek().span.start;
+        self.expect(&TokenKind::KwExtern, "")?;
+        let abi = match self.peek().kind.clone() {
+            TokenKind::Str(raw) => {
+                let span = self.advance().span;
+                let mut text = String::new();
+                for part in self.parse_string_parts(&raw, span) {
+                    if let StrPart::Literal(value) = part {
+                        text.push_str(&value);
+                    }
+                }
+                text
+            }
+            _ => {
+                let span = self.peek().span;
+                self.error("E0103", "expected an ABI string after `extern`", span);
+                "C".into()
+            }
+        };
+        self.skip_newlines();
+        let sig = self.parse_fn_signature()?;
+        Some(ExternFnDecl {
+            abi,
+            name: sig.name,
+            name_span: sig.name_span,
+            params: sig.params,
+            ret: sig.ret,
+            span: Span::new(start, sig.span.end),
+        })
+    }
+
+    fn parse_macro(&mut self) -> Option<MacroDecl> {
+        let start = self.peek().span.start;
+        self.expect(&TokenKind::KwMacro, "")?;
+        let (name, name_span) = self.expect_ident("for the macro name")?;
+        self.expect(&TokenKind::LParen, "to open macro parameters");
+        let mut params = Vec::new();
+        self.delimiter_depth += 1;
+        while !self.check(&TokenKind::RParen) && !self.at_eof() {
+            let Some((param, span)) = self.expect_ident("for a macro parameter") else {
+                break;
+            };
+            params.push((param, span));
+            if self.eat(&TokenKind::Comma).is_some() {
+                continue;
+            }
+            break;
+        }
+        self.expect(&TokenKind::RParen, "to close macro parameters");
+        self.delimiter_depth = self.delimiter_depth.saturating_sub(1);
+        self.skip_newlines();
+        let body = self.parse_block();
+        let end = body.span.end;
+        Some(MacroDecl {
+            name,
+            name_span,
+            params,
+            body,
+            span: Span::new(start, end),
+        })
+    }
+
+    fn parse_trait(&mut self) -> Option<TraitDecl> {
+        let start = self.peek().span.start;
+        self.expect(&TokenKind::KwTrait, "")?;
+        let (name, name_span) = self.expect_ident("for the trait name")?;
+        self.skip_newlines();
+        let mut methods = Vec::new();
+        if self
+            .expect(&TokenKind::LBrace, "to open trait body")
+            .is_none()
+        {
+            return None;
+        }
+        self.delimiter_depth += 1;
+        self.skip_separators();
+        while !self.check(&TokenKind::RBrace) && !self.at_eof() {
+            let before = self.pos;
+            if self.check(&TokenKind::KwFn) {
+                if let Some(method) = self.parse_fn_signature() {
+                    methods.push(method);
+                }
+            } else {
+                let span = self.peek().span;
+                self.error("E0101", "expected a method signature in `trait`", span);
+                self.advance();
+            }
+            self.skip_separators();
+            if self.pos == before {
+                self.advance();
+            }
+        }
+        let end = self
+            .expect(&TokenKind::RBrace, "to close trait body")
+            .map(|t| t.span.end)
+            .unwrap_or(self.peek().span.end);
+        self.delimiter_depth = self.delimiter_depth.saturating_sub(1);
+        Some(TraitDecl {
+            name,
+            name_span,
+            methods,
+            span: Span::new(start, end),
+        })
+    }
+
+    fn parse_fn_signature(&mut self) -> Option<FnSignature> {
+        let start = self.peek().span.start;
+        self.expect(&TokenKind::KwFn, "")?;
+        let (name, name_span) = self.expect_ident("for the method name")?;
+        let _ = self.parse_generic_params();
+        self.skip_newlines();
+        let mut params = Vec::new();
+        self.expect(&TokenKind::LParen, "to open the parameter list");
+        self.delimiter_depth += 1;
+        self.skip_newlines();
+        while !self.check(&TokenKind::RParen) && !self.at_eof() {
+            let Some((pname, pspan)) = self.expect_ident("for a parameter name") else {
+                break;
+            };
+            let ty = if self.eat(&TokenKind::Colon).is_some() {
+                self.parse_type()
+            } else if pname == "self" {
+                TypeExpr {
+                    kind: TypeExprKind::Named {
+                        path: vec!["Self".into()],
+                        args: Vec::new(),
+                    },
+                    span: pspan,
+                }
+            } else {
+                self.parse_type()
+            };
+            params.push(Param {
+                name: pname,
+                name_span: pspan,
+                ty,
+                span: pspan.merge(self.tokens[self.pos.saturating_sub(1)].span),
+            });
+            self.skip_newlines();
+            if self.eat(&TokenKind::Comma).is_some() {
+                self.skip_newlines();
+                continue;
+            }
+            break;
+        }
+        self.expect(&TokenKind::RParen, "to close the parameter list");
+        self.delimiter_depth = self.delimiter_depth.saturating_sub(1);
+        self.skip_newlines();
+        let ret = if self.eat(&TokenKind::Arrow).is_some() {
+            Some(self.parse_type())
+        } else {
+            None
+        };
+        self.eat(&TokenKind::Semi);
+        Some(FnSignature {
+            name,
+            name_span,
+            params,
+            ret,
+            span: Span::new(start, self.tokens[self.pos.saturating_sub(1)].span.end),
+        })
+    }
+
+    fn parse_impl(&mut self) -> Option<ImplDecl> {
+        let start = self.peek().span.start;
+        self.expect(&TokenKind::KwImpl, "")?;
+        let generics = self.parse_generic_params();
+        let (first, first_span) = self.expect_ident("for the impl target")?;
+        let first_args = self.parse_type_args();
+        let (trait_name, type_name, type_span, type_args) = if self.eat(&TokenKind::KwFor).is_some()
+        {
+            let (type_name, type_span) = self.expect_ident("after `for` in impl")?;
+            let type_args = self.parse_type_args();
+            (Some(first), type_name, type_span, type_args)
+        } else {
+            (None, first, first_span, first_args)
+        };
+        let self_ty = TypeExpr {
+            kind: TypeExprKind::Named {
+                path: vec![type_name.clone()],
+                args: type_args.clone(),
+            },
+            span: type_span,
+        };
+        self.skip_newlines();
+        let mut methods = Vec::new();
+        if self
+            .expect(&TokenKind::LBrace, "to open impl body")
+            .is_none()
+        {
+            return None;
+        }
+        self.delimiter_depth += 1;
+        self.skip_separators();
+        while !self.check(&TokenKind::RBrace) && !self.at_eof() {
+            let before = self.pos;
+            if self.check(&TokenKind::KwFn) {
+                if let Some(method) = self.parse_fn(false, false, Some(&self_ty)) {
+                    methods.push(method);
+                }
+            } else {
+                let span = self.peek().span;
+                self.error("E0101", "expected a method declaration in `impl`", span);
+                self.advance();
+            }
+            self.skip_separators();
+            if self.pos == before {
+                self.advance();
+            }
+        }
+        let end = self
+            .expect(&TokenKind::RBrace, "to close impl body")
+            .map(|t| t.span.end)
+            .unwrap_or(self.peek().span.end);
+        self.delimiter_depth = self.delimiter_depth.saturating_sub(1);
+        Some(ImplDecl {
+            type_name,
+            type_span,
+            generics,
+            type_args,
+            trait_name,
+            methods,
+            span: Span::new(start, end),
+        })
+    }
+
+    fn parse_fn(
+        &mut self,
+        is_pub: bool,
+        is_test: bool,
+        self_ty: Option<&TypeExpr>,
+    ) -> Option<FnDecl> {
         let start = self.peek().span.start;
         self.expect(&TokenKind::KwFn, "to start a function declaration")?;
         let (name, name_span) = self.expect_ident("for the function name")?;
@@ -337,6 +595,22 @@ impl Parser {
                 };
                 let ty = if self.eat(&TokenKind::Colon).is_some() {
                     self.parse_type()
+                } else if pname == "self" {
+                    if let Some(self_ty) = self_ty {
+                        TypeExpr {
+                            kind: self_ty.kind.clone(),
+                            span: pspan,
+                        }
+                    } else {
+                        self.error("E0111", "`self` is only valid in an `impl` method", pspan);
+                        TypeExpr {
+                            kind: TypeExprKind::Named {
+                                path: vec!["<missing>".into()],
+                                args: Vec::new(),
+                            },
+                            span: pspan,
+                        }
+                    }
                 } else {
                     let span = self.peek().span;
                     self.error(
@@ -471,13 +745,6 @@ impl Parser {
         self.expect(&TokenKind::KwEnum, "")?;
         let (name, name_span) = self.expect_ident("for the enum name")?;
         let generics = self.parse_generic_params();
-        if !generics.is_empty() {
-            self.error(
-                "E0115",
-                "generic enums are not implemented in this build",
-                name_span,
-            );
-        }
         self.skip_newlines();
         let mut variants = Vec::new();
         if self.eat(&TokenKind::LBrace).is_some() {
@@ -491,17 +758,26 @@ impl Parser {
                 let Some((vname, vspan)) = self.expect_ident("for an enum variant") else {
                     break;
                 };
-                let payload = if self.eat(&TokenKind::LParen).is_some() {
-                    let ty = self.parse_type();
+                let mut fields = Vec::new();
+                if self.eat(&TokenKind::LParen).is_some() {
+                    self.delimiter_depth += 1;
+                    self.skip_newlines();
+                    while !self.check(&TokenKind::RParen) && !self.at_eof() {
+                        fields.push(self.parse_type());
+                        self.skip_newlines();
+                        if self.eat(&TokenKind::Comma).is_some() {
+                            self.skip_newlines();
+                            continue;
+                        }
+                        break;
+                    }
                     self.expect(&TokenKind::RParen, "to close variant payload");
-                    Some(ty)
-                } else {
-                    None
-                };
+                    self.delimiter_depth = self.delimiter_depth.saturating_sub(1);
+                }
                 variants.push(VariantDecl {
                     name: vname,
                     name_span: vspan,
-                    payload,
+                    fields,
                     span: vspan.merge(self.tokens[self.pos.saturating_sub(1)].span),
                 });
                 if self.eat(&TokenKind::Comma).is_none() && !self.at_separator() {
@@ -525,6 +801,7 @@ impl Parser {
         Some(EnumDecl {
             name,
             name_span,
+            generics,
             variants,
             span: Span::new(start, self.tokens[self.pos.saturating_sub(1)].span.end),
         })
@@ -533,6 +810,34 @@ impl Parser {
     fn parse_import(&mut self) -> Option<ImportDecl> {
         let start = self.peek().span.start;
         self.expect(&TokenKind::KwImport, "")?;
+        if let TokenKind::Str(raw) = self.peek().kind.clone() {
+            let string_span = self.advance().span;
+            let mut path = String::new();
+            for part in self.parse_string_parts(&raw, string_span) {
+                match part {
+                    StrPart::Literal(text) => path.push_str(&text),
+                    StrPart::Expr(_) => self.error(
+                        "E0109",
+                        "import paths cannot contain interpolation",
+                        string_span,
+                    ),
+                }
+            }
+            let alias = if self.eat(&TokenKind::KwAs).is_some() {
+                self.expect_ident("for the module alias")
+                    .map(|(name, _)| name)
+            } else {
+                None
+            };
+            self.eat(&TokenKind::Semi);
+            return Some(ImportDecl {
+                module: Vec::new(),
+                path: Some(path),
+                alias,
+                items: Vec::new(),
+                span: Span::new(start, self.tokens[self.pos.saturating_sub(1)].span.end),
+            });
+        }
         let mut module = Vec::new();
         if let Some((first, _)) = self.expect_ident("in import path") {
             module.push(first);
@@ -577,6 +882,8 @@ impl Parser {
         self.eat(&TokenKind::Semi);
         Some(ImportDecl {
             module,
+            path: None,
+            alias: None,
             items,
             span: Span::new(start, self.tokens[self.pos.saturating_sub(1)].span.end),
         })
@@ -588,6 +895,33 @@ impl Parser {
 
     fn parse_type(&mut self) -> TypeExpr {
         let start = self.peek().span.start;
+        if self.check(&TokenKind::KwFn) {
+            self.advance();
+            self.expect(&TokenKind::LParen, "to open function type parameters");
+            self.delimiter_depth += 1;
+            let mut params = Vec::new();
+            self.skip_newlines();
+            while !self.check(&TokenKind::RParen) && !self.at_eof() {
+                params.push(self.parse_type());
+                self.skip_newlines();
+                if self.eat(&TokenKind::Comma).is_some() {
+                    self.skip_newlines();
+                    continue;
+                }
+                break;
+            }
+            self.expect(&TokenKind::RParen, "to close function type parameters");
+            self.delimiter_depth = self.delimiter_depth.saturating_sub(1);
+            self.expect(&TokenKind::Arrow, "before a function return type");
+            let ret = self.parse_type();
+            return TypeExpr {
+                kind: TypeExprKind::Fn {
+                    params,
+                    ret: Box::new(ret),
+                },
+                span: Span::new(start, self.tokens[self.pos.saturating_sub(1)].span.end),
+            };
+        }
         if self.check(&TokenKind::LParen) {
             self.advance();
             if self.check(&TokenKind::RParen) {
@@ -609,6 +943,56 @@ impl Parser {
             return TypeExpr {
                 kind: TypeExprKind::Tuple(types),
                 span: Span::new(start, end),
+            };
+        }
+        if self.check(&TokenKind::LBracket) {
+            self.advance();
+            self.delimiter_depth += 1;
+            self.skip_newlines();
+            let elem = self.parse_type();
+            self.skip_newlines();
+            self.expect(&TokenKind::Semi, "between array element type and length");
+            self.skip_newlines();
+            let len = match self.peek().kind {
+                TokenKind::Int(value) if value >= 0 => {
+                    self.advance();
+                    value as usize
+                }
+                _ => {
+                    let span = self.peek().span;
+                    self.error("E0116", "array length must be a non-negative integer", span);
+                    self.advance();
+                    0
+                }
+            };
+            self.skip_newlines();
+            let end = self
+                .expect(&TokenKind::RBracket, "to close array type")
+                .map(|t| t.span.end)
+                .unwrap_or(self.peek().span.end);
+            self.delimiter_depth = self.delimiter_depth.saturating_sub(1);
+            return TypeExpr {
+                kind: TypeExprKind::Array {
+                    elem: Box::new(elem),
+                    len,
+                },
+                span: Span::new(start, end),
+            };
+        }
+        if self.check(&TokenKind::KwDyn) {
+            self.advance();
+            let (name, name_span) = match self.expect_ident("after `dyn`") {
+                Some(value) => value,
+                None => {
+                    return TypeExpr {
+                        kind: TypeExprKind::Dyn("<missing>".into()),
+                        span: Span::new(start, self.peek().span.end),
+                    }
+                }
+            };
+            return TypeExpr {
+                kind: TypeExprKind::Dyn(name),
+                span: Span::new(start, name_span.end),
             };
         }
         let mut path = Vec::new();
@@ -921,16 +1305,20 @@ impl Parser {
                 span,
             );
         }
-        if matches!(
-            self.peek().kind,
-            TokenKind::KwUnsafe | TokenKind::KwAsync | TokenKind::KwAwait
-        ) {
+        if self.check(&TokenKind::KwAwait) {
+            self.advance();
+            self.skip_newlines();
+            let inner = self.parse_unary();
+            let span = Span::new(start, inner.span.end);
+            return Expr::new(ExprKind::Await(Box::new(inner)), span);
+        }
+        if matches!(self.peek().kind, TokenKind::KwUnsafe | TokenKind::KwAsync) {
             let span = self.peek().span;
             let name = self.peek().kind.punct_text();
             self.advance();
             self.error(
                 "E0108",
-                format!("`{name}` is not implemented in this build"),
+                format!("`{name}` is not implemented in this expression position"),
                 span,
             );
             return self.parse_unary();
@@ -985,6 +1373,21 @@ impl Parser {
                 }
                 TokenKind::Dot => {
                     self.advance();
+                    if let TokenKind::Int(index) = self.peek().kind {
+                        if index >= 0 {
+                            let index_span = self.advance().span;
+                            let span = expr.span.merge(index_span);
+                            expr = Expr::new(
+                                ExprKind::TupleField {
+                                    base: Box::new(expr),
+                                    index: index as usize,
+                                    index_span,
+                                },
+                                span,
+                            );
+                            continue;
+                        }
+                    }
                     let (name, name_span) = match self.expect_ident("after `.`") {
                         Some(v) => v,
                         None => break,
@@ -1126,6 +1529,7 @@ impl Parser {
                 }
                 Expr::new(ExprKind::Ident(name), token.span)
             }
+            TokenKind::Pipe | TokenKind::PipePipe => self.parse_closure(token.span.start),
             TokenKind::LParen => {
                 self.advance();
                 self.delimiter_depth += 1;
@@ -1136,25 +1540,31 @@ impl Parser {
                     return Expr::new(ExprKind::Unit, Span::new(token.span.start, end));
                 }
                 let first = self.parse_expr_prec(0);
+                let mut items = vec![first];
                 self.skip_newlines();
-                if self.check(&TokenKind::Comma) {
-                    let span = self.peek().span;
-                    self.error("E0114", "tuples are not implemented in this build", span);
-                    while self.eat(&TokenKind::Comma).is_some() {
-                        self.skip_newlines();
-                        let _ = self.parse_expr_prec(0);
-                        self.skip_newlines();
+                let mut is_tuple = false;
+                while self.eat(&TokenKind::Comma).is_some() {
+                    is_tuple = true;
+                    self.skip_newlines();
+                    if self.check(&TokenKind::RParen) {
+                        break;
                     }
+                    items.push(self.parse_expr_prec(0));
+                    self.skip_newlines();
                 }
                 let end = self
                     .expect(&TokenKind::RParen, "to close parenthesised expression")
                     .map(|t| t.span.end)
                     .unwrap_or(self.peek().span.end);
                 self.delimiter_depth = self.delimiter_depth.saturating_sub(1);
-                Expr::new(
-                    ExprKind::Paren(Box::new(first)),
-                    Span::new(token.span.start, end),
-                )
+                if is_tuple {
+                    Expr::new(ExprKind::Tuple(items), Span::new(token.span.start, end))
+                } else {
+                    Expr::new(
+                        ExprKind::Paren(Box::new(items.pop().unwrap())),
+                        Span::new(token.span.start, end),
+                    )
+                }
             }
             TokenKind::LBracket => {
                 self.advance();
@@ -1271,6 +1681,67 @@ impl Parser {
                 fields,
             },
             name_span.merge(Span::new(end, end)),
+        )
+    }
+
+    fn parse_closure(&mut self, start: usize) -> Expr {
+        let mut params = Vec::new();
+        if self.check(&TokenKind::PipePipe) {
+            self.advance();
+        } else {
+            self.expect(&TokenKind::Pipe, "to open a closure parameter list");
+            self.delimiter_depth += 1;
+            self.skip_newlines();
+            while !self.check(&TokenKind::Pipe) && !self.at_eof() {
+                let before = self.pos;
+                let Some((name, name_span)) = self.expect_ident("for a closure parameter") else {
+                    break;
+                };
+                self.expect(&TokenKind::Colon, "after a closure parameter name");
+                let ty = self.parse_type();
+                params.push(Param {
+                    name,
+                    name_span,
+                    ty,
+                    span: name_span.merge(self.tokens[self.pos.saturating_sub(1)].span),
+                });
+                self.skip_newlines();
+                if self.eat(&TokenKind::Comma).is_some() {
+                    self.skip_newlines();
+                    continue;
+                }
+                if self.pos == before {
+                    self.advance();
+                }
+                break;
+            }
+            self.expect(&TokenKind::Pipe, "to close a closure parameter list");
+            self.delimiter_depth = self.delimiter_depth.saturating_sub(1);
+        }
+        self.skip_newlines();
+        let ret = if self.eat(&TokenKind::Arrow).is_some() {
+            self.skip_newlines();
+            Some(self.parse_type())
+        } else {
+            None
+        };
+        self.skip_newlines();
+        let body = if self.check(&TokenKind::LBrace) {
+            self.parse_block()
+        } else {
+            let expr = self.parse_expr_prec(0);
+            let span = expr.span;
+            Block {
+                stmts: vec![Stmt {
+                    kind: StmtKind::Expr(expr),
+                    span,
+                }],
+                span,
+            }
+        };
+        Expr::new(
+            ExprKind::Closure { params, ret, body },
+            Span::new(start, self.tokens[self.pos.saturating_sub(1)].span.end),
         )
     }
 
@@ -1420,11 +1891,16 @@ impl Parser {
                     self.advance();
                     self.delimiter_depth += 1;
                     self.skip_newlines();
-                    let inner = if self.check(&TokenKind::RParen) {
-                        None
-                    } else {
-                        Some(Box::new(self.parse_pattern()))
-                    };
+                    let mut fields = Vec::new();
+                    while !self.check(&TokenKind::RParen) && !self.at_eof() {
+                        fields.push(self.parse_pattern());
+                        self.skip_newlines();
+                        if self.eat(&TokenKind::Comma).is_some() {
+                            self.skip_newlines();
+                            continue;
+                        }
+                        break;
+                    }
                     self.skip_newlines();
                     let end = self
                         .expect(&TokenKind::RParen, "to close variant pattern")
@@ -1435,7 +1911,7 @@ impl Parser {
                         kind: PatternKind::Variant {
                             name,
                             name_span: span,
-                            inner,
+                            fields,
                         },
                         span: span.merge(Span::new(end, end)),
                     }
@@ -1448,9 +1924,30 @@ impl Parser {
             }
             TokenKind::LParen => {
                 self.advance();
-                let inner = self.parse_pattern();
+                self.delimiter_depth += 1;
+                self.skip_newlines();
+                let first = self.parse_pattern();
+                let mut fields = vec![first];
+                let mut is_tuple = false;
+                while self.eat(&TokenKind::Comma).is_some() {
+                    is_tuple = true;
+                    self.skip_newlines();
+                    if self.check(&TokenKind::RParen) {
+                        break;
+                    }
+                    fields.push(self.parse_pattern());
+                    self.skip_newlines();
+                }
                 self.expect(&TokenKind::RParen, "to close pattern");
-                inner
+                self.delimiter_depth = self.delimiter_depth.saturating_sub(1);
+                if is_tuple {
+                    Pattern {
+                        kind: PatternKind::Tuple(fields),
+                        span,
+                    }
+                } else {
+                    fields.pop().unwrap()
+                }
             }
             _ => {
                 let found = token.kind.describe();

@@ -97,29 +97,69 @@ fn main() {
 
 ```nova
 enum Shape {
+    Rect(Int, Int)
     Circle(Int)
-    Square(Int)
     Empty
 }
 
-fn area(shape: Shape) -> Int {
-    match shape {
-        Circle(radius) => radius * radius * 3
-        Square(side) => side * side
-        Empty => 0
+impl Shape {
+    fn area(self) -> Int {
+        match self {
+            Rect(width, height) => width * height
+            Circle(radius) => radius * radius * 3
+            Empty => 0
+        }
     }
 }
 
 fn main() {
-    println(area(Circle(2)))
-    println(area(Empty))
+    println(Rect(2, 3).area())
+    println(Empty.area())
 }
 ```
 
-A variant takes zero or one payload. Constructors are global (`Circle(2)`, `Empty`), so variant names must be unique across enums; `Some`, `None`, `Ok` and `Err` are reserved. Match must cover every variant or end with `_`.
+Variants may carry zero or more positional payload fields. Constructors are global (`Rect(2, 3)`, `Empty`), so variant names must be unique across enums; `Some`, `None`, `Ok` and `Err` are reserved. `impl Type { fn name(self) ... }` adds methods to a struct or enum; the first parameter must be `self`. Trait impls and `dyn Trait` dynamic dispatch are supported for non-generic types; generic methods, static methods and trait impls on generic types are not implemented. Match must cover every variant or end with `_`.
+
+## Tuples, arrays and slices
+
+```nova
+fn total(values: Slice<Int>) -> Int {
+    var i = 0
+    var sum = 0
+    while i < values.len() {
+        sum += values[i]
+        i += 1
+    }
+    return sum
+}
+
+fn main() {
+    let pair = (1, "two")
+    println(pair.0)
+    match (3, 4) {
+        (left, right) => println(left + right)
+    }
+    var numbers: [Int; 3] = [1, 2, 3]
+    numbers[1] = 9
+    println(total(numbers.as_slice()))
+}
+```
+
+Tuples are inline values: construction, `.0`-style access, tuple-typed returns, tuple patterns in `match`, and mutation of tuple fields through a mutable root. `let (a, b) = ...` destructuring is not implemented. Arrays have a compile-time length and bounds-checked indexing. `Slice<T>` is a borrowed `{ptr, len}` view created by `.as_slice()` on an array or list; it does not own storage, so do not return a slice of a local across its lifetime.
+
+## Beyond the core
+
+- Capturing closures (`|x: Int| x + base`) capture outer locals by value, including nested captures and closures returned from functions; named function values use the type `fn(Int) -> Int`.
+- Hashed `Map<K, V>` and `Set<T>` created with `map()` / `set()` plus a type annotation; `insert`, `get`, `contains`, `contains_key` and `len` are supported. Keys are limited to `Int`, `Bool`, `Char` and `String`.
+- Generic functions, structs, enums and inherent methods are monomorphised at concrete call sites. Struct literals and variant constructors infer type arguments from an annotation; explicit type arguments at those expression sites and trait impls on generic types are not implemented.
+- `trait` declarations and `impl Trait for Type` provide conformance checking and ordinary method dispatch. `dyn Trait` boxes a copy of the value with a vtable and dispatches dynamically; trait impls on generic types are not implemented.
+- `async fn` and prefix `await` parse and run with synchronous semantics; there is no scheduler, task or channel runtime.
+- `extern "C" fn` declarations bind directly to linked platform symbols. The boundary is scalar-only (Bool, Int, Float, Char, Unit), values are copied, and declarations are emitted `nounwind`; heap values, pointer ownership transfer and unwinding across the boundary are not supported.
+- Expression and statement macros (`macro square(value) { value * value }`) expand by AST substitution at each call site; a macro used as a statement splices its body's statements into the caller.
+- `import "util.nova"` loads another source file into the same flat module namespace; `import "util.nova" as util` additionally allows qualified calls (`util.add(2, 3)`) and qualified type names (`util.User`). Imports are cycle-checked. The merged namespace is still flat, so duplicate unqualified names are errors, and a package registry is not implemented.
 
 ## Not implemented
 
-Implemented on `String`: `len`, `is_empty`, `to_string`, `contains`, `starts_with`, `ends_with` and `trim`. Still planned: generics, variants with multiple payload fields, traits and impls, methods on user types, closures, tuples, maps, sets, arrays/slices, async, FFI, macros, named/default arguments, user modules and a package registry.
+Implemented on `String`: `len`, `is_empty`, `to_string`, `contains`, `starts_with`, `ends_with` and `trim`. Still planned: real async scheduling and channels, package resolution, mutable captures, named/default arguments and trait impls on generic types.
 
 These features are rejected with a diagnostic rather than silently compiled to something else. See [Status](../../status/) and the [reference](../reference/).

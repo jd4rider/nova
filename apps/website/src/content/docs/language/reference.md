@@ -65,8 +65,12 @@ There are no implicit conversions. A function argument must match its parameter 
 
 ## Memory and runtime
 
+The FFI boundary accepts only Bool, Int, Float, Char and Unit. Arguments and results are copied, generated declarations carry `nounwind`, and no pointer ownership is transferred; unwinding across the boundary is not modeled.
+
 Runtime allocation currently lasts for the process lifetime. There is no reference counting, cycle collector or user-visible free. See [Memory model](../memory/). This is a documented limitation, not a claim of general memory safety.
 
 ## Not in the accepted grammar
 
-Generics, enums, traits, impls, closures, tuples, maps, sets, fixed-width integers, arrays/slices, async/await, FFI, unsafe blocks, `defer`, named/default arguments, macros and user modules. Unsupported constructs should produce a diagnostic; if one is silently accepted, treat it as a compiler bug.
+Async scheduling/channels, mutable captures, namespaced modules, fixed-width integers, unsafe blocks, `defer` and named/default arguments. Unsupported constructs should produce a diagnostic; if one is silently accepted, treat it as a compiler bug.
+
+Accepted in the current grammar: user enums (including multi-field variants), `impl` methods with `self`, tuples, fixed arrays, borrowed `Slice<T>`, capturing closures and function values, monomorphised generic functions, structs, enums and inherent methods, static `trait`/`impl Trait for Type` conformance, `dyn Trait` objects that box a copy of the value and dispatch through a per-type vtable, hashed `Map`/`Set`, path imports with optional `as` aliases for qualified calls and type names, synchronous `async`/`await`, `extern "C"` declarations and expression/statement macros. Captures are by value: a closure sees the value an outer local held when the closure was created, and mutating the original local afterwards does not change the capture. `let` does not destructure tuples, slices are not lifetime-checked, and async does not create concurrency.

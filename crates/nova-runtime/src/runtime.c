@@ -279,3 +279,124 @@ void nova_list_push(nova_list *list, void *elem, int64_t elem_size) {
            elem, (size_t)elem_size);
     list->len += 1;
 }
+
+/* ------------------------------------------------------------------ */
+/* Hashed maps and sets                                                */
+/* ------------------------------------------------------------------ */
+
+typedef struct {
+    void *slots;
+    unsigned char *state;
+    int64_t len;
+    int64_t cap;
+    int64_t entry_size;
+    int32_t key_kind;
+} nova_map;
+
+static uint64_t nova_hash_bytes(const unsigned char *data, int64_t len) {
+    uint64_t hash = 1469598103934665603ULL;
+    for (int64_t i = 0; i < len; i++) {
+        hash ^= data[i];
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
+/* key_kind: 0 = Int, 1 = Bool, 2 = Char, 3 = String. */
+static uint64_t nova_hash_key(const void *key, int32_t kind) {
+    if (kind == 3) {
+        nova_str s;
+        memcpy(&s, key, sizeof(s));
+        return nova_hash_bytes((const unsigned char *)s.ptr, s.len);
+    }
+    if (kind == 0) return nova_hash_bytes((const unsigned char *)key, 8);
+    if (kind == 1) return nova_hash_bytes((const unsigned char *)key, 1);
+    return nova_hash_bytes((const unsigned char *)key, 4);
+}
+
+static int nova_key_eq(const void *left, const void *right, int32_t kind) {
+    if (kind == 3) {
+        nova_str a, b;
+        memcpy(&a, left, sizeof(a));
+        memcpy(&b, right, sizeof(b));
+        return a.len == b.len &&
+               (a.len == 0 || memcmp(a.ptr, b.ptr, (size_t)a.len) == 0);
+    }
+    int64_t size = kind == 0 ? 8 : (kind == 1 ? 1 : 4);
+    return memcmp(left, right, (size_t)size) == 0;
+}
+
+static void nova_map_resize(nova_map *map, int64_t new_cap) {
+    void *old_slots = map->slots;
+    unsigned char *old_state = map->state;
+    int64_t old_cap = map->cap;
+    map->slots = nova_alloc(new_cap * map->entry_size);
+    map->state = (unsigned char *)nova_alloc(new_cap);
+    memset(map->state, 0, (size_t)new_cap);
+    map->cap = new_cap;
+    for (int64_t i = 0; i < old_cap; i++) {
+        if (!old_state[i]) continue;
+        void *entry = (char *)old_slots + (size_t)i * (size_t)map->entry_size;
+        uint64_t hash = nova_hash_key(entry, map->key_kind);
+        int64_t mask = new_cap - 1;
+        int64_t index = (int64_t)(hash & (uint64_t)mask);
+        while (map->state[index]) index = (index + 1) & mask;
+        map->state[index] = 1;
+        memcpy((char *)map->slots + (size_t)index * (size_t)map->entry_size,
+               entry, (size_t)map->entry_size);
+    }
+    free(old_slots);
+    free(old_state);
+}
+
+static int64_t nova_map_find(const nova_map *map, const void *key) {
+    if (map->cap == 0) return -1;
+    uint64_t hash = nova_hash_key(key, map->key_kind);
+    int64_t mask = map->cap - 1;
+    int64_t index = (int64_t)(hash & (uint64_t)mask);
+    for (;;) {
+        if (!map->state[index]) return -1;
+        void *entry = (char *)map->slots + (size_t)index * (size_t)map->entry_size;
+        if (nova_key_eq(entry, key, map->key_kind)) return index;
+        index = (index + 1) & mask;
+    }
+}
+
+static int nova_map_put(nova_map *map, const void *entry) {
+    int64_t existing = nova_map_find(map, entry);
+    if (existing >= 0) {
+        memcpy((char *)map->slots + (size_t)existing * (size_t)map->entry_size,
+               entry, (size_t)map->entry_size);
+        return 0;
+    }
+    if (map->cap == 0 || (map->len + 1) * 10 >= map->cap * 7) {
+        nova_map_resize(map, map->cap == 0 ? 8 : map->cap * 2);
+    }
+    uint64_t hash = nova_hash_key(entry, map->key_kind);
+    int64_t mask = map->cap - 1;
+    int64_t index = (int64_t)(hash & (uint64_t)mask);
+    while (map->state[index]) index = (index + 1) & mask;
+    map->state[index] = 1;
+    memcpy((char *)map->slots + (size_t)index * (size_t)map->entry_size,
+           entry, (size_t)map->entry_size);
+    map->len += 1;
+    return 1;
+}
+
+void nova_map_insert(nova_map *map, void *entry) {
+    (void)nova_map_put(map, entry);
+}
+
+int32_t nova_map_add(nova_map *map, void *entry) {
+    return nova_map_put(map, entry);
+}
+
+void *nova_map_get(nova_map *map, void *key) {
+    int64_t index = nova_map_find(map, key);
+    if (index < 0) return NULL;
+    return (char *)map->slots + (size_t)index * (size_t)map->entry_size;
+}
+
+int64_t nova_map_len(nova_map *map) {
+    return map->len;
+}

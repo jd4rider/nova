@@ -15,8 +15,16 @@ pub enum Type {
     Char,
     String,
     List(Box<Type>),
+    Tuple(Vec<Type>),
+    Array(Box<Type>, usize),
+    Slice(Box<Type>),
+    Map(Box<Type>, Box<Type>),
+    Set(Box<Type>),
+    Fn(Vec<Type>, Box<Type>),
     Option(Box<Type>),
     Result(Box<Type>, Box<Type>),
+    /// A `dyn Trait` value: boxed data pointer plus vtable pointer.
+    TraitObject(String),
     Struct(String),
     /// Nominal user-defined enum. Values are a tag plus an optional payload.
     Enum(String),
@@ -74,7 +82,9 @@ impl Type {
             Type::Result(ok, err) => {
                 ok.contains_value_struct(name) || err.contains_value_struct(name)
             }
-            Type::List(_) => false,
+            Type::Tuple(items) => items.iter().any(|ty| ty.contains_value_struct(name)),
+            Type::Array(inner, _) => inner.contains_value_struct(name),
+            Type::List(_) | Type::Slice(_) => false,
             _ => false,
         }
     }
@@ -90,8 +100,36 @@ impl fmt::Display for Type {
             Type::Char => write!(f, "Char"),
             Type::String => write!(f, "String"),
             Type::List(inner) => write!(f, "List<{inner}>"),
+            Type::Tuple(items) => {
+                write!(f, "(")?;
+                for (index, item) in items.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{item}")?;
+                }
+                if items.len() == 1 {
+                    write!(f, ",")?;
+                }
+                write!(f, ")")
+            }
+            Type::Array(inner, len) => write!(f, "[{inner}; {len}]"),
+            Type::Slice(inner) => write!(f, "Slice<{inner}>"),
+            Type::Map(key, value) => write!(f, "Map<{key}, {value}>"),
+            Type::Set(inner) => write!(f, "Set<{inner}>"),
+            Type::Fn(params, ret) => {
+                write!(f, "fn(")?;
+                for (index, param) in params.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{param}")?;
+                }
+                write!(f, ") -> {ret}")
+            }
             Type::Option(inner) => write!(f, "Option<{inner}>"),
             Type::Result(ok, err) => write!(f, "Result<{ok}, {err}>"),
+            Type::TraitObject(name) => write!(f, "dyn {name}"),
             Type::Struct(name) => write!(f, "{name}"),
             Type::Enum(name) => write!(f, "{name}"),
             Type::Never => write!(f, "Never"),

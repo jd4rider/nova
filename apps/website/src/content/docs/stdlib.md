@@ -16,7 +16,7 @@ description: The small standard-library surface currently implemented by Nova, a
 | `assert_eq(left, right)` | Abort with a source line if values differ. |
 | `panic(message)` | Abort with a message and source line. |
 
-Builtins are available to checked programs; `import std.io { println }` and `import std.core { assert }` are recognized. An import does not currently provide a user module graph.
+Builtins are available to checked programs; `import std.io { println }` and `import std.core { assert }` are recognized. User files can also be loaded with path imports, documented under Modules.
 
 ## Types and core operations
 
@@ -25,12 +25,19 @@ Builtins are available to checked programs; `import std.io { println }` and `imp
 - `Option<T>`: `None`, `Some(value)`, exhaustive `match`, `?` propagation.
 - `Result<T, E>`: `Ok(value)`, `Err(error)`, exhaustive `match`, `?` propagation.
 - Structs: field access, literals, mutation through mutable roots.
+- Enums: unit or multi-field variants, exhaustive `match`, and non-generic `impl Type` methods with `self`.
+- Tuples: inline values, `.0` access, tuple patterns and field mutation.
+- Arrays: `[T; N]`, compile-time length, bounds-checked indexing, `.len()` and `.as_slice()`.
+- `Slice<T>`: borrowed `{ptr, len}` view with bounds-checked indexing and `.len()`.
+- `Map<K, V>` / `Set<T>`: hashed collections built with `map()` / `set()` and a type annotation; open addressing with FNV-1a key hashing; keys limited to `Int`, `Bool`, `Char` and `String`.
+- Generic structs, enums and inherent methods: `struct Pair<T>`, `enum Boxed<T>` and `impl<T> Pair<T>`, monomorphised from concrete annotations.
+- `fn(...) -> T`: function values for named functions and capturing closures; captures copy the outer value at closure creation.
 
-Byte and Unicode-scalar string indexes, slicing, iterators, maps, sets, tuples, fixed-width integers and arrays are **not implemented**.
+Byte and Unicode-scalar string indexes, general string slicing, iterators, fixed-width integers, mutable captures and lifetime-checked references are **not implemented**.
 
 ## Modules
 
-Only standard import names are recognized for the builtin surface. A complete module index, signatures, platform notes and generated API docs are **planned**. The current truth is the compiler source and its tests, not an aspirational API listing.
+Standard imports expose the builtin surface. `import "util.nova"` flattens another source file into the current program with cycle checks; `import "util.nova" as util` additionally qualifies its calls and type names. The underlying namespace is still flat, so duplicate unqualified names remain errors. Package resolution, a registry and a generated module index are **planned**. The current truth is the compiler source and its tests, not an aspirational API listing.
 
 ## Planned
 

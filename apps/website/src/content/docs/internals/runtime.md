@@ -24,7 +24,7 @@ Allocation currently uses process-lifetime allocation. There is no free, referen
 
 ## ABI and portability
 
-The ABI is C-compatible for the generated calls, but there is no public FFI for user code. Only macOS arm64 is currently tested. No sanitizer run, thread model, C-unwind boundary or cross-platform ABI matrix exists yet.
+Generated calls use a C-compatible ABI, and user code can declare raw `extern "C"` functions. There is still no ownership or unwind contract at that boundary. Only macOS arm64 is currently tested. No sanitizer run, thread model, C-unwind boundary or cross-platform ABI matrix exists yet.
 
 ## Reproducibility
 

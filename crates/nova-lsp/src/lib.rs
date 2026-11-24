@@ -451,6 +451,34 @@ fn completion(text: &str, offset: Option<usize>) -> Vec<Value> {
             Item::Enum(decl) => items.push(json!({
                 "label": decl.name, "kind": 10, "detail": "enum (not implemented)"
             })),
+            Item::Impl(decl) => {
+                for method in &decl.methods {
+                    items.push(json!({
+                        "label": method.name,
+                        "kind": 2,
+                        "detail": format!("{}.{}", decl.type_name, signature(method)),
+                    }));
+                }
+            }
+            Item::Trait(decl) => {
+                for method in &decl.methods {
+                    items.push(json!({
+                        "label": method.name,
+                        "kind": 2,
+                        "detail": format!("{}.{}", decl.name, method.name),
+                    }));
+                }
+            }
+            Item::Extern(decl) => items.push(json!({
+                "label": decl.name,
+                "kind": 3,
+                "detail": format!("extern \"{}\" function", decl.abi),
+            })),
+            Item::Macro(decl) => items.push(json!({
+                "label": decl.name,
+                "kind": 14,
+                "detail": "expression macro",
+            })),
             Item::Import(_) => {}
         }
     }
@@ -574,8 +602,67 @@ fn document_symbols(program: &ast::Program, text: &str) -> Value {
                     "children": children
                 }));
             }
+            Item::Impl(decl) => {
+                let children: Vec<Value> = decl
+                    .methods
+                    .iter()
+                    .map(|method| {
+                        json!({
+                            "name": format!("{}.{}", decl.type_name, method.name),
+                            "kind": 6,
+                            "detail": signature(method),
+                            "range": span_range(text, method.span),
+                            "selectionRange": span_range(text, method.name_span)
+                        })
+                    })
+                    .collect();
+                symbols.push(json!({
+                    "name": format!("impl {}", decl.type_name),
+                    "kind": 5,
+                    "range": span_range(text, decl.span),
+                    "selectionRange": span_range(text, decl.type_span),
+                    "children": children
+                }));
+            }
+            Item::Trait(decl) => {
+                let children: Vec<Value> = decl
+                    .methods
+                    .iter()
+                    .map(|method| {
+                        json!({
+                            "name": method.name,
+                            "kind": 6,
+                            "range": span_range(text, method.span),
+                            "selectionRange": span_range(text, method.name_span)
+                        })
+                    })
+                    .collect();
+                symbols.push(json!({
+                    "name": format!("trait {}", decl.name),
+                    "kind": 11,
+                    "range": span_range(text, decl.span),
+                    "selectionRange": span_range(text, decl.name_span),
+                    "children": children
+                }));
+            }
+            Item::Extern(decl) => symbols.push(json!({
+                "name": decl.name,
+                "kind": 12,
+                "detail": format!("extern \"{}\"", decl.abi),
+                "range": span_range(text, decl.span),
+                "selectionRange": span_range(text, decl.name_span)
+            })),
+            Item::Macro(decl) => symbols.push(json!({
+                "name": decl.name,
+                "kind": 14,
+                "range": span_range(text, decl.span),
+                "selectionRange": span_range(text, decl.name_span)
+            })),
             Item::Import(import) => symbols.push(json!({
-                "name": import.module.join("."),
+                "name": import
+                    .path
+                    .clone()
+                    .unwrap_or_else(|| import.module.join(".")),
                 "kind": 2,
                 "range": span_range(text, import.span),
                 "selectionRange": span_range(text, import.span)
@@ -608,6 +695,13 @@ fn type_expr(ty: &TypeExpr) -> String {
                 items.iter().map(type_expr).collect::<Vec<_>>().join(", ")
             )
         }
+        TypeExprKind::Array { elem, len } => format!("[{}; {len}]", type_expr(elem)),
+        TypeExprKind::Fn { params, ret } => format!(
+            "fn({}) -> {}",
+            params.iter().map(type_expr).collect::<Vec<_>>().join(", "),
+            type_expr(ret)
+        ),
+        TypeExprKind::Dyn(name) => format!("dyn {name}"),
         TypeExprKind::Named { path, args } => {
             let base = path.join(".");
             if args.is_empty() {

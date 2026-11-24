@@ -16,6 +16,10 @@ pub enum Item {
     Fn(FnDecl),
     Struct(StructDecl),
     Enum(EnumDecl),
+    Impl(ImplDecl),
+    Trait(TraitDecl),
+    Extern(ExternFnDecl),
+    Macro(MacroDecl),
     Import(ImportDecl),
 }
 
@@ -61,6 +65,7 @@ pub struct FieldDecl {
 pub struct EnumDecl {
     pub name: String,
     pub name_span: Span,
+    pub generics: Vec<String>,
     pub variants: Vec<VariantDecl>,
     pub span: Span,
 }
@@ -69,13 +74,68 @@ pub struct EnumDecl {
 pub struct VariantDecl {
     pub name: String,
     pub name_span: Span,
-    pub payload: Option<TypeExpr>,
+    /// Positional payload types. Empty for a unit variant.
+    pub fields: Vec<TypeExpr>,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug)]
+pub struct ImplDecl {
+    pub type_name: String,
+    pub type_span: Span,
+    pub generics: Vec<String>,
+    pub type_args: Vec<TypeExpr>,
+    pub trait_name: Option<String>,
+    pub methods: Vec<FnDecl>,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug)]
+pub struct ExternFnDecl {
+    pub abi: String,
+    pub name: String,
+    pub name_span: Span,
+    pub params: Vec<Param>,
+    pub ret: Option<TypeExpr>,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug)]
+pub struct MacroDecl {
+    pub name: String,
+    pub name_span: Span,
+    pub params: Vec<(String, Span)>,
+    /// Macro body block. In expression position only the trailing expression
+    /// contributes a value; in statement position the statements are spliced
+    /// into the caller's block.
+    pub body: Block,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug)]
+pub struct TraitDecl {
+    pub name: String,
+    pub name_span: Span,
+    pub methods: Vec<FnSignature>,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug)]
+pub struct FnSignature {
+    pub name: String,
+    pub name_span: Span,
+    pub params: Vec<Param>,
+    pub ret: Option<TypeExpr>,
     pub span: Span,
 }
 
 #[derive(Clone, Debug)]
 pub struct ImportDecl {
     pub module: Vec<String>,
+    /// Relative file path for a user module import.
+    pub path: Option<String>,
+    /// Module alias from `import "file.nova" as name`.
+    pub alias: Option<String>,
     pub items: Vec<ImportItem>,
     pub span: Span,
 }
@@ -99,8 +159,18 @@ pub enum TypeExprKind {
         path: Vec<String>,
         args: Vec<TypeExpr>,
     },
+    /// `dyn Trait` trait object type.
+    Dyn(String),
     Unit,
     Tuple(Vec<TypeExpr>),
+    Array {
+        elem: Box<TypeExpr>,
+        len: usize,
+    },
+    Fn {
+        params: Vec<TypeExpr>,
+        ret: Box<TypeExpr>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -199,6 +269,11 @@ pub enum ExprKind {
         name: String,
         name_span: Span,
     },
+    TupleField {
+        base: Box<Expr>,
+        index: usize,
+        index_span: Span,
+    },
     Index {
         base: Box<Expr>,
         index: Box<Expr>,
@@ -219,6 +294,12 @@ pub enum ExprKind {
     },
     Block(Block),
     List(Vec<Expr>),
+    Tuple(Vec<Expr>),
+    Closure {
+        params: Vec<Param>,
+        ret: Option<TypeExpr>,
+        body: Block,
+    },
     Range {
         start: Box<Expr>,
         end: Box<Expr>,
@@ -227,6 +308,7 @@ pub enum ExprKind {
     Paren(Box<Expr>),
     Unit,
     Try(Box<Expr>),
+    Await(Box<Expr>),
     /// Placeholder produced during error recovery. Never reaches type checking
     /// without a diagnostic already being emitted.
     Error,
@@ -276,10 +358,11 @@ pub enum PatternKind {
     Wildcard,
     Bind(String),
     Literal(PatternLiteral),
+    Tuple(Vec<Pattern>),
     Variant {
         name: String,
         name_span: Span,
-        inner: Option<Box<Pattern>>,
+        fields: Vec<Pattern>,
     },
 }
 

@@ -15,6 +15,8 @@ pub struct TypedProgram {
     pub functions: Vec<TypedFn>,
     pub structs: Vec<StructDef>,
     pub enums: Vec<EnumDef>,
+    pub externs: Vec<ExternDef>,
+    pub trait_impls: Vec<TraitImplDef>,
     pub tests: Vec<String>,
     pub main: Option<String>,
 }
@@ -38,10 +40,26 @@ pub struct EnumDef {
 }
 
 #[derive(Clone, Debug)]
+pub struct TraitImplDef {
+    pub trait_name: String,
+    pub ty: Type,
+    /// Method symbols in trait declaration order, for vtable layout.
+    pub methods: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ExternDef {
+    pub name: String,
+    pub symbol: String,
+    pub params: Vec<Type>,
+    pub ret: Type,
+}
+
+#[derive(Clone, Debug)]
 pub struct EnumVariantDef {
     pub name: String,
-    /// `None` for a unit variant; at most one payload value per variant.
-    pub payload: Option<Type>,
+    /// Positional payload types. Empty for a unit variant.
+    pub fields: Vec<Type>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -60,6 +78,8 @@ pub struct LocalInfo {
 pub struct TypedFn {
     pub name: String,
     pub params: Vec<LocalId>,
+    /// Outer locals loaded from the hidden environment pointer at entry.
+    pub captures: Vec<LocalId>,
     pub ret: Type,
     pub body: TBlock,
     pub locals: Vec<LocalInfo>,
@@ -117,6 +137,7 @@ pub enum TStmtKind {
 pub enum LValue {
     Local(LocalId),
     Field(Box<LValue>, usize),
+    TupleField(Box<LValue>, usize),
     Index(Box<LValue>, Box<TExpr>),
 }
 
@@ -155,6 +176,31 @@ pub enum TExprKind {
         name: String,
         args: Vec<TExpr>,
     },
+    /// Reference to a named function or a generated closure function.
+    FunctionRef {
+        name: String,
+    },
+    Closure {
+        name: String,
+        captures: Vec<TExpr>,
+    },
+    FnCall {
+        callee: Box<TExpr>,
+        args: Vec<TExpr>,
+    },
+    /// Box a concrete value and pair it with a vtable.
+    TraitObject {
+        value: Box<TExpr>,
+        trait_name: String,
+        value_ty: Type,
+    },
+    /// Dynamic dispatch through a trait object's vtable.
+    DynCall {
+        receiver: Box<TExpr>,
+        trait_name: String,
+        index: usize,
+        args: Vec<TExpr>,
+    },
     Builtin {
         kind: BuiltinFn,
         args: Vec<TExpr>,
@@ -162,6 +208,13 @@ pub enum TExprKind {
     Method {
         receiver: Box<TExpr>,
         method: BuiltinMethod,
+        args: Vec<TExpr>,
+    },
+    /// Call to a method declared in an `impl` block. `name` is the resolved
+    /// `Type.method` symbol; the receiver is passed as the first argument.
+    UserMethod {
+        receiver: Box<TExpr>,
+        name: String,
         args: Vec<TExpr>,
     },
     ListPush {
@@ -184,7 +237,7 @@ pub enum TExprKind {
     EnumVariant {
         enum_name: String,
         tag: u32,
-        payload: Option<Box<TExpr>>,
+        fields: Vec<TExpr>,
     },
     If {
         cond: Box<TExpr>,
@@ -197,6 +250,23 @@ pub enum TExprKind {
     },
     Block(TBlock),
     List(Vec<TExpr>),
+    MapEmpty,
+    SetEmpty,
+    MapInsert {
+        map: LValue,
+        key: Box<TExpr>,
+        value: Box<TExpr>,
+    },
+    SetInsert {
+        set: LValue,
+        value: Box<TExpr>,
+    },
+    Array(Vec<TExpr>),
+    Tuple(Vec<TExpr>),
+    TupleField {
+        base: Box<TExpr>,
+        index: usize,
+    },
     OptionSome(Box<TExpr>),
     OptionNone,
     ResultOk(Box<TExpr>),
@@ -246,6 +316,15 @@ pub enum BuiltinMethod {
     ListIsEmpty,
     ListGet,
     ListPush,
+    ListToSlice,
+    MapLen,
+    MapGet,
+    MapContainsKey,
+    SetLen,
+    SetContains,
+    ArrayLen,
+    ArrayToSlice,
+    SliceLen,
     StringLen,
     StringIsEmpty,
     StringContains,
@@ -291,9 +370,12 @@ pub enum TPattern {
     None,
     Ok(Option<LocalId>),
     Err(Option<LocalId>),
-    /// User enum variant, identified by declaration tag.
+    /// User enum variant, identified by declaration tag. Each entry binds one
+    /// positional payload field; `None` means the field is ignored.
     Enum {
         tag: u32,
-        payload: Option<LocalId>,
+        bindings: Vec<Option<LocalId>>,
     },
+    /// Tuple pattern. Each entry binds one positional element.
+    Tuple(Vec<Option<LocalId>>),
 }
