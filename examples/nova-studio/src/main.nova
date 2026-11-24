@@ -3193,7 +3193,7 @@ fn main() {
     app.nodes = build_nodes(app.root, 0, app.expanded)
     if capture.len() > 0 && app.nodes.len() > 0 {
         let first_dir = app.nodes[0].is_dir
-        println("studio: " + "${app.nodes.len()}" + " rows, first is dir=" + "${first_dir}")
+        println("studio: " + "${app.nodes.len()}" + " rows, first is dir=" + "${first_dir}" + ", plugins=" + "${app.plugins.len()}")
     }
     if start_file.len() > 0 {
         app = open_file(app, start_file)
