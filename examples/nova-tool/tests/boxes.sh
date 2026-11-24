@@ -88,10 +88,11 @@ with tarfile.open(fileobj=buf, mode="w") as tar:
     info.size = len(payload)
     tar.addfile(info, io.BytesIO(payload))
 with open(root + "/evil.box", "wb") as f:
-    f.write(gzip.compress(buf.getvalue()))
+    f.write(gzip.compress(buf.getvalue(), compresslevel=0))
 PY
-        ( cd "$tmp/archive/app" && NOVA_TOOL_BIN="$tool" "$nova" box unpack "$tmp/evil.box" "$tmp/archive/evil-out" ) >/dev/null 2>&1
-        if [ $? -ne 0 ] && [ ! -f "$tmp/escaped.txt" ] && [ ! -f "$tmp/archive/escaped.txt" ]; then ok; else no "unpack rejects traversal"; fi
+        ( cd "$tmp/archive/app" && NOVA_TOOL_BIN="$tool" "$nova" box unpack "$tmp/evil.box" "$tmp/archive/evil-out" ) > "$tmp/evil.log" 2>&1
+        status=$?
+        if [ $status -ne 0 ] && grep -q "unsafe archive path" "$tmp/evil.log" && [ ! -f "$tmp/escaped.txt" ] && [ ! -f "$tmp/archive/escaped.txt" ]; then ok; else no "unpack rejects traversal"; fi
     fi
 fi
 
