@@ -60,6 +60,8 @@ The bundle is unsigned. A locally built app is not quarantined, but copying it t
 - **Editor.** Line numbers, current-line highlight, indent guides, bracket-pair matching under the caret, a gutter marker on declarations, the enclosing `fn` marked along the left edge and named in the breadcrumb, and a minimap down the right edge. Syntax highlighting follows Dark+ scopes: block and line comments, strings with escapes, numbers, declarations, control flow, types and function names.
 - **Selection and clipboard.** Drag to select, `⇧`-click to extend, `⌘A` selects all, and `⌘C` / `⌘X` / `⌘V` go through the system clipboard. Typing or `Delete` replaces the selection.
 - **Find and replace.** `⌘F` opens an in-editor bar: type to highlight every match, `Enter`/`⇧Enter` to step, `Tab` to the replace field, `⌘Enter` to replace all.
+- **Multi-cursor.** `⌘D` drops another caret on the next occurrence of the word under the caret (or of the selection); typing and `Backspace` apply at every caret and each caret is drawn in place. `Esc` or a click returns to one caret.
+- **Terminal panel.** Build and Check no longer block: the command runs on a host thread and its output streams into a TERMINAL tab in the bottom panel while the window stays responsive.
 - **Folding.** Declaration lines (`fn`, `struct`, `impl`, `enum`) get a gutter marker; click it to collapse the block, which shows `⋯ n lines`, and click the `+` to reopen.
 - **Vim mode.** On by default and toggled from Settings or the palette. NORMAL, INSERT and VISUAL, with `h j k l`, `w b e`, `0 $`, `gg G`, `x`, `dd`, `yy`, `p`, `u`, `i a I A o O`, `v`. The status bar shows the mode and NORMAL draws a block caret.
 - **Zoom and effects.** `⌘+`/`⌘-`/`⌘0` resize the editor; typing throws a short-lived spark trail at the caret.
@@ -78,7 +80,7 @@ The bundle is unsigned. A locally built app is not quarantined, but copying it t
 These are gaps, not hidden behaviour:
 
 - **No language server.** There is no completions, hover, go-to-definition or inline diagnostics; the Problems panel is intentionally empty. The Rust LSP is a separate process that speaks JSON-RPC over stdio, and the host has no asynchronous channel.
-- **No integrated terminal.** Run launches Terminal instead of embedding a PTY.
+- **No interactive terminal.** The terminal panel streams a command’s output; it does not allocate a PTY, so you cannot type into it. Run still launches Terminal for TUI programs.
 - **No AI panel.** No Copilot, no FreeBuff chat, no diff review. The host cannot stream a network response.
 - **No search across files.** Quick open and the palette exist; workspace search does not.
 - **No multi-cursor.** Selection, clipboard, find/replace and folding exist; multiple simultaneous carets do not.
@@ -98,6 +100,7 @@ These are gaps, not hidden behaviour:
 | Find / replace | `⌘F` |
 | Copy / cut / paste | `⌘C` / `⌘X` / `⌘V` |
 | Select all | `⌘A` |
+| Select next occurrence | `⌘D` |
 | Fold or unfold a block | click the gutter marker |
 | Build / Check | `⌘B` / `⇧⌘B` |
 | Build and run in Terminal | `⌘R` |
@@ -117,8 +120,7 @@ Overlays close with `Esc`; `↑`/`↓` move the selection and `Enter` commits it
 - The workbench was driven with `NOVA_STUDIO_SHOT` and the resulting frames were inspected: chrome, explorer, welcome screen, an open Nova file with highlighting, and the Output panel after a real `check` task.
 - The process and file helpers behind Build were checked directly: a command's exit code and output cross back to Nova, and a write/read round-trip preserves content.
 
-There is **no automated UI event test**. Key and mouse handling was exercised by hand, not by a harness that injects events, so treat interaction coverage as manual. That is the same honesty standard the Electron page applies to its own untested effects layer.
-
+`tests/studio-ui.sh` drives the workbench with synthetic clicks, drags and keystrokes: it writes a script of events, the app feeds each one through the same `click`/`drag`/`key` handlers the window uses, and the script asserts on the resulting model (selection text, clipboard contents, find match count, fold count, visible row count, caret count, line contents and streamed terminal output). It runs five cases and prints `passed n, failed 0`. What it does not cover is AppKit's own event delivery — real mouse and keyboard capture is still exercised by hand.
 ## Next
 
 - [nova-gui library guide](../../libraries/gui/)

@@ -76,6 +76,10 @@ extern "C" fn nova_fs_list(path: String) -> String
 extern "C" fn nova_gui_panel(mode: Int) -> String
 extern "C" fn nova_gui_clipboard_get() -> String
 extern "C" fn nova_gui_clipboard_set(text: String)
+extern "C" fn nova_term_start(command: String, cwd: String) -> Int
+extern "C" fn nova_term_poll() -> String
+extern "C" fn nova_term_running() -> Int
+extern "C" fn nova_term_clear()
 extern "C" fn nova_fs_cwd() -> String
 extern "C" fn nova_env(name: String) -> String
 extern "C" fn nova_process_run(command: String, cwd: String) -> String
@@ -498,6 +502,26 @@ fn clipboard() -> String {
 
 fn set_clipboard(text: String) {
     nova_gui_clipboard_set(text)
+}
+
+// ---------- streaming terminal ----------
+
+// Starts a shell command and returns immediately; output arrives via term_poll.
+fn term_start(command: String, directory: String) -> Bool {
+    return nova_term_start(command, directory) == 1
+}
+
+// Bytes produced since the previous call, as UTF-8 text.
+fn term_poll() -> String {
+    return nova_term_poll()
+}
+
+fn term_running() -> Bool {
+    return nova_term_running() == 1
+}
+
+fn term_clear() {
+    nova_term_clear()
 }
 
 fn env(name: String) -> String {

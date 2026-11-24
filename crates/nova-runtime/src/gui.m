@@ -18,6 +18,7 @@
 #import <Cocoa/Cocoa.h>
 #import <CoreText/CoreText.h>
 #import <ImageIO/ImageIO.h>
+#include <pthread.h>
 #import <QuartzCore/QuartzCore.h>
 
 #include <math.h>
@@ -1180,6 +1181,142 @@ nova_str nova_fs_cwd(void) {
 /* Native open panel: mode 0 picks a file, mode 1 picks a folder. The panel
  * runs its own modal loop, which is safe here because the app's loop is the
  * main thread and nothing holds state across the call. */
+/* ------------------------------------------------------------------ */
+/* Streaming terminal                                                 */
+/* ------------------------------------------------------------------ */
+
+/* A command runs on a detached thread that appends to a shared buffer; the
+ * Nova side polls, so the window keeps painting while the command runs. A
+ * locked buffer is the whole synchronisation: one producer, one consumer. */
+static pthread_mutex_t nova_term_lock = PTHREAD_MUTEX_INITIALIZER;
+static char *nova_term_buffer = NULL;
+static size_t nova_term_length = 0;
+static size_t nova_term_capacity = 0;
+static size_t nova_term_seen = 0;
+static int nova_term_active = 0;
+
+static void nova_term_append(const char *data, size_t len) {
+    pthread_mutex_lock(&nova_term_lock);
+    if (nova_term_length + len + 1 > nova_term_capacity) {
+        size_t cap = nova_term_capacity ? nova_term_capacity : 8192;
+        while (cap < nova_term_length + len + 1) cap *= 2;
+        char *grown = (char *)realloc(nova_term_buffer, cap);
+        if (grown) {
+            nova_term_buffer = grown;
+            nova_term_capacity = cap;
+        }
+    }
+    if (nova_term_buffer && nova_term_capacity >= nova_term_length + len + 1) {
+        memcpy(nova_term_buffer + nova_term_length, data, len);
+        nova_term_length += len;
+        nova_term_buffer[nova_term_length] = '\0';
+    }
+    pthread_mutex_unlock(&nova_term_lock);
+}
+
+struct nova_term_job {
+    FILE *pipe;
+};
+
+static void *nova_term_worker(void *arg) {
+    struct nova_term_job *job = (struct nova_term_job *)arg;
+    char chunk[4096];
+    size_t got;
+    while ((got = fread(chunk, 1, sizeof(chunk), job->pipe)) > 0) {
+        nova_term_append(chunk, got);
+    }
+    pclose(job->pipe);
+    free(job);
+    pthread_mutex_lock(&nova_term_lock);
+    nova_term_active = 0;
+    pthread_mutex_unlock(&nova_term_lock);
+    return NULL;
+}
+
+int64_t nova_term_start(nova_str command, nova_str cwd) {
+    if (nova_term_active) return 0;
+    char *cmd = nova_gui_cstr(command);
+    char *dir = nova_gui_cstr(cwd);
+    if (!cmd || !dir) {
+        free(cmd);
+        free(dir);
+        return 0;
+    }
+    size_t size = strlen(cmd) + strlen(dir) + 32;
+    char *full = (char *)malloc(size);
+    if (!full) {
+        free(cmd);
+        free(dir);
+        return 0;
+    }
+    snprintf(full, size, "cd '%s' && %s 2>&1", dir, cmd);
+    free(cmd);
+    free(dir);
+    FILE *pipe = popen(full, "r");
+    free(full);
+    if (!pipe) return 0;
+    pthread_mutex_lock(&nova_term_lock);
+    nova_term_length = 0;
+    nova_term_seen = 0;
+    if (nova_term_buffer) nova_term_buffer[0] = '\0';
+    nova_term_active = 1;
+    pthread_mutex_unlock(&nova_term_lock);
+    struct nova_term_job *job = (struct nova_term_job *)malloc(sizeof(struct nova_term_job));
+    if (!job) {
+        pclose(pipe);
+        nova_term_active = 0;
+        return 0;
+    }
+    job->pipe = pipe;
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, nova_term_worker, job) != 0) {
+        pclose(pipe);
+        free(job);
+        pthread_mutex_lock(&nova_term_lock);
+        nova_term_active = 0;
+        pthread_mutex_unlock(&nova_term_lock);
+        return 0;
+    }
+    pthread_detach(thread);
+    return 1;
+}
+
+/* Returns only the bytes produced since the last poll. */
+nova_str nova_term_poll(void) {
+    pthread_mutex_lock(&nova_term_lock);
+    size_t from = nova_term_seen;
+    size_t to = nova_term_length;
+    char *copy = NULL;
+    size_t len = 0;
+    if (to > from && nova_term_buffer) {
+        len = to - from;
+        copy = (char *)malloc(len + 1);
+        if (copy) {
+            memcpy(copy, nova_term_buffer + from, len);
+            copy[len] = '\0';
+            nova_term_seen = to;
+        } else {
+            len = 0;
+        }
+    }
+    pthread_mutex_unlock(&nova_term_lock);
+    if (!copy) return nova_gui_empty();
+    nova_str result = {copy, (int64_t)len};
+    return result;
+}
+
+int64_t nova_term_running(void) {
+    return nova_term_active;
+}
+
+void nova_term_clear(void) {
+    pthread_mutex_lock(&nova_term_lock);
+    nova_term_length = 0;
+    nova_term_seen = 0;
+    if (nova_term_buffer) nova_term_buffer[0] = '\0';
+    pthread_mutex_unlock(&nova_term_lock);
+}
+
 /* Clipboard access for the editor: ⌘C, ⌘X and ⌘V go through NSPasteboard. */
 nova_str nova_gui_clipboard_get(void) {
     @autoreleasepool {

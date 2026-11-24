@@ -583,6 +583,9 @@ struct App {
     field2: String,
     field2_cursor: Int,
     focus: Int,
+    cursors: List<Int>,
+    term: String,
+    task_running: Bool,
 }
 
 // ---------- workspace ----------
@@ -843,6 +846,9 @@ fn edit_insert(app: App, value: String) -> App {
     }
     app = clear_selection(app)
     app = snapshot(app)
+    if app.cursors.len() > 0 {
+        return insert_at_carets(app, value)
+    }
     var tab = app.tabs[app.active]
     let chars = tab.lines[tab.cursor_line].graphemes()
     let col = gui.clamp(tab.cursor_col, 0, chars.len())
@@ -886,6 +892,9 @@ fn edit_backspace(app: App) -> App {
         return clear_selection(app)
     }
     app = snapshot(app)
+    if app.cursors.len() > 0 {
+        return backspace_at_carets(app)
+    }
     var tab = app.tabs[app.active]
     if tab.cursor_col > 0 {
         let chars = tab.lines[tab.cursor_line].graphemes()
@@ -1042,25 +1051,17 @@ fn with_trailing_newline(text: String) -> String {
 
 fn run_task(app: App, kind: String) -> App {
     var app = app
-    let nova = nova_binary()
-    let command = nova + " " + kind
-    // Show the work before blocking on the compiler: the host runs tasks
-    // synchronously, so the window cannot repaint until the task returns.
-    app.status = kind + " running…"
-    app.bottom = "output"
+    let command = nova_binary() + " " + kind + " 2>&1"
+    gui.term_clear()
+    app.bottom = "terminal"
     app.panel = true
-    gui.begin()
-    draw(app)
-    gui.present()
-    let output = gui.run(command, app.root)
-    let status = gui.exit_status()
-    var text = "$ " + command + "\n"
-    text = text + with_trailing_newline(output)
-    text = text + "\nexit " + "${status}"
-    app.output = text
-    app.bottom = "output"
-    app.panel = true
-    app.status = kind + " exited " + "${status}"
+    app.term = "$ " + command + "\n"
+    if gui.term_start(command, app.root) {
+        app.task_running = true
+        app.status = kind + " running…"
+    } else {
+        app.status = "Could not start " + kind
+    }
     return app
 }
 
@@ -1118,6 +1119,8 @@ fn commands() -> List<Command> {
     list.push(Command { id: "openfolder", label: "File: Open Folder…", hint: "⇧⌘O" })
     list.push(Command { id: "vim", label: "Toggle Vim mode", hint: "" })
     list.push(Command { id: "minimap", label: "Toggle minimap", hint: "" })
+    list.push(Command { id: "terminal", label: "Toggle terminal", hint: "" })
+    list.push(Command { id: "addcursor", label: "Select next occurrence", hint: "⌘D" })
     list.push(Command { id: "about", label: "About Nova Studio", hint: "" })
     list.push(Command { id: "quit", label: "Quit", hint: "⌘Q" })
     return list
@@ -1276,6 +1279,14 @@ fn run_command(app: App, id: String) -> App {
         }
         next.status = "No such plugin: " + key
         return next
+    }
+    if id == "terminal" {
+        next.panel = true
+        next.bottom = "terminal"
+        return next
+    }
+    if id == "addcursor" {
+        return add_cursor(next)
     }
     if id == "quit" {
         next.quit = true
@@ -2002,6 +2013,20 @@ fn draw_editor(app: App, x: Int, y: Int, w: Int, h: Int) {
         }
         draw_sparks(app, caret_x + 2, caret_y)
     }
+    var e = 0
+    while e + 1 < app.cursors.len() {
+        let extra_line = app.cursors[e]
+        let extra_col = app.cursors[e + 1]
+        let extra_row = row_of(rows, extra_line)
+        if extra_row >= tab.scroll && extra_row < tab.scroll + rows_visible {
+            let extra_chars = tab.lines[extra_line].graphemes()
+            let extra_prefix = slice_chars(extra_chars, 0, gui.clamp(extra_col, 0, extra_chars.len()))
+            let extra_x = x + gutter_width() + gui.mono_width(extra_prefix, size)
+            let extra_y = y + (extra_row - tab.scroll) * lh + 3
+            gui.rect(extra_x, extra_y, 2, size + 3, theme.fg_bright)
+        }
+        e = e + 2
+    }
     gui.clip_reset()
     draw_minimap(app, x + text_w, y, minimap, h)
 }
@@ -2060,10 +2085,10 @@ fn draw_panel(app: App, x: Int, y: Int, w: Int, h: Int) {
     gui.rect(x, y, w, 35, theme.panel)
 
     var tx = x + 12
-    let labels: List<String> = ["PROBLEMS", "OUTPUT", "DOCS"]
-    let ids: List<String> = ["problems", "output", "docs"]
+    let labels: List<String> = ["PROBLEMS", "OUTPUT", "TERMINAL", "DOCS"]
+    let ids: List<String> = ["problems", "output", "terminal", "docs"]
     var i = 0
-    while i < 3 {
+    while i < 4 {
         var color = gui.rgb(150, 150, 150)
         if app.bottom == ids[i] {
             color = theme.fg_bright
@@ -2097,6 +2122,22 @@ fn draw_panel(app: App, x: Int, y: Int, w: Int, h: Int) {
         gui.text(x + 12, body_y + 10, "No problems detected.", 12, theme.muted)
         gui.text(x + 12, body_y + 30, "The Nova build runs the compiler as a task and reports its output verbatim;", 11, theme.faint)
         gui.text(x + 12, body_y + 46, "it does not host a language server, so there are no inline diagnostics yet.", 11, theme.faint)
+    }
+    if app.bottom == "terminal" {
+        let lines = split_lines(app.term)
+        let capacity = body_h / 16 - 1
+        var start = 0
+        if lines.len() > capacity && capacity > 0 {
+            start = lines.len() - capacity
+        }
+        var row = start
+        while row < lines.len() {
+            gui.mono(x + 12, body_y + 8 + (row - start) * 16, lines[row], 12, theme.fg)
+            row = row + 1
+        }
+        if app.term.len() == 0 {
+            gui.text(x + 12, body_y + 10, "Terminal: Build (⌘B) streams its output here.", 12, theme.muted)
+        }
     }
     if app.bottom == "docs" {
         let lines = docs_lines()
@@ -3194,6 +3235,428 @@ fn row_of(rows: List<Int>, line: Int) -> Int {
     return -1
 }
 
+// ---------- multi-cursor ----------
+
+fn word_bounds(line: String, col: Int) -> List<Int> {
+    let chars = line.graphemes()
+    var start = gui.clamp(col, 0, chars.len())
+    var end = start
+    while start > 0 && is_ident_part(chars[start - 1]) {
+        start = start - 1
+    }
+    while end < chars.len() && is_ident_part(chars[end]) {
+        end = end + 1
+    }
+    var out: List<Int> = []
+    out.push(start)
+    out.push(end)
+    return out
+}
+
+// ⌘D: put another caret on the next occurrence of the word under the caret.
+fn add_cursor(app: App) -> App {
+    var app = app
+    if app.active < 0 || app.tabs.len() == 0 {
+        return app
+    }
+    let tab = app.tabs[app.active]
+    var needle = ""
+    let span = selection_span(tab)
+    if !span.empty {
+        needle = selected_text(tab)
+    }
+    if needle.len() == 0 {
+        let bounds = word_bounds(tab.lines[tab.cursor_line], tab.cursor_col)
+        needle = slice_chars(tab.lines[tab.cursor_line].graphemes(), bounds[0], bounds[1])
+    }
+    if needle.len() == 0 {
+        app.status = "Nothing to select"
+        return app
+    }
+    var from_line = tab.cursor_line
+    var from_col = tab.cursor_col
+    var c = 0
+    while c + 1 < app.cursors.len() {
+        if app.cursors[c] > from_line || (app.cursors[c] == from_line && app.cursors[c + 1] > from_col) {
+            from_line = app.cursors[c]
+            from_col = app.cursors[c + 1]
+        }
+        c = c + 2
+    }
+    var line = from_line
+    var col = from_col + needle.graphemes().len()
+    var found_line = -1
+    var found_col = -1
+    var scanned = 0
+    while scanned <= tab.lines.len() {
+        if line >= tab.lines.len() {
+            line = 0
+            col = 0
+        }
+        let at = find_in_line(tab.lines[line], needle, col)
+        if at >= 0 {
+            found_line = line
+            found_col = at
+            scanned = tab.lines.len() + 1
+        } else {
+            line = line + 1
+            col = 0
+            scanned = scanned + 1
+        }
+    }
+    if found_line < 0 {
+        app.status = "No more matches"
+        return app
+    }
+    var cursors = app.cursors
+    cursors.push(found_line)
+    cursors.push(found_col)
+    app.cursors = cursors
+    app.status = "${cursors.len() / 2 + 1} cursors"
+    return app
+}
+
+// Inserts at the primary caret and every extra caret, right to left.
+fn insert_at_carets(app: App, value: String) -> App {
+    var app = app
+    var tab = app.tabs[app.active]
+    let added = value.graphemes().len()
+    var pts: List<Int> = []
+    pts.push(tab.cursor_line)
+    pts.push(gui.clamp(tab.cursor_col, 0, tab.lines[tab.cursor_line].graphemes().len()))
+    var c = 0
+    while c + 1 < app.cursors.len() {
+        let l = app.cursors[c]
+        pts.push(l)
+        pts.push(gui.clamp(app.cursors[c + 1], 0, tab.lines[l].graphemes().len()))
+        c = c + 2
+    }
+    let n = pts.len() / 2
+    var i = 0
+    while i < n {
+        var j = 0
+        while j + 1 < n - i {
+            let l0 = pts[j * 2]
+            let c0 = pts[j * 2 + 1]
+            let l1 = pts[(j + 1) * 2]
+            let c1 = pts[(j + 1) * 2 + 1]
+            if l0 < l1 || (l0 == l1 && c0 < c1) {
+                pts[j * 2] = l1
+                pts[j * 2 + 1] = c1
+                pts[(j + 1) * 2] = l0
+                pts[(j + 1) * 2 + 1] = c0
+            }
+            j = j + 1
+        }
+        i = i + 1
+    }
+    var lines = tab.lines
+    var k = 0
+    while k + 1 < pts.len() {
+        let line = pts[k]
+        let chars = lines[line].graphemes()
+        let at = gui.clamp(pts[k + 1], 0, chars.len())
+        lines = replace_line(lines, line, slice_chars(chars, 0, at) + value + slice_chars(chars, at, chars.len()))
+        k = k + 2
+    }
+    tab.lines = lines
+    tab.cursor_col = tab.cursor_col + added
+    var extras: List<Int> = []
+    var m = 0
+    while m + 1 < app.cursors.len() {
+        extras.push(app.cursors[m])
+        extras.push(app.cursors[m + 1] + added)
+        m = m + 2
+    }
+    app.cursors = extras
+    tab.dirty = true
+    app.tabs[app.active] = tab
+    app.status = ""
+    return app
+}
+
+// Backspace at the primary caret and every extra caret.
+fn backspace_at_carets(app: App) -> App {
+    var app = app
+    var tab = app.tabs[app.active]
+    var pts: List<Int> = []
+    pts.push(tab.cursor_line)
+    pts.push(tab.cursor_col)
+    var c = 0
+    while c + 1 < app.cursors.len() {
+        pts.push(app.cursors[c])
+        pts.push(app.cursors[c + 1])
+        c = c + 2
+    }
+    let n = pts.len() / 2
+    var i = 0
+    while i < n {
+        var j = 0
+        while j + 1 < n - i {
+            let l0 = pts[j * 2]
+            let c0 = pts[j * 2 + 1]
+            let l1 = pts[(j + 1) * 2]
+            let c1 = pts[(j + 1) * 2 + 1]
+            if l0 < l1 || (l0 == l1 && c0 < c1) {
+                pts[j * 2] = l1
+                pts[j * 2 + 1] = c1
+                pts[(j + 1) * 2] = l0
+                pts[(j + 1) * 2 + 1] = c0
+            }
+            j = j + 1
+        }
+        i = i + 1
+    }
+    var lines = tab.lines
+    var k = 0
+    while k + 1 < pts.len() {
+        let line = pts[k]
+        let chars = lines[line].graphemes()
+        let at = gui.clamp(pts[k + 1], 0, chars.len())
+        if at > 0 {
+            lines = replace_line(lines, line, slice_chars(chars, 0, at - 1) + slice_chars(chars, at, chars.len()))
+        }
+        k = k + 2
+    }
+    tab.lines = lines
+    if tab.cursor_col > 0 {
+        tab.cursor_col = tab.cursor_col - 1
+    }
+    var extras: List<Int> = []
+    var m = 0
+    while m + 1 < app.cursors.len() {
+        extras.push(app.cursors[m])
+        var ecol = app.cursors[m + 1]
+        if ecol > 0 {
+            ecol = ecol - 1
+        }
+        extras.push(ecol)
+        m = m + 2
+    }
+    app.cursors = extras
+    tab.dirty = true
+    app.tabs[app.active] = tab
+    return app
+}
+
+// ---------- scripted UI test ----------
+
+// Reverse of code_to_text: the key code that produces a printable character.
+fn char_code(ch: String) -> Int {
+    let chars = printable().graphemes()
+    var i = 0
+    while i < chars.len() {
+        if chars[i] == ch {
+            return 32 + i
+        }
+        i = i + 1
+    }
+    return 0
+}
+
+fn digit_value(ch: String) -> Int {
+    let digits = "0123456789".graphemes()
+    var i = 0
+    while i < digits.len() {
+        if digits[i] == ch {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+fn str_to_int(word: String) -> Int {
+    var value = 0
+    var sign = 1
+    let chars = word.graphemes()
+    var i = 0
+    while i < chars.len() {
+        if chars[i] == "-" && i == 0 {
+            sign = 0 - 1
+        } else {
+            let d = digit_value(chars[i])
+            if d >= 0 {
+                value = value * 10 + d
+            }
+        }
+        i = i + 1
+    }
+    return value * sign
+}
+
+fn script_words(line: String) -> List<String> {
+    var out: List<String> = []
+    let chars = line.graphemes()
+    var current = ""
+    var i = 0
+    while i < chars.len() {
+        if chars[i] == " " {
+            if current.len() > 0 {
+                out.push(current)
+                current = ""
+            }
+        } else {
+            current = current + chars[i]
+        }
+        i = i + 1
+    }
+    if current.len() > 0 {
+        out.push(current)
+    }
+    return out
+}
+
+fn report(ok: Bool, name: String) {
+    if ok {
+        println("PASS " + name)
+    } else {
+        println("FAIL " + name)
+    }
+}
+
+fn poll_term(app: App) -> App {
+    var app = app
+    let chunk = gui.term_poll()
+    if chunk.len() > 0 {
+        app.term = app.term + chunk
+    }
+    if !gui.term_running() {
+        app.task_running = false
+    }
+    return app
+}
+
+// Runs a script of synthetic events against the same handlers the window uses,
+// so selection, find and folding are exercised without a human at the keyboard.
+fn run_script(app: App, path: String) -> App {
+    var app = app
+    for entry in split_lines(gui.read(path)) {
+        let trimmed = entry.trim()
+        if trimmed.len() > 0 && !trimmed.starts_with("#") {
+            let words = script_words(trimmed)
+            let cmd = words[0]
+            if cmd == "click" && words.len() >= 3 {
+                app = click(app, str_to_int(words[1]), str_to_int(words[2]), 0)
+            }
+            if cmd == "clickmod" && words.len() >= 4 {
+                app = click(app, str_to_int(words[1]), str_to_int(words[2]), str_to_int(words[3]))
+            }
+            if cmd == "drag" && words.len() >= 3 {
+                app = drag(app, str_to_int(words[1]), str_to_int(words[2]))
+            }
+            if cmd == "key" && words.len() >= 2 {
+                app = key(app, str_to_int(words[1]), 0)
+            }
+            if cmd == "keymod" && words.len() >= 3 {
+                app = key(app, str_to_int(words[1]), str_to_int(words[2]))
+            }
+            if cmd == "text" && words.len() >= 2 {
+                let chars = words[1].graphemes()
+                var i = 0
+                while i < chars.len() {
+                    app = key(app, char_code(chars[i]), 0)
+                    i = i + 1
+                }
+            }
+            if cmd == "fold" && words.len() >= 2 {
+                app = toggle_fold(app, str_to_int(words[1]))
+            }
+            if cmd == "shot" && words.len() >= 2 {
+                gui.begin()
+                draw(app)
+                gui.present()
+                gui.save_png(words[1])
+            }
+            if cmd == "wait" && words.len() >= 2 {
+                var ms = str_to_int(words[1])
+                while ms > 0 {
+                    gui.pump()
+                    gui.sleep(10)
+                    if app.task_running {
+                        app = poll_term(app)
+                    }
+                    ms = ms - 10
+                }
+            }
+            if cmd == "build_now" {
+                app = run_task(app, "build")
+            }
+            if cmd == "assert_cursor" && words.len() >= 3 {
+                var ok = false
+                if app.active >= 0 && app.tabs.len() > 0 {
+                    let tab = app.tabs[app.active]
+                    ok = tab.cursor_line == str_to_int(words[1]) && tab.cursor_col == str_to_int(words[2])
+                }
+                report(ok, trimmed)
+            }
+            if cmd == "assert_selection_has" && words.len() >= 2 {
+                var ok = false
+                if app.active >= 0 && app.tabs.len() > 0 {
+                    ok = selected_text(app.tabs[app.active]).contains(words[1])
+                }
+                report(ok, trimmed)
+            }
+            if cmd == "assert_find" && words.len() >= 2 {
+                var count = 0
+                if app.active >= 0 && app.tabs.len() > 0 {
+                    count = all_matches(app.tabs[app.active], app.field).len() / 2
+                }
+                report(count == str_to_int(words[1]), trimmed)
+            }
+            if cmd == "assert_fold" && words.len() >= 2 {
+                var count = 0
+                if app.active >= 0 && app.tabs.len() > 0 {
+                    count = app.tabs[app.active].folds.len()
+                }
+                report(count == str_to_int(words[1]), trimmed)
+            }
+            if cmd == "assert_rows" && words.len() >= 2 {
+                var count = 0
+                if app.active >= 0 && app.tabs.len() > 0 {
+                    count = visible_rows(app.tabs[app.active]).len()
+                }
+                report(count == str_to_int(words[1]), trimmed)
+            }
+            if cmd == "assert_clipboard_has" && words.len() >= 2 {
+                report(gui.clipboard().contains(words[1]), trimmed)
+            }
+            if cmd == "assert_term_has" && words.len() >= 2 {
+                report(app.term.contains(words[1]), trimmed)
+            }
+            if cmd == "assert_rows_min" && words.len() >= 2 {
+                var count = 0
+                if app.active >= 0 && app.tabs.len() > 0 {
+                    count = visible_rows(app.tabs[app.active]).len()
+                }
+                report(count >= str_to_int(words[1]), trimmed)
+            }
+            if cmd == "assert_rows_max" && words.len() >= 2 {
+                var count = 0
+                if app.active >= 0 && app.tabs.len() > 0 {
+                    count = visible_rows(app.tabs[app.active]).len()
+                }
+                report(count <= str_to_int(words[1]), trimmed)
+            }
+            if cmd == "assert_line_has" && words.len() >= 3 {
+                var ok = false
+                if app.active >= 0 && app.tabs.len() > 0 {
+                    let tab = app.tabs[app.active]
+                    let at = str_to_int(words[1])
+                    if at >= 0 && at < tab.lines.len() {
+                        ok = tab.lines[at].contains(words[2])
+                    }
+                }
+                report(ok, trimmed)
+            }
+            if cmd == "assert_cursors" && words.len() >= 2 {
+                report(app.cursors.len() / 2 == str_to_int(words[1]), trimmed)
+            }
+        }
+    }
+    return app
+}
+
 // ---------- input ----------
 
 // Which control the pointer is over, coarsely: two positions with the same key
@@ -3332,6 +3795,9 @@ fn key(app: App, code: Int, mods: Int) -> App {
             app.overlay = "find"
             app.focus = 0
             return app
+        }
+        if code == 100 {
+            return add_cursor(app)
         }
         if code == 99 {
             return copy_selection(app)
@@ -3516,6 +3982,34 @@ fn if_set(flag: Bool, value: Int, other: Int) -> Int {
     return other
 }
 
+fn toggle_fold(app: App, line: Int) -> App {
+    var app = app
+    if app.active < 0 || app.tabs.len() == 0 {
+        return app
+    }
+    var tab = app.tabs[app.active]
+    if line < 0 || line >= tab.lines.len() {
+        return app
+    }
+    var folds = tab.folds
+    if has_int(folds, line) {
+        var kept: List<Int> = []
+        var k = 0
+        while k < folds.len() {
+            if folds[k] != line {
+                kept.push(folds[k])
+            }
+            k = k + 1
+        }
+        folds = kept
+    } else {
+        folds.push(line)
+    }
+    tab.folds = folds
+    app.tabs[app.active] = tab
+    return app
+}
+
 fn drag(app: App, mx: Int, my: Int) -> App {
     var app = app
     if app.overlay.len() > 0 {
@@ -3679,23 +4173,7 @@ fn click(app: App, mx: Int, my: Int, mods: Int) -> App {
             let trimmed = tab.lines[line].trim()
             let is_decl = trimmed.starts_with("fn ") || trimmed.starts_with("struct ") || trimmed.starts_with("impl ") || trimmed.starts_with("enum ")
             if is_decl {
-                var folds = tab.folds
-                if has_int(folds, line) {
-                    var kept: List<Int> = []
-                    var k = 0
-                    while k < folds.len() {
-                        if folds[k] != line {
-                            kept.push(folds[k])
-                        }
-                        k = k + 1
-                    }
-                    folds = kept
-                } else {
-                    folds.push(line)
-                }
-                tab.folds = folds
-                app.tabs[app.active] = tab
-                return app
+                return toggle_fold(app, line)
             }
         }
         var next = app
@@ -3720,10 +4198,10 @@ fn click(app: App, mx: Int, my: Int, mods: Int) -> App {
         let panel_y = h - status_height() - panel_height()
         if my > panel_y && my < panel_y + 35 {
             var tx = left + 12
-            let ids: List<String> = ["problems", "output", "docs"]
-            let labels: List<String> = ["PROBLEMS", "OUTPUT", "DOCS"]
+            let ids: List<String> = ["problems", "output", "terminal", "docs"]
+            let labels: List<String> = ["PROBLEMS", "OUTPUT", "TERMINAL", "DOCS"]
             var i = 0
-            while i < 3 {
+            while i < 4 {
                 let width = gui.text_width(labels[i], 11) + 20
                 if mx >= tx - 10 && mx < tx + width - 10 {
                     app.bottom = ids[i]
@@ -3865,6 +4343,9 @@ fn main() {
         field2: "",
         field2_cursor: 0,
         focus: 0,
+        cursors: [],
+        term: "",
+        task_running: false,
     }
     app.nodes = build_nodes(app.root, 0, app.expanded)
     app.plugins = load_plugins(app.root)
@@ -3878,11 +4359,24 @@ fn main() {
     let start_task = gui.env("NOVA_STUDIO_TASK")
     if start_task.len() > 0 {
         app = run_task(app, start_task)
-        println("studio: task " + start_task + " -> " + app.status)
+        println("studio: task " + start_task + " started")
     }
+    let script = gui.env("NOVA_STUDIO_SCRIPT")
     var running = true
+    if script.len() > 0 {
+        app = run_script(app, script)
+        running = false
+    }
     var dirty = true
     while running {
+        if app.task_running {
+            app = poll_term(app)
+            if !app.task_running {
+                app.term = app.term + "\n[finished]"
+                app.status = "task finished"
+            }
+            dirty = true
+        }
         if dirty {
             gui.begin()
             draw(app)
