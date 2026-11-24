@@ -506,7 +506,10 @@ static void nova_gui_build_context(void) {
     if (nova_w <= 0 || nova_h <= 0) return;
     size_t pixels_w = (size_t)(nova_w * nova_scale);
     size_t pixels_h = (size_t)(nova_h * nova_scale);
-    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+    /* sRGB, not DeviceRGB. DeviceRGB is Generic RGB with a 1.8 gamma, so
+     * compositing it into an sRGB window lifts every midtone: #1e1e1e arrives
+     * as roughly #2c2c2c and the whole UI reads as washed out. */
+    CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
     nova_ctx = CGBitmapContextCreate(NULL, pixels_w, pixels_h, 8, 0, space,
                                      kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
     CGColorSpaceRelease(space);
@@ -539,7 +542,7 @@ static CGColorRef nova_gui_color(int64_t rgb) {
         (CGFloat)(rgb & 0xFF) / 255.0,
         1.0,
     };
-    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+    CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
     CGColorRef color = CGColorCreate(space, components);
     CGColorSpaceRelease(space);
     return color;
@@ -584,6 +587,55 @@ static CTLineRef nova_gui_make_line(nova_str text, int64_t size, int64_t mono) {
     return line;
 }
 
+#include <stdint.h>
+#include <string.h>
+
+/* An immediate-mode loop redraws the same strings many times a second, and
+ * building a CTLine (attribute dictionary, font lookup, shaping) costs far more
+ * than drawing it. These are the most recently used lines, keyed by content. */
+#define NOVA_LINE_CACHE 512
+
+typedef struct {
+    uint64_t hash;
+    char *bytes;
+    int64_t len;
+    int64_t size;
+    int64_t mono;
+    CTLineRef line;
+} NovaLineEntry;
+
+static NovaLineEntry nova_lines[NOVA_LINE_CACHE];
+
+static CTLineRef nova_gui_cached_line(nova_str text, int64_t size, int64_t mono) {
+    if (!text.ptr || text.len <= 0 || text.len > 2048) return NULL;
+    uint64_t hash = 1469598103934665603ULL;
+    int64_t i = 0;
+    while (i < text.len) {
+        hash = (hash ^ (uint64_t)(unsigned char)text.ptr[i]) * 1099511628211ULL;
+        i = i + 1;
+    }
+    hash = hash * 1099511628211ULL ^ (uint64_t)size;
+    hash = hash * 1099511628211ULL ^ (uint64_t)mono;
+    NovaLineEntry *entry = &nova_lines[hash % NOVA_LINE_CACHE];
+    if (entry->line && entry->hash == hash && entry->size == size && entry->mono == mono &&
+        entry->len == text.len && entry->bytes &&
+        memcmp(entry->bytes, text.ptr, (size_t)text.len) == 0) {
+        return (CTLineRef)CFRetain(entry->line);
+    }
+    CTLineRef line = nova_gui_make_line(text, size, mono);
+    if (!line) return NULL;
+    if (entry->line) CFRelease(entry->line);
+    free(entry->bytes);
+    entry->bytes = (char *)malloc((size_t)text.len);
+    if (entry->bytes) memcpy(entry->bytes, text.ptr, (size_t)text.len);
+    entry->len = entry->bytes ? text.len : 0;
+    entry->size = size;
+    entry->mono = mono;
+    entry->hash = hash;
+    entry->line = line;                /* the cache owns this reference */
+    return (CTLineRef)CFRetain(line);  /* the caller owns its own */
+}
+
 /* ------------------------------------------------------------------ */
 /* Public API                                                         */
 /* ------------------------------------------------------------------ */
@@ -615,6 +667,12 @@ int64_t nova_gui_open(nova_str title, int64_t width, int64_t height) {
         nova_window.titlebarAppearsTransparent = YES;
         nova_window.titleVisibility = NSWindowTitleHidden;
         nova_window.backgroundColor = [NSColor colorWithCalibratedRed:0.094 green:0.094 blue:0.094 alpha:1.0];
+        /* Frame for the framebuffer image: sRGB, so 0x1e1e1e stays 0x1e1e1e. */
+        nova_window.colorSpace = [NSColorSpace sRGBColorSpace];
+        /* Opaque, fully opaque content: a window that composites with alpha
+         * picks up whatever is behind it and reads as washed out. */
+        nova_window.opaque = YES;
+        nova_window.alphaValue = 1.0;
         nova_window.minSize = NSMakeSize(720, 480);
 
         nova_view = [[NovaGuiView alloc] initWithFrame:frame];
@@ -696,7 +754,7 @@ void nova_gui_rect_alpha(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb
         (CGFloat)(rgb & 0xFF) / 255.0,
         a,
     };
-    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+    CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
     CGColorRef color = CGColorCreate(space, components);
     CGColorSpaceRelease(space);
     CGContextSetFillColorWithColor(nova_ctx, color);
@@ -749,11 +807,14 @@ void nova_gui_line(int64_t x0, int64_t y0, int64_t x1, int64_t y1, int64_t rgb) 
 
 void nova_gui_text(int64_t x, int64_t y, nova_str text, int64_t size, int64_t rgb, int64_t mono) {
     if (!nova_ctx) return;
-    CTLineRef line = nova_gui_make_line(text, size, mono);
+    CTLineRef line = nova_gui_cached_line(text, size, mono);
     if (!line) return;
     CTFontRef font = nova_gui_font(size, mono);
     CGColorRef color = nova_gui_color(rgb);
     CGContextSetFillColorWithColor(nova_ctx, color);
+    /* Subpixel/light smoothing blurs light glyphs on a dark background.
+     * Grayscale antialiasing keeps small text crisp instead of milky. */
+    CGContextSetShouldSmoothFonts(nova_ctx, false);
     CGContextSetTextPosition(nova_ctx, (CGFloat)x, (CGFloat)y + CTFontGetAscent(font));
     CTLineDraw(line, nova_ctx);
     CGColorRelease(color);
@@ -761,7 +822,7 @@ void nova_gui_text(int64_t x, int64_t y, nova_str text, int64_t size, int64_t rg
 }
 
 int64_t nova_gui_text_width(nova_str text, int64_t size, int64_t mono) {
-    CTLineRef line = nova_gui_make_line(text, size, mono);
+    CTLineRef line = nova_gui_cached_line(text, size, mono);
     if (!line) return 0;
     /* CTLineGetTypographicBounds returns the width; its pointer arguments are
      * ascent, descent and leading. Measuring into the first one yields the
@@ -832,6 +893,7 @@ void nova_gui_pump(void) {
 }
 
 void nova_gui_present(void) {
+    CFAbsoluteTime started = CFAbsoluteTimeGetCurrent();
     nova_gui_pump();
     @autoreleasepool {
         if (!nova_ctx || !nova_view) return;
@@ -844,6 +906,7 @@ void nova_gui_present(void) {
         [nova_view display];
         [CATransaction flush];
     }
+    nova_gui_trace("present %.2fms", (CFAbsoluteTimeGetCurrent() - started) * 1000.0);
 }
 
 int64_t nova_gui_next_event(void) {

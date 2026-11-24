@@ -1490,6 +1490,44 @@ fn draw_settings(app: App, w: Int) {
 
 // ---------- input ----------
 
+// Which control the pointer is over, coarsely: two positions with the same key
+// paint exactly the same hover state, so moving between them needs no redraw.
+fn hover_key(app: App) -> String {
+    let mx = app.mouse_x
+    let my = app.mouse_y
+    let h = gui.height()
+    let status_top = h - status_height()
+    if mx < 0 || my < 0 {
+        return "-"
+    }
+    if app.overlay.len() > 0 {
+        return "overlay"
+    }
+    if my < title_height() {
+        let band = mx / 30
+        let line = my / 14
+        return "title:${band}:${line}"
+    }
+    if mx < activity_width() && my < status_top {
+        let slot = (my - title_height()) / 46
+        return "activity:${slot}"
+    }
+    if app.sidebar && mx < activity_width() + sidebar_width() && my < status_top {
+        let rows_top = title_height() + 62
+        if my >= rows_top {
+            let row = (my - rows_top) / row_height() + app.tree_scroll
+            return "tree:${row}"
+        }
+        let band = my / 20
+        return "side:${band}"
+    }
+    if app.panel && my > status_top - panel_height() {
+        let tab = (my - (status_top - panel_height())) / 35
+        return "panel:${tab}"
+    }
+    return "body"
+}
+
 fn handle(app: App, event: gui.Event) -> App {
     var app = app
     if event.kind == gui.event_close() {
@@ -1997,8 +2035,17 @@ fn main() {
             gui.pump()
             gui.sleep(8)
         } else {
+            let previous = app
             app = handle(app, event)
-            dirty = true
+            // A mouse move only changes the picture when it changes what is
+            // highlighted; redrawing on every move made hover feel sluggish.
+            if event.kind == gui.event_mouse_move() {
+                if hover_key(previous) != hover_key(app) {
+                    dirty = true
+                }
+            } else {
+                dirty = true
+            }
         }
         if app.quit || !gui.is_open() {
             running = false
