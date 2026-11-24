@@ -72,6 +72,7 @@ extern "C" fn nova_fs_read(path: String) -> String
 extern "C" fn nova_fs_read_bytes(path: String) -> String
 extern "C" fn nova_fs_write_bytes(path: String, data: String) -> Int
 extern "C" fn nova_sha256_file(path: String) -> String
+extern "C" fn nova_sha256_bytes(data: String) -> String
 extern "C" fn nova_fs_write(path: String, data: String) -> Int
 extern "C" fn nova_fs_exists(path: String) -> Int
 extern "C" fn nova_fs_is_dir(path: String) -> Int
@@ -508,6 +509,11 @@ fn write_bytes(path: String, data: List<Int>) -> Bool {
 
 fn sha256(path: String) -> String {
     return nova_sha256_file(path)
+}
+
+// SHA-256 of bytes held in memory, as lowercase hex.
+fn sha256_bytes(data: List<Int>) -> String {
+    return nova_sha256_bytes(data.utf8())
 }
 
 fn exists(path: String) -> Bool {

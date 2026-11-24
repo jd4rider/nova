@@ -1299,6 +1299,15 @@ nova_str nova_sha256_file(nova_str path) {
     return nova_sha256_final(&ctx);
 }
 
+/* Hashes bytes already in memory, which is how the registry derives its
+ * sharded index path from a package name. */
+nova_str nova_sha256_bytes(nova_str data) {
+    nova_sha256_ctx ctx;
+    nova_sha256_init(&ctx);
+    if (data.len > 0 && data.ptr) nova_sha256_update(&ctx, (const unsigned char *)data.ptr, (size_t)data.len);
+    return nova_sha256_final(&ctx);
+}
+
 int64_t nova_fs_exists(nova_str path) {
     char *name = nova_gui_cstr(path);
     if (!name) return 0;

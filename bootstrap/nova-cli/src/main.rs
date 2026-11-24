@@ -859,7 +859,62 @@ fn box_project_root() -> Result<PathBuf, i32> {
 
 /// Package operations run through the Nova implementation in `nova-tool`.
 /// Actions that are not implemented report unsupported instead of pretending.
+/// Registry commands read a static index, so they do not need a project or a
+/// manifest. They still run through the Nova implementation in `nova-tool`.
+fn cmd_box_registry(action: &str, args: &[String]) -> i32 {
+    let mut mode = "";
+    let mut arg = String::new();
+    match action {
+        "search" => {
+            if args.len() > 1 {
+                eprintln!("nova box search: at most one query is supported");
+                return EXIT_UNSUPPORTED;
+            }
+            mode = "box-search";
+            arg = args.first().cloned().unwrap_or_default();
+        }
+        "info" | "fetch" => {
+            if args.len() != 1 {
+                eprintln!("nova box {action}: expected one box name");
+                return EXIT_UNSUPPORTED;
+            }
+            mode = if action == "info" { "box-info" } else { "box-fetch" };
+            arg = args[0].clone();
+        }
+        _ => return EXIT_UNSUPPORTED,
+    }
+    let tool = match nova_tool_path() {
+        Some(tool) => tool,
+        None => {
+            eprintln!("nova box: nova-tool not found; build it with `nova build` in examples/nova-tool or set NOVA_TOOL_BIN");
+            return EXIT_ERROR;
+        }
+    };
+    let output = match Command::new(&tool)
+        .env("NOVA_TOOL", mode)
+        .env("NOVA_TOOL_ARG", &arg)
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => {
+            eprintln!("nova box: could not run {}: {error}", tool.display());
+            return EXIT_ERROR;
+        }
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+    print!("{text}");
+    eprint!("{}", String::from_utf8_lossy(&output.stderr));
+    if output.status.success() && !text.contains("error:") {
+        EXIT_OK
+    } else {
+        EXIT_ERROR
+    }
+}
+
 fn cmd_box(action: &str, args: &[String]) -> i32 {
+    if action == "search" || action == "info" || action == "fetch" {
+        return cmd_box_registry(action, args);
+    }
     let root = match box_project_root() {
         Ok(root) => root,
         Err(code) => return code,
@@ -921,7 +976,7 @@ fn cmd_box(action: &str, args: &[String]) -> i32 {
         }
         _ => {
             eprintln!(
-                "nova box: `{action}` is not implemented yet; available: tree, check, lock, metadata, resolve, pack, verify, unpack"
+                "nova box: `{action}` is not implemented yet; available: tree, check, lock, metadata, resolve, pack, verify, unpack, search, info, fetch"
             );
             return EXIT_UNSUPPORTED;
         }

@@ -58,7 +58,7 @@ if [ -x "$nova" ]; then
     ( cd "$tmp/project/app" && NOVA_TOOL_BIN="$tool" "$nova" box lock ) > "$tmp/cli-lock.txt" 2>&1
     grep -q 'box "math"' "$tmp/project/app/Box.lock" && ok || no "nova box lock writes Box.lock"
     ( cd "$tmp/project/app" && NOVA_TOOL_BIN="$tool" "$nova" box check ) >/dev/null 2>&1 && ok || no "nova box check"
-    ( cd "$tmp/project/app" && NOVA_TOOL_BIN="$tool" "$nova" box search >/dev/null 2>&1 ) && no "unsupported search exited ok" || ok
+    ( cd "$tmp/project/app" && NOVA_TOOL_BIN="$tool" "$nova" box publish >/dev/null 2>&1 ) && no "unsupported publish exited ok" || ok
 else
     no "nova binary missing"
 fi
@@ -94,6 +94,78 @@ PY
         status=$?
         if [ $status -ne 0 ] && grep -q "unsafe archive path" "$tmp/evil.log" && [ ! -f "$tmp/escaped.txt" ] && [ ! -f "$tmp/archive/escaped.txt" ]; then ok; else no "unpack rejects traversal"; fi
     fi
+fi
+
+# ---- JSON reader -------------------------------------------------------
+if command -v python3 >/dev/null 2>&1; then
+    printf '%s' '{"a":[1,2.5,true,null],"b":"x\u00e9","c":{"d":"q\"z"},"e":"\u0001"}' > "$tmp/doc.json"
+    out=$(NOVA_TOOL=box-json NOVA_TOOL_PATH="$tmp/doc.json" "$tool")
+    expected=$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1])),separators=(",",":"),ensure_ascii=False))' "$tmp/doc.json")
+    [ "$out" = "$expected" ] && ok || no "json round trip: got $out"
+    printf '%s' '{"a":1,}' > "$tmp/bad.json"
+    NOVA_TOOL=box-json NOVA_TOOL_PATH="$tmp/bad.json" "$tool" | grep -q "error:" && ok || no "json rejects trailing comma"
+    printf '%s' '[01]' > "$tmp/bad2.json"
+    NOVA_TOOL=box-json NOVA_TOOL_PATH="$tmp/bad2.json" "$tool" | grep -q "leading zero" && ok || no "json rejects leading zero"
+fi
+
+# ---- Sparse index, search, info, fetch ---------------------------------
+if [ -x "$nova" ]; then
+    reg="$tmp/registry"
+    mkdir -p "$reg/index/v1/packages" "$reg/files"
+    cp -R "$root/examples/nova-tool/tests/boxes/app" "$tmp/pkgapp"
+    ( cd "$tmp/pkgapp" && NOVA_TOOL_BIN="$tool" "$nova" box pack "$reg/files/app-1.0.0.box" ) >/dev/null 2>&1
+    sha=$(shasum -a 256 "$reg/files/app-1.0.0.box" | cut -d' ' -f1)
+    size=$(wc -c < "$reg/files/app-1.0.0.box" | tr -d ' ')
+    h=$(printf '%s' '@nova/app' | shasum -a 256 | cut -d' ' -f1)
+    aa=$(printf '%s' "$h" | cut -c1-2)
+    bb=$(printf '%s' "$h" | cut -c3-4)
+    mkdir -p "$reg/index/v1/packages/$aa/$bb"
+    cat > "$reg/index/v1/packages/$aa/$bb/@nova%2Fapp.json" <<JSON
+{"name":"@nova/app","versions":[{"version":"1.0.0","dependencies":[],"license":"MIT","nova":">=0.1.0","archive":"files/app-1.0.0.box","sha256":"$sha","size":$size,"published":"2026-01-01T00:00:00Z","yanked":false},{"version":"1.1.0","dependencies":[],"license":"MIT","nova":">=0.1.0","archive":"files/app-1.0.0.box","sha256":"$sha","size":$size,"published":"2026-01-02T00:00:00Z","yanked":true}]}
+JSON
+    cat > "$reg/config.json" <<'JSON'
+{"protocol_version":1,"index":"index/","publishing":"github-pr","capabilities":["sparse-index","sha256","yank"]}
+JSON
+    cat > "$reg/index/v1/catalogue.json" <<'JSON'
+{"packages":[{"name":"@nova/app","version":"1.0.0","description":"Fixture application"},{"name":"@nova/math","version":"0.2.3","description":"Vectors and matrices"}]}
+JSON
+
+    out=$( cd "$tmp" && NOVA_BOXES_REGISTRY="$reg" NOVA_TOOL_BIN="$tool" "$nova" box search math )
+    echo "$out" | grep -q "@nova/math 0.2.3 Vectors and matrices" && ok || no "search finds a box"
+    out=$( cd "$tmp" && NOVA_BOXES_REGISTRY="$reg" NOVA_TOOL_BIN="$tool" "$nova" box search )
+    echo "$out" | grep -q "@nova/app" && echo "$out" | grep -q "@nova/math" && ok || no "search lists the catalogue"
+    out=$( cd "$tmp" && NOVA_BOXES_REGISTRY="$reg" NOVA_TOOL_BIN="$tool" "$nova" box search "nothing here" )
+    echo "$out" | grep -q "no boxes match" && ok || no "search reports no match"
+
+    out=$( cd "$tmp" && NOVA_BOXES_REGISTRY="$reg" NOVA_TOOL_BIN="$tool" "$nova" box info @nova/app )
+    echo "$out" | grep -q "versions: 2" && echo "$out" | grep -q "latest: 1.0.0" && ok || no "info reads the sharded record"
+    echo "$out" | grep -q "1.1.0 license=MIT yanked=true" && ok || no "info shows yanked versions"
+
+    out=$( cd "$tmp" && NOVA_BOXES_REGISTRY="$reg" NOVA_BOXES_CACHE="$tmp/cache" NOVA_TOOL_BIN="$tool" "$nova" box fetch "@nova/app@^1.0.0" )
+    echo "$out" | grep -q "fetched @nova/app 1.0.0" && ok || no "fetch skips yanked versions"
+    [ -f "$tmp/cache/src/@nova%2Fapp/1.0.0/Box.toml" ] && ok || no "fetch unpacks into the cache"
+
+    badreg="$tmp/badreg"
+    mkdir -p "$badreg/index/v1/packages/$aa/$bb" "$badreg/files"
+    cp "$reg/config.json" "$badreg/config.json"
+    cp "$reg/files/app-1.0.0.box" "$badreg/files/app-1.0.0.box"
+    cat > "$badreg/index/v1/packages/$aa/$bb/@nova%2Fapp.json" <<'JSON'
+{"name":"@nova/app","versions":[{"version":"1.0.0","dependencies":[],"license":"MIT","archive":"files/app-1.0.0.box","sha256":"0000000000000000000000000000000000000000000000000000000000000000","yanked":false}]}
+JSON
+    ( cd "$tmp" && NOVA_BOXES_REGISTRY="$badreg" NOVA_BOXES_CACHE="$tmp/badcache" NOVA_TOOL_BIN="$tool" "$nova" box fetch @nova/app ) > "$tmp/badfetch.log" 2>&1
+    status=$?
+    [ $status -ne 0 ] && grep -q "checksum mismatch" "$tmp/badfetch.log" && ok || no "fetch rejects a bad checksum"
+
+    proto="$tmp/proto"
+    mkdir -p "$proto/index"
+    printf '%s' '{"protocol_version":2}' > "$proto/config.json"
+    ( cd "$tmp" && NOVA_BOXES_REGISTRY="$proto" NOVA_TOOL_BIN="$tool" "$nova" box search ) > "$tmp/proto.log" 2>&1
+    status=$?
+    [ $status -ne 0 ] && grep -q "protocol 2" "$tmp/proto.log" && ok || no "unknown protocol stops the client"
+
+    ( cd "$tmp" && NOVA_TOOL_BIN="$tool" "$nova" box search ) > "$tmp/noreg.log" 2>&1
+    status=$?
+    [ $status -ne 0 ] && grep -q "NOVA_BOXES_REGISTRY" "$tmp/noreg.log" && ok || no "missing registry reports the variable"
 fi
 
 echo "passed $pass, failed $fail"

@@ -1,0 +1,569 @@
+// A strict JSON reader and writer, in Nova.
+//
+// Parsed values live in one arena of nodes plus one arena of links, so the
+// reader never needs pointers, mutation or a garbage collector: a value is a
+// node index, an array's elements are `count` link entries, and an object's
+// members are `count` link entries holding key and value node indices in
+// pairs. Each container's links are contiguous because a container appends its
+// own links only after its children have appended theirs.
+//
+// The reader accepts exactly RFC 8259 grammar: no comments, no trailing
+// commas, no unquoted keys and no NaN/Infinity. The writer emits compact JSON
+// and escapes control characters, which is what the registry index needs.
+
+struct JsonNode {
+    kind: Int, // 0 null, 1 bool, 2 number, 3 string, 4 array, 5 object
+    text: String, // string contents, number literal, "true" or "false"
+    first: Int, // first link entry, for arrays and objects
+    count: Int, // element count, or member count times two for objects
+}
+
+struct JsonDoc {
+    nodes: List<JsonNode>,
+    links: List<Int>,
+    error: String,
+}
+
+struct JsonStep {
+    doc: JsonDoc,
+    pos: Int,
+    node: Int,
+    failed: Bool,
+}
+
+fn js_empty() -> JsonDoc {
+    return JsonDoc { nodes: [], links: [], error: "" }
+}
+
+fn js_fail(doc: JsonDoc, pos: Int, message: String) -> JsonStep {
+    var error = doc.error
+    if error.len() == 0 {
+        error = "${message} at character ${pos}"
+    }
+    return JsonStep {
+        doc: JsonDoc { nodes: doc.nodes, links: doc.links, error: error },
+        pos: pos,
+        node: 0 - 1,
+        failed: true,
+    }
+}
+
+fn js_is_digit(c: String) -> Bool {
+    return c == "0" || c == "1" || c == "2" || c == "3" || c == "4" || c == "5" || c == "6" || c == "7" || c == "8" || c == "9"
+}
+
+fn js_hex(c: String) -> Int {
+    let digits = "0123456789abcdef".chars()
+    var i = 0
+    while i < digits.len() {
+        if digits[i] == c {
+            return i
+        }
+        i = i + 1
+    }
+    let upper = "0123456789ABCDEF".chars()
+    var k = 0
+    while k < upper.len() {
+        if upper[k] == c {
+            return k
+        }
+        k = k + 1
+    }
+    return 0 - 1
+}
+
+fn js_hex_digit(value: Int) -> String {
+    let digits = "0123456789abcdef".chars()
+    if value < 0 || value >= digits.len() {
+        return "0"
+    }
+    return digits[value]
+}
+
+fn js_skip(chars: List<String>, pos: Int) -> Int {
+    var i = pos
+    while i < chars.len() {
+        let c = chars[i]
+        if c == " " || c == "\t" || c == "\n" || c == "\r" {
+            i = i + 1
+        } else {
+            return i
+        }
+    }
+    return i
+}
+
+// `pos` points at the opening quote. The resulting string node is appended to
+// the arena and its index is returned in `node`.
+fn js_string_node(chars: List<String>, doc: JsonDoc, pos: Int) -> JsonStep {
+    var work = doc
+    var text = ""
+    var i = pos + 1
+    var closed = false
+    while i < chars.len() && !closed {
+        let c = chars[i]
+        if c == "\"" {
+            closed = true
+            i = i + 1
+        } else if c == "\\" {
+            i = i + 1
+            if i >= chars.len() {
+                return js_fail(work, i, "unterminated escape")
+            }
+            let escape = chars[i]
+            i = i + 1
+            if escape == "\"" {
+                text = text + "\""
+            } else if escape == "\\" {
+                text = text + "\\"
+            } else if escape == "/" {
+                text = text + "/"
+            } else if escape == "b" {
+                text = text + char_string(8)
+            } else if escape == "f" {
+                text = text + char_string(12)
+            } else if escape == "n" {
+                text = text + "\n"
+            } else if escape == "r" {
+                text = text + "\r"
+            } else if escape == "t" {
+                text = text + "\t"
+            } else if escape == "u" {
+                var code = 0
+                var count = 0
+                var ok = true
+                while count < 4 && i < chars.len() {
+                    let digit = js_hex(chars[i])
+                    if digit < 0 {
+                        ok = false
+                    } else {
+                        code = code * 16 + digit
+                    }
+                    i = i + 1
+                    count = count + 1
+                }
+                if count < 4 || !ok {
+                    return js_fail(work, i, "malformed \\u escape")
+                }
+                if code >= 55296 && code <= 57343 {
+                    // Lone surrogates are not valid UTF-8, so they become the
+                    // replacement character instead of corrupting the string.
+                    text = text + char_string(65533)
+                } else {
+                    text = text + char_string(code)
+                }
+            } else {
+                return js_fail(work, i, "unknown escape \\${escape}")
+            }
+        } else {
+            text = text + c
+            i = i + 1
+        }
+    }
+    if !closed {
+        return js_fail(work, i, "unterminated string")
+    }
+    var nodes = work.nodes
+    nodes.push(JsonNode { kind: 3, text: text, first: 0, count: 0 })
+    work = JsonDoc { nodes: nodes, links: work.links, error: work.error }
+    return JsonStep { doc: work, pos: i, node: nodes.len() - 1, failed: false }
+}
+
+fn js_number_node(chars: List<String>, doc: JsonDoc, pos: Int) -> JsonStep {
+    var i = pos
+    var negative = false
+    if i < chars.len() && chars[i] == "-" {
+        negative = true
+        i = i + 1
+    }
+    let start = i
+    while i < chars.len() && js_is_digit(chars[i]) {
+        i = i + 1
+    }
+    let digits = i - start
+    if digits == 0 {
+        return js_fail(doc, pos, "expected a number")
+    }
+    if digits > 1 && chars[start] == "0" {
+        return js_fail(doc, pos, "a number must not have a leading zero")
+    }
+    if i < chars.len() && chars[i] == "." {
+        i = i + 1
+        let fraction = i
+        while i < chars.len() && js_is_digit(chars[i]) {
+            i = i + 1
+        }
+        if i == fraction {
+            return js_fail(doc, i, "expected digits after the decimal point")
+        }
+    }
+    if i < chars.len() && (chars[i] == "e" || chars[i] == "E") {
+        i = i + 1
+        if i < chars.len() && (chars[i] == "+" || chars[i] == "-") {
+            i = i + 1
+        }
+        let exponent = i
+        while i < chars.len() && js_is_digit(chars[i]) {
+            i = i + 1
+        }
+        if i == exponent {
+            return js_fail(doc, i, "expected digits in the exponent")
+        }
+    }
+    var text = ""
+    var k = pos
+    while k < i {
+        text = text + chars[k]
+        k = k + 1
+    }
+    if negative {
+        // Keep the literal exactly as written; readers that need a number
+        // convert it themselves.
+        text = text
+    }
+    var nodes = doc.nodes
+    nodes.push(JsonNode { kind: 2, text: text, first: 0, count: 0 })
+    return JsonStep {
+        doc: JsonDoc { nodes: nodes, links: doc.links, error: doc.error },
+        pos: i,
+        node: nodes.len() - 1,
+        failed: false,
+    }
+}
+
+fn js_word(chars: List<String>, doc: JsonDoc, pos: Int, word: String, kind: Int) -> JsonStep {
+    let expected = word.chars()
+    var i = 0
+    while i < expected.len() {
+        if pos + i >= chars.len() || chars[pos + i] != expected[i] {
+            return js_fail(doc, pos, "expected `${word}`")
+        }
+        i = i + 1
+    }
+    var nodes = doc.nodes
+    nodes.push(JsonNode { kind: kind, text: word, first: 0, count: 0 })
+    return JsonStep {
+        doc: JsonDoc { nodes: nodes, links: doc.links, error: doc.error },
+        pos: pos + expected.len(),
+        node: nodes.len() - 1,
+        failed: false,
+    }
+}
+
+fn js_array(chars: List<String>, doc: JsonDoc, pos: Int) -> JsonStep {
+    var work = doc
+    var mine: List<Int> = []
+    var i = js_skip(chars, pos + 1)
+    var done = false
+    if i < chars.len() && chars[i] == "]" {
+        i = i + 1
+        done = true
+    }
+    while !done {
+        let item = js_value(chars, work, i)
+        if item.failed {
+            return item
+        }
+        work = item.doc
+        mine.push(item.node)
+        i = js_skip(chars, item.pos)
+        if i < chars.len() && chars[i] == "," {
+            i = js_skip(chars, i + 1)
+        } else if i < chars.len() && chars[i] == "]" {
+            i = i + 1
+            done = true
+        } else {
+            return js_fail(work, i, "expected ',' or ']'")
+        }
+    }
+    let first = work.links.len()
+    var links = work.links
+    for link in mine {
+        links.push(link)
+    }
+    var nodes = work.nodes
+    nodes.push(JsonNode { kind: 4, text: "", first: first, count: mine.len() })
+    return JsonStep {
+        doc: JsonDoc { nodes: nodes, links: links, error: work.error },
+        pos: i,
+        node: nodes.len() - 1,
+        failed: false,
+    }
+}
+
+fn js_object(chars: List<String>, doc: JsonDoc, pos: Int) -> JsonStep {
+    var work = doc
+    var mine: List<Int> = []
+    var i = js_skip(chars, pos + 1)
+    var done = false
+    if i < chars.len() && chars[i] == "}" {
+        i = i + 1
+        done = true
+    }
+    while !done {
+        if i >= chars.len() || chars[i] != "\"" {
+            return js_fail(work, i, "expected a quoted object key")
+        }
+        let key = js_string_node(chars, work, i)
+        if key.failed {
+            return key
+        }
+        work = key.doc
+        i = js_skip(chars, key.pos)
+        if i >= chars.len() || chars[i] != ":" {
+            return js_fail(work, i, "expected ':' after an object key")
+        }
+        let value = js_value(chars, work, i + 1)
+        if value.failed {
+            return value
+        }
+        work = value.doc
+        mine.push(key.node)
+        mine.push(value.node)
+        i = js_skip(chars, value.pos)
+        if i < chars.len() && chars[i] == "," {
+            i = js_skip(chars, i + 1)
+        } else if i < chars.len() && chars[i] == "}" {
+            i = i + 1
+            done = true
+        } else {
+            return js_fail(work, i, "expected ',' or '}'")
+        }
+    }
+    let first = work.links.len()
+    var links = work.links
+    for link in mine {
+        links.push(link)
+    }
+    var nodes = work.nodes
+    nodes.push(JsonNode { kind: 5, text: "", first: first, count: mine.len() })
+    return JsonStep {
+        doc: JsonDoc { nodes: nodes, links: links, error: work.error },
+        pos: i,
+        node: nodes.len() - 1,
+        failed: false,
+    }
+}
+
+fn js_value(chars: List<String>, doc: JsonDoc, pos: Int) -> JsonStep {
+    let i = js_skip(chars, pos)
+    if i >= chars.len() {
+        return js_fail(doc, i, "expected a value")
+    }
+    let c = chars[i]
+    if c == "{" {
+        return js_object(chars, doc, i)
+    }
+    if c == "[" {
+        return js_array(chars, doc, i)
+    }
+    if c == "\"" {
+        return js_string_node(chars, doc, i)
+    }
+    if c == "t" {
+        return js_word(chars, doc, i, "true", 1)
+    }
+    if c == "f" {
+        return js_word(chars, doc, i, "false", 1)
+    }
+    if c == "n" {
+        return js_word(chars, doc, i, "null", 0)
+    }
+    if c == "-" || js_is_digit(c) {
+        return js_number_node(chars, doc, i)
+    }
+    return js_fail(doc, i, "unexpected character `${c}`")
+}
+
+fn js_parse(source: String) -> JsonDoc {
+    let chars = source.chars()
+    let step = js_value(chars, js_empty(), 0)
+    if step.failed {
+        return step.doc
+    }
+    let after = js_skip(chars, step.pos)
+    if after != chars.len() {
+        return js_fail(step.doc, after, "trailing characters after the document").doc
+    }
+    return step.doc
+}
+
+fn js_node(doc: JsonDoc, node: Int) -> JsonNode {
+    if node < 0 || node >= doc.nodes.len() {
+        return JsonNode { kind: 0, text: "", first: 0, count: 0 }
+    }
+    return doc.nodes[node]
+}
+
+fn js_kind(doc: JsonDoc, node: Int) -> Int {
+    return js_node(doc, node).kind
+}
+
+// Array length, or object member count.
+fn js_len(doc: JsonDoc, node: Int) -> Int {
+    let item = js_node(doc, node)
+    if item.kind == 4 {
+        return item.count
+    }
+    if item.kind == 5 {
+        return item.count / 2
+    }
+    return 0
+}
+
+// The node index of array element `index`, or an object member's value.
+fn js_at(doc: JsonDoc, node: Int, index: Int) -> Int {
+    let item = js_node(doc, node)
+    if index < 0 || index >= js_len(doc, node) {
+        return 0 - 1
+    }
+    if item.kind == 4 {
+        let slot = item.first + index
+        if slot < 0 || slot >= doc.links.len() {
+            return 0 - 1
+        }
+        return doc.links[slot]
+    }
+    if item.kind == 5 {
+        let slot = item.first + index * 2 + 1
+        if slot < 0 || slot >= doc.links.len() {
+            return 0 - 1
+        }
+        return doc.links[slot]
+    }
+    return 0 - 1
+}
+
+// The key text of object member `index`.
+fn js_key(doc: JsonDoc, node: Int, index: Int) -> String {
+    let item = js_node(doc, node)
+    if item.kind != 5 || index < 0 || index >= js_len(doc, node) {
+        return ""
+    }
+    let slot = item.first + index * 2
+    if slot < 0 || slot >= doc.links.len() {
+        return ""
+    }
+    let key = doc.links[slot]
+    if key < 0 || key >= doc.nodes.len() {
+        return ""
+    }
+    return doc.nodes[key].text
+}
+
+// The value node of member `key`, or -1 when the key is absent.
+fn js_get(doc: JsonDoc, node: Int, key: String) -> Int {
+    var i = 0
+    while i < js_len(doc, node) {
+        if js_key(doc, node, i) == key {
+            return js_at(doc, node, i)
+        }
+        i = i + 1
+    }
+    return 0 - 1
+}
+
+fn js_str(doc: JsonDoc, node: Int) -> String {
+    let item = js_node(doc, node)
+    if item.kind == 3 {
+        return item.text
+    }
+    if item.kind == 2 {
+        return item.text
+    }
+    return ""
+}
+
+fn js_number_text(doc: JsonDoc, node: Int) -> String {
+    let item = js_node(doc, node)
+    if item.kind == 2 {
+        return item.text
+    }
+    return ""
+}
+
+fn js_bool(doc: JsonDoc, node: Int) -> Bool {
+    let item = js_node(doc, node)
+    return item.kind == 1 && item.text == "true"
+}
+
+fn js_quote(text: String) -> String {
+    var out = "\""
+    for c in text.chars() {
+        if c == "\"" {
+            out = out + "\\\""
+        } else if c == "\\" {
+            out = out + "\\\\"
+        } else if c == "\n" {
+            out = out + "\\n"
+        } else if c == "\r" {
+            out = out + "\\r"
+        } else if c == "\t" {
+            out = out + "\\t"
+        } else if c == char_string(8) {
+            out = out + "\\b"
+        } else if c == char_string(12) {
+            out = out + "\\f"
+        } else {
+            // Any other control character must be escaped to stay valid JSON.
+            var escape = ""
+            var code = 0
+            while code < 32 {
+                if c == char_string(code) {
+                    escape = "\\u00" + js_hex_digit(code / 16) + js_hex_digit(code % 16)
+                }
+                code = code + 1
+            }
+            if escape.len() > 0 {
+                out = out + escape
+            } else {
+                out = out + c
+            }
+        }
+    }
+    return out + "\""
+}
+
+fn js_render(doc: JsonDoc, node: Int) -> String {
+    let item = js_node(doc, node)
+    if item.kind == 0 {
+        return "null"
+    }
+    if item.kind == 1 {
+        if item.text == "true" {
+            return "true"
+        }
+        return "false"
+    }
+    if item.kind == 2 {
+        return item.text
+    }
+    if item.kind == 3 {
+        return js_quote(item.text)
+    }
+    if item.kind == 4 {
+        var out = "["
+        var i = 0
+        while i < js_len(doc, node) {
+            if i > 0 {
+                out = out + ","
+            }
+            out = out + js_render(doc, js_at(doc, node, i))
+            i = i + 1
+        }
+        return out + "]"
+    }
+    if item.kind == 5 {
+        var out = "{"
+        var i = 0
+        while i < js_len(doc, node) {
+            if i > 0 {
+                out = out + ","
+            }
+            out = out + js_quote(js_key(doc, node, i)) + ":" + js_render(doc, js_at(doc, node, i))
+            i = i + 1
+        }
+        return out + "}"
+    }
+    return "null"
+}

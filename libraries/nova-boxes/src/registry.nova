@@ -1,0 +1,464 @@
+// Registry client for Nova Boxes, in Nova.
+//
+// The registry is static data, described in docs/boxes/REGISTRY_PROTOCOL.md:
+//
+//   config.json                                  protocol and capabilities
+//   index/v1/catalogue.json                      names for `nova box search`
+//   index/v1/packages/<aa>/<bb>/<name>.json      one record per box, sharded
+//                                                by the SHA-256 of its name
+//
+// Reads are plain file reads for a local mirror (`/path`, `file:///path`) and
+// `http_get` for an HTTPS index. No account, token or database is involved.
+
+import "../../nova-gui/src/gui.nova" as gui
+import "./json.nova"
+import "./semver.nova"
+import "./archive.nova"
+
+fn rg_root() -> String {
+    return gui.env("NOVA_BOXES_REGISTRY").trim()
+}
+
+fn rg_join(base: String, child: String) -> String {
+    if base.len() == 0 {
+        return child
+    }
+    if child.len() == 0 {
+        return base
+    }
+    if base.ends_with("/") {
+        return base + child
+    }
+    return base + "/" + child
+}
+
+fn rg_is_local(location: String) -> Bool {
+    if location.starts_with("/") || location.starts_with("./") || location.starts_with("../") {
+        return true
+    }
+    return location.starts_with("file://")
+}
+
+fn rg_strip_file(location: String) -> String {
+    if !location.starts_with("file://") {
+        return location
+    }
+    let chars = location.chars()
+    var out = ""
+    var i = 7
+    while i < chars.len() {
+        out = out + chars[i]
+        i = i + 1
+    }
+    return out
+}
+
+// Reads a registry file. An empty string means "not available": index files
+// are never legitimately empty, so callers can report a real error.
+fn rg_read(root: String, relative: String) -> String {
+    let target = rg_join(root, relative)
+    if rg_is_local(target) {
+        let path = rg_strip_file(target)
+        if !gui.exists(path) || gui.is_dir(path) {
+            return ""
+        }
+        return gui.read(path)
+    }
+    return http_get(target)
+}
+
+fn rg_lower(text: String) -> String {
+    let lower = "abcdefghijklmnopqrstuvwxyz".chars()
+    let upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".chars()
+    var out = ""
+    for c in text.chars() {
+        var mapped = c
+        var i = 0
+        while i < upper.len() {
+            if upper[i] == c {
+                mapped = lower[i]
+            }
+            i = i + 1
+        }
+        out = out + mapped
+    }
+    return out
+}
+
+fn rg_name_char(c: String) -> Bool {
+    let allowed = "abcdefghijklmnopqrstuvwxyz0123456789_-"
+    for known in allowed.chars() {
+        if c == known {
+            return true
+        }
+    }
+    return false
+}
+
+// Canonical registry names are scoped: `@publisher/box`, ASCII lowercase,
+// `[a-z0-9_-]`, at most 64 characters, no leading digit in either part.
+fn rg_valid_name(name: String) -> Bool {
+    if name.len() == 0 || name.len() > 64 || !name.starts_with("@") {
+        return false
+    }
+    let parts = name.split("/")
+    if parts.len() != 2 {
+        return false
+    }
+    var index = 0
+    while index < 2 {
+        var part = parts[index]
+        if index == 0 {
+            let chars = part.chars()
+            var rest = ""
+            var i = 1
+            while i < chars.len() {
+                rest = rest + chars[i]
+                i = i + 1
+            }
+            part = rest
+        }
+        if part.len() == 0 {
+            return false
+        }
+        let chars = part.chars()
+        if js_is_digit(chars[0]) {
+            return false
+        }
+        for c in chars {
+            if !rg_name_char(c) {
+                return false
+            }
+        }
+        index = index + 1
+    }
+    return true
+}
+
+fn rg_percent_byte(code: Int) -> String {
+    return "%" + js_hex_digit(code / 16) + js_hex_digit(code % 16)
+}
+
+// Percent-encodes a canonical name for use as one URL path segment. `@` and
+// the name alphabet stay literal; `/` becomes `%2F`.
+fn rg_encode(name: String) -> String {
+    var out = ""
+    for c in name.chars() {
+        if rg_name_char(c) || c == "@" || c == "." || c == "-" || c == "_" {
+            out = out + c
+        } else {
+            let bytes = c.bytes()
+            var i = 0
+            while i < bytes.len() {
+                out = out + rg_percent_byte(bytes[i])
+                i = i + 1
+            }
+        }
+    }
+    return out
+}
+
+// `<aa>/<bb>`: the first four lowercase hex digits of SHA-256(name).
+fn rg_shard(name: String, offset: Int) -> String {
+    let hash = gui.sha256_bytes(name.bytes())
+    let chars = hash.chars()
+    if chars.len() < 4 {
+        return ""
+    }
+    return chars[offset].to_string() + chars[offset + 1].to_string()
+}
+
+fn rg_record_path(name: String) -> String {
+    let aa = rg_shard(name, 0)
+    let bb = rg_shard(name, 2)
+    return "index/v1/packages/${aa}/${bb}/${rg_encode(name)}.json"
+}
+
+fn rg_cache_root() -> String {
+    let configured = gui.env("NOVA_BOXES_CACHE").trim()
+    if configured.len() > 0 {
+        return rg_strip_file(configured)
+    }
+    let home = gui.env("HOME")
+    if home.len() == 0 {
+        return ""
+    }
+    return home + "/.nova/boxes"
+}
+
+// Splits `@publisher/box@^1.2.0` into the name and the requirement. A name
+// without a second `@` uses the `*` requirement.
+fn rg_split_spec(spec: String) -> (String, String) {
+    let chars = spec.chars()
+    var start = 0
+    if spec.starts_with("@") {
+        start = 1
+    }
+    var cut = 0 - 1
+    var i = start
+    while i < chars.len() {
+        if chars[i] == "@" {
+            cut = i
+            i = chars.len()
+        } else {
+            i = i + 1
+        }
+    }
+    if cut < 0 {
+        return (spec.trim(), "*")
+    }
+    var name = ""
+    var k = 0
+    while k < cut {
+        name = name + chars[k]
+        k = k + 1
+    }
+    var version = ""
+    var v = cut + 1
+    while v < chars.len() {
+        version = version + chars[v]
+        v = v + 1
+    }
+    var requirement = version.trim()
+    if requirement.len() == 0 {
+        requirement = "*"
+    }
+    return (name.trim(), requirement)
+}
+
+// Validates config.json. Returns "" when the registry is usable, otherwise an
+// actionable message. A client that does not know the protocol must stop.
+fn rg_check_registry(root: String) -> String {
+    if root.len() == 0 {
+        return "error: NOVA_BOXES_REGISTRY is not set and no first-party registry is deployed yet; point it at a mirror root"
+    }
+    let text = rg_read(root, "config.json")
+    if text.len() == 0 {
+        return "error: cannot read " + rg_join(root, "config.json")
+    }
+    let doc = js_parse(text)
+    if doc.error.len() > 0 {
+        return "error: invalid registry config: ${doc.error}"
+    }
+    let index = doc.nodes.len() - 1
+    let version = js_number_text(doc, js_get(doc, index, "protocol_version"))
+    if version.len() == 0 {
+        return "error: registry config has no numeric protocol_version"
+    }
+    if version != "1" {
+        return "error: registry speaks protocol ${version}, this client speaks 1"
+    }
+    return ""
+}
+
+fn rg_versions(doc: JsonDoc, record: Int) -> Int {
+    return js_get(doc, record, "versions")
+}
+
+fn rg_latest(doc: JsonDoc, record: Int) -> Int {
+    let versions = rg_versions(doc, record)
+    var best = 0 - 1
+    var best_version = sv_parse("0.0.0")
+    var i = 0
+    while i < js_len(doc, versions) {
+        let item = js_at(doc, versions, i)
+        let version = sv_parse(js_str(doc, js_get(doc, item, "version")))
+        if version.ok && !js_bool(doc, js_get(doc, item, "yanked")) {
+            if best < 0 || sv_cmp(version, best_version) > 0 {
+                best = i
+                best_version = version
+            }
+        }
+        i = i + 1
+    }
+    return best
+}
+
+fn rg_dep_lines(doc: JsonDoc, version: Int) -> String {
+    var out = ""
+    let deps = js_get(doc, version, "dependencies")
+    var i = 0
+    while i < js_len(doc, deps) {
+        let dep = js_at(doc, deps, i)
+        let dep_name = js_str(doc, js_get(doc, dep, "name"))
+        let dep_req = js_str(doc, js_get(doc, dep, "req"))
+        out = out + "    " + dep_name + " " + dep_req + "\n"
+        i = i + 1
+    }
+    return out
+}
+
+fn rg_search(root: String, query: String) -> String {
+    let check = rg_check_registry(root)
+    if check.len() > 0 {
+        return check
+    }
+    let text = rg_read(root, "index/v1/catalogue.json")
+    if text.len() == 0 {
+        return "error: cannot read " + rg_join(root, "index/v1/catalogue.json")
+    }
+    let doc = js_parse(text)
+    if doc.error.len() > 0 {
+        return "error: invalid catalogue: ${doc.error}"
+    }
+    let index = doc.nodes.len() - 1
+    let packages = js_get(doc, index, "packages")
+    let needle = rg_lower(query.trim())
+    var out = ""
+    var found = 0
+    var i = 0
+    while i < js_len(doc, packages) {
+        let item = js_at(doc, packages, i)
+        let name = js_str(doc, js_get(doc, item, "name"))
+        let description = js_str(doc, js_get(doc, item, "description"))
+        if needle.len() == 0 || rg_lower(name).contains(needle) || rg_lower(description).contains(needle) {
+            let version = js_str(doc, js_get(doc, item, "version"))
+            out = out + name + " " + version + " " + description + "\n"
+            found = found + 1
+        }
+        i = i + 1
+    }
+    if found == 0 {
+        return "no boxes match `${query}`"
+    }
+    return out
+}
+
+fn rg_info(root: String, name: String) -> String {
+    if !rg_valid_name(name) {
+        return "error: `${name}` is not a canonical registry name; use @publisher/box"
+    }
+    let check = rg_check_registry(root)
+    if check.len() > 0 {
+        return check
+    }
+    let path = rg_record_path(name)
+    let text = rg_read(root, path)
+    if text.len() == 0 {
+        return "error: box `${name}` is not in the registry index (${path})"
+    }
+    let doc = js_parse(text)
+    if doc.error.len() > 0 {
+        return "error: invalid index record for ${name}: ${doc.error}"
+    }
+    let record = doc.nodes.len() - 1
+    let recorded = js_str(doc, js_get(doc, record, "name"))
+    if recorded != name {
+        return "error: ${path} names `${recorded}`, not `${name}`"
+    }
+    let versions = rg_versions(doc, record)
+    var out = "${name}\nversions: ${js_len(doc, versions)}\n"
+    let latest = rg_latest(doc, record)
+    if latest >= 0 {
+        let latest_version = js_str(doc, js_get(doc, js_at(doc, versions, latest), "version"))
+        out = out + "latest: " + latest_version + "\n"
+    }
+    var i = 0
+    while i < js_len(doc, versions) {
+        let item = js_at(doc, versions, i)
+        let version = js_str(doc, js_get(doc, item, "version"))
+        var yanked = "false"
+        if js_bool(doc, js_get(doc, item, "yanked")) {
+            yanked = "true"
+        }
+        let license = js_str(doc, js_get(doc, item, "license"))
+        let sha = js_str(doc, js_get(doc, item, "sha256"))
+        out = out + version + " license=" + license + " yanked=" + yanked + " sha256=" + sha + "\n"
+        out = out + rg_dep_lines(doc, item)
+        i = i + 1
+    }
+    return out
+}
+
+fn rg_resolve_url(root: String, location: String) -> String {
+    if location.starts_with("http://") || location.starts_with("https://") || location.starts_with("file://") || location.starts_with("/") {
+        return location
+    }
+    return rg_join(root, location)
+}
+
+fn rg_download(url: String, destination: String) -> Bool {
+    if rg_is_local(url) {
+        let path = rg_strip_file(url)
+        if !gui.exists(path) || gui.is_dir(path) {
+            return false
+        }
+        return gui.write_bytes(destination, gui.read_bytes(path))
+    }
+    let body = http_get(url)
+    if body.len() == 0 {
+        return false
+    }
+    return gui.write_bytes(destination, body.bytes())
+}
+
+fn rg_fetch(root: String, spec: String) -> String {
+    let pair = rg_split_spec(spec)
+    let name = pair.0
+    let requirement = pair.1
+    if !rg_valid_name(name) {
+        return "error: `${name}` is not a canonical registry name; use @publisher/box"
+    }
+    let check = rg_check_registry(root)
+    if check.len() > 0 {
+        return check
+    }
+    let path = rg_record_path(name)
+    let text = rg_read(root, path)
+    if text.len() == 0 {
+        return "error: box `${name}` is not in the registry index (${path})"
+    }
+    let doc = js_parse(text)
+    if doc.error.len() > 0 {
+        return "error: invalid index record for ${name}: ${doc.error}"
+    }
+    let record = doc.nodes.len() - 1
+    let versions = rg_versions(doc, record)
+    var best = 0 - 1
+    var best_version = sv_parse("0.0.0")
+    var i = 0
+    while i < js_len(doc, versions) {
+        let item = js_at(doc, versions, i)
+        let version = sv_parse(js_str(doc, js_get(doc, item, "version")))
+        if version.ok && !js_bool(doc, js_get(doc, item, "yanked")) && sv_satisfies(version, requirement) {
+            if best < 0 || sv_cmp(version, best_version) > 0 {
+                best = i
+                best_version = version
+            }
+        }
+        i = i + 1
+    }
+    if best < 0 {
+        return "error: no version of ${name} satisfies `${requirement}`"
+    }
+    let chosen = js_at(doc, versions, best)
+    let version_text = sv_text(best_version)
+    let archive = js_str(doc, js_get(doc, chosen, "archive"))
+    let expected = js_str(doc, js_get(doc, chosen, "sha256"))
+    if archive.len() == 0 || expected.len() == 0 {
+        return "error: ${name} ${version_text} has no archive or sha256 in the index"
+    }
+    let cache = rg_cache_root()
+    if cache.len() == 0 {
+        return "error: cannot determine a cache directory; set NOVA_BOXES_CACHE"
+    }
+    let archives = cache + "/archives"
+    if !ar_mkdirs(archives) {
+        return "error: cannot create ${archives}"
+    }
+    let destination = "${archives}/${rg_encode(name)}-${version_text}.box"
+    let url = rg_resolve_url(root, archive)
+    if !rg_download(url, destination) {
+        return "error: cannot download ${url}"
+    }
+    let actual = gui.sha256(destination)
+    if actual != expected {
+        return "error: checksum mismatch for ${name} ${version_text}: expected ${expected}, got ${actual}"
+    }
+    let target = "${cache}/src/${rg_encode(name)}/${version_text}"
+    let unpacked = ar_unpack(destination, target)
+    if unpacked.starts_with("error:") {
+        return unpacked
+    }
+    return "fetched ${name} ${version_text}\nsha256 ${actual}\ncache ${target}"
+}

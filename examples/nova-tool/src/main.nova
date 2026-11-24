@@ -11,6 +11,8 @@ import "../../../libraries/nova-boxes/src/semver.nova"
 import "../../../libraries/nova-boxes/src/resolve.nova"
 import "../../../libraries/nova-boxes/src/report.nova"
 import "../../../libraries/nova-boxes/src/archive.nova"
+import "../../../libraries/nova-boxes/src/json.nova"
+import "../../../libraries/nova-boxes/src/registry.nova"
 
 // nova-tool: the phase-1 self-hosted toolchain, in Nova.
 //
@@ -21,6 +23,21 @@ import "../../../libraries/nova-boxes/src/archive.nova"
 fn main() {
     let mode = gui.env("NOVA_TOOL")
     let path = gui.env("NOVA_TOOL_PATH")
+
+    // Registry commands need no project: they read an index and a cache.
+    if mode == "box-search" || mode == "box-info" || mode == "box-fetch" {
+        let arg = gui.env("NOVA_TOOL_ARG")
+        let registry = rg_root()
+        if mode == "box-search" {
+            println(rg_search(registry, arg))
+        } else if mode == "box-info" {
+            println(rg_info(registry, arg))
+        } else {
+            println(rg_fetch(registry, arg))
+        }
+        return
+    }
+
     if path.len() == 0 {
         println("nova-tool: set NOVA_TOOL_PATH")
         return
@@ -28,6 +45,16 @@ fn main() {
     let source = gui.read(path)
     if source.len() == 0 && !gui.exists(path) {
         println("nova-tool: cannot read ${path}")
+        return
+    }
+
+    if mode == "box-json" {
+        let doc = js_parse(source)
+        if doc.error.len() > 0 {
+            println("error: ${doc.error}")
+        } else {
+            println(js_render(doc, doc.nodes.len() - 1))
+        }
         return
     }
 

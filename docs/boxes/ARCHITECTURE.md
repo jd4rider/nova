@@ -23,6 +23,8 @@ a **box**; the tooling is written in Nova and exposed through `nova box`.
 | Manifest and identity | `libraries/nova-boxes/src/boxes.nova` | `[package]`, `[bin]`, `[dependencies]`, name rules |
 | SemVer | `libraries/nova-boxes/src/semver.nova` | parsing, ordering, caret/tilde/range/wildcard requirements |
 | Resolution | `libraries/nova-boxes/src/resolve.nova` | path dependencies, requirement checks, cycles |
+| JSON | `libraries/nova-boxes/src/json.nova` | strict RFC 8259 reader and compact writer |
+| Registry | `libraries/nova-boxes/src/registry.nova` | names, sharded index records, catalogue, fetch, cache |
 | Reports | `libraries/nova-boxes/src/report.nova` | `Box.lock`, tree, metadata |
 | Archives | `libraries/nova-boxes/src/archive.nova` | deterministic tar + stored gzip, entry listing, safe extraction |
 | Command surface | `examples/nova-tool` + `nova box` | tool modes and CLI dispatch |
@@ -39,11 +41,20 @@ a **box**; the tooling is written in Nova and exposed through `nova box`.
    of being silently ignored.
 4. **Two manifests are accepted.** `Box.toml` wins; `nova.toml` is read for
    existing projects. There is no automatic rewrite.
+5. **The index is sharded by the name's hash.** A client fetches `config.json`
+   once, then one record per box at `index/v1/packages/<aa>/<bb>/<encoded>`.
+   Search reads a separate `catalogue.json`; a sparse index cannot enumerate
+   itself, and pretending otherwise would mean downloading every record.
+6. **Reads work against a directory or HTTPS.** The same code reads a local
+   mirror with ordinary file I/O and a server with `http_get`. Local reads are
+   how the tests exercise the protocol without network access.
+7. **No default registry URL.** Until a registry is deployed, an unset
+   `NOVA_BOXES_REGISTRY` is an error rather than a guess at someone's domain.
 
 ## Planned layers
 
-SHA-256 and raw byte I/O are host primitives (`gui.sha256`, `gui.read_bytes`,
-`gui.write_bytes`); archive layout, compression framing, CRC32 and path ordering
-are Nova. The sparse index client, the cache and reviewed publishing are
-specified in `REGISTRY_PROTOCOL.md` and tracked in `PROGRESS.md`. They are not
-implemented yet and no command pretends otherwise.
+SHA-256 and raw byte I/O are host primitives (`gui.sha256`,
+`gui.sha256_bytes`, `gui.read_bytes`, `gui.write_bytes`); archive layout,
+compression framing, CRC32, JSON, name encoding and path ordering are Nova.
+Reviewed publishing is specified in `REGISTRY_PROTOCOL.md` and tracked in
+`PROGRESS.md`; it is not implemented and no command pretends otherwise.

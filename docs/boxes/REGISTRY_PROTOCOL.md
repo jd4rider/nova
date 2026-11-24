@@ -1,8 +1,9 @@
 # Nova Boxes registry protocol (design)
 
-**State: design only. No client or server implements this yet.** It is written
-down so the archive format, index and publishing flow can be reviewed before
-code exists, and so a mirror can be built without reading our CI.
+**State: the read side is implemented** in `libraries/nova-boxes/src/registry.nova`
+(`search`, `info`, `fetch`, checksum verification, cache) and tested against a
+filesystem mirror. Publishing is still design only: no workflow uploads or
+indexes anything yet.
 
 ## Transport
 
@@ -26,12 +27,30 @@ code exists, and so a mirror can be built without reading our CI.
 A client that does not know `protocol_version` must stop with an actionable
 error rather than guessing.
 
+## Catalogue
+
+Path: `index/v1/catalogue.json`. Search has to read something that lists names;
+a sparse index by definition cannot enumerate itself. The catalogue is a
+convenience view, not an authority: `info` and `fetch` always read the box's own
+record.
+
+```json
+{
+  "packages": [
+    {"name": "@nova/json", "version": "1.0.0", "description": "JSON reader"}
+  ]
+}
+```
+
 ## Package records
 
 Path: `index/v1/packages/<aa>/<bb>/<encoded-name>.json`, where `aa` and `bb`
 are the first two and next two lowercase hex digits of the SHA-256 of the
 canonical package name (UTF-8, lowercase, no scope separator normalization
-beyond the rules below). `encoded-name` is the canonical name percent-encoded.
+beyond the rules below). `encoded-name` is the canonical name percent-encoded as one path segment:
+`[a-z0-9_.@-]` stay literal and `/` becomes `%2F` (for example
+`@nova%2Fjson.json`). The client derives the same path locally, so a mirror
+must preserve case in the encoding (uppercase hex).
 
 ```json
 {
@@ -54,7 +73,9 @@ beyond the rules below). `encoded-name` is the canonical name percent-encoded.
 ```
 
 Records are append-only. A version is never overwritten; yanking flips a flag
-and is recorded in the same file.
+and is recorded in the same file. `archive` may be absolute or relative to the
+registry root; relative paths are what a local mirror and a Pages-hosted index
+use, and they resolve without a second configuration field.
 
 ## Identity
 
@@ -74,7 +95,11 @@ carry no name or timestamp. Limits: 10 MiB compressed, 100 MiB expanded,
 10 000 entries, no absolute paths, no `..`, no links or device files.
 
 Extraction verifies the SHA-256 of the downloaded bytes, checks every path
-against the destination, and moves the result into the cache atomically.
+against the destination, and unpacks under
+`<cache>/src/<encoded-name>/<version>`. The archive is kept at
+`<cache>/archives/<encoded-name>-<version>.box`. `NOVA_BOXES_CACHE` selects the
+cache root; the default is `~/.nova/boxes`. A checksum mismatch leaves the
+downloaded file for inspection and returns a non-zero exit code.
 
 ## Publishing
 
