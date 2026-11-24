@@ -1,0 +1,29 @@
+import "../../../libraries/nova-wasm/src/app.nova" as app
+
+// The smallest component: slot 0 is the count, slot 1 is the action the shell
+// sends. Build with NOVA_TARGET=wasm32, open index.html next to the module.
+
+fn view(count: Int) -> String {
+    var out = "<main style=\"font:18px ui-monospace,monospace;max-width:32rem;margin:4rem auto;padding:0 1rem;color:#c8f7d4;background:#0b0f0c\">"
+    out = out + "<h1 style=\"color:#7dffb0\">Nova <span style=\"color:#ffd479\">WASM</span></h1>"
+    out = out + "<p>rendered by a Nova component, compiled to WebAssembly.</p>"
+    out = out + "<p style=\"font-size:3rem;margin:.5rem 0;color:#ffd479\">" + "${count}" + "</p>"
+    out = out + "<button data-action=\"1\" style=\"font:inherit;padding:.6rem 1.2rem;margin-right:.5rem;cursor:pointer\">+1</button>"
+    out = out + "<button data-action=\"2\" style=\"font:inherit;padding:.6rem 1.2rem;cursor:pointer\">reset</button>"
+    out = out + "</main>"
+    return out
+}
+
+fn main() {
+    var count = app.get(0)
+    let action = app.action()
+    if action == 1 {
+        count = count + 1
+    }
+    if action == 2 {
+        count = 0
+    }
+    app.set(0, count)
+    app.clear_action()
+    app.mount(view(count))
+}

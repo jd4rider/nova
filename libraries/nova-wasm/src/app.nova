@@ -1,0 +1,32 @@
+// Nova Wasm: the smallest useful browser layer.
+//
+// There are no globals and no scheduler. JS calls the exported `main` once per
+// event; the model lives in numeric state slots, `main` returns the next view
+// as HTML in the output buffer, and the shell swaps it into the page. Slots are
+// fixed-size integers: slot 0 is the model used by the demo, slot 1 is the
+// pending action code set by the shell before a render. Slot 9 is reserved so
+// it cannot collide with a component's own model slots.
+
+extern "C" fn nova_state_get(slot: Int) -> Int
+extern "C" fn nova_state_set(slot: Int, value: Int) -> Unit
+
+fn get(slot: Int) -> Int {
+    return nova_state_get(slot)
+}
+
+fn set(slot: Int, value: Int) {
+    nova_state_set(slot, value)
+}
+
+// Writes the view. The shell reads the wasm output buffer after each `main`.
+fn mount(markup: String) {
+    println(markup)
+}
+
+fn action() -> Int {
+    return nova_state_get(9)
+}
+
+fn clear_action() {
+    nova_state_set(9, 0)
+}

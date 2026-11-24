@@ -141,6 +141,10 @@ pub fn compile(
 
     let clang = find_clang()?;
     let UnixTime { dir, stamp } = make_work_dir()?;
+    let wasm = options
+        .target
+        .as_deref()
+        .is_some_and(|t| t.starts_with("wasm32"));
     let _ = stamp;
     let ir_path = match &options.emit_ir {
         Some(path) => path.clone(),
@@ -153,6 +157,75 @@ pub fn compile(
 
     let runtime_c = dir.join("runtime.c");
     let runtime_o = dir.join("runtime.o");
+    if wasm {
+        if let Some(parent) = options.output.parent() {
+            fs::create_dir_all(parent).map_err(|e| io_error(parent, e))?;
+        }
+        fs::write(&runtime_c, WASM_RUNTIME_C).map_err(|e| io_error(&runtime_c, e))?;
+        let mut cc = Command::new(&clang);
+        cc.args([
+            "--target=wasm32-unknown-unknown",
+            "-O2",
+            "-std=c11",
+            "-ffreestanding",
+            "-fno-builtin",
+            "-c",
+        ])
+        .arg(&runtime_c)
+        .arg("-o")
+        .arg(&runtime_o);
+        run_checked(&mut cc, "compiling the wasm runtime")?;
+
+        let filtered: String = ir
+            .lines()
+            .filter(|line| {
+                !(line.trim_start().starts_with("declare")
+                    && (line.contains("@nova_print_str(")
+                        || line.contains("@nova_string_concat(")
+                        || line.contains("@nova_string_eq(")
+                        || line.contains("@nova_i64_to_string(")))
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let correlated = format!("{}\n{}", filtered, WASM_SHIMS);
+        fs::write(&ir_path, correlated).map_err(|e| io_error(&ir_path, e))?;
+
+        let ir_o = dir.join("program.o");
+        let mut obj = Command::new(&clang);
+        obj.args(["--target=wasm32-unknown-unknown", "-O2", "-c"])
+            .arg(&ir_path)
+            .arg("-o")
+            .arg(&ir_o)
+            .arg("-Wno-override-module");
+        run_checked(&mut obj, "compiling Nova to wasm32")?;
+
+        let linker = find_wasm_ld()?;
+        let mut link = Command::new(&linker);
+        link.args([
+            "-flavor",
+            "wasm",
+            "--no-entry",
+            "--export=main",
+            "--export=nova_output_ptr",
+            "--export=nova_output_len",
+            "--export=nova_reset_output",
+            "--export=nova_state_get",
+            "--export=nova_state_set",
+            "--export-memory",
+        ])
+        .arg(&runtime_o)
+        .arg(&ir_o)
+        .arg("-o")
+        .arg(&options.output);
+        run_checked(&mut link, "linking the wasm module")?;
+        if options.emit_ir.is_none() {
+            let _ = fs::remove_dir_all(&dir);
+        }
+        return Ok(BuildArtifact {
+            executable: options.output.clone(),
+            ir: options.emit_ir.clone(),
+        });
+    }
     fs::write(&runtime_c, RUNTIME_C).map_err(|e| io_error(&runtime_c, e))?;
 
     let mut cc = Command::new(&clang);
@@ -227,6 +300,32 @@ fn io_error(path: &Path, error: std::io::Error) -> BuildError {
         message: format!("could not access `{}`", path.display()),
         details: error.to_string(),
     }
+}
+
+fn find_wasm_ld() -> Result<String, BuildError> {
+    if let Ok(path) = std::env::var("NOVA_WASM_LD") {
+        return Ok(path);
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        let toolchains = PathBuf::from(home).join(".rustup/toolchains");
+        if let Ok(entries) = fs::read_dir(&toolchains) {
+            for entry in entries.flatten() {
+                let rustlib = entry.path().join("lib/rustlib");
+                if let Ok(targets) = fs::read_dir(&rustlib) {
+                    for target in targets.flatten() {
+                        let candidate = target.path().join("bin/rust-lld");
+                        if candidate.is_file() {
+                            return Ok(candidate.display().to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Err(BuildError {
+        message: "could not find a WebAssembly linker".into(),
+        details: "set NOVA_WASM_LD to rust-lld (shipped with Rust) or wasm-ld".into(),
+    })
 }
 
 fn find_clang() -> Result<String, BuildError> {
@@ -4376,3 +4475,7 @@ fn main() {
         let _ = fs::remove_file(&artifact.executable);
     }
 }
+
+const WASM_RUNTIME_C: &str = include_str!("../../nova-runtime/src/wasm.c");
+
+const WASM_SHIMS: &str = include_str!("../../nova-runtime/src/wasm_shims.ll");

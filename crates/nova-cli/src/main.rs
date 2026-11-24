@@ -324,7 +324,14 @@ fn build_options(
     lto: bool,
 ) -> BuildOptions {
     let target = root.join("target/nova");
-    let output = target.join(&manifest.name);
+    let wasm = std::env::var("NOVA_TARGET")
+        .map(|value| value.starts_with("wasm32"))
+        .unwrap_or(false);
+    let output = if wasm {
+        target.join(format!("{}.wasm", manifest.name))
+    } else {
+        target.join(&manifest.name)
+    };
     BuildOptions {
         output: output.clone(),
         opt_level: if release { OptLevel::O3 } else { OptLevel::O2 },
@@ -336,7 +343,11 @@ fn build_options(
         debug,
         lto,
         entry: None,
-        target: None,
+        target: if wasm {
+            Some("wasm32-unknown-unknown".to_string())
+        } else {
+            std::env::var("NOVA_TARGET").ok()
+        },
     }
 }
 

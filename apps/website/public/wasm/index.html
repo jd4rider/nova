@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nova Wasm</title>
+    <meta name="description" content="Documentation and a Bible reader rendered by Nova components compiled to WebAssembly." />
+    <style>
+      html, body { margin: 0; background: #0b0f0c; color: #c8f7d4; font: 16px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
+      #app { min-height: 100vh; }
+      #app .wrap { max-width: 860px; margin: 0 auto; padding: 32px 20px 80px; }
+      .boot { padding: 40px 20px; color: #6f9f80; }
+    </style>
+  </head>
+  <body>
+    <div id="app"><p class="boot">Loading Nova Wasm…</p></div>
+    <script type="module">
+      const mount = document.getElementById('app')
+      try {
+        const { createApp } = await import('./shell.js')
+        await createApp('./nova-wasm-site.wasm', mount, (target) => {
+          const reference = target.querySelector('#bible-ref')
+          const passage = target.querySelector('#passage')
+          if (!reference || !passage) return
+          passage.textContent = 'loading passage…'
+          const ref = reference.dataset.ref
+          const translation = reference.dataset.translation
+          fetch(`https://bible-api.com/${encodeURIComponent(ref)}?translation=${translation}`)
+            .then((response) => response.json())
+            .then((data) => {
+              passage.textContent = ''
+              if (!data.verses || !data.verses.length) {
+                passage.textContent = data.error || 'No verses returned.'
+                return
+              }
+              data.verses.forEach((verse) => {
+                const line = document.createElement('p')
+                const number = document.createElement('span')
+                number.className = 'v'
+                number.textContent = String(verse.verse)
+                line.append(number, document.createTextNode(verse.text.trim()))
+                passage.append(line)
+              })
+            })
+            .catch((error) => { passage.textContent = `Could not load: ${error.message}` })
+        })
+      } catch (error) {
+        mount.innerHTML = `<p class="boot">Nova Wasm failed to start: ${error.message}</p>`
+      }
+    </script>
+  </body>
+</html>

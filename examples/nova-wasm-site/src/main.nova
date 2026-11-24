@@ -1,0 +1,126 @@
+import "../../../libraries/nova-wasm/src/app.nova" as app
+
+// Nova Wasm site: documentation pages and a Bible reader, rendered by Nova
+// components compiled to WebAssembly. Slot 0 is the route; slots 1..3 are the
+// Bible selection. The shell fetches passage text after each render and fills
+// #passage, because wasm exports carry numbers, not strings.
+
+fn books() -> List<String> {
+    return ["Genesis", "Exodus", "Leviticus", "Numbers", "Deuteronomy", "Joshua", "Judges", "Ruth", "1 Samuel", "2 Samuel", "1 Kings", "2 Kings", "1 Chronicles", "2 Chronicles", "Ezra", "Nehemiah", "Esther", "Job", "Psalms", "Proverbs", "Ecclesiastes", "Song of Solomon", "Isaiah", "Jeremiah", "Lamentations", "Ezekiel", "Daniel", "Hosea", "Joel", "Amos", "Obadiah", "Jonah", "Micah", "Nahum", "Habakkuk", "Zephaniah", "Haggai", "Zechariah", "Malachi", "Matthew", "Mark", "Luke", "John", "Acts", "Romans", "1 Corinthians", "2 Corinthians", "Galatians", "Ephesians", "Philippians", "Colossians", "1 Thessalonians", "2 Thessalonians", "1 Timothy", "2 Timothy", "Titus", "Philemon", "Hebrews", "James", "1 Peter", "2 Peter", "1 John", "2 John", "3 John", "Jude", "Revelation"]
+}
+
+fn chapters() -> List<Int> {
+    return [50, 40, 27, 36, 34, 24, 21, 4, 31, 24, 22, 25, 29, 36, 10, 13, 10, 42, 150, 31, 12, 8, 66, 52, 5, 48, 12, 14, 3, 9, 1, 4, 7, 3, 3, 3, 2, 14, 4, 28, 16, 24, 21, 28, 16, 16, 13, 6, 6, 4, 4, 5, 3, 6, 4, 3, 1, 13, 5, 5, 3, 5, 1, 1, 1, 22]
+}
+
+fn styles() -> String {
+    var out = "<style>*{box-sizing:border-box}body{margin:0;background:#0b0f0c;color:#c8f7d4;font:16px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace}"
+    out = out + ".wrap{max-width:860px;margin:0 auto;padding:32px 20px 80px}h1{font-size:34px;color:#7dffb0;margin:.2em 0}h1 span{color:#ffd479}h2{color:#7dffb0;margin-top:1.6em}"
+    out = out + ".nav{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 24px}.nav button,.row button{font:inherit;background:#0e1712;border:1px solid #245235;color:#c8f7d4;padding:8px 14px;cursor:pointer}"
+    out = out + ".nav button:hover,.row button:hover{background:#182a1d}.nav button.on{background:#7dffb0;color:#08120b;border-color:#7dffb0}"
+    out = out + ".panel{border:1px solid #1d3a28;background:#0e1712;padding:18px 20px;margin-top:18px}.row{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}"
+    out = out + ".ref{font-size:20px;color:#ffd479;margin:0}.passage{white-space:pre-wrap;max-height:56vh;overflow:auto}.passage .v{color:#ffd479;font-size:12px;vertical-align:super;margin-right:6px}"
+    out = out + "code{color:#ffd479}a{color:#7dffb0}.muted{color:#6f9f80}</style>"
+    return out
+}
+
+fn nav(route: Int) -> String {
+    var out = "<nav class=\"nav\">"
+    out = out + "<button data-action=\"100\" class=\"" + on(route == 0) + "\">Overview</button>"
+    out = out + "<button data-action=\"101\" class=\"" + on(route == 1) + "\">Components</button>"
+    out = out + "<button data-action=\"102\" class=\"" + on(route == 2) + "\">Bible</button>"
+    out = out + "</nav>"
+    return out
+}
+
+fn on(active: Bool) -> String {
+    if active {
+        return "on"
+    }
+    return ""
+}
+
+fn docs_overview() -> String {
+    var out = "<h1>Nova <span>WASM</span></h1><p>A documentation page rendered by Nova code compiled to WebAssembly. No framework runtime, no virtual DOM, no npm bundle.</p>"
+    out = out + "<div class=\"panel\"><h2>The contract</h2><p>JS calls the exported <code>main</code>, reads HTML from the wasm output buffer and sets <code>innerHTML</code>. Clicks carry a <code>data-action</code> code, which the shell writes into a state slot before the next call.</p>"
+    out = out + "<p class=\"muted\">Model, update, view — three pieces. State is numeric slots; the view is a String.</p></div>"
+    out = out + "<div class=\"panel\"><h2>Why it is small</h2><p>Nova has no globals, so the model lives in runtime slots. That removes the need for a scheduler, subscriptions or a component tree. The compiler already type-checks the view.</p></div>"
+    return out
+}
+
+fn docs_components() -> String {
+    var out = "<h1>Writing a <span>component</span></h1><p>A component is a function from state to HTML, plus a <code>main</code> that applies the action.</p>"
+    out = out + "<div class=\"panel\"><h2>view</h2><p><code>fn view(count: Int) -&gt; String</code> returns markup. Buttons use <code>data-action</code> integers.</p></div>"
+    out = out + "<div class=\"panel\"><h2>update</h2><p><code>main</code> reads <code>app.action()</code>, changes the slots, then calls <code>app.mount(view(...))</code>.</p></div>"
+    out = out + "<div class=\"panel\"><h2>Ship</h2><p><code>NOVA_TARGET=wasm32 nova build</code> writes a <code>.wasm</code>. The shell is ten lines of JavaScript.</p></div>"
+    return out
+}
+
+fn bible(book: Int, chapter: Int, translation: Int) -> String {
+    let names = books()
+    let counts = chapters()
+    let name = names[book]
+    let labels: List<String> = ["WEB", "KJV", "ASV"]
+    let codes: List<String> = ["web", "kjv", "asv"]
+    let reference = name + " " + "${chapter}"
+    var out = "<h1>Bible <span>reader</span></h1><p class=\"muted\">Controls rendered by Nova; passage text fetched by the shell from bible-api.com.</p>"
+    out = out + "<div class=\"panel\"><p id=\"bible-ref\" class=\"ref\" data-ref=\"" + reference + "\" data-translation=\"" + codes[translation] + "\">" + reference + " · " + labels[translation] + "</p>"
+    out = out + "<div class=\"row\"><button data-action=\"1\">← book</button><button data-action=\"2\">book →</button><button data-action=\"3\">← chapter</button><button data-action=\"4\">chapter →</button><button data-action=\"5\">" + labels[translation] + " →</button></div>"
+    out = out + "<div id=\"passage\" class=\"passage\">loading passage…</div></div>"
+    return out
+}
+
+fn main() {
+    var route = app.get(0)
+    var book = app.get(1)
+    var chapter = app.get(2)
+    var translation = app.get(3)
+    let action = app.action()
+    if action >= 100 && action < 110 {
+        route = action - 100
+    }
+    if action == 1 {
+        book = book - 1
+    }
+    if action == 2 {
+        book = book + 1
+    }
+    if action == 3 {
+        chapter = chapter - 1
+    }
+    if action == 4 {
+        chapter = chapter + 1
+    }
+    if action == 5 {
+        translation = translation + 1
+    }
+    if book < 0 {
+        book = 0
+    }
+    if book > 65 {
+        book = 65
+    }
+    if translation > 2 {
+        translation = 0
+    }
+    let counts = chapters()
+    if chapter < 1 {
+        chapter = 1
+    }
+    if chapter > counts[book] {
+        chapter = counts[book]
+    }
+    app.set(0, route)
+    app.set(1, book)
+    app.set(2, chapter)
+    app.set(3, translation)
+    app.clear_action()
+    var body = docs_overview()
+    if route == 1 {
+        body = docs_components()
+    }
+    if route == 2 {
+        body = bible(book, chapter, translation)
+    }
+    app.mount(styles() + "<div class=\"wrap\">" + nav(route) + body + "</div>")
+}
