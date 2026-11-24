@@ -9,7 +9,7 @@ description: A native immediate-mode GUI written in Nova, with a CoreGraphics ra
 
 Three pieces, no external dependencies:
 
-- **`crates/nova-runtime/src/gui.m`** — the macOS host. It creates one `NSWindow`, owns a `CGBitmapContext` framebuffer, draws glyphs with CoreText, queues input events and writes PNGs for tests.
+- **`runtime/gui.m`** — the macOS host. It creates one `NSWindow`, owns a `CGBitmapContext` framebuffer, draws glyphs with CoreText, queues input events and writes PNGs for tests.
 - **`libraries/nova-gui/src/gui.nova`** — the Nova API. `extern "C"` declarations plus a theme, an `Event` struct and geometry helpers.
 - **The compiler** — `nova-codegen-llvm` compiles and links the host only when a program's resolved externs mention `nova_gui_`, `nova_fs_`, `nova_process_` or `nova_env`, and links `Cocoa`, `CoreText`, `CoreGraphics` and `ImageIO`. A program that never touches the GUI does not pay for AppKit, and the WebAssembly target is untouched.
 

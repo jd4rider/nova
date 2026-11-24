@@ -3,7 +3,7 @@ title: Runtime and ABI
 description: The C runtime, checked helpers, abort policy and allocation limits.
 ---
 
-Nova links a small C runtime (`crates/nova-runtime/src/runtime.c`) embedded by the compiler. The runtime ABI is versioned (`ABI_VERSION = 1`); `nova doctor` reports it.
+Nova links a small C runtime (`runtime/runtime.c`) embedded by the compiler. The runtime ABI is versioned (`ABI_VERSION = 1`); `nova doctor` reports it.
 
 ## Responsibilities
 

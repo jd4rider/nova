@@ -10,7 +10,7 @@ Nova needs strings, lists, bounds checks, checked arithmetic traps, and startup 
 
 ## Decision
 
-Ship a small C runtime (`crates/nova-runtime/src/runtime.c`) embedded with `include_str!` and compiled by Clang. Allocation currently uses process-lifetime allocation. All safe-language values are immutable or uniquely owned; there is no user-visible manual free. Checked arithmetic and bounds failures call a runtime trap that writes a message and aborts.
+Ship a small C runtime (`runtime/runtime.c`) embedded with `include_str!` and compiled by Clang. Allocation currently uses process-lifetime allocation. All safe-language values are immutable or uniquely owned; there is no user-visible manual free. Checked arithmetic and bounds failures call a runtime trap that writes a message and aborts.
 
 ## Consequences
 

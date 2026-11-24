@@ -54,7 +54,7 @@ keyboard ──► key_text ──► pty_write(slot) ──► /bin/sh -c "$SHE
 screen ◄── parse ◄── pty_poll(slot) ◄────────────────┘
 ```
 
-- `crates/nova-runtime/src/gui.m` owns a pool of eight ptys: `nova_pty_open`, `nova_pty_poll`, `nova_pty_write`, `nova_pty_write_text`, `nova_pty_resize`, `nova_pty_close`, `nova_pty_status`. Each slot has a reader thread appending to a locked buffer; Nova polls it once per frame.
+- `runtime/gui.m` owns a pool of eight ptys: `nova_pty_open`, `nova_pty_poll`, `nova_pty_write`, `nova_pty_write_text`, `nova_pty_resize`, `nova_pty_close`, `nova_pty_status`. Each slot has a reader thread appending to a locked buffer; Nova polls it once per frame.
 - `libraries/nova-term` is the emulator: a ring of rows (a linefeed copies one row, not the grid), a ring of scrollback lines, a VT parser and a renderer that batches same-colour runs into single draw calls.
 - The app is immediate mode: poll every live pty, feed the bytes, draw the grid, poll one event.
 

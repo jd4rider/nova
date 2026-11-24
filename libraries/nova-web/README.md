@@ -47,4 +47,4 @@ Single-threaded and blocking, bound to loopback, HTTP/1.1 without TLS, form-enco
 - `apps/website/src/content/docs/libraries/web.md`
 - `apps/website/src/content/docs/libraries/templating.md`
 
-The server builtins (`http_listen`, `http_accept`, `http_method`, `http_path`, `http_query`, `http_body`, `http_header`, `http_form`, `http_respond`, `http_close`) live in `crates/nova-runtime/src/runtime.c` and are documented under the standard library.
+The server builtins (`http_listen`, `http_accept`, `http_method`, `http_path`, `http_query`, `http_body`, `http_header`, `http_form`, `http_respond`, `http_close`) live in `runtime/runtime.c` and are documented under the standard library.
