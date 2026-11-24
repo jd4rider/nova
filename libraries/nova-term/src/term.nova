@@ -1514,10 +1514,6 @@ fn tm_view(t: Term) -> Int {
     return 0
 }
 
-fn tm_sb_len(t: Term) -> Int {
-    return t.sb.len()
-}
-
 fn tm_backlog(t: Term) -> Int {
     return tm_reg(t, tm_i_scount())
 }

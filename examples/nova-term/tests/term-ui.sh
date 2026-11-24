@@ -76,6 +76,14 @@ assert_font_has Nerd
 SCRIPT
 run_case font "$WORK/font.txt"
 
+cat > "$WORK/structs.txt" <<'SCRIPT'
+assert_lit
+assert_lit_push
+assert_tab_cwd
+assert_tab_title shell
+SCRIPT
+run_case structs "$WORK/structs.txt"
+
 echo
 echo "passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]

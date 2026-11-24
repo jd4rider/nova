@@ -750,7 +750,9 @@ impl<'a> ModuleGen<'a> {
             Type::Char => (4, 4),
             Type::Int | Type::Float => (8, 8),
             Type::String => (16, 8),
-            Type::List(_) | Type::Slice(_) => (16, 8),
+            /* nova_list is { data, len, cap }: three words, not two. Sizing it
+             * as 16 truncated the tail of every struct copied through a list. */
+            Type::List(_) | Type::Slice(_) => (24, 8),
             Type::Map(_, _) | Type::Set(_) => (48, 8),
             Type::Fn(_, _) => (16, 8),
             Type::TraitObject(_) => (16, 8),

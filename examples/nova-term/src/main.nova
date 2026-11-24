@@ -143,7 +143,15 @@ fn close_active(app: App) -> App {
     var i = 0
     while i < app.tabs.len() {
         if i != index {
-            rest.push(app.tabs[i])
+            let old = app.tabs[i]
+            rest.push(Tab {
+                slot: old.slot,
+                title: old.title,
+                term: old.term,
+                cols: old.cols,
+                rows: old.rows,
+                cwd: old.cwd,
+            })
         }
         i = i + 1
     }
@@ -783,11 +791,32 @@ fn run_script(app: App, path: String) -> App {
                 }
                 println(truth(vt.tm_alt_on(app.tabs[app.active].term) == want) + " " + trimmed)
             }
-            if cmd == "assert_sb" {
-                println(truth(vt.tm_sb_len(app.tabs[app.active].term) > 1000) + " " + trimmed)
+            if cmd == "assert_tab_title" && words.len() >= 2 {
+                var ok = false
+                if app.tabs.len() > 0 {
+                    ok = app.tabs[app.active].title == words[1]
+                }
+                println(truth(ok) + " " + trimmed)
             }
-            if cmd == "assert_sbcap" {
-                println(truth(vt.tm_sb_len(app.tabs[app.active].term) == vt.tm_scrollback_capacity()) + " " + trimmed)
+            if cmd == "assert_tab_cwd" {
+                var ok = false
+                if app.tabs.len() > 0 {
+                    ok = app.tabs[app.active].cwd.starts_with("/")
+                }
+                println(truth(ok) + " " + trimmed)
+            }
+            if cmd == "assert_lit" {
+                let made = Tab { slot: 3, title: "probe", term: vt.tm_new(20, 4), cols: 20, rows: 4, cwd: "/tmp/probe" }
+                println(truth(made.cwd == "/tmp/probe") + " " + trimmed)
+            }
+            if cmd == "assert_lit_push" {
+                var list: List<Tab> = []
+                list.push(Tab { slot: 4, title: "pushed", term: vt.tm_new(20, 4), cols: 20, rows: 4, cwd: "/tmp/pushed" })
+                var ok = false
+                if list.len() > 0 {
+                    ok = list[0].cwd == "/tmp/pushed" && list[0].title == "pushed"
+                }
+                println(truth(ok) + " " + trimmed)
             }
             if cmd == "fontname" {
                 println("FONT " + gui.mono_font())

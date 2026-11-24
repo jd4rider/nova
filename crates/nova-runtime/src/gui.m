@@ -1033,7 +1033,11 @@ static char *nova_gui_cstr(nova_str text) {
 }
 
 static nova_str nova_gui_empty(void) {
-    nova_str empty = {"", 0};
+    /* Nova takes ownership of host strings, so this must be heap memory: a
+     * pointer to the "" literal would be handed to free() later. */
+    char *buffer = (char *)malloc(1);
+    if (buffer) buffer[0] = '\0';
+    nova_str empty = {buffer, 0};
     return empty;
 }
 
