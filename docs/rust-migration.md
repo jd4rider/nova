@@ -1,6 +1,6 @@
 # Replacing the Rust compiler with Nova
 
-The compiler is currently Rust: **17,821 lines across 11 crates** in `bootstrap/`.
+The compiler is currently Rust: **17,907 lines across 9 crates** in `bootstrap/`.
 This page is the inventory and the order in which each crate can become Nova.
 It is a bootstrapping project, not a port: the tool that compiles Nova has to be
 written in Nova, compiled by the Rust tool, and then compile itself before the
@@ -20,10 +20,10 @@ Rust one can go.
 | `nova-pkg` | 234 | `nova.toml`, lockfile, module graph | Nova, phase 1 |
 | `nova-wasm` | 229 | wasm32 backend | Nova, phase 5 (a backend, not a port) |
 | `nova-fmt` | 186 | Source formatter | **deleted**; Nova formatter |
-| `nova-runtime` | 98 | Thin Rust wrappers over the C runtime | Fold into the C runtime; no Rust needed |
+| `nova-runtime` | 98 | Thin Rust wrappers over the C runtime | **deleted**; C and Objective-C sources moved to `runtime/` |
 
-The 98 lines in `nova-runtime` are wrappers around `runtime.c` and `gui.m`;
-they disappear first, since the C host already does the work.
+The 98 lines in `nova-runtime` were wrappers around `runtime.c` and `gui.m`;
+they are gone, and the sources now live in `runtime/` outside the Rust workspace.
 
 ## Phases
 
@@ -67,7 +67,7 @@ test corpus green at every step.
 `crates/` is gone. The remaining Rust compiler lives in `bootstrap/` and is
 built by Cargo only as the stage-0 compiler; Nova packages live in `libraries/`
 and are described by Nova Boxes. `nova-stdlib` (a 1-line placeholder) was
-deleted.
+deleted, and the C/Objective-C runtime moved to `runtime/`.
 
 ## Phase 1 status (in progress)
 

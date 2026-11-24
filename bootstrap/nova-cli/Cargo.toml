@@ -14,7 +14,6 @@ nova-diag = { workspace = true }
 nova-lsp = { workspace = true }
 nova-parser = { workspace = true }
 nova-pkg = { workspace = true }
-nova-runtime = { workspace = true }
 nova-sema = { workspace = true }
 clap = { workspace = true }
 serde_json = { workspace = true }

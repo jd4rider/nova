@@ -146,7 +146,6 @@ bootstrap/
   nova-sema           name resolution and type checking
   nova-ir             typed intermediate representation
   nova-codegen-llvm   textual LLVM IR emission
-  nova-runtime        native support library
   nova-cli            build, run, check, test, fmt, lsp, tree
   nova-lsp            stdio language server
   nova-wasm           browser front-end ABI

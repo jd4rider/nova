@@ -5,7 +5,6 @@ members = [
     "bootstrap/nova-lexer",
     "bootstrap/nova-parser",
     "bootstrap/nova-sema",
-    "bootstrap/nova-runtime",
     "bootstrap/nova-codegen-llvm",
     "bootstrap/nova-pkg",
     "bootstrap/nova-lsp",
@@ -25,7 +24,6 @@ nova-diag = { path = "bootstrap/nova-diag" }
 nova-lexer = { path = "bootstrap/nova-lexer" }
 nova-parser = { path = "bootstrap/nova-parser" }
 nova-sema = { path = "bootstrap/nova-sema" }
-nova-runtime = { path = "bootstrap/nova-runtime" }
 nova-codegen-llvm = { path = "bootstrap/nova-codegen-llvm" }
 nova-pkg = { path = "bootstrap/nova-pkg" }
 nova-lsp = { path = "bootstrap/nova-lsp" }

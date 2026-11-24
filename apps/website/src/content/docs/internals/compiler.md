@@ -12,7 +12,6 @@ bootstrap/
   nova-parser/        AST, recursive descent, Pratt expressions
   nova-sema/          resolution, local inference, typed IR
   nova-codegen-llvm/  textual LLVM IR, Clang invocation, linking
-  nova-runtime/       C ABI and runtime helpers
   nova-pkg/           manifest and lockfile
   nova-lsp/           stdio language server
   nova-wasm/          browser front end for the playground

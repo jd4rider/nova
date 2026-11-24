@@ -11,6 +11,8 @@ use nova_codegen_llvm::{compile, BuildOptions, OptLevel};
 use nova_diag::{render_all, Diagnostic};
 use nova_parser::{parse, Item, Program};
 use nova_pkg::{find_project_root, load, write_lock, Manifest, MANIFEST_NAME};
+
+const ABI_VERSION: u32 = 1;
 use nova_sema::{check, TypedProgram};
 
 const EXIT_OK: i32 = 0;
@@ -870,7 +872,7 @@ fn cmd_doctor() -> i32 {
             .unwrap_or_else(|_| "<unknown>".into())
     );
     println!("OS: {} {}", std::env::consts::OS, std::env::consts::ARCH);
-    println!("Runtime ABI: {}", nova_runtime::ABI_VERSION);
+    println!("Runtime ABI: {}", ABI_VERSION);
 
     let mut ok = true;
     match first_line("clang", &["--version"]) {

@@ -8,4 +8,3 @@ license.workspace = true
 nova-diag = { workspace = true }
 nova-parser = { workspace = true }
 nova-sema = { workspace = true }
-nova-runtime = { workspace = true }

@@ -21,7 +21,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use nova_diag::{LineIndex, Span};
 use nova_parser::ast::{AssignOp, BinaryOp};
-use nova_runtime::{GUI_M, RUNTIME_C};
+// The C runtime is embedded so a checked-in copy cannot drift from the compiler
+// that emits calls into it. It lives in `runtime/`, outside the Rust workspace.
+const RUNTIME_C: &str = include_str!("../../../runtime/runtime.c");
+const GUI_M: &str = include_str!("../../../runtime/gui.m");
 use nova_sema::{
     BuiltinFn, BuiltinMethod, LValue, LocalId, TBlock, TExpr, TExprKind, TPattern, TStmt,
     TStmtKind, TStrPartKind, Type, TypedFn, TypedProgram,
@@ -4614,6 +4617,6 @@ fn main() {
     }
 }
 
-const WASM_RUNTIME_C: &str = include_str!("../../nova-runtime/src/wasm.c");
+const WASM_RUNTIME_C: &str = include_str!("../../../runtime/wasm.c");
 
-const WASM_SHIMS: &str = include_str!("../../nova-runtime/src/wasm_shims.ll");
+const WASM_SHIMS: &str = include_str!("../../../runtime/wasm_shims.ll");

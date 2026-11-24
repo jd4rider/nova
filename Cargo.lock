@@ -154,7 +154,6 @@ dependencies = [
  "nova-lsp",
  "nova-parser",
  "nova-pkg",
- "nova-runtime",
  "nova-sema",
  "serde_json",
 ]
@@ -165,7 +164,6 @@ version = "0.2.0"
 dependencies = [
  "nova-diag",
  "nova-parser",
- "nova-runtime",
  "nova-sema",
 ]
 
@@ -208,10 +206,6 @@ dependencies = [
  "serde",
  "toml",
 ]
-
-[[package]]
-name = "nova-runtime"
-version = "0.2.0"
 
 [[package]]
 name = "nova-sema"
