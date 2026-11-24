@@ -76,7 +76,8 @@ The Nova implementations exist and are exercised by `examples/nova-tool`:
 | Piece | Nova file | State |
 |---|---|---|
 | Formatter | `libraries/nova-fmt/src/fmt.nova` | formats every corpus file, idempotent; `nova fmt`, the LSP and the wasm playground all run this implementation |
-| Parser | `libraries/nova-parser/src/parser.nova`, `expr.nova`, `ast.nova` | `ast.nova` is the phase-2 AST arena: imports, structs, enums, impls, externs, generics, functions, control flow, `match`, calls, literals, indexing and operators. It parses all 27 library/tool sources without errors |
+| Parser | `libraries/nova-parser/src/parser.nova`, `expr.nova`, `ast.nova` | `ast.nova` is the phase-2 AST arena: imports, structs, enums, impls, externs, generics, functions, control flow, `match`, calls, literals, indexing and operators. It parses all 28 library/tool sources without errors |
+| Semantic checks | `libraries/nova-check/src/sema.nova` | Body-level AST slice: declaration tables, scoped locals, expression/return types, call arity/types, struct fields, conditions and loop checks. Nine focused assertions; still partial and not wired into `nova build` |
 | Semantic checks | `libraries/nova-check/src/check.nova` | declaration-level: duplicate items, duplicate parameters, unknown type names |
 | Lexer | `libraries/nova-lexer/src/lexer.nova` | tokenizes the full 5,139-line studio file and the large-input corpus |
 | Diagnostics | `libraries/nova-diag/src/diag.nova` | renders severity, location and caret |
@@ -106,19 +107,21 @@ output buffer to read the result back, plus value-ABI shims for `chars`, `split`
 `join` and the trim family.
 
 Phase-2 suites: `tests/expr.sh` (expression trees), `tests/parser.sh`
-(item structure plus the AST slice), `tests/sema.sh` (declaration checks), and
+(item structure plus the AST splice), `tests/sema.sh` (declaration checks),
+`tests/sema-ast.sh` (body-level AST checks), and
 `apps/website/scripts/test-playground-format.mjs` (the browser formatter wasm,
 output and idempotence).
 
-Phase-2 corpus gate: `ast.nova` parses all 27 files under `libraries/*/src`
+Phase-2 corpus gate: `ast.nova` parses all 28 files under `libraries/*/src`
 plus `examples/nova-tool/src` with no parse errors. That is coverage of the
 syntax those files use, not proof of full grammar parity: closures and forms
 absent from the corpus are not covered yet, and the AST is not wired into
-`nova build`. Porting sema onto this AST is phase 3.
+`nova build`. The phase-3 slice in `sema.nova` now checks bodies over this AST;
+full sema parity remains the gate.
 
 Test state: `sh examples/nova-tool/tests/toolchain.sh` → **passed 117, failed 0**
 (including formatting the studio source), `sh examples/nova-tool/tests/parser.sh`
-→ **passed 48, failed 0** (including the 27-file AST corpus), and
+→ **passed 49, failed 0** (including the 28-file AST corpus), and
 `sh examples/nova-tool/tests/boxes.sh`
 → **passed 64, failed 0**. No Rust crate has been deleted yet: the bootstrap
 compiler (lexer, parser, sema, codegen, CLI, LSP) is still Rust, and phases 2–4

@@ -8,6 +8,7 @@ import "../../../libraries/nova-parser/src/parser.nova"
 import "../../../libraries/nova-parser/src/expr.nova"
 import "../../../libraries/nova-parser/src/ast.nova"
 import "../../../libraries/nova-check/src/check.nova"
+import "../../../libraries/nova-check/src/sema.nova"
 import "../../../libraries/nova-boxes/src/semver.nova"
 import "../../../libraries/nova-boxes/src/resolve.nova"
 import "../../../libraries/nova-boxes/src/report.nova"
@@ -162,6 +163,18 @@ fn main() {
 
     if mode == "sema" {
         let diags = ck_check(source)
+        if diags.len() == 0 {
+            println("OK ${path}")
+        } else {
+            for message in diags {
+                println(message)
+            }
+        }
+        return
+    }
+
+    if mode == "sema-ast" {
+        let diags = sa_check(source)
         if diags.len() == 0 {
             println("OK ${path}")
         } else {
