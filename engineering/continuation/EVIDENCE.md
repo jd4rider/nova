@@ -43,18 +43,21 @@ Result: PASS — passed 4, failed 0.
 sh examples/nova-tool/tests/codegen.sh
 ```
 
-Result: PASS — passed 8, failed 0.
+Result: PASS — passed 11, failed 0.
 
 Evidence from the suite:
 
 - `define i64 @nova_add(i64 %p0, i64 %p1)` emitted.
 - Direct call `call i64 @nova_add(i64 1, i64 2)` emitted.
-- Host clang accepted the module.
-- Native binary exited with 9 (the expected arithmetic result).
+- The straight-line module contains no `alloca`; params and `let` bindings stay
+  in SSA.
+- Host clang accepted both the immutable and mutable modules.
+- Native binaries exited with 9 and 2 (the expected arithmetic results).
 - On this Apple Silicon host, `file` reported Mach-O.
 
 Limits: the test invokes clang; `nova-tool emit-ir` only emits IR. The slice
-does not use the seed runtime ABI and has no control flow yet.
+does not use the seed runtime ABI and has no control flow yet. This is a
+generated-code improvement, not a compiler-speed measurement.
 
 ## Nova Boxes
 
@@ -63,6 +66,7 @@ Previously recorded: `sh examples/nova-tool/tests/boxes.sh` → passed 64, faile
 
 ## Commit history
 
+- SSA mutable/immutable codegen checkpoint — see branch HEAD.
 - `e9d9e4a` — native codegen path in Nova, durable continuation state.
 - `47302b6` — AST-based semantic checker in Nova.
 - `983fd6a` — full-corpus AST parser regression gate.

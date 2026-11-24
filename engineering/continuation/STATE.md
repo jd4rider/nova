@@ -14,8 +14,9 @@ Status: READY
 
 ## Last verified behavior
 
-- `sh examples/nova-tool/tests/codegen.sh` → passed 8, failed 0. The Nova tool
-  emits IR; clang compiles it; the native binary exits 9.
+- `sh examples/nova-tool/tests/codegen.sh` → passed 11, failed 0. The Nova tool
+  emits IR; clang compiles it; native binaries exit 9 and 2. Immutable params
+  and `let` bindings stay in SSA (no `alloca`).
 - `sh examples/nova-tool/tests/parser.sh` → passed 50, failed 0.
 - `sh examples/nova-tool/tests/sema-ast.sh` → passed 9, failed 0.
 - `sh examples/nova-tool/tests/sema.sh` → passed 4, failed 0.
@@ -24,7 +25,8 @@ Status: READY
 ## Work completed since previous checkpoint
 
 - `libraries/nova-codegen/src/llvm.nova`: Int functions, parameters, `let`/`var`,
-  assignment, integer literals, `+ - * /`, direct calls and `return`.
+  assignment, integer literals, `+ - * /`, direct calls and `return`; immutable
+  bindings use SSA, mutable bindings use stack slots.
 - `NOVA_TOOL=emit-ir` mode in `examples/nova-tool`.
 - `tests/codegen.sh` and `tests/codegen-sample.nova`.
 - Durable continuation files under `engineering/continuation/`.
@@ -55,7 +57,7 @@ Status: READY
 - Command: `(cd examples/nova-tool && ../../target/debug/nova build)`
 - Result: PASS
 - Command: `sh examples/nova-tool/tests/codegen.sh`
-- Result: PASS (8/0)
+- Result: PASS (11/0)
 
 ## Blockers and approvals
 

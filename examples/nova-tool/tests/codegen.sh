@@ -16,6 +16,11 @@ echo "$out" | grep -q "define i64 @nova_add(i64 %p0, i64 %p1)" && ok || no "add 
 echo "$out" | grep -q "add i64" && ok || no "integer addition"
 echo "$out" | grep -q "call i64 @nova_add(i64 1, i64 2)" && ok || no "direct call"
 echo "$out" | grep -q "define i32 @main()" && ok || no "entry wrapper"
+if echo "$out" | grep -q "alloca"; then
+    no "immutable params/lets spill to stack"
+else
+    ok
+fi
 
 printf '%s\n' "$out" > "$tmp/out.ll"
 if clang -x ir "$tmp/out.ll" -o "$tmp/out" > "$tmp/clang.log" 2>&1; then
@@ -39,6 +44,22 @@ if [ -x "$tmp/out" ]; then
     fi
 else
     no "native binary missing"
+fi
+
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-var.nova" "$tool")
+printf '%s\n' "$out" > "$tmp/var.ll"
+if clang -x ir "$tmp/var.ll" -o "$tmp/var" > "$tmp/var-clang.log" 2>&1; then
+    ok
+else
+    no "clang rejects mutable IR"
+    cat "$tmp/var-clang.log"
+fi
+if [ -x "$tmp/var" ]; then
+    "$tmp/var"
+    code=$?
+    [ "$code" -eq 2 ] && ok || no "mutable result (got $code, expected 2)"
+else
+    no "mutable binary missing"
 fi
 
 printf 'fn main() -> Int {\n    return "x"\n}\n' > "$tmp/bad.nova"

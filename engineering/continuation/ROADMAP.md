@@ -11,6 +11,7 @@ Status vocabulary: `TODO`, `READY`, `IN_PROGRESS`, `PARTIAL`, `BLOCKED`,
 | CLI-01 | Nova build/run driver over the Nova compiler | TODO | CODEGEN-01 |
 | LSP-01 | Nova language server with the existing feature surface | TODO | COMP-01, CODEGEN-01, stdio host |
 | BOOT-02 | Stage-1/2/3 self-compilation and conformance | TODO | CLI-01 |
+| PERF-01 | Measured compiler/LSP performance at feature parity | TODO | CLI-01, LSP-01 |
 | REL-01 | Clean-machine distribution without a Rust SDK | TODO | BOOT-02 |
 
 ## Acceptance gates
@@ -28,6 +29,9 @@ Status vocabulary: `TODO`, `READY`, `IN_PROGRESS`, `PARTIAL`, `BLOCKED`,
 - **BOOT-02**: a known-good seed builds generation 1, generation 1 builds
   generation 2, generation 2 builds generation 3, and each generation passes
   the conformance suite.
+- **PERF-01**: Nova is faster than the Rust toolchain on identical, recorded
+  workloads at feature parity; no claim without raw samples, correctness checks
+  and a documented method. See `PERFORMANCE.md`.
 
 ## Critical path
 

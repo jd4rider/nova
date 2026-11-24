@@ -78,7 +78,7 @@ The Nova implementations exist and are exercised by `examples/nova-tool`:
 | Formatter | `libraries/nova-fmt/src/fmt.nova` | formats every corpus file, idempotent; `nova fmt`, the LSP and the wasm playground all run this implementation |
 | Parser | `libraries/nova-parser/src/parser.nova`, `expr.nova`, `ast.nova` | `ast.nova` is the phase-2 AST arena: imports, structs, enums, impls, externs, generics, functions, control flow, `match`, calls, literals, indexing and operators. It parses all 29 library/tool sources without errors |
 | Semantic checks | `libraries/nova-check/src/sema.nova` | Body-level AST slice: declaration tables, scoped locals, expression/return types, call arity/types, struct fields, conditions and loop checks. Nine focused assertions; still partial and not wired into `nova build` |
-| Codegen slice | `libraries/nova-codegen/src/llvm.nova` | Emits self-contained textual LLVM IR for straight-line Int functions, arithmetic, direct calls and returns. Eight focused assertions; clang validates the IR and executes the binary. No control flow or seed ABI parity yet |
+| Codegen slice | `libraries/nova-codegen/src/llvm.nova` | Emits self-contained textual LLVM IR for straight-line Int functions, arithmetic, direct calls and returns. Eleven focused assertions; immutable params/`let` stay in SSA, clang validates the IR and executes the binaries. No control flow or seed ABI parity yet |
 | Semantic checks | `libraries/nova-check/src/check.nova` | declaration-level: duplicate items, duplicate parameters, unknown type names |
 | Lexer | `libraries/nova-lexer/src/lexer.nova` | tokenizes the full 5,139-line studio file and the large-input corpus |
 | Diagnostics | `libraries/nova-diag/src/diag.nova` | renders severity, location and caret |
@@ -126,7 +126,7 @@ Test state: `sh examples/nova-tool/tests/toolchain.sh` → **passed 117, failed 
 → **passed 50, failed 0** (including the 29-file AST corpus), and
 `sh examples/nova-tool/tests/boxes.sh`
 → **passed 64, failed 0**, and `sh examples/nova-tool/tests/codegen.sh`
-→ **passed 8, failed 0** (native execution on this host). No Rust crate has been deleted yet: the bootstrap
+→ **passed 11, failed 0** (native execution on this host). No Rust crate has been deleted yet: the bootstrap
 compiler (lexer, parser, sema, codegen, CLI, LSP) is still Rust, and phases 2–4
 of this document are what removes it. `nova fmt` runs the Nova formatter, and
 `nova box` runs Nova Boxes; neither makes the compiler self-hosted.

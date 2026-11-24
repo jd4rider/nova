@@ -35,7 +35,8 @@ and the integration gate pass.
 
 ### CODEGEN-01.01 — Straight-line Int functions to textual LLVM IR
 - Status: VERIFIED
-- Evidence: `tests/codegen.sh` → 8/0; IR assertions pass.
+- Evidence: `tests/codegen.sh` → 11/0; IR assertions pass; immutable params
+  and `let` bindings stay in SSA.
 - Files: `libraries/nova-codegen/src/llvm.nova`.
 - Scope: Int parameters/return, `let`/`var`, assignment, literals, `+ - * /`,
   direct calls and `return`.
@@ -43,9 +44,16 @@ and the integration gate pass.
 
 ### CODEGEN-01.02 — Native execution through clang
 - Status: VERIFIED
-- Evidence: test compiles the emitted module with host clang and executes a
-  native binary; result 9; Mach-O on this host.
+- Evidence: test compiles the emitted modules with host clang and executes
+  native binaries; results 9 and 2; Mach-O on this host.
 - Limit: the test invokes clang; the Nova tool does not yet.
+
+### CODEGEN-01.05 — Immutable-binding SSA lowering
+- Status: VERIFIED
+- Evidence: `tests/codegen.sh` asserts no `alloca` for params/`let`; mutable
+  fixture still compiles and exits 2.
+- Files: `libraries/nova-codegen/src/llvm.nova`.
+- Limit: generated-code improvement, not a compiler-speed measurement.
 
 ### CODEGEN-01.03 — Control flow and comparisons
 - Status: READY
@@ -83,6 +91,16 @@ and the integration gate pass.
 ### LSP-01.02 — Diagnostics and document sync
 - Status: TODO
 - Prerequisites: LSP-01.01, COMP-01.03.
+
+## PERF-01 — Performance at parity
+
+### PERF-01.01 — Comparable benchmark harness
+- Status: TODO
+- Prerequisites: CLI-01.01, LSP-01.02.
+- Goal: measure Rust and Nova on identical parser/check/build/LSP workloads.
+- Acceptance: raw samples, hardware/versions, correctness checks and losses;
+  no faster-than-Rust claim before it passes.
+- Rules: `engineering/continuation/PERFORMANCE.md`.
 
 ## BOOT-02 — Self-compilation
 

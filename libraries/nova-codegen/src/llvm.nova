@@ -19,6 +19,8 @@ struct CgSig {
 struct CgLocal {
     name: String,
     slot: String,
+    value: String,
+    mutable: Bool,
 }
 
 struct CgState {
@@ -196,13 +198,10 @@ fn cg_emit_fn(ast: Ast, fns: List<CgSig>, sig: CgSig) -> CgResult {
     }
     var i = 0
     while i < sig.params.len() {
-        let slot_result = cg_slot(state)
-        state = slot_result.0
-        let slot = slot_result.1
-        state = cg_line(state, "  " + slot + " = alloca i64")
-        state = cg_line(state, "  store i64 %p" + i.to_string() + ", ptr " + slot)
+        // Parameters are immutable Nova values: keep them in SSA instead of
+        // spilling to the stack.
         var locals = state.locals
-        locals.push(CgLocal { name: sig.params[i], slot: slot })
+        locals.push(CgLocal { name: sig.params[i], slot: "", value: "%p" + i.to_string(), mutable: false })
         state = cg_state(state, state.lines, state.temps, state.slots, locals, state.terminated, state.error)
         i = i + 1
     }
@@ -246,13 +245,19 @@ fn cg_stmt(ast: Ast, state: CgState, node: Int) -> CgState {
     if item.kind == ak_let() || item.kind == ak_var() {
         let value = cg_expr2(ast, state, a_child(ast, node, 0))
         var work = value.state
+        if item.kind == ak_let() {
+            // Immutable bindings can name the SSA value directly.
+            var locals = work.locals
+            locals.push(CgLocal { name: item.text, slot: "", value: value.value, mutable: false })
+            return cg_state(work, work.lines, work.temps, work.slots, locals, work.terminated, work.error)
+        }
         let slot_result = cg_slot(work)
         work = slot_result.0
         let slot = slot_result.1
         work = cg_line(work, "  " + slot + " = alloca i64")
         work = cg_line(work, "  store i64 " + value.value + ", ptr " + slot)
         var locals = work.locals
-        locals.push(CgLocal { name: item.text, slot: slot })
+        locals.push(CgLocal { name: item.text, slot: slot, value: "", mutable: true })
         return cg_state(work, work.lines, work.temps, work.slots, locals, work.terminated, work.error)
     }
     if item.kind == ak_return() {
@@ -294,6 +299,9 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
         if index < 0 {
             return cg_val(cg_error(state, "unknown local " + item.text), "0")
         }
+        if state.locals[index].value.len() > 0 {
+            return cg_val(state, state.locals[index].value)
+        }
         let temp_result = cg_temp(state)
         var work = temp_result.0
         let temp = temp_result.1
@@ -321,6 +329,9 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
             let index = cg_local_index(state.locals, ast.nodes[left].text)
             if index < 0 {
                 return cg_val(cg_error(state, "unknown local " + ast.nodes[left].text), "0")
+            }
+            if !state.locals[index].mutable {
+                return cg_val(cg_error(state, "cannot assign to immutable binding " + ast.nodes[left].text), "0")
             }
             let value = cg_expr2(ast, state, a_child(ast, node, 1))
             let work = cg_line(value.state, "  store i64 " + value.value + ", ptr " + state.locals[index].slot)
