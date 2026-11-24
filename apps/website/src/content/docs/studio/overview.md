@@ -5,6 +5,8 @@ description: The implemented Electron workbench, its architecture and verified l
 
 Nova Studio is a standalone Electron workbench using React, strict TypeScript, Vite, Monaco and xterm. It is not a wrapper around an external editor, and the compiler/LSP work without it. If you prefer VS Code, the [Nova Language extension](../../toolchain/vscode/) provides the shared grammar and the same Rust LSP without the Studio shell.
 
+**A second workbench exists:** `examples/nova-studio` is Nova Studio rewritten in Nova on the [nova-gui](../../libraries/gui/) library — the same layout and palette, drawn by one native window with no Electron, React or Monaco. It is experimental and does not port the LSP, AI panel, terminal or Vim mode. See [Nova Studio in Nova](../nova-studio/).
+
 **Verification status:** `npm run typecheck` and `npm run build` pass. The GUI has not yet been exercised by an automated end-to-end test, so this site does **not** publish a screenshot or claim interactive verification that has not happened.
 
 ## Architecture

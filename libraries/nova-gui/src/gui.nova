@@ -1,0 +1,474 @@
+// nova-gui — a native, immediate-mode GUI for Nova programs.
+//
+// The macOS host in `crates/nova-runtime/src/gui.m` owns one window, a
+// CoreGraphics framebuffer and an input queue. This file is the Nova side: a
+// small vocabulary of draw calls, the input poll, a theme and the workspace
+// helpers a real application needs.
+//
+// A program is one loop:
+//
+//   import "../../libraries/nova-gui/src/gui.nova" as gui
+//
+//   fn main() {
+//       if !gui.open("Hello", 640, 360) { return }
+//       let theme = gui.dark()
+//       var running = true
+//       while running {
+//           gui.clear(theme.bg)
+//           gui.text(24, 20, "Hello, Nova", 20, theme.fg_bright)
+//           gui.present()
+//           let event = gui.next_event()
+//           if event.kind == gui.event_close() { running = false }
+//       }
+//       gui.close()
+//   }
+//
+// There is no retained widget tree and no callback: a frame is whatever the
+// loop draws between `begin` and `present`. Coordinates are points from the
+// top-left, the same mental model as CSS or a canvas, and the host scales to
+// the display's pixel ratio so text stays crisp on Retina screens.
+//
+// Input is polled, not delivered. `present` pumps the platform event queue and
+// `next_event` returns one decoded event at a time, which keeps the runtime
+// free of function pointers from C back into Nova.
+//
+// The host also exposes workspace file access and process running. Nova's
+// standard library is still a placeholder, so an editor that opens folders and
+// runs the compiler needs those from the host; they are part of this macOS
+// host and are linked only into programs that use nova-gui.
+
+extern "C" fn usleep(usec: Int) -> Int
+
+extern "C" fn nova_gui_open(title: String, width: Int, height: Int) -> Int
+extern "C" fn nova_gui_is_open() -> Int
+extern "C" fn nova_gui_width() -> Int
+extern "C" fn nova_gui_height() -> Int
+extern "C" fn nova_gui_begin() -> Unit
+extern "C" fn nova_gui_clear(rgb: Int) -> Unit
+extern "C" fn nova_gui_rect(x: Int, y: Int, w: Int, h: Int, rgb: Int) -> Unit
+extern "C" fn nova_gui_rect_alpha(x: Int, y: Int, w: Int, h: Int, rgb: Int, alpha: Int) -> Unit
+extern "C" fn nova_gui_round_rect(x: Int, y: Int, w: Int, h: Int, radius: Int, rgb: Int) -> Unit
+extern "C" fn nova_gui_stroke_rect(x: Int, y: Int, w: Int, h: Int, rgb: Int) -> Unit
+extern "C" fn nova_gui_line(x0: Int, y0: Int, x1: Int, y1: Int, rgb: Int) -> Unit
+extern "C" fn nova_gui_text(x: Int, y: Int, text: String, size: Int, rgb: Int, mono: Int) -> Unit
+extern "C" fn nova_gui_text_width(text: String, size: Int, mono: Int) -> Int
+extern "C" fn nova_gui_advance(size: Int, mono: Int) -> Int
+extern "C" fn nova_gui_clip(x: Int, y: Int, w: Int, h: Int) -> Unit
+extern "C" fn nova_gui_clip_reset() -> Unit
+extern "C" fn nova_gui_present() -> Unit
+extern "C" fn nova_gui_next_event() -> Int
+extern "C" fn nova_gui_event_code() -> Int
+extern "C" fn nova_gui_event_x() -> Int
+extern "C" fn nova_gui_event_y() -> Int
+extern "C" fn nova_gui_event_mods() -> Int
+extern "C" fn nova_gui_event_delta() -> Int
+extern "C" fn nova_gui_set_title(title: String) -> Unit
+extern "C" fn nova_gui_close() -> Unit
+extern "C" fn nova_gui_save_png(path: String) -> Int
+
+extern "C" fn nova_fs_read(path: String) -> String
+extern "C" fn nova_fs_write(path: String, data: String) -> Int
+extern "C" fn nova_fs_exists(path: String) -> Int
+extern "C" fn nova_fs_is_dir(path: String) -> Int
+extern "C" fn nova_fs_list(path: String) -> String
+extern "C" fn nova_fs_cwd() -> String
+extern "C" fn nova_env(name: String) -> String
+extern "C" fn nova_process_run(command: String, cwd: String) -> String
+extern "C" fn nova_process_status() -> Int
+
+// ---------- colours ----------
+
+fn rgb(red: Int, green: Int, blue: Int) -> Int {
+    return red * 65536 + green * 256 + blue
+}
+
+fn white() -> Int {
+    return 16777215
+}
+
+// The palette Nova Studio uses: Visual Studio Code Dark+, one field per role so
+// a theme swap is a single struct literal.
+struct Theme {
+    bg: Int,
+    bg_hard: Int,
+    panel: Int,
+    elevated: Int,
+    border: Int,
+    border_strong: Int,
+    fg: Int,
+    fg_bright: Int,
+    muted: Int,
+    faint: Int,
+    accent: Int,
+    status: Int,
+    link: Int,
+    selection: Int,
+    input: Int,
+    red: Int,
+    green: Int,
+    yellow: Int,
+    blue: Int,
+    purple: Int,
+    aqua: Int,
+    orange: Int,
+}
+
+fn dark() -> Theme {
+    return Theme {
+        bg: rgb(30, 30, 30),
+        bg_hard: rgb(24, 24, 24),
+        panel: rgb(37, 37, 38),
+        elevated: rgb(42, 45, 46),
+        border: rgb(43, 43, 43),
+        border_strong: rgb(60, 60, 60),
+        fg: rgb(204, 204, 204),
+        fg_bright: rgb(255, 255, 255),
+        muted: rgb(140, 140, 140),
+        faint: rgb(110, 118, 129),
+        accent: rgb(0, 120, 212),
+        status: rgb(0, 122, 204),
+        link: rgb(55, 148, 255),
+        selection: rgb(4, 57, 94),
+        input: rgb(60, 60, 60),
+        red: rgb(241, 76, 76),
+        green: rgb(137, 209, 133),
+        yellow: rgb(204, 167, 0),
+        blue: rgb(55, 148, 255),
+        purple: rgb(197, 134, 192),
+        aqua: rgb(78, 201, 176),
+        orange: rgb(206, 145, 120),
+    }
+}
+
+fn gruvbox() -> Theme {
+    return Theme {
+        bg: rgb(40, 40, 40),
+        bg_hard: rgb(29, 32, 33),
+        panel: rgb(50, 48, 47),
+        elevated: rgb(60, 56, 54),
+        border: rgb(60, 56, 54),
+        border_strong: rgb(80, 73, 69),
+        fg: rgb(235, 219, 178),
+        fg_bright: rgb(251, 241, 199),
+        muted: rgb(168, 153, 132),
+        faint: rgb(146, 131, 116),
+        accent: rgb(254, 128, 25),
+        status: rgb(60, 56, 54),
+        link: rgb(131, 165, 152),
+        selection: rgb(80, 73, 69),
+        input: rgb(29, 32, 33),
+        red: rgb(251, 73, 52),
+        green: rgb(184, 187, 38),
+        yellow: rgb(250, 189, 47),
+        blue: rgb(131, 165, 152),
+        purple: rgb(211, 134, 155),
+        aqua: rgb(142, 192, 124),
+        orange: rgb(254, 128, 25),
+    }
+}
+
+// ---------- events ----------
+
+struct Event {
+    kind: Int,
+    code: Int,
+    x: Int,
+    y: Int,
+    mods: Int,
+    delta: Int,
+}
+
+fn event_none() -> Int {
+    return 0
+}
+
+fn event_key() -> Int {
+    return 1
+}
+
+fn event_mouse_down() -> Int {
+    return 2
+}
+
+fn event_mouse_up() -> Int {
+    return 3
+}
+
+fn event_mouse_move() -> Int {
+    return 4
+}
+
+fn event_drag() -> Int {
+    return 5
+}
+
+fn event_scroll() -> Int {
+    return 6
+}
+
+fn event_resize() -> Int {
+    return 7
+}
+
+fn event_close() -> Int {
+    return 8
+}
+
+fn key_enter() -> Int {
+    return 13
+}
+
+fn key_tab() -> Int {
+    return 9
+}
+
+fn key_escape() -> Int {
+    return 27
+}
+
+fn key_backspace() -> Int {
+    return 127
+}
+
+fn key_delete() -> Int {
+    return 1010
+}
+
+fn key_left() -> Int {
+    return 1004
+}
+
+fn key_right() -> Int {
+    return 1003
+}
+
+fn key_up() -> Int {
+    return 1001
+}
+
+fn key_down() -> Int {
+    return 1002
+}
+
+fn key_home() -> Int {
+    return 1005
+}
+
+fn key_end() -> Int {
+    return 1006
+}
+
+fn key_page_up() -> Int {
+    return 1007
+}
+
+fn key_page_down() -> Int {
+    return 1008
+}
+
+fn mod_command() -> Int {
+    return 1
+}
+
+fn mod_shift() -> Int {
+    return 2
+}
+
+fn mod_option() -> Int {
+    return 4
+}
+
+fn mod_control() -> Int {
+    return 8
+}
+
+fn next_event() -> Event {
+    let kind = nova_gui_next_event()
+    return Event {
+        kind: kind,
+        code: nova_gui_event_code(),
+        x: nova_gui_event_x(),
+        y: nova_gui_event_y(),
+        mods: nova_gui_event_mods(),
+        delta: nova_gui_event_delta(),
+    }
+}
+
+// ---------- window ----------
+
+fn open(title: String, width: Int, height: Int) -> Bool {
+    return nova_gui_open(title, width, height) == 1
+}
+
+fn is_open() -> Bool {
+    return nova_gui_is_open() == 1
+}
+
+fn width() -> Int {
+    return nova_gui_width()
+}
+
+fn height() -> Int {
+    return nova_gui_height()
+}
+
+fn set_title(title: String) {
+    nova_gui_set_title(title)
+}
+
+fn close() {
+    nova_gui_close()
+}
+
+fn sleep(milliseconds: Int) {
+    usleep(milliseconds * 1000)
+}
+
+// Saves the current frame as a PNG. Handy in tests and for bug reports.
+fn save_png(path: String) -> Bool {
+    return nova_gui_save_png(path) == 1
+}
+
+// ---------- drawing ----------
+
+fn begin() {
+    nova_gui_begin()
+}
+
+fn present() {
+    nova_gui_present()
+}
+
+fn clear(color: Int) {
+    nova_gui_clear(color)
+}
+
+fn rect(x: Int, y: Int, w: Int, h: Int, color: Int) {
+    nova_gui_rect(x, y, w, h, color)
+}
+
+// Fills a rectangle with 0..255 opacity, used for overlay scrims.
+fn rect_alpha(x: Int, y: Int, w: Int, h: Int, color: Int, alpha: Int) {
+    nova_gui_rect_alpha(x, y, w, h, color, alpha)
+}
+
+fn round_rect(x: Int, y: Int, w: Int, h: Int, radius: Int, color: Int) {
+    nova_gui_round_rect(x, y, w, h, radius, color)
+}
+
+fn stroke(x: Int, y: Int, w: Int, h: Int, color: Int) {
+    nova_gui_stroke_rect(x, y, w, h, color)
+}
+
+fn line(x0: Int, y0: Int, x1: Int, y1: Int, color: Int) {
+    nova_gui_line(x0, y0, x1, y1, color)
+}
+
+// Draws text with the system font, top-left anchored.
+fn text(x: Int, y: Int, value: String, size: Int, color: Int) {
+    nova_gui_text(x, y, value, size, color, 0)
+}
+
+// Draws text with the monospaced font, top-left anchored.
+fn mono(x: Int, y: Int, value: String, size: Int, color: Int) {
+    nova_gui_text(x, y, value, size, color, 1)
+}
+
+fn text_width(value: String, size: Int) -> Int {
+    return nova_gui_text_width(value, size, 0)
+}
+
+fn mono_width(value: String, size: Int) -> Int {
+    return nova_gui_text_width(value, size, 1)
+}
+
+// Width of one character cell in the monospaced font.
+fn advance(size: Int) -> Int {
+    return nova_gui_advance(size, 1)
+}
+
+fn clip(x: Int, y: Int, w: Int, h: Int) {
+    nova_gui_clip(x, y, w, h)
+}
+
+fn clip_reset() {
+    nova_gui_clip_reset()
+}
+
+// ---------- geometry helpers ----------
+
+fn inside(x: Int, y: Int, w: Int, h: Int, px: Int, py: Int) -> Bool {
+    return px >= x && px < x + w && py >= y && py < y + h
+}
+
+fn clamp(value: Int, low: Int, high: Int) -> Int {
+    if value < low {
+        return low
+    }
+    if value > high {
+        return high
+    }
+    return value
+}
+
+fn min(a: Int, b: Int) -> Int {
+    if a < b {
+        return a
+    }
+    return b
+}
+
+fn max(a: Int, b: Int) -> Int {
+    if a > b {
+        return a
+    }
+    return b
+}
+
+// A horizontal scrollbar-like fraction, used by the editor gutter.
+fn fraction(part: Int, total: Int) -> Int {
+    if total <= 0 {
+        return 0
+    }
+    return part * 100 / total
+}
+
+// ---------- workspace ----------
+
+fn read(path: String) -> String {
+    return nova_fs_read(path)
+}
+
+fn write(path: String, data: String) -> Bool {
+    return nova_fs_write(path, data) == 1
+}
+
+fn exists(path: String) -> Bool {
+    return nova_fs_exists(path) == 1
+}
+
+fn is_dir(path: String) -> Bool {
+    return nova_fs_is_dir(path) == 1
+}
+
+// Directory entries as "d<TAB>name" or "f<TAB>name", one per line.
+fn list(path: String) -> String {
+    return nova_fs_list(path)
+}
+
+fn cwd() -> String {
+    return nova_fs_cwd()
+}
+
+fn env(name: String) -> String {
+    return nova_env(name)
+}
+
+// Runs a shell command in a directory and returns its combined output.
+fn run(command: String, directory: String) -> String {
+    return nova_process_run(command, directory)
+}
+
+fn exit_status() -> Int {
+    return nova_process_status()
+}

@@ -299,6 +299,14 @@ fn is_c_abi_scalar(ty: &Type) -> bool {
     )
 }
 
+/// Types that can cross the C boundary. Scalars are copied by value; `String`
+/// is `{ const char *ptr; int64_t len; }` on both sides, so a program can hand
+/// text to a native host and receive text back without a heap value escaping.
+/// Lists, maps and user structs still have no C representation.
+fn is_c_abi_value(ty: &Type) -> bool {
+    is_c_abi_scalar(ty) || matches!(ty, Type::String)
+}
+
 impl Checker {
     fn run(mut self, program: &ast::Program) -> CheckResult {
         self.collect_imports(program);
@@ -1022,7 +1030,7 @@ impl Checker {
                 );
             }
             for (param, ty) in decl.params.iter().zip(params.iter()) {
-                if !is_c_abi_scalar(ty) {
+                if !is_c_abi_value(ty) {
                     self.diagnostics.push(
                         Diagnostic::error(
                             "E0240",
@@ -1033,13 +1041,13 @@ impl Checker {
                             param.name_span,
                         )
                         .with_note(
-                            "extern functions accept Bool, Int, Float, Char and Unit; values are passed by copy",
+                            "extern functions accept Bool, Int, Float, Char, String and Unit; a String crosses as a `{ ptr, len }` view that C must not free",
                         ),
                     );
                     valid = false;
                 }
             }
-            if !is_c_abi_scalar(&ret) {
+            if !is_c_abi_value(&ret) {
                 self.diagnostics.push(
                     Diagnostic::error(
                         "E0240",
@@ -1050,7 +1058,7 @@ impl Checker {
                             .unwrap_or(decl.name_span),
                     )
                     .with_note(
-                        "extern functions may return Bool, Int, Float, Char or Unit; heap values cannot cross the boundary",
+                        "extern functions may return Bool, Int, Float, Char, String or Unit; lists and structs cannot cross the boundary",
                     ),
                 );
                 valid = false;
@@ -5886,15 +5894,30 @@ fn main() {
     #[test]
     fn rejects_non_c_abi_extern_signatures() {
         let result = check_src(
-            r#"extern "C" fn strlen(text: String) -> Int
+            r#"extern "C" fn consume(items: List<Int>) -> Int
 fn main() {
-    println(strlen("hi"))
 }
 "#,
         );
         let rendered = format!("{:#?}", result.diagnostics);
         assert!(rendered.contains("E0240"), "{rendered}");
         assert!(result.program.externs.is_empty());
+    }
+
+    #[test]
+    fn accepts_string_extern_signatures() {
+        // `String` crosses as a `{ ptr, len }` view, so a host can draw text or
+        // return file contents without a heap value escaping the boundary.
+        let result = check_src(
+            r#"extern "C" fn nova_fs_read(path: String) -> String
+extern "C" fn nova_gui_text(x: Int, y: Int, text: String, size: Int) -> Unit
+fn main() {
+    nova_gui_text(0, 0, nova_fs_read("a"), 13)
+}
+"#,
+        );
+        assert!(errors(&result).is_empty(), "{:#?}", result.diagnostics);
+        assert_eq!(result.program.externs.len(), 2);
     }
 
     #[test]

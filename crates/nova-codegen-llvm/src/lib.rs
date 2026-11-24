@@ -21,7 +21,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use nova_diag::{LineIndex, Span};
 use nova_parser::ast::{AssignOp, BinaryOp};
-use nova_runtime::RUNTIME_C;
+use nova_runtime::{GUI_M, RUNTIME_C};
 use nova_sema::{
     BuiltinFn, BuiltinMethod, LValue, LocalId, TBlock, TExpr, TExprKind, TPattern, TStmt,
     TStmtKind, TStrPartKind, Type, TypedFn, TypedProgram,
@@ -237,6 +237,32 @@ pub fn compile(
         .arg(&runtime_o);
     run_checked(&mut cc, "compiling the Nova runtime")?;
 
+    /* nova-gui is a macOS Cocoa host. It is compiled and linked only when the
+     * program actually calls into it, so a plain Nova program keeps its
+     * light runtime and never drags AppKit into the link. */
+    let gui_o = dir.join("gui.o");
+    /* Checked against the resolved externs, not the entry file's text: a GUI
+     * program usually imports the declarations from a module, so the literal
+     * symbol names live in that module's source rather than main.nova. */
+    let wants_gui = cfg!(target_os = "macos")
+        && options.target.is_none()
+        && program.externs.iter().any(|external| {
+            external.symbol.starts_with("nova_gui_")
+                || external.symbol.starts_with("nova_fs_")
+                || external.symbol.starts_with("nova_process_")
+                || external.symbol.starts_with("nova_env")
+        });
+    if wants_gui {
+        let gui_m = dir.join("gui.m");
+        fs::write(&gui_m, GUI_M).map_err(|e| io_error(&gui_m, e))?;
+        let mut objc = Command::new(&clang);
+        objc.args(["-fobjc-arc", "-O2", "-c"])
+            .arg(&gui_m)
+            .arg("-o")
+            .arg(&gui_o);
+        run_checked(&mut objc, "compiling the nova-gui host")?;
+    }
+
     if let Some(parent) = options.output.parent() {
         fs::create_dir_all(parent).map_err(|e| io_error(parent, e))?;
     }
@@ -249,6 +275,18 @@ pub fn compile(
         .arg("-o")
         .arg(&options.output)
         .arg("-lm");
+    if wants_gui {
+        link.arg(&gui_o).args([
+            "-framework",
+            "Cocoa",
+            "-framework",
+            "CoreText",
+            "-framework",
+            "CoreGraphics",
+            "-framework",
+            "ImageIO",
+        ]);
+    }
     if options.debug {
         link.arg("-g");
     }

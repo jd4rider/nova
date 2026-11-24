@@ -1,0 +1,87 @@
+---
+title: Nova Studio in Nova
+description: The workbench rebuilt in Nova on nova-gui — same layout and palette, with the gaps listed honestly.
+---
+
+**Status: experimental, macOS only.** `examples/nova-studio` is Nova Studio rewritten in Nova. It draws the workbench itself through [nova-gui](../../libraries/gui/): no Electron, no React, no Monaco, no web view. The Electron application described in the [overview](../overview/) still exists and is unchanged; this page documents the Nova implementation.
+
+## Run it
+
+```sh
+cargo build -p nova-cli
+cd examples/nova-studio
+../../target/debug/nova build
+NOVA_BIN="$(cd ../.. && pwd)/target/debug/nova" \
+NOVA_STUDIO_ROOT="$(cd ../.. && pwd)" \
+./target/nova/nova-studio
+```
+
+| Variable | Meaning |
+|---|---|
+| `NOVA_STUDIO_ROOT` | Workspace folder shown in the explorer. Defaults to the working directory. |
+| `NOVA_STUDIO_OPEN` | File to open in a tab at launch. |
+| `NOVA_BIN` | Compiler used by Build, Check and Run. Defaults to `nova` on `PATH`. |
+| `NOVA_STUDIO_SHOT` | Writes the first frame to a PNG and exits. Used for verification. |
+| `NOVA_STUDIO_TASK` | Runs `build`, `check` or `test` at launch. Used for verification. |
+
+There is no folder picker yet, so the workspace is chosen by `NOVA_STUDIO_ROOT`. Point `NOVA_BIN` at a freshly built compiler: a stale `nova` on `PATH` will produce real compiler errors in the output panel.
+
+## What matches the Electron Studio
+
+- **Layout and palette.** The same 35px title bar with a centred command pill, 48px activity bar, 300px explorer, 35px tabs, 22px breadcrumbs, 240px bottom panel and 22px status bar. The same Dark+ colours, byte for byte from `styles.css`, plus Gruvbox as an alternative.
+- **Explorer.** Real directory listing of the workspace, directories first, lazy expansion, click to open a file, active file highlighted.
+- **Tabs.** Dirty state, close button, active-tab accent, per-tab scroll and caret position.
+- **Editor.** Line numbers, current-line highlight, Dark+ syntax highlighting for Nova (comments, strings, numbers, keywords, control flow, types), a steady caret, and click-to-place. Arrow keys, Home/End, Page keys, Backspace/Delete, Enter and Tab (four spaces) edit the buffer.
+- **Save.** `⌘S` writes the buffer and clears the dirty dot; `⇧⌘S` saves every dirty tab.
+- **Go to file.** `⌘P` lists every file in the workspace (skipping `target`, `node_modules`, `dist`, `out`, `release`) and filters as you type.
+- **Command palette.** `⇧⌘P` with the same commands the Electron menu exposes, including Build, Run, Check, toggle sidebar and panel, documentation, settings and quit.
+- **Tasks.** Build, Check and Run shell out to the real compiler in the workspace and print its output verbatim with the exit code. Run builds first, then opens `target/nova/<package>` in Terminal, so a TUI program gets a real terminal instead of a frozen window.
+- **Panels.** Problems, Output and the built-in Docs quick reference.
+- **Status bar.** Workspace, last status message, line/column, encoding, theme and tool name.
+- **Settings.** `⌘,` switches between Dark+ and Gruvbox and changes the editor font size, applied immediately.
+- **Welcome screen** when no tab is open, listing the shortcuts.
+
+## What is not ported yet
+
+These are gaps, not hidden behaviour:
+
+- **No language server.** There is no completions, hover, go-to-definition or inline diagnostics; the Problems panel is intentionally empty. The Rust LSP is a separate process that speaks JSON-RPC over stdio, and the host has no asynchronous channel.
+- **No integrated terminal.** Run launches Terminal instead of embedding a PTY.
+- **No AI panel.** No Copilot, no FreeBuff chat, no diff review. The host cannot stream a network response.
+- **No search across files.** Quick open and the palette exist; workspace search does not.
+- **No Vim mode, visual effects or synthesized sound.**
+- **No selection, multi-cursor, find/replace, undo/redo or folding.** The editor is a caret and a buffer; an undo stack is the obvious next step.
+- **Unclosed dirty tabs are discarded** on close instead of prompting.
+- **Settings are not persisted** between launches.
+- **Closing with ⌘Q leaves the window state unsaved**; there is no session restore.
+
+## Shortcuts
+
+| Action | Shortcut |
+|---|---|
+| Save / Save all | `⌘S` / `⇧⌘S` |
+| Build / Check | `⌘B` / `⇧⌘B` |
+| Build and run in Terminal | `⌘R` |
+| Close tab | `⌘W` |
+| Go to file | `⌘P` |
+| Command palette | `⇧⌘P` |
+| Toggle sidebar | `⇧⌘E` |
+| Toggle bottom panel | ``⌘` `` |
+| Settings | `⌘,` |
+| Quit | `⌘Q` |
+
+Overlays close with `Esc`; `↑`/`↓` move the selection and `Enter` commits it.
+
+## How it is verified
+
+- `nova check` passes on the whole program.
+- The workbench was driven with `NOVA_STUDIO_SHOT` and the resulting frames were inspected: chrome, explorer, welcome screen, an open Nova file with highlighting, and the Output panel after a real `check` task.
+- The process and file helpers behind Build were checked directly: a command's exit code and output cross back to Nova, and a write/read round-trip preserves content.
+
+There is **no automated UI event test**. Key and mouse handling was exercised by hand, not by a harness that injects events, so treat interaction coverage as manual. That is the same honesty standard the Electron page applies to its own untested effects layer.
+
+## Next
+
+- [nova-gui library guide](../../libraries/gui/)
+- [Studio overview (Electron)](../overview/)
+- [Keyboard shortcuts (Electron)](../shortcuts/)

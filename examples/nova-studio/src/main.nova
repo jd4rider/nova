@@ -1,0 +1,1938 @@
+import std.io { println }
+import "../../../libraries/nova-gui/src/gui.nova" as gui
+
+// Nova Studio, rewritten in Nova on nova-gui.
+//
+// The layout mirrors the Electron workbench: a 35px title bar with a command
+// pill, a 48px activity bar, a 300px explorer, tabs, breadcrumbs, the editor,
+// a 240px bottom panel and a 22px status bar, all in the same Dark+ palette.
+//
+// Everything here is immediate mode: the loop drains one event, updates the
+// model and redraws. There is no retained widget tree, so a redraw is a
+// function of the model and the window size.
+
+// ---------- layout ----------
+
+fn title_height() -> Int {
+    return 35
+}
+
+fn status_height() -> Int {
+    return 22
+}
+
+fn activity_width() -> Int {
+    return 48
+}
+
+fn sidebar_width() -> Int {
+    return 300
+}
+
+fn tabs_height() -> Int {
+    return 35
+}
+
+fn crumbs_height() -> Int {
+    return 22
+}
+
+fn panel_height() -> Int {
+    return 240
+}
+
+fn row_height() -> Int {
+    return 22
+}
+
+fn line_height(size: Int) -> Int {
+    return size + 6
+}
+
+fn gutter_width() -> Int {
+    return 46
+}
+
+// ---------- text helpers ----------
+//
+// Nova's String has no split, substring or character index, so the editor
+// builds those from `graphemes()` once here and reuses them everywhere.
+
+fn slice_chars(chars: List<String>, start: Int, stop: Int) -> String {
+    var out = ""
+    var i = start
+    while i < stop && i < chars.len() {
+        out = out + chars[i]
+        i = i + 1
+    }
+    return out
+}
+
+fn split_lines(text: String) -> List<String> {
+    var out: List<String> = []
+    var current = ""
+    for ch in text.graphemes() {
+        if ch == "\n" {
+            out.push(current)
+            current = ""
+        } else {
+            if ch != "\r" {
+                current = current + ch
+            }
+        }
+    }
+    out.push(current)
+    return out
+}
+
+fn join_lines(lines: List<String>) -> String {
+    var out = ""
+    var i = 0
+    while i < lines.len() {
+        if i > 0 {
+            out = out + "\n"
+        }
+        out = out + lines[i]
+        i = i + 1
+    }
+    return out
+}
+
+fn replace_line(lines: List<String>, at: Int, value: String) -> List<String> {
+    var out: List<String> = []
+    var i = 0
+    while i < lines.len() {
+        if i == at {
+            out.push(value)
+        } else {
+            out.push(lines[i])
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn insert_line(lines: List<String>, at: Int, value: String) -> List<String> {
+    var out: List<String> = []
+    var i = 0
+    var placed = false
+    while i < lines.len() {
+        if i == at {
+            out.push(value)
+            placed = true
+        }
+        out.push(lines[i])
+        i = i + 1
+    }
+    if !placed {
+        out.push(value)
+    }
+    return out
+}
+
+fn remove_line(lines: List<String>, at: Int) -> List<String> {
+    var out: List<String> = []
+    var i = 0
+    while i < lines.len() {
+        if i != at {
+            out.push(lines[i])
+        }
+        i = i + 1
+    }
+    if out.len() == 0 {
+        out.push("")
+    }
+    return out
+}
+
+fn basename(path: String) -> String {
+    let chars = path.graphemes()
+    var i = chars.len() - 1
+    var found = -1
+    while i >= 0 {
+        if chars[i] == "/" {
+            found = i
+            i = -1
+        } else {
+            i = i - 1
+        }
+    }
+    return slice_chars(chars, found + 1, chars.len())
+}
+
+fn dirname(path: String) -> String {
+    let chars = path.graphemes()
+    var i = chars.len() - 1
+    var found = -1
+    while i >= 0 {
+        if chars[i] == "/" {
+            found = i
+            i = -1
+        } else {
+            i = i - 1
+        }
+    }
+    if found <= 0 {
+        return "/"
+    }
+    return slice_chars(chars, 0, found)
+}
+
+fn relative(root: String, path: String) -> String {
+    let root_chars = root.graphemes()
+    if path.starts_with(root) {
+        let chars = path.graphemes()
+        let skip = root_chars.len() + 1
+        if chars.len() > skip {
+            return slice_chars(chars, skip, chars.len())
+        }
+    }
+    return path
+}
+
+fn list_has(items: List<String>, value: String) -> Bool {
+    var i = 0
+    while i < items.len() {
+        if items[i] == value {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+fn append_list(into: List<String>, extra: List<String>) -> List<String> {
+    var out = into
+    var i = 0
+    while i < extra.len() {
+        out.push(extra[i])
+        i = i + 1
+    }
+    return out
+}
+
+fn is_digit(ch: String) -> Bool {
+    return "0123456789".contains(ch)
+}
+
+fn is_letter(ch: String) -> Bool {
+    return "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".contains(ch)
+}
+
+fn is_ident_start(ch: String) -> Bool {
+    return is_letter(ch) || ch == "_"
+}
+
+fn is_ident_part(ch: String) -> Bool {
+    return is_letter(ch) || is_digit(ch) || ch == "_"
+}
+
+// Printable ASCII, indexed by code - 32, so a key event becomes text without
+// an Int-to-Char conversion (Nova has none).
+fn printable() -> String {
+    return " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+}
+
+fn code_to_text(code: Int) -> String {
+    if code < 32 || code > 126 {
+        return ""
+    }
+    let chars = printable().graphemes()
+    let index = code - 32
+    if index < 0 || index >= chars.len() {
+        return ""
+    }
+    return chars[index]
+}
+
+// ---------- syntax ----------
+
+fn is_control(word: String) -> Bool {
+    return word == "if" || word == "else" || word == "while" || word == "for" || word == "return" || word == "match"
+}
+
+fn is_keyword(word: String) -> Bool {
+    return word == "fn" || word == "let" || word == "var" || word == "struct" || word == "enum" || word == "impl" ||
+        word == "import" || word == "as" || word == "extern" || word == "true" || word == "false" || word == "mut" ||
+        word == "self" || word == "trait" || word == "pub" || word == "const"
+}
+
+fn is_type(word: String) -> Bool {
+    return word == "Int" || word == "String" || word == "Bool" || word == "Float" || word == "Char" ||
+        word == "Unit" || word == "List" || word == "Map" || word == "Option" || word == "Result"
+}
+
+fn word_color(word: String, theme: gui.Theme) -> Int {
+    if is_control(word) {
+        return theme.purple
+    }
+    if is_keyword(word) {
+        return theme.blue
+    }
+    if is_type(word) {
+        return theme.aqua
+    }
+    return theme.fg
+}
+
+// Draws one line with Dark+ colours and returns the x after the last glyph.
+fn draw_code(x0: Int, y: Int, text: String, size: Int, theme: gui.Theme) -> Int {
+    let chars = text.graphemes()
+    let count = chars.len()
+    var x = x0
+    var i = 0
+    while i < count {
+        let ch = chars[i]
+        var token = ""
+        var color = theme.fg
+        var done = false
+        if ch == "/" && i + 1 < count && chars[i + 1] == "/" {
+            token = slice_chars(chars, i, count)
+            color = gui.rgb(106, 153, 85)
+            i = count
+            done = true
+        }
+        if !done && ch == "\"" {
+            var j = i + 1
+            var closed = false
+            while j < count && !closed {
+                if chars[j] == "\"" {
+                    j = j + 1
+                    closed = true
+                } else {
+                    j = j + 1
+                }
+            }
+            token = slice_chars(chars, i, j)
+            color = theme.orange
+            i = j
+            done = true
+        }
+        if !done && is_digit(ch) {
+            var j = i
+            var go = true
+            while j < count && go {
+                if is_digit(chars[j]) || chars[j] == "." {
+                    j = j + 1
+                } else {
+                    go = false
+                }
+            }
+            token = slice_chars(chars, i, j)
+            color = gui.rgb(181, 206, 168)
+            i = j
+            done = true
+        }
+        if !done && is_ident_start(ch) {
+            var j = i
+            var go = true
+            while j < count && go {
+                if is_ident_part(chars[j]) {
+                    j = j + 1
+                } else {
+                    go = false
+                }
+            }
+            token = slice_chars(chars, i, j)
+            color = word_color(token, theme)
+            i = j
+            done = true
+        }
+        if !done {
+            var j = i
+            var go = true
+            while j < count && go {
+                let c = chars[j]
+                if is_ident_part(c) || c == "\"" || c == "/" {
+                    go = false
+                } else {
+                    j = j + 1
+                }
+            }
+            if j == i {
+                j = i + 1
+            }
+            token = slice_chars(chars, i, j)
+            color = theme.fg
+            i = j
+        }
+        if token.len() > 0 {
+            gui.mono(x, y, token, size, color)
+            x = x + gui.mono_width(token, size)
+        }
+    }
+    return x
+}
+
+// ---------- model ----------
+
+struct Node {
+    path: String,
+    name: String,
+    depth: Int,
+    is_dir: Bool,
+}
+
+struct Tab {
+    path: String,
+    name: String,
+    lines: List<String>,
+    dirty: Bool,
+    cursor_line: Int,
+    cursor_col: Int,
+    scroll: Int,
+}
+
+struct Command {
+    id: String,
+    label: String,
+    hint: String,
+}
+
+struct Row {
+    key: String,
+    label: String,
+    hint: String,
+}
+
+struct App {
+    root: String,
+    nodes: List<Node>,
+    expanded: List<String>,
+    tabs: List<Tab>,
+    active: Int,
+    theme: gui.Theme,
+    theme_name: String,
+    size: Int,
+    overlay: String,
+    field: String,
+    field_cursor: Int,
+    selection: Int,
+    output: String,
+    bottom: String,
+    panel: Bool,
+    sidebar: Bool,
+    status: String,
+    quit: Bool,
+    tree_scroll: Int,
+    files: List<String>,
+    mouse_x: Int,
+    mouse_y: Int,
+}
+
+// ---------- workspace ----------
+
+fn skip_dir(name: String) -> Bool {
+    return name == "target" || name == "node_modules" || name == "dist" || name == "out" || name == "release" || name == ".git"
+}
+
+fn build_nodes(root: String, depth: Int, expanded: List<String>) -> List<Node> {
+    var nodes: List<Node> = []
+    let entries = split_lines(gui.list(root))
+    var i = 0
+    while i < entries.len() {
+        let chars = entries[i].graphemes()
+        if chars.len() > 2 {
+            let name = slice_chars(chars, 2, chars.len())
+            let path = root + "/" + name
+            let is_dir = chars[0] == "d"
+            nodes.push(Node { path: path, name: name, depth: depth, is_dir: is_dir })
+            if is_dir && list_has(expanded, path) {
+                let children = build_nodes(path, depth + 1, expanded)
+                var c = 0
+                while c < children.len() {
+                    nodes.push(children[c])
+                    c = c + 1
+                }
+            }
+        }
+        i = i + 1
+    }
+    return nodes
+}
+
+fn collect_files(root: String, depth: Int) -> List<String> {
+    var out: List<String> = []
+    if depth > 6 {
+        return out
+    }
+    let entries = split_lines(gui.list(root))
+    var i = 0
+    while i < entries.len() {
+        let chars = entries[i].graphemes()
+        if chars.len() > 2 {
+            let name = slice_chars(chars, 2, chars.len())
+            let path = root + "/" + name
+            if chars[0] == "d" {
+                if !skip_dir(name) {
+                    out = append_list(out, collect_files(path, depth + 1))
+                }
+            } else {
+                out.push(path)
+            }
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn project_name(root: String) -> String {
+    let text = gui.read(root + "/nova.toml")
+    if text.len() == 0 {
+        return ""
+    }
+    for line in split_lines(text) {
+        let trimmed = line.trim()
+        if trimmed.starts_with("name") {
+            let chars = trimmed.graphemes()
+            var i = 0
+            var found = -1
+            while i < chars.len() {
+                if chars[i] == "=" {
+                    found = i
+                    i = chars.len()
+                } else {
+                    i = i + 1
+                }
+            }
+            if found >= 0 {
+                let raw = slice_chars(chars, found + 1, chars.len()).trim()
+                return raw.replace("\"", "")
+            }
+        }
+    }
+    return ""
+}
+
+// ---------- tabs and editing ----------
+
+fn active_tab(app: App) -> Tab {
+    if app.active < 0 || app.active >= app.tabs.len() {
+        return Tab { path: "", name: "", lines: [""], dirty: false, cursor_line: 0, cursor_col: 0, scroll: 0 }
+    }
+    return app.tabs[app.active]
+}
+
+fn open_file(app: App, path: String) -> App {
+    var app = app
+    var i = 0
+    while i < app.tabs.len() {
+        if app.tabs[i].path == path {
+            app.active = i
+            app.overlay = ""
+            app.field = ""
+            app.field_cursor = 0
+            return app
+        }
+        i = i + 1
+    }
+    let text = gui.read(path)
+    var tabs = app.tabs
+    tabs.push(Tab {
+        path: path,
+        name: basename(path),
+        lines: split_lines(text),
+        dirty: false,
+        cursor_line: 0,
+        cursor_col: 0,
+        scroll: 0,
+    })
+    app.tabs = tabs
+    app.active = tabs.len() - 1
+    app.overlay = ""
+    app.field = ""
+    app.field_cursor = 0
+    app.status = ""
+    return app
+}
+
+fn close_tab(app: App) -> App {
+    var app = app
+    if app.active < 0 || app.tabs.len() == 0 {
+        return app
+    }
+    var rest: List<Tab> = []
+    var i = 0
+    while i < app.tabs.len() {
+        if i != app.active {
+            rest.push(app.tabs[i])
+        }
+        i = i + 1
+    }
+    app.tabs = rest
+    if app.active >= rest.len() {
+        app.active = rest.len() - 1
+    }
+    return app
+}
+
+fn save(app: App) -> App {
+    var app = app
+    if app.active < 0 {
+        return app
+    }
+    var tab = app.tabs[app.active]
+    let text = join_lines(tab.lines)
+    if gui.write(tab.path, text) {
+        tab.dirty = false
+        app.status = "Saved " + tab.name
+    } else {
+        app.status = "Could not save " + tab.name
+    }
+    app.tabs[app.active] = tab
+    return app
+}
+
+fn save_all(app: App) -> App {
+    var app = app
+    var i = 0
+    var saved = 0
+    while i < app.tabs.len() {
+        var tab = app.tabs[i]
+        if tab.dirty {
+            if gui.write(tab.path, join_lines(tab.lines)) {
+                tab.dirty = false
+                app.tabs[i] = tab
+                saved = saved + 1
+            }
+        }
+        i = i + 1
+    }
+    app.status = "Saved " + "${saved}" + " file(s)"
+    return app
+}
+
+fn edit_insert(app: App, value: String) -> App {
+    var app = app
+    if app.active < 0 {
+        return app
+    }
+    var tab = app.tabs[app.active]
+    let chars = tab.lines[tab.cursor_line].graphemes()
+    let col = gui.clamp(tab.cursor_col, 0, chars.len())
+    let before = slice_chars(chars, 0, col)
+    let after = slice_chars(chars, col, chars.len())
+    tab.lines = replace_line(tab.lines, tab.cursor_line, before + value + after)
+    tab.cursor_col = col + value.graphemes().len()
+    tab.dirty = true
+    app.tabs[app.active] = tab
+    app.status = ""
+    return app
+}
+
+fn edit_newline(app: App) -> App {
+    var app = app
+    if app.active < 0 {
+        return app
+    }
+    var tab = app.tabs[app.active]
+    let chars = tab.lines[tab.cursor_line].graphemes()
+    let col = gui.clamp(tab.cursor_col, 0, chars.len())
+    let before = slice_chars(chars, 0, col)
+    let after = slice_chars(chars, col, chars.len())
+    tab.lines = replace_line(tab.lines, tab.cursor_line, before)
+    tab.lines = insert_line(tab.lines, tab.cursor_line + 1, after)
+    tab.cursor_line = tab.cursor_line + 1
+    tab.cursor_col = 0
+    tab.dirty = true
+    app.tabs[app.active] = tab
+    return app
+}
+
+fn edit_backspace(app: App) -> App {
+    var app = app
+    if app.active < 0 {
+        return app
+    }
+    var tab = app.tabs[app.active]
+    if tab.cursor_col > 0 {
+        let chars = tab.lines[tab.cursor_line].graphemes()
+        let col = gui.clamp(tab.cursor_col, 0, chars.len())
+        let before = slice_chars(chars, 0, col - 1)
+        let after = slice_chars(chars, col, chars.len())
+        tab.lines = replace_line(tab.lines, tab.cursor_line, before + after)
+        tab.cursor_col = col - 1
+        tab.dirty = true
+    } else {
+        if tab.cursor_line > 0 {
+            let previous = tab.lines[tab.cursor_line - 1]
+            let current = tab.lines[tab.cursor_line]
+            tab.lines = replace_line(tab.lines, tab.cursor_line - 1, previous + current)
+            tab.lines = remove_line(tab.lines, tab.cursor_line)
+            tab.cursor_line = tab.cursor_line - 1
+            tab.cursor_col = previous.graphemes().len()
+            tab.dirty = true
+        }
+    }
+    app.tabs[app.active] = tab
+    return app
+}
+
+fn edit_delete(app: App) -> App {
+    var app = app
+    if app.active < 0 {
+        return app
+    }
+    var tab = app.tabs[app.active]
+    let chars = tab.lines[tab.cursor_line].graphemes()
+    let col = gui.clamp(tab.cursor_col, 0, chars.len())
+    if col < chars.len() {
+        let before = slice_chars(chars, 0, col)
+        let after = slice_chars(chars, col + 1, chars.len())
+        tab.lines = replace_line(tab.lines, tab.cursor_line, before + after)
+        tab.dirty = true
+    } else {
+        if tab.cursor_line + 1 < tab.lines.len() {
+            let current = tab.lines[tab.cursor_line]
+            let next = tab.lines[tab.cursor_line + 1]
+            tab.lines = replace_line(tab.lines, tab.cursor_line, current + next)
+            tab.lines = remove_line(tab.lines, tab.cursor_line + 1)
+            tab.dirty = true
+        }
+    }
+    app.tabs[app.active] = tab
+    return app
+}
+
+fn edit_move(app: App, dline: Int, dcol: Int) -> App {
+    var app = app
+    if app.active < 0 {
+        return app
+    }
+    var tab = app.tabs[app.active]
+    var line = tab.cursor_line + dline
+    line = gui.clamp(line, 0, tab.lines.len() - 1)
+    var col = tab.cursor_col
+    if dline != 0 {
+        col = tab.cursor_col
+    } else {
+        col = tab.cursor_col + dcol
+    }
+    if col < 0 {
+        if line > 0 {
+            line = line - 1
+            col = tab.lines[line].graphemes().len()
+        } else {
+            col = 0
+        }
+    }
+    if col > tab.lines[line].graphemes().len() {
+        if line + 1 < tab.lines.len() {
+            line = line + 1
+            col = 0
+        } else {
+            col = tab.lines[line].graphemes().len()
+        }
+    }
+    tab.cursor_line = line
+    tab.cursor_col = gui.clamp(col, 0, tab.lines[line].graphemes().len())
+    tab = tab_scrolled(tab)
+    app.tabs[app.active] = tab
+    return app
+}
+
+fn edit_home(app: App) -> App {
+    var app = app
+    if app.active < 0 {
+        return app
+    }
+    var tab = app.tabs[app.active]
+    tab.cursor_col = 0
+    app.tabs[app.active] = tab
+    return app
+}
+
+fn edit_end(app: App) -> App {
+    var app = app
+    if app.active < 0 {
+        return app
+    }
+    var tab = app.tabs[app.active]
+    tab.cursor_col = tab.lines[tab.cursor_line].graphemes().len()
+    app.tabs[app.active] = tab
+    return app
+}
+
+// Keeps the caret inside the visible rows.
+fn tab_scrolled(tab: Tab) -> Tab {
+    var tab = tab
+    let visible = (gui.height() - title_height() - status_height() - tabs_height() - crumbs_height()) / line_height(13)
+    if tab.cursor_line < tab.scroll {
+        tab.scroll = tab.cursor_line
+    }
+    if tab.cursor_line >= tab.scroll + visible {
+        tab.scroll = tab.cursor_line - visible + 1
+    }
+    if tab.scroll < 0 {
+        tab.scroll = 0
+    }
+    return tab
+}
+
+// ---------- tasks ----------
+
+fn nova_binary() -> String {
+    var nova = gui.env("NOVA_BIN")
+    if nova.len() == 0 {
+        nova = "nova"
+    }
+    return nova
+}
+
+fn with_trailing_newline(text: String) -> String {
+    if text.len() == 0 {
+        return text
+    }
+    let chars = text.graphemes()
+    if chars[chars.len() - 1] == "\n" {
+        return text
+    }
+    return text + "\n"
+}
+
+fn run_task(app: App, kind: String) -> App {
+    var app = app
+    let nova = nova_binary()
+    let command = nova + " " + kind
+    let output = gui.run(command, app.root)
+    let status = gui.exit_status()
+    var text = "$ " + command + "\n"
+    text = text + with_trailing_newline(output)
+    text = text + "\nexit " + "${status}"
+    app.output = text
+    app.bottom = "output"
+    app.panel = true
+    app.status = kind + " exited " + "${status}"
+    return app
+}
+
+fn run_project(app: App) -> App {
+    var app = app
+    let nova = nova_binary()
+    let built = gui.run(nova + " build", app.root)
+    let status = gui.exit_status()
+    if status != 0 {
+        var text = "$ " + nova + " build\n" + with_trailing_newline(built)
+        text = text + "\nexit " + "${status}"
+        app.output = text
+        app.bottom = "output"
+        app.panel = true
+        app.status = "build failed"
+        return app
+    }
+    let name = project_name(app.root)
+    if name.len() == 0 {
+        app.status = "No nova.toml in this workspace"
+        return app
+    }
+    let target = "./target/nova/" + name
+    let launched = gui.run("open -a Terminal " + target, app.root)
+    var text = "$ " + nova + " build\n" + with_trailing_newline(built)
+    text = text + "\nlaunched " + target + " in Terminal\n" + launched
+    app.output = text
+    app.bottom = "output"
+    app.panel = true
+    app.status = "running " + name
+    return app
+}
+
+// ---------- palette ----------
+
+fn commands() -> List<Command> {
+    var list: List<Command> = []
+    list.push(Command { id: "build", label: "Build project", hint: "⌘B" })
+    list.push(Command { id: "run", label: "Build and run in Terminal", hint: "⌘R" })
+    list.push(Command { id: "check", label: "Check project", hint: "⇧⌘B" })
+    list.push(Command { id: "save", label: "Save file", hint: "⌘S" })
+    list.push(Command { id: "saveall", label: "Save all files", hint: "⇧⌘S" })
+    list.push(Command { id: "close", label: "Close tab", hint: "⌘W" })
+    list.push(Command { id: "quick", label: "Go to file", hint: "⌘P" })
+    list.push(Command { id: "palette", label: "Show all commands", hint: "⇧⌘P" })
+    list.push(Command { id: "sidebar", label: "Toggle sidebar", hint: "⇧⌘E" })
+    list.push(Command { id: "panel", label: "Toggle bottom panel", hint: "⌘`" })
+    list.push(Command { id: "docs", label: "Open documentation", hint: "" })
+    list.push(Command { id: "settings", label: "Settings", hint: "⌘," })
+    list.push(Command { id: "about", label: "About Nova Studio", hint: "" })
+    list.push(Command { id: "quit", label: "Quit", hint: "⌘Q" })
+    return list
+}
+
+fn rows(app: App) -> List<Row> {
+    var list: List<Row> = []
+    let query = app.field.lower()
+    if app.overlay == "palette" {
+        for command in commands() {
+            if query.len() == 0 || command.label.lower().contains(query) {
+                list.push(Row { key: command.id, label: command.label, hint: command.hint })
+            }
+        }
+    } else {
+        for path in app.files {
+            let shown = relative(app.root, path)
+            if query.len() == 0 || shown.lower().contains(query) {
+                list.push(Row { key: path, label: shown, hint: "" })
+            }
+        }
+    }
+    return list
+}
+
+fn open_palette(app: App) -> App {
+    var app = app
+    app.overlay = "palette"
+    app.field = ""
+    app.field_cursor = 0
+    app.selection = 0
+    return app
+}
+
+fn open_quick(app: App) -> App {
+    var app = app
+    app.overlay = "quick"
+    app.field = ""
+    app.field_cursor = 0
+    app.selection = 0
+    app.files = collect_files(app.root, 0)
+    return app
+}
+
+fn run_command(app: App, id: String) -> App {
+    var next = app
+    next.overlay = ""
+    next.field = ""
+    next.field_cursor = 0
+    next.selection = 0
+    if id == "build" {
+        return run_task(next, "build")
+    }
+    if id == "check" {
+        return run_task(next, "check")
+    }
+    if id == "run" {
+        return run_project(next)
+    }
+    if id == "save" {
+        return save(next)
+    }
+    if id == "saveall" {
+        return save_all(next)
+    }
+    if id == "close" {
+        return close_tab(next)
+    }
+    if id == "quick" {
+        return open_quick(next)
+    }
+    if id == "palette" {
+        return open_palette(next)
+    }
+    if id == "sidebar" {
+        next.sidebar = !next.sidebar
+        return next
+    }
+    if id == "panel" {
+        next.panel = !next.panel
+        return next
+    }
+    if id == "docs" {
+        next.panel = true
+        next.bottom = "docs"
+        return next
+    }
+    if id == "settings" {
+        next.overlay = "settings"
+        return next
+    }
+    if id == "about" {
+        next.overlay = "about"
+        return next
+    }
+    if id == "quit" {
+        next.quit = true
+        return next
+    }
+    return next
+}
+
+// ---------- drawing ----------
+
+fn draw(app: App) {
+    let theme = app.theme
+    let w = gui.width()
+    let h = gui.height()
+    gui.clear(theme.bg)
+    draw_title(app, w)
+    draw_activity(app, h)
+    if app.sidebar {
+        draw_sidebar(app, h)
+    }
+    draw_main(app, w, h)
+    draw_status(app, w, h)
+    if app.overlay.len() > 0 {
+        draw_overlay(app, w, h)
+    }
+}
+
+fn draw_title(app: App, w: Int) {
+    let theme = app.theme
+    gui.rect(0, 0, w, title_height(), theme.bg_hard)
+    gui.line(0, title_height() - 1, w, title_height() - 1, theme.border)
+    var pill = w * 60 / 100
+    if pill > 520 {
+        pill = 520
+    }
+    if pill < 220 {
+        pill = 220
+    }
+    let pill_x = (w - pill) / 2
+    gui.round_rect(pill_x, 6, pill, 24, 6, gui.rgb(36, 36, 36))
+    gui.stroke(pill_x, 6, pill, 24, theme.border_strong)
+    gui.text(pill_x + 11, 10, "✦", 11, gui.rgb(90, 200, 255))
+    var label = "Nova Studio"
+    if app.active >= 0 && app.tabs.len() > 0 {
+        label = app.tabs[app.active].name
+        if app.tabs[app.active].dirty {
+            label = "● " + label
+        }
+    }
+    gui.text(pill_x + 26, 9, label, 12, theme.muted)
+    gui.text(w - 100, 8, "▤", 15, theme.muted)
+    gui.text(w - 70, 8, "◫", 15, theme.muted)
+    gui.text(w - 40, 8, "⚙", 15, theme.muted)
+}
+
+fn draw_activity(app: App, h: Int) {
+    let theme = app.theme
+    let top = title_height()
+    let bottom = h - status_height()
+    gui.rect(0, top, activity_width(), bottom - top, theme.bg_hard)
+    gui.line(activity_width() - 1, top, activity_width() - 1, bottom, theme.border)
+    var i = 0
+    while i < 4 {
+        let y = top + 4 + i * 46
+        var glyph = "▤"
+        if i == 1 {
+            glyph = "⌕"
+        }
+        if i == 2 {
+            glyph = "✦"
+        }
+        if i == 3 {
+            glyph = "⚙"
+        }
+        var color = theme.muted
+        if i == 0 {
+            color = theme.fg_bright
+            gui.rect(0, y, 2, 46, theme.fg_bright)
+        }
+        gui.text(16, y + 13, glyph, 18, color)
+        i = i + 1
+    }
+}
+
+fn draw_sidebar(app: App, h: Int) {
+    let theme = app.theme
+    let x = activity_width()
+    let top = title_height()
+    let bottom = h - status_height()
+    gui.rect(x, top, sidebar_width(), bottom - top, theme.panel)
+    gui.line(x + sidebar_width() - 1, top, x + sidebar_width() - 1, bottom, theme.border)
+    gui.text(x + 20, top + 11, "EXPLORER", 11, theme.fg)
+    gui.text(x + sidebar_width() - 28, top + 8, "↻", 14, theme.muted)
+    gui.text(x + 14, top + 40, basename(app.root), 12, theme.fg_bright)
+    let start_y = top + 62
+    gui.clip(x, start_y, sidebar_width() - 1, bottom - start_y)
+    var i = app.tree_scroll
+    var row = 0
+    while i < app.nodes.len() && start_y + row * row_height() < bottom {
+        let node = app.nodes[i]
+        let ry = start_y + row * row_height()
+        var selected = false
+        if app.active >= 0 && app.tabs.len() > 0 && app.tabs[app.active].path == node.path {
+            selected = true
+        }
+        if selected {
+            gui.rect(x, ry, sidebar_width() - 1, row_height(), theme.selection)
+        }
+        let indent = 12 + node.depth * 12
+        var color = theme.fg
+        if selected {
+            color = theme.fg_bright
+        }
+        if node.is_dir {
+            var chevron = "▸"
+            if list_has(app.expanded, node.path) {
+                chevron = "▾"
+            }
+            gui.text(x + indent, ry + 5, chevron, 11, theme.fg)
+            gui.text(x + indent + 15, ry + 4, node.name, 12, color)
+        } else {
+            gui.text(x + indent + 15, ry + 4, node.name, 12, color)
+        }
+        i = i + 1
+        row = row + 1
+    }
+    gui.clip_reset()
+}
+
+fn draw_tabs(app: App, x: Int, y: Int, w: Int) {
+    let theme = app.theme
+    gui.rect(x, y, w, tabs_height(), theme.panel)
+    gui.line(x, y + tabs_height() - 1, x + w, y + tabs_height() - 1, theme.border)
+    gui.clip(x, y, w, tabs_height())
+    var tx = x
+    var i = 0
+    while i < app.tabs.len() {
+        let tab = app.tabs[i]
+        var width = gui.mono_width(tab.name, 12) + 62
+        if width > 240 {
+            width = 240
+        }
+        if width < 120 {
+            width = 120
+        }
+        if i == app.active {
+            gui.rect(tx, y, width, tabs_height(), theme.bg)
+            gui.rect(tx, y, width, 1, theme.accent)
+        } else {
+            gui.rect(tx, y, width, tabs_height(), gui.rgb(45, 45, 45))
+        }
+        gui.line(tx + width - 1, y, tx + width - 1, y + tabs_height(), theme.border)
+        var color = gui.rgb(150, 150, 150)
+        if i == app.active {
+            color = theme.fg_bright
+        }
+        gui.text(tx + 10, y + 9, tab.name, 12, color)
+        if tab.dirty {
+            gui.text(tx + width - 38, y + 9, "●", 9, theme.fg)
+        }
+        gui.text(tx + width - 22, y + 8, "✕", 11, theme.muted)
+        tx = tx + width
+        i = i + 1
+    }
+    gui.clip_reset()
+}
+
+fn draw_crumbs(app: App, x: Int, y: Int, w: Int) {
+    let theme = app.theme
+    gui.rect(x, y, w, crumbs_height(), theme.bg)
+    gui.line(x, y + crumbs_height() - 1, x + w, y + crumbs_height() - 1, theme.border)
+    if app.active >= 0 && app.tabs.len() > 0 {
+        let path = relative(app.root, app.tabs[app.active].path)
+        gui.text(x + 12, y + 4, basename(app.root), 11, theme.muted)
+        gui.text(x + 12 + gui.text_width(basename(app.root), 11) + 4, y + 4, "›", 11, theme.faint)
+        gui.text(x + 12 + gui.text_width(basename(app.root), 11) + 16, y + 4, path, 11, theme.fg)
+    }
+}
+
+fn draw_welcome(app: App, x: Int, y: Int, w: Int, h: Int) {
+    let theme = app.theme
+    let left = x + 52
+    var top = y + 46
+    gui.text(left, top, "✦", 20, gui.rgb(90, 200, 255))
+    gui.text(left, top + 26, "Nova Studio", 32, theme.fg_bright)
+    gui.text(left, top + 68, "A workbench for the Nova language, written in Nova.", 13, theme.muted)
+    top = top + 110
+    gui.text(left, top, "START", 13, theme.fg_bright)
+    let rows_list: List<String> = [
+        "Open a file from the explorer          ▤",
+        "Go to file                             ⌘P",
+        "Command palette                        ⇧⌘P",
+        "Build                                  ⌘B",
+        "Build and run in Terminal              ⌘R",
+        "Toggle sidebar / panel                 ⇧⌘E / ⌘`",
+        "Settings                               ⌘,",
+    ]
+    var i = 0
+    while i < rows_list.len() {
+        gui.text(left, top + 24 + i * 24, rows_list[i], 13, theme.link)
+        i = i + 1
+    }
+    gui.text(left, top + 24 + rows_list.len() * 24 + 16, "The compiler, engine and this window are all Nova.", 12, theme.muted)
+}
+
+fn draw_editor(app: App, x: Int, y: Int, w: Int, h: Int) {
+    let theme = app.theme
+    if app.tabs.len() == 0 || app.active < 0 {
+        draw_welcome(app, x, y, w, h)
+        return
+    }
+    let tab = app.tabs[app.active]
+    let size = app.size
+    let lh = line_height(size)
+    let rows_visible = h / lh
+    gui.clip(x, y, w, h)
+    var row = 0
+    while row < rows_visible {
+        let index = tab.scroll + row
+        if index < tab.lines.len() {
+            let ly = y + row * lh
+            if index == tab.cursor_line {
+                gui.rect(x, ly, w, lh, theme.elevated)
+            }
+            let number = "${index + 1}"
+            let number_width = gui.mono_width(number, size)
+            var number_color = theme.faint
+            if index == tab.cursor_line {
+                number_color = theme.link
+            }
+            gui.mono(x + gutter_width() - 12 - number_width, ly + 3, number, size, number_color)
+            draw_code(x + gutter_width(), ly + 3, tab.lines[index], size, theme)
+        }
+        row = row + 1
+    }
+    // Caret
+    let chars = tab.lines[tab.cursor_line].graphemes()
+    let prefix = slice_chars(chars, 0, gui.clamp(tab.cursor_col, 0, chars.len()))
+    let caret_x = x + gutter_width() + gui.mono_width(prefix, size)
+    let caret_y = y + (tab.cursor_line - tab.scroll) * lh + 3
+    gui.rect(caret_x, caret_y, 2, size + 3, theme.fg_bright)
+    gui.clip_reset()
+}
+
+fn draw_main(app: App, w: Int, h: Int) {
+    let theme = app.theme
+    var left = activity_width()
+    if app.sidebar {
+        left = left + sidebar_width()
+    }
+    let top = title_height()
+    var bottom = h - status_height()
+    if app.panel {
+        bottom = bottom - panel_height()
+    }
+    draw_tabs(app, left, top, w - left)
+    draw_crumbs(app, left, top + tabs_height(), w - left)
+    let editor_top = top + tabs_height() + crumbs_height()
+    draw_editor(app, left, editor_top, w - left, bottom - editor_top)
+    if app.panel {
+        draw_panel(app, left, bottom, w - left, panel_height())
+    }
+    gui.line(left, top, left, bottom, theme.border)
+}
+
+fn docs_lines() -> List<String> {
+    return [
+        "NOVA STUDIO — QUICK REFERENCE",
+        "",
+        "Language",
+        "  fn name(arg: Int) -> Int { return arg }",
+        "  struct Point { x: Int, y: Int }",
+        "  enum Status { Idle, Running }",
+        "  match value { Status.Idle => foo() }",
+        "",
+        "Toolchain",
+        "  nova build        compile the project binary",
+        "  nova run          compile and run it",
+        "  nova check        parse and type-check only",
+        "  nova test         run tests/**/*.nova",
+        "  nova fmt          format sources",
+        "",
+        "This workbench",
+        "  ⌘S save · ⌘B build · ⌘R run in Terminal",
+        "  ⌘P go to file · ⇧⌘P all commands",
+        "  ⌘W close tab · ⌘` panel · ⇧⌘E sidebar",
+        "",
+        "Full documentation: https://jd4rider.github.io/nova/docs/",
+    ]
+}
+
+fn draw_panel(app: App, x: Int, y: Int, w: Int, h: Int) {
+    let theme = app.theme
+    gui.rect(x, y, w, h, theme.bg)
+    gui.line(x, y, x + w, y, theme.border)
+    gui.rect(x, y, w, 35, theme.panel)
+
+    var tx = x + 12
+    let labels: List<String> = ["PROBLEMS", "OUTPUT", "DOCS"]
+    let ids: List<String> = ["problems", "output", "docs"]
+    var i = 0
+    while i < 3 {
+        var color = gui.rgb(150, 150, 150)
+        if app.bottom == ids[i] {
+            color = theme.fg_bright
+            gui.rect(tx - 10, y, gui.text_width(labels[i], 11) + 20, 35, theme.bg)
+            gui.rect(tx - 10, y, gui.text_width(labels[i], 11) + 20, 1, theme.accent)
+        }
+        gui.text(tx, y + 12, labels[i], 11, color)
+        tx = tx + gui.text_width(labels[i], 11) + 40
+        i = i + 1
+    }
+
+    let body_y = y + 35
+    let body_h = h - 35
+    gui.clip(x, body_y, w, body_h)
+    if app.bottom == "output" {
+        let lines = split_lines(app.output)
+        var row = 0
+        while row < lines.len() && body_y + 8 + row * 16 < body_y + body_h {
+            gui.mono(x + 12, body_y + 8 + row * 16, lines[row], 12, theme.fg)
+            row = row + 1
+        }
+        if app.output.len() == 0 {
+            gui.text(x + 12, body_y + 10, "No task has run yet. Press ⌘B to build.", 12, theme.muted)
+        }
+    }
+    if app.bottom == "problems" {
+        gui.text(x + 12, body_y + 10, "No problems detected.", 12, theme.muted)
+        gui.text(x + 12, body_y + 30, "The Nova build runs the compiler as a task and reports its output verbatim;", 11, theme.faint)
+        gui.text(x + 12, body_y + 46, "it does not host a language server, so there are no inline diagnostics yet.", 11, theme.faint)
+    }
+    if app.bottom == "docs" {
+        let lines = docs_lines()
+        var row = 0
+        while row < lines.len() && body_y + 8 + row * 16 < body_y + body_h {
+            var color = theme.muted
+            if lines[row].starts_with("NOVA STUDIO") {
+                color = theme.fg_bright
+            }
+            gui.mono(x + 12, body_y + 8 + row * 16, lines[row], 11, color)
+            row = row + 1
+        }
+    }
+    gui.clip_reset()
+}
+
+fn draw_status(app: App, w: Int, h: Int) {
+    let theme = app.theme
+    let y = h - status_height()
+    gui.rect(0, y, w, status_height(), theme.status)
+    gui.text(10, y + 5, "◈ nova-studio", 11, gui.white())
+    gui.text(118, y + 5, basename(app.root), 11, gui.white())
+    if app.status.len() > 0 {
+        gui.text(260, y + 5, app.status, 11, gui.white())
+        gui.text(259, y + 5, "·", 11, gui.white())
+    }
+    var cursor = "Ln 1, Col 1"
+    if app.active >= 0 && app.tabs.len() > 0 {
+        let tab = app.tabs[app.active]
+        cursor = "Ln " + "${tab.cursor_line + 1}" + ", Col " + "${tab.cursor_col + 1}"
+    }
+    let right = "UTF-8   " + cursor + "   " + app.theme_name + "   Nova"
+    gui.text(w - gui.text_width(right, 11) - 12, y + 5, right, 11, gui.white())
+}
+
+fn draw_overlay(app: App, w: Int, h: Int) {
+    let theme = app.theme
+    gui.rect_alpha(0, 0, w, h, 0, 110)
+    if app.overlay == "about" {
+        draw_about(app, w)
+        return
+    }
+    if app.overlay == "settings" {
+        draw_settings(app, w)
+        return
+    }
+    var card = 640
+    if card > w - 80 {
+        card = w - 80
+    }
+    let x = (w - card) / 2
+    let y = 70
+    let list = rows(app)
+    var height = 44 + list.len() * 30 + 8
+    if height > h - 140 {
+        height = h - 140
+    }
+    gui.rect(x, y, card, height, theme.panel)
+    gui.stroke(x, y, card, height, theme.border_strong)
+    gui.rect(x + 1, y + 1, card - 2, 33, theme.panel)
+    gui.line(x, y + 34, x + card, y + 34, theme.border_strong)
+    var query = app.field
+    if query.len() == 0 {
+        query = "Type a name"
+    }
+    gui.text(x + 12, y + 10, query, 13, theme.fg)
+    let caret = app.field.graphemes()
+    let caret_x = x + 12 + gui.mono_width(slice_chars(caret, 0, gui.clamp(app.field_cursor, 0, caret.len())), 13)
+    gui.rect(caret_x, y + 9, 1, 16, theme.accent)
+    var i = 0
+    while i < list.len() && i < 12 {
+        let ry = y + 38 + i * 30
+        if i == app.selection {
+            gui.rect(x + 4, ry, card - 8, 28, theme.selection)
+        }
+        gui.text(x + 12, ry + 7, list[i].label, 13, theme.fg)
+        gui.text(x + card - 12 - gui.text_width(list[i].hint, 11), ry + 8, list[i].hint, 11, theme.muted)
+        i = i + 1
+    }
+    if list.len() == 0 {
+        gui.text(x + 12, y + 46, "No matches", 12, theme.muted)
+    }
+}
+
+fn draw_about(app: App, w: Int) {
+    let theme = app.theme
+    let card = 560
+    let x = (w - card) / 2
+    let y = 90
+    gui.rect(x, y, card, 300, theme.panel)
+    gui.stroke(x, y, card, 300, theme.border_strong)
+    gui.text(x + 24, y + 24, "✦ Nova Studio", 22, theme.fg_bright)
+    gui.text(x + 24, y + 60, "The workbench, rewritten in Nova.", 13, theme.muted)
+    let lines: List<String> = [
+        "Every pixel here is drawn by Nova through nova-gui:",
+        "a native macOS window, a CoreGraphics framebuffer and",
+        "CoreText glyphs, polled from a single event loop.",
+        "",
+        "The editor, explorer, tabs, palette and tasks are",
+        "functions in examples/nova-studio/src/main.nova.",
+        "",
+        "The compiler is invoked as a real task; output is verbatim.",
+    ]
+    var i = 0
+    while i < lines.len() {
+        gui.text(x + 24, y + 92 + i * 19, lines[i], 12, theme.fg)
+        i = i + 1
+    }
+    gui.text(x + 24, y + 266, "Esc closes this panel", 11, theme.faint)
+}
+
+fn draw_settings(app: App, w: Int) {
+    let theme = app.theme
+    let card = 520
+    let x = (w - card) / 2
+    let y = 90
+    gui.rect(x, y, card, 300, theme.panel)
+    gui.stroke(x, y, card, 300, theme.border_strong)
+    gui.text(x + 24, y + 22, "Settings", 18, theme.fg_bright)
+    gui.line(x + 24, y + 56, x + card - 24, y + 56, theme.border_strong)
+    gui.text(x + 24, y + 70, "THEME", 11, theme.muted)
+    gui.rect(x + 24, y + 90, 140, 32, theme.bg)
+    gui.stroke(x + 24, y + 90, 140, 32, theme.border_strong)
+    gui.text(x + 36, y + 99, "Dark+", 12, theme.fg_bright)
+    gui.rect(x + 176, y + 90, 140, 32, theme.bg)
+    gui.stroke(x + 176, y + 90, 140, 32, theme.border_strong)
+    gui.text(x + 188, y + 99, "Gruvbox", 12, theme.fg)
+    gui.text(x + 24, y + 140, "FONT SIZE", 11, theme.muted)
+    gui.rect(x + 24, y + 160, 32, 30, theme.bg)
+    gui.stroke(x + 24, y + 160, 32, 30, theme.border_strong)
+    gui.text(x + 36, y + 168, "−", 13, theme.fg)
+    gui.text(x + 68, y + 168, "${app.size}", 13, theme.fg_bright)
+    gui.rect(x + 100, y + 160, 32, 30, theme.bg)
+    gui.stroke(x + 100, y + 160, 32, 30, theme.border_strong)
+    gui.text(x + 110, y + 168, "+", 13, theme.fg)
+    let notes: List<String> = [
+        "Themes and font size apply immediately.",
+        "Settings are not persisted between launches yet.",
+        "",
+        "Esc closes this panel",
+    ]
+    var i = 0
+    while i < notes.len() {
+        gui.text(x + 24, y + 210 + i * 18, notes[i], 11, theme.muted)
+        i = i + 1
+    }
+}
+
+// ---------- input ----------
+
+fn handle(app: App, event: gui.Event) -> App {
+    var app = app
+    if event.kind == gui.event_close() {
+        app.quit = true
+        return app
+    }
+    if event.kind == gui.event_mouse_move() {
+        app.mouse_x = event.x
+        app.mouse_y = event.y
+        return app
+    }
+    if event.kind == gui.event_mouse_down() {
+        return click(app, event.x, event.y)
+    }
+    if event.kind == gui.event_scroll() {
+        return scroll(app, event.delta, event.x, event.y)
+    }
+    if event.kind == gui.event_key() {
+        return key(app, event.code, event.mods)
+    }
+    return app
+}
+
+fn key(app: App, code: Int, mods: Int) -> App {
+    var app = app
+    let command = mods % 2 == 1
+    let shift = (mods / 2) % 2 == 1
+    if app.overlay.len() > 0 {
+        return overlay_key(app, code, mods)
+    }
+    if command {
+        if code == 115 {
+            if shift {
+                return save_all(app)
+            }
+            return save(app)
+        }
+        if code == 98 {
+            if shift {
+                return run_task(app, "check")
+            }
+            return run_task(app, "build")
+        }
+        if code == 114 {
+            return run_project(app)
+        }
+        if code == 119 {
+            return close_tab(app)
+        }
+        if code == 112 {
+            if shift {
+                return open_palette(app)
+            }
+            return open_quick(app)
+        }
+        if code == 96 {
+            app.panel = !app.panel
+            return app
+        }
+        if code == 44 {
+            app.overlay = "settings"
+            return app
+        }
+        if code == 101 {
+            if shift {
+                app.sidebar = !app.sidebar
+            }
+            return app
+        }
+        if code == 113 {
+            app.quit = true
+            return app
+        }
+        return app
+    }
+    if app.active >= 0 && app.tabs.len() > 0 {
+        if code == gui.key_enter() {
+            return edit_newline(app)
+        }
+        if code == gui.key_tab() {
+            return edit_insert(app, "    ")
+        }
+        if code == gui.key_backspace() {
+            return edit_backspace(app)
+        }
+        if code == gui.key_delete() {
+            return edit_delete(app)
+        }
+        if code == gui.key_left() {
+            return edit_move(app, 0, -1)
+        }
+        if code == gui.key_right() {
+            return edit_move(app, 0, 1)
+        }
+        if code == gui.key_up() {
+            return edit_move(app, -1, 0)
+        }
+        if code == gui.key_down() {
+            return edit_move(app, 1, 0)
+        }
+        if code == gui.key_home() {
+            return edit_home(app)
+        }
+        if code == gui.key_end() {
+            return edit_end(app)
+        }
+        if code >= 32 && code <= 126 {
+            let text = code_to_text(code)
+            if text.len() > 0 {
+                return edit_insert(app, text)
+            }
+        }
+    }
+    if code == gui.key_escape() {
+        app.overlay = ""
+    }
+    return app
+}
+
+fn overlay_key(app: App, code: Int, mods: Int) -> App {
+    var app = app
+    let command = mods % 2 == 1
+    if code == gui.key_escape() {
+        app.overlay = ""
+        app.field = ""
+        app.field_cursor = 0
+        return app
+    }
+    if code == gui.key_enter() {
+        let list = rows(app)
+        if app.selection >= 0 && app.selection < list.len() {
+            let picked = list[app.selection]
+            if app.overlay == "quick" {
+                var next = app
+                next.overlay = ""
+                next.field = ""
+                next.field_cursor = 0
+                return open_file(next, picked.key)
+            }
+            return run_command(app, picked.key)
+        }
+        return app
+    }
+    if code == gui.key_up() {
+        if app.selection > 0 {
+            app.selection = app.selection - 1
+        }
+        return app
+    }
+    if code == gui.key_down() {
+        let list = rows(app)
+        if app.selection + 1 < list.len() {
+            app.selection = app.selection + 1
+        }
+        return app
+    }
+    if app.overlay == "settings" || app.overlay == "about" {
+        return app
+    }
+    if code == gui.key_backspace() {
+        let chars = app.field.graphemes()
+        if app.field_cursor > 0 {
+            app.field = slice_chars(chars, 0, app.field_cursor - 1) + slice_chars(chars, app.field_cursor, chars.len())
+            app.field_cursor = app.field_cursor - 1
+            app.selection = 0
+        }
+        return app
+    }
+    if code == gui.key_left() {
+        if app.field_cursor > 0 {
+            app.field_cursor = app.field_cursor - 1
+        }
+        return app
+    }
+    if code == gui.key_right() {
+        if app.field_cursor < app.field.graphemes().len() {
+            app.field_cursor = app.field_cursor + 1
+        }
+        return app
+    }
+    if !command && code >= 32 && code <= 126 {
+        let text = code_to_text(code)
+        if text.len() > 0 {
+            let chars = app.field.graphemes()
+            app.field = slice_chars(chars, 0, app.field_cursor) + text + slice_chars(chars, app.field_cursor, chars.len())
+            app.field_cursor = app.field_cursor + 1
+            app.selection = 0
+        }
+    }
+    return app
+}
+
+fn scroll(app: App, delta: Int, mx: Int, my: Int) -> App {
+    var app = app
+    let steps = delta / 10
+    if steps == 0 {
+        return app
+    }
+    let left = activity_width() + (if_set(app.sidebar, sidebar_width(), 0))
+    if app.sidebar && mx < activity_width() + sidebar_width() {
+        app.tree_scroll = gui.clamp(app.tree_scroll - steps, 0, app.nodes.len())
+        return app
+    }
+    if app.active >= 0 && app.tabs.len() > 0 && mx > left {
+        var tab = app.tabs[app.active]
+        tab.scroll = gui.clamp(tab.scroll - steps, 0, tab.lines.len())
+        app.tabs[app.active] = tab
+    }
+    return app
+}
+
+fn if_set(flag: Bool, value: Int, other: Int) -> Int {
+    if flag {
+        return value
+    }
+    return other
+}
+
+fn click(app: App, mx: Int, my: Int) -> App {
+    var app = app
+    let w = gui.width()
+    let h = gui.height()
+    if app.overlay.len() > 0 {
+        return overlay_click(app, mx, my, w, h)
+    }
+    // Title bar buttons
+    if my < title_height() {
+        if mx > w - 110 && mx < w - 90 {
+            app.sidebar = !app.sidebar
+            return app
+        }
+        if mx > w - 80 && mx < w - 60 {
+            app.panel = !app.panel
+            return app
+        }
+        if mx > w - 50 {
+            app.overlay = "settings"
+            return app
+        }
+        return app
+    }
+    // Activity bar
+    if mx < activity_width() && my < h - status_height() {
+        let index = (my - title_height()) / 46
+        if index == 1 {
+            return open_quick(app)
+        }
+        if index == 2 {
+            app.panel = true
+            app.bottom = "docs"
+            return app
+        }
+        if index == 3 {
+            app.overlay = "settings"
+            return app
+        }
+        app.sidebar = !app.sidebar
+        return app
+    }
+    // Explorer
+    if app.sidebar && mx < activity_width() + sidebar_width() {
+        if my < title_height() + 35 && mx > activity_width() + sidebar_width() - 40 {
+            app.nodes = build_nodes(app.root, 0, app.expanded)
+            return app
+        }
+        let start_y = title_height() + 62
+        if my >= start_y {
+            let index = app.tree_scroll + (my - start_y) / row_height()
+            if index >= 0 && index < app.nodes.len() {
+                let node = app.nodes[index]
+                if node.is_dir {
+                    var expanded = app.expanded
+                    if list_has(expanded, node.path) {
+                        var kept: List<String> = []
+                        var i = 0
+                        while i < expanded.len() {
+                            if expanded[i] != node.path {
+                                kept.push(expanded[i])
+                            }
+                            i = i + 1
+                        }
+                        expanded = kept
+                    } else {
+                        expanded.push(node.path)
+                    }
+                    app.expanded = expanded
+                    app.nodes = build_nodes(app.root, 0, expanded)
+                } else {
+                    return open_file(app, node.path)
+                }
+            }
+        }
+        return app
+    }
+    // Tabs
+    var left = activity_width()
+    if app.sidebar {
+        left = left + sidebar_width()
+    }
+    if my < title_height() + tabs_height() && mx > left {
+        var tx = left
+        var i = 0
+        while i < app.tabs.len() {
+            var width = gui.mono_width(app.tabs[i].name, 12) + 62
+            if width > 240 {
+                width = 240
+            }
+            if width < 120 {
+                width = 120
+            }
+            if mx >= tx && mx < tx + width {
+                if mx > tx + width - 30 {
+                    app.active = i
+                    return close_tab(app)
+                }
+                app.active = i
+                return app
+            }
+            tx = tx + width
+            i = i + 1
+        }
+        return app
+    }
+    // Editor
+    let editor_top = title_height() + tabs_height() + crumbs_height()
+    var editor_bottom = h - status_height()
+    if app.panel {
+        editor_bottom = editor_bottom - panel_height()
+    }
+    if app.active >= 0 && my > editor_top && my < editor_bottom && mx > left {
+        let tab = app.tabs[app.active]
+        if my < title_height() + tabs_height() + crumbs_height() {
+            return app
+        }
+        let size = app.size
+        let lh = line_height(size)
+        let line = tab.scroll + (my - editor_top) / lh
+        var next = app
+        var picked = tab
+        picked.cursor_line = gui.clamp(line, 0, tab.lines.len() - 1)
+        let advance = gui.advance(size)
+        let column = (mx - left - gutter_width()) / advance
+        picked.cursor_col = gui.clamp(column, 0, picked.lines[picked.cursor_line].graphemes().len())
+        next.tabs[next.active] = picked
+        return next
+    }
+    // Bottom panel tabs
+    if app.panel {
+        let panel_y = h - status_height() - panel_height()
+        if my > panel_y && my < panel_y + 35 {
+            var tx = left + 12
+            let ids: List<String> = ["problems", "output", "docs"]
+            let labels: List<String> = ["PROBLEMS", "OUTPUT", "DOCS"]
+            var i = 0
+            while i < 3 {
+                let width = gui.text_width(labels[i], 11) + 20
+                if mx >= tx - 10 && mx < tx + width - 10 {
+                    app.bottom = ids[i]
+                    return app
+                }
+                tx = tx + width + 20
+                i = i + 1
+            }
+        }
+    }
+    return app
+}
+
+fn overlay_click(app: App, mx: Int, my: Int, w: Int, h: Int) -> App {
+    var app = app
+    if app.overlay == "settings" {
+        let card = 520
+        let x = (w - card) / 2
+        let y = 90
+        if mx > x + 24 && mx < x + 164 && my > y + 90 && my < y + 122 {
+            app.theme = gui.dark()
+            app.theme_name = "Dark+"
+            return app
+        }
+        if mx > x + 176 && mx < x + 316 && my > y + 90 && my < y + 122 {
+            app.theme = gui.gruvbox()
+            app.theme_name = "Gruvbox"
+            return app
+        }
+        if mx > x + 24 && mx < x + 56 && my > y + 160 && my < y + 190 {
+            if app.size > 10 {
+                app.size = app.size - 1
+            }
+            return app
+        }
+        if mx > x + 100 && mx < x + 132 && my > y + 160 && my < y + 190 {
+            if app.size < 20 {
+                app.size = app.size + 1
+            }
+            return app
+        }
+        return app
+    }
+    if app.overlay == "about" {
+        if my > 240 || mx < 200 {
+            app.overlay = ""
+        }
+        return app
+    }
+    var card = 640
+    if card > w - 80 {
+        card = w - 80
+    }
+    let x = (w - card) / 2
+    let y = 70
+    let list = rows(app)
+    let index = (my - y - 38) / 30
+    if mx > x && mx < x + card && index >= 0 && index < list.len() && my > y + 38 {
+        let picked = list[index]
+        if app.overlay == "quick" {
+            var next = app
+            next.overlay = ""
+            next.field = ""
+            next.field_cursor = 0
+            return open_file(next, picked.key)
+        }
+        return run_command(app, picked.key)
+    }
+    if mx < x || mx > x + card || my < y || my > y + h {
+        app.overlay = ""
+        app.field = ""
+        app.field_cursor = 0
+    }
+    return app
+}
+
+// ---------- main ----------
+
+fn main() {
+    // Launch hooks: NOVA_STUDIO_OPEN opens a file at startup and
+    // NOVA_STUDIO_SHOT writes the first frame to a PNG and exits.
+    let capture = gui.env("NOVA_STUDIO_SHOT")
+    let start_file = gui.env("NOVA_STUDIO_OPEN")
+    var root = gui.env("NOVA_STUDIO_ROOT")
+    if root.len() == 0 {
+        root = gui.cwd()
+    }
+    if !gui.open("Nova Studio", 1280, 820) {
+        println("nova-studio: could not open a window")
+        return
+    }
+    var app = App {
+        root: root,
+        nodes: [],
+        expanded: [],
+        tabs: [],
+        active: -1,
+        theme: gui.dark(),
+        theme_name: "Dark+",
+        size: 13,
+        overlay: "",
+        field: "",
+        field_cursor: 0,
+        selection: 0,
+        output: "",
+        bottom: "problems",
+        panel: true,
+        sidebar: true,
+        status: "",
+        quit: false,
+        tree_scroll: 0,
+        files: [],
+        mouse_x: 0,
+        mouse_y: 0,
+    }
+    app.nodes = build_nodes(app.root, 0, app.expanded)
+    if capture.len() > 0 && app.nodes.len() > 0 {
+        let first_dir = app.nodes[0].is_dir
+        println("studio: " + "${app.nodes.len()}" + " rows, first is dir=" + "${first_dir}")
+    }
+    if start_file.len() > 0 {
+        app = open_file(app, start_file)
+    }
+    let start_task = gui.env("NOVA_STUDIO_TASK")
+    if start_task.len() > 0 {
+        app = run_task(app, start_task)
+        println("studio: task " + start_task + " -> " + app.status)
+    }
+    var running = true
+    var dirty = true
+    while running {
+        if dirty {
+            gui.begin()
+            draw(app)
+            gui.present()
+            dirty = false
+            if capture.len() > 0 {
+                gui.save_png(capture)
+                app.quit = true
+            }
+        }
+        let event = gui.next_event()
+        if event.kind == gui.event_none() {
+            gui.sleep(8)
+        } else {
+            app = handle(app, event)
+            dirty = true
+        }
+        if app.quit || !gui.is_open() {
+            running = false
+        }
+    }
+    gui.close()
+}

@@ -1,0 +1,31 @@
+import std.io { println }
+import "../../../libraries/nova-gui/src/gui.nova" as gui
+
+// Draws one frame, saves it as a PNG and exits. Used to verify the window and
+// rasterizer without a screen recorder.
+fn main() {
+    if !gui.open("nova-gui smoke", 640, 320) {
+        println("smoke: could not open a window")
+        return
+    }
+    let theme = gui.dark()
+    gui.begin()
+    gui.clear(theme.bg)
+    gui.text(24, 22, "Nova GUI", 28, theme.fg_bright)
+    gui.text(24, 62, "A native window, rasterized by Nova.", 13, theme.muted)
+    gui.rect(24, 94, 300, 34, theme.panel)
+    gui.stroke(24, 94, 300, 34, theme.border_strong)
+    gui.mono(34, 102, "Cmd+S saves   q quits", 13, theme.fg)
+    gui.round_rect(24, 146, 110, 30, 6, theme.accent)
+    gui.text(46, 152, "Build", 13, gui.white())
+    gui.stroke(24, 194, 592, 1, theme.border)
+    gui.text(24, 210, "status bar", 11, theme.orange)
+    let word = "hello"
+    let measured = gui.mono_width(word, 13)
+    gui.mono(24, 246, "advance: " + "${gui.advance(13)}px  width: " + "${measured}px", 12, theme.green)
+    gui.present()
+    let saved = gui.save_png("dist/smoke.png")
+    println("smoke: saved=${saved} size=${gui.width()}x${gui.height()}")
+    gui.sleep(250)
+    gui.close()
+}

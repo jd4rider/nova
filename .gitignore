@@ -9,6 +9,8 @@ editors/vscode/*.vsix
 apps/website/dist/
 apps/website/.astro/
 examples/breakout/dist/
+examples/nova-studio/dist/
+examples/gui-smoke/dist/
 *.log
 .DS_Store
 *.nova.ll

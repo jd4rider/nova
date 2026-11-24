@@ -1,0 +1,890 @@
+/*
+ * nova-gui — a native window, immediate-mode rasterizer and input queue.
+ *
+ * macOS implementation (AppKit + CoreGraphics + CoreText). Nova has no
+ * callbacks across the FFI boundary, so this follows the same shape as the
+ * terminal bindings: the host owns a window and an event queue, and a Nova
+ * `while` loop drains events, draws a frame and calls nova_gui_present().
+ *
+ * Coordinates are in points with the origin at the top-left, so drawing code
+ * reads like CSS or a canvas. The backing bitmap is device-sized (2x on a
+ * Retina display) and every draw is scaled by the same factor, which keeps
+ * text crisp without the caller knowing about pixel ratios.
+ *
+ * Only macOS is implemented. The build compiles this file only when a program
+ * references nova_gui_ symbols, so non-GUI Nova programs never link AppKit.
+ */
+
+#import <Cocoa/Cocoa.h>
+#import <CoreText/CoreText.h>
+#import <ImageIO/ImageIO.h>
+
+#include <math.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#include <dirent.h>
+#include <stdlib.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+/* Matches the runtime ABI: { const char *ptr; int64_t len; } UTF-8 bytes. */
+typedef struct {
+    const char *ptr;
+    int64_t len;
+} nova_str;
+
+/* Input events. Printable keys report their Unicode scalar (32..0x10FFFF);
+ * everything else uses these codes, which match nova-tui where they overlap. */
+#define NOVA_GUI_NONE 0
+#define NOVA_GUI_KEY 1
+#define NOVA_GUI_MOUSE_DOWN 2
+#define NOVA_GUI_MOUSE_UP 3
+#define NOVA_GUI_MOUSE_MOVE 4
+#define NOVA_GUI_DRAG 5
+#define NOVA_GUI_SCROLL 6
+#define NOVA_GUI_RESIZE 7
+#define NOVA_GUI_CLOSE 8
+
+#define NOVA_KEY_ENTER 13
+#define NOVA_KEY_TAB 9
+#define NOVA_KEY_ESCAPE 27
+#define NOVA_KEY_BACKSPACE 127
+#define NOVA_KEY_DELETE 1010
+#define NOVA_KEY_LEFT 1004
+#define NOVA_KEY_RIGHT 1003
+#define NOVA_KEY_UP 1001
+#define NOVA_KEY_DOWN 1002
+#define NOVA_KEY_HOME 1005
+#define NOVA_KEY_END 1006
+#define NOVA_KEY_PAGE_UP 1007
+#define NOVA_KEY_PAGE_DOWN 1008
+
+/* Modifier bits: 1 command, 2 shift, 4 option, 8 control. */
+#define NOVA_MOD_COMMAND 1
+#define NOVA_MOD_SHIFT 2
+#define NOVA_MOD_OPTION 4
+#define NOVA_MOD_CONTROL 8
+
+typedef struct {
+    int64_t kind;
+    int64_t code;
+    int64_t x;
+    int64_t y;
+    int64_t mods;
+    int64_t delta;
+} NovaGuiEvent;
+
+#define NOVA_GUI_QUEUE 1024
+
+static NovaGuiEvent nova_queue[NOVA_GUI_QUEUE];
+static int nova_q_head = 0;
+static int nova_q_tail = 0;
+
+static CGContextRef nova_ctx = NULL;
+static CGImageRef nova_image = NULL;
+static int64_t nova_w = 0;
+static int64_t nova_h = 0;
+static int64_t nova_scale = 1;
+static int nova_clip_depth = 0;
+static int nova_running = 0;
+static NSWindow *nova_window = nil;
+static NSView *nova_view = nil;
+static NSMutableString *nova_title = nil;
+
+static void nova_gui_emit(int64_t kind, int64_t code, int64_t x, int64_t y, int64_t mods, int64_t delta) {
+    int next = (nova_q_tail + 1) % NOVA_GUI_QUEUE;
+    if (next == nova_q_head) return; /* queue full: drop the newest event */
+    NovaGuiEvent *event = &nova_queue[nova_q_tail];
+    event->kind = kind;
+    event->code = code;
+    event->x = x;
+    event->y = y;
+    event->mods = mods;
+    event->delta = delta;
+    nova_q_tail = next;
+}
+
+static int64_t nova_gui_modifiers(NSEventModifierFlags flags) {
+    int64_t mods = 0;
+    if (flags & NSEventModifierFlagCommand) mods |= NOVA_MOD_COMMAND;
+    if (flags & NSEventModifierFlagShift) mods |= NOVA_MOD_SHIFT;
+    if (flags & NSEventModifierFlagOption) mods |= NOVA_MOD_OPTION;
+    if (flags & NSEventModifierFlagControl) mods |= NOVA_MOD_CONTROL;
+    return mods;
+}
+
+@interface NovaGuiView : NSView
+@end
+
+@implementation NovaGuiView
+
+- (BOOL)acceptsFirstResponder {
+    return YES;
+}
+
+- (BOOL)isOpaque {
+    return YES;
+}
+
+- (void)drawRect:(NSRect)dirtyRect {
+    (void)dirtyRect;
+    CGContextRef context = [[NSGraphicsContext currentContext] CGContext];
+    if (!context) return;
+    if (nova_image) {
+        CGContextSaveGState(context);
+        CGContextSetInterpolationQuality(context, kCGInterpolationLow);
+        CGContextDrawImage(context, self.bounds, nova_image);
+        CGContextRestoreGState(context);
+    }
+}
+
+/* View coordinates are bottom-left; the drawing API is top-left. */
+- (NSPoint)nova_point:(NSEvent *)event {
+    NSPoint local = [self convertPoint:event.locationInWindow fromView:nil];
+    return NSMakePoint(local.x, (CGFloat)nova_h - local.y);
+}
+
+- (void)keyDown:(NSEvent *)event {
+    int64_t mods = nova_gui_modifiers(event.modifierFlags);
+    int64_t code = 0;
+    switch (event.keyCode) {
+        case 36: code = NOVA_KEY_ENTER; break;
+        case 48: code = NOVA_KEY_TAB; break;
+        case 53: code = NOVA_KEY_ESCAPE; break;
+        case 51: code = NOVA_KEY_BACKSPACE; break;
+        case 117: code = NOVA_KEY_DELETE; break;
+        case 123: code = NOVA_KEY_LEFT; break;
+        case 124: code = NOVA_KEY_RIGHT; break;
+        case 126: code = NOVA_KEY_UP; break;
+        case 125: code = NOVA_KEY_DOWN; break;
+        case 115: code = NOVA_KEY_HOME; break;
+        case 119: code = NOVA_KEY_END; break;
+        case 116: code = NOVA_KEY_PAGE_UP; break;
+        case 121: code = NOVA_KEY_PAGE_DOWN; break;
+        default: break;
+    }
+    if (code == 0) {
+        NSString *text = (mods & NOVA_MOD_COMMAND) ? event.charactersIgnoringModifiers : event.characters;
+        if (text.length > 0) {
+            unichar first = [text characterAtIndex:0];
+            /* Surrogate pair: combine into one scalar. */
+            if (first >= 0xD800 && first <= 0xDBFF && text.length > 1) {
+                unichar low = [text characterAtIndex:1];
+                code = 0x10000 + ((int64_t)(first - 0xD800) << 10) + (int64_t)(low - 0xDC00);
+            } else {
+                code = first;
+            }
+        }
+    }
+    nova_gui_emit(NOVA_GUI_KEY, code, 0, 0, mods, 0);
+}
+
+- (void)flagsChanged:(NSEvent *)event {
+    /* Keep the modifier state fresh so a later click reports shift/command. */
+    nova_gui_emit(NOVA_GUI_NONE, 0, 0, 0, nova_gui_modifiers(event.modifierFlags), 0);
+}
+
+- (void)mouseDown:(NSEvent *)event {
+    NSPoint point = [self nova_point:event];
+    nova_gui_emit(NOVA_GUI_MOUSE_DOWN, 0, (int64_t)point.x, (int64_t)point.y, nova_gui_modifiers(event.modifierFlags), 1);
+}
+
+- (void)mouseUp:(NSEvent *)event {
+    NSPoint point = [self nova_point:event];
+    nova_gui_emit(NOVA_GUI_MOUSE_UP, 0, (int64_t)point.x, (int64_t)point.y, nova_gui_modifiers(event.modifierFlags), 1);
+}
+
+- (void)rightMouseDown:(NSEvent *)event {
+    NSPoint point = [self nova_point:event];
+    nova_gui_emit(NOVA_GUI_MOUSE_DOWN, 0, (int64_t)point.x, (int64_t)point.y, nova_gui_modifiers(event.modifierFlags), 2);
+}
+
+- (void)mouseMoved:(NSEvent *)event {
+    NSPoint point = [self nova_point:event];
+    nova_gui_emit(NOVA_GUI_MOUSE_MOVE, 0, (int64_t)point.x, (int64_t)point.y, nova_gui_modifiers(event.modifierFlags), 0);
+}
+
+- (void)mouseDragged:(NSEvent *)event {
+    NSPoint point = [self nova_point:event];
+    nova_gui_emit(NOVA_GUI_DRAG, 0, (int64_t)point.x, (int64_t)point.y, nova_gui_modifiers(event.modifierFlags), 1);
+}
+
+- (void)rightMouseDragged:(NSEvent *)event {
+    [self mouseDragged:event];
+}
+
+- (void)scrollWheel:(NSEvent *)event {
+    NSPoint point = [self nova_point:event];
+    CGFloat delta = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY : event.scrollingDeltaY * 10.0;
+    if (delta == 0.0) return;
+    nova_gui_emit(NOVA_GUI_SCROLL, 0, (int64_t)point.x, (int64_t)point.y, nova_gui_modifiers(event.modifierFlags), (int64_t)lround(delta));
+}
+
+- (void)updateTrackingAreas {
+    for (NSTrackingArea *area in [self trackingAreas]) {
+        [self removeTrackingArea:area];
+    }
+    NSTrackingAreaOptions options = NSTrackingMouseMoved | NSTrackingMouseEnteredAndExited |
+                                    NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect;
+    NSTrackingArea *area = [[NSTrackingArea alloc] initWithRect:[self bounds]
+                                                        options:options
+                                                          owner:self
+                                                       userInfo:nil];
+    [self addTrackingArea:area];
+}
+
+@end
+
+@interface NovaGuiDelegate : NSObject <NSWindowDelegate>
+@end
+
+@implementation NovaGuiDelegate
+
+- (BOOL)windowShouldClose:(NSWindow *)sender {
+    (void)sender;
+    nova_running = 0;
+    nova_gui_emit(NOVA_GUI_CLOSE, 0, 0, 0, 0, 0);
+    return NO;
+}
+
+- (void)windowDidResize:(NSNotification *)notification {
+    (void)notification;
+    NSSize size = nova_view ? nova_view.bounds.size : NSMakeSize(nova_w, nova_h);
+    nova_gui_emit(NOVA_GUI_RESIZE, 0, (int64_t)size.width, (int64_t)size.height, 0, 0);
+}
+
+@end
+
+static NovaGuiDelegate *nova_delegate = nil;
+
+/* ------------------------------------------------------------------ */
+/* Framebuffer                                                        */
+/* ------------------------------------------------------------------ */
+
+static void nova_gui_build_context(void) {
+    if (nova_ctx) {
+        CGContextRelease(nova_ctx);
+        nova_ctx = NULL;
+    }
+    if (nova_image) {
+        CGImageRelease(nova_image);
+        nova_image = NULL;
+    }
+    if (nova_w <= 0 || nova_h <= 0) return;
+    size_t pixels_w = (size_t)(nova_w * nova_scale);
+    size_t pixels_h = (size_t)(nova_h * nova_scale);
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+    nova_ctx = CGBitmapContextCreate(NULL, pixels_w, pixels_h, 8, 0, space,
+                                     kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+    CGColorSpaceRelease(space);
+    if (!nova_ctx) return;
+    /* Top-left origin with y growing downward, expressed in points. */
+    CGContextTranslateCTM(nova_ctx, 0, (CGFloat)pixels_h);
+    CGContextScaleCTM(nova_ctx, (CGFloat)nova_scale, -(CGFloat)nova_scale);
+    CGContextSetShouldAntialias(nova_ctx, true);
+    CGContextSetLineWidth(nova_ctx, 1.0);
+    CGContextSetTextMatrix(nova_ctx, CGAffineTransformMakeScale(1.0, -1.0));
+}
+
+/* Rebuild the bitmap when the window is resized, and re-clamp the clip stack. */
+static void nova_gui_sync_size(void) {
+    if (!nova_view) return;
+    int64_t width = (int64_t)lround(nova_view.bounds.size.width);
+    int64_t height = (int64_t)lround(nova_view.bounds.size.height);
+    if (width <= 0 || height <= 0) return;
+    if (width == nova_w && height == nova_h && nova_ctx) return;
+    nova_w = width;
+    nova_h = height;
+    nova_clip_depth = 0;
+    nova_gui_build_context();
+}
+
+static CGColorRef nova_gui_color(int64_t rgb) {
+    CGFloat components[4] = {
+        (CGFloat)((rgb >> 16) & 0xFF) / 255.0,
+        (CGFloat)((rgb >> 8) & 0xFF) / 255.0,
+        (CGFloat)(rgb & 0xFF) / 255.0,
+        1.0,
+    };
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+    CGColorRef color = CGColorCreate(space, components);
+    CGColorSpaceRelease(space);
+    return color;
+}
+
+static CTFontRef nova_gui_font(int64_t size, int64_t mono) {
+    static CTFontRef cache[2][80];
+    int index = (int)(size < 1 ? 1 : (size > 79 ? 79 : size));
+    int which = mono ? 1 : 0;
+    if (!cache[which][index]) {
+        CTFontRef font = NULL;
+        if (mono) {
+            font = CTFontCreateWithName(CFSTR("Menlo"), (CGFloat)index, NULL);
+        }
+        if (!font) {
+            font = CTFontCreateUIFontForLanguage(kCTFontUIFontSystem, (CGFloat)index, NULL);
+        }
+        if (!font) {
+            font = CTFontCreateWithName(CFSTR("Helvetica"), (CGFloat)index, NULL);
+        }
+        cache[which][index] = font;
+    }
+    return cache[which][index];
+}
+
+static CTLineRef nova_gui_make_line(nova_str text, int64_t size, int64_t mono) {
+    if (!text.ptr || text.len <= 0) return NULL;
+    CFStringRef string = CFStringCreateWithBytes(NULL, (const UInt8 *)text.ptr, (CFIndex)text.len,
+                                                 kCFStringEncodingUTF8, false);
+    if (!string) return NULL;
+    CTFontRef font = nova_gui_font(size, mono);
+    const void *keys[1] = { kCTFontAttributeName };
+    const void *values[1] = { font };
+    CFDictionaryRef attributes = CFDictionaryCreate(NULL, keys, values, 1,
+                                                    &kCFTypeDictionaryKeyCallBacks,
+                                                    &kCFTypeDictionaryValueCallBacks);
+    CFAttributedStringRef attributed = CFAttributedStringCreate(NULL, string, attributes);
+    CTLineRef line = CTLineCreateWithAttributedString(attributed);
+    CFRelease(attributed);
+    CFRelease(attributes);
+    CFRelease(string);
+    return line;
+}
+
+/* ------------------------------------------------------------------ */
+/* Public API                                                         */
+/* ------------------------------------------------------------------ */
+
+int64_t nova_gui_open(nova_str title, int64_t width, int64_t height) {
+    @autoreleasepool {
+        nova_title = [[NSMutableString alloc] initWithBytes:title.ptr ? title.ptr : ""
+                                                     length:(NSUInteger)(title.len > 0 ? title.len : 0)
+                                                   encoding:NSUTF8StringEncoding];
+        if (!nova_title) nova_title = [NSMutableString stringWithString:@"Nova"];
+
+        [NSApplication sharedApplication];
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+        [NSApp finishLaunching];
+
+        /* A minimal menu so Cmd+Q reaches the app like any other Mac window. */
+        NSMenu *menubar = [[NSMenu alloc] init];
+        NSMenuItem *appItem = [[NSMenuItem alloc] init];
+        [menubar addItem:appItem];
+        [NSApp setMainMenu:menubar];
+        NSMenu *appMenu = [[NSMenu alloc] init];
+        [[appMenu addItemWithTitle:@"Quit Nova" action:@selector(terminate:) keyEquivalent:@"q"] setTarget:NSApp];
+        [appItem setSubmenu:appMenu];
+
+        NSRect frame = NSMakeRect(0, 0, (CGFloat)width, (CGFloat)height);
+        NSWindowStyleMask style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+                                  NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable |
+                                  NSWindowStyleMaskFullSizeContentView;
+        nova_window = [[NSWindow alloc] initWithContentRect:frame
+                                                  styleMask:style
+                                                    backing:NSBackingStoreBuffered
+                                                      defer:NO];
+        if (!nova_window) return 0;
+
+        nova_window.title = nova_title;
+        nova_window.titlebarAppearsTransparent = YES;
+        nova_window.titleVisibility = NSWindowTitleHidden;
+        nova_window.backgroundColor = [NSColor colorWithCalibratedRed:0.094 green:0.094 blue:0.094 alpha:1.0];
+        nova_window.minSize = NSMakeSize(720, 480);
+
+        nova_view = [[NovaGuiView alloc] initWithFrame:frame];
+        nova_window.contentView = nova_view;
+        nova_delegate = [[NovaGuiDelegate alloc] init];
+        nova_window.delegate = nova_delegate;
+
+        [nova_window center];
+        [nova_window makeKeyAndOrderFront:nil];
+        [nova_window makeFirstResponder:nova_view];
+        [NSApp activateIgnoringOtherApps:YES];
+
+        NSScreen *screen = [nova_window screen];
+        nova_scale = screen ? (int64_t)lround(screen.backingScaleFactor) : 1;
+        if (nova_scale < 1) nova_scale = 1;
+        nova_w = (int64_t)lround(nova_view.bounds.size.width);
+        nova_h = (int64_t)lround(nova_view.bounds.size.height);
+        nova_gui_build_context();
+        if (!nova_ctx) return 0;
+        nova_running = 1;
+        return 1;
+    }
+}
+
+int64_t nova_gui_is_open(void) {
+    return nova_running;
+}
+
+int64_t nova_gui_width(void) {
+    return nova_w;
+}
+
+int64_t nova_gui_height(void) {
+    return nova_h;
+}
+
+void nova_gui_begin(void) {
+    nova_gui_sync_size();
+    nova_clip_depth = 0;
+    if (nova_ctx) {
+        CGContextRestoreGState(nova_ctx);
+        CGContextSaveGState(nova_ctx);
+        CGContextSetTextMatrix(nova_ctx, CGAffineTransformMakeScale(1.0, -1.0));
+        CGContextSetLineWidth(nova_ctx, 1.0);
+    }
+}
+
+void nova_gui_clear(int64_t rgb) {
+    if (!nova_ctx) return;
+    CGColorRef color = nova_gui_color(rgb);
+    CGContextSetFillColorWithColor(nova_ctx, color);
+    CGContextFillRect(nova_ctx, CGRectMake(0, 0, (CGFloat)nova_w, (CGFloat)nova_h));
+    CGColorRelease(color);
+}
+
+void nova_gui_rect(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb) {
+    if (!nova_ctx || w <= 0 || h <= 0) return;
+    CGColorRef color = nova_gui_color(rgb);
+    CGContextSetFillColorWithColor(nova_ctx, color);
+    CGContextFillRect(nova_ctx, CGRectMake((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h));
+    CGColorRelease(color);
+}
+
+void nova_gui_rect_alpha(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb, int64_t alpha) {
+    if (!nova_ctx || w <= 0 || h <= 0) return;
+    CGFloat a = (CGFloat)(alpha < 0 ? 0 : (alpha > 255 ? 255 : alpha)) / 255.0;
+    CGFloat components[4] = {
+        (CGFloat)((rgb >> 16) & 0xFF) / 255.0,
+        (CGFloat)((rgb >> 8) & 0xFF) / 255.0,
+        (CGFloat)(rgb & 0xFF) / 255.0,
+        a,
+    };
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+    CGColorRef color = CGColorCreate(space, components);
+    CGColorSpaceRelease(space);
+    CGContextSetFillColorWithColor(nova_ctx, color);
+    CGContextFillRect(nova_ctx, CGRectMake((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h));
+    CGColorRelease(color);
+}
+
+void nova_gui_round_rect(int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius, int64_t rgb) {
+    if (!nova_ctx || w <= 0 || h <= 0) return;
+    CGFloat r = (CGFloat)(radius > 0 ? radius : 0);
+    CGFloat limit = (CGFloat)(w < h ? w : h) / 2.0;
+    if (r > limit) r = limit;
+    CGRect rect = CGRectMake((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h);
+    CGColorRef color = nova_gui_color(rgb);
+    if (r <= 0) {
+        CGContextSetFillColorWithColor(nova_ctx, color);
+        CGContextFillRect(nova_ctx, rect);
+    } else {
+        CGPathRef path = CGPathCreateWithRoundedRect(rect, r, r, NULL);
+        CGContextAddPath(nova_ctx, path);
+        CGContextSetFillColorWithColor(nova_ctx, color);
+        CGContextFillPath(nova_ctx);
+        CGPathRelease(path);
+    }
+    CGColorRelease(color);
+}
+
+void nova_gui_stroke_rect(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb) {
+    if (!nova_ctx || w <= 0 || h <= 0) return;
+    CGColorRef color = nova_gui_color(rgb);
+    CGContextSetStrokeColorWithColor(nova_ctx, color);
+    CGContextSetLineWidth(nova_ctx, 1.0);
+    /* A half-pixel inset keeps a one-point border on the pixel grid. */
+    CGContextStrokeRect(nova_ctx, CGRectMake((CGFloat)x + 0.5, (CGFloat)y + 0.5,
+                                             (CGFloat)w - 1.0, (CGFloat)h - 1.0));
+    CGColorRelease(color);
+}
+
+void nova_gui_line(int64_t x0, int64_t y0, int64_t x1, int64_t y1, int64_t rgb) {
+    if (!nova_ctx) return;
+    CGColorRef color = nova_gui_color(rgb);
+    CGContextSetStrokeColorWithColor(nova_ctx, color);
+    CGContextSetLineWidth(nova_ctx, 1.0);
+    CGContextBeginPath(nova_ctx);
+    CGContextMoveToPoint(nova_ctx, (CGFloat)x0 + 0.5, (CGFloat)y0 + 0.5);
+    CGContextAddLineToPoint(nova_ctx, (CGFloat)x1 + 0.5, (CGFloat)y1 + 0.5);
+    CGContextStrokePath(nova_ctx);
+    CGColorRelease(color);
+}
+
+void nova_gui_text(int64_t x, int64_t y, nova_str text, int64_t size, int64_t rgb, int64_t mono) {
+    if (!nova_ctx) return;
+    CTLineRef line = nova_gui_make_line(text, size, mono);
+    if (!line) return;
+    CTFontRef font = nova_gui_font(size, mono);
+    CGColorRef color = nova_gui_color(rgb);
+    CGContextSetFillColorWithColor(nova_ctx, color);
+    CGContextSetTextPosition(nova_ctx, (CGFloat)x, (CGFloat)y + CTFontGetAscent(font));
+    CTLineDraw(line, nova_ctx);
+    CGColorRelease(color);
+    CFRelease(line);
+}
+
+int64_t nova_gui_text_width(nova_str text, int64_t size, int64_t mono) {
+    CTLineRef line = nova_gui_make_line(text, size, mono);
+    if (!line) return 0;
+    /* CTLineGetTypographicBounds returns the width; its pointer arguments are
+     * ascent, descent and leading. Measuring into the first one yields the
+     * ascent, which is why this reads the return value instead. */
+    double width = CTLineGetTypographicBounds(line, NULL, NULL, NULL);
+    CFRelease(line);
+    return (int64_t)ceil(width);
+}
+
+/* Width of one space, which is the cell width a monospaced layout needs. */
+int64_t nova_gui_advance(int64_t size, int64_t mono) {
+    static int64_t cache[2][80];
+    int index = (int)(size < 1 ? 1 : (size > 79 ? 79 : size));
+    int which = mono ? 1 : 0;
+    if (!cache[which][index]) {
+        nova_str space = {" ", 1};
+        int64_t width = nova_gui_text_width(space, size, mono);
+        cache[which][index] = width > 0 ? width : (int64_t)((double)index * (mono ? 0.6 : 0.55));
+    }
+    return cache[which][index];
+}
+
+void nova_gui_clip(int64_t x, int64_t y, int64_t w, int64_t h) {
+    if (!nova_ctx) return;
+    CGContextSaveGState(nova_ctx);
+    nova_clip_depth += 1;
+    CGContextClipToRect(nova_ctx, CGRectMake((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h));
+}
+
+void nova_gui_clip_reset(void) {
+    if (!nova_ctx) return;
+    while (nova_clip_depth > 0) {
+        CGContextRestoreGState(nova_ctx);
+        nova_clip_depth -= 1;
+    }
+    CGContextSetTextMatrix(nova_ctx, CGAffineTransformMakeScale(1.0, -1.0));
+    CGContextSetLineWidth(nova_ctx, 1.0);
+}
+
+void nova_gui_present(void) {
+    @autoreleasepool {
+        for (;;) {
+            NSEvent *event = [NSApp nextEventMatchingMask:NSEventMaskAny
+                                                untilDate:[NSDate distantPast]
+                                                   inMode:NSDefaultRunLoopMode
+                                                  dequeue:YES];
+            if (!event) break;
+            [NSApp sendEvent:event];
+        }
+        if (!nova_ctx || !nova_view) return;
+        if (nova_image) {
+            CGImageRelease(nova_image);
+            nova_image = NULL;
+        }
+        nova_image = CGBitmapContextCreateImage(nova_ctx);
+        [nova_view display];
+    }
+}
+
+int64_t nova_gui_next_event(void) {
+    if (nova_q_head == nova_q_tail) return NOVA_GUI_NONE;
+    NovaGuiEvent *event = &nova_queue[nova_q_head];
+    if (event->kind == NOVA_GUI_NONE) {
+        /* Modifier-only event: consume it, report nothing. */
+        nova_q_head = (nova_q_head + 1) % NOVA_GUI_QUEUE;
+        return NOVA_GUI_NONE;
+    }
+    static NovaGuiEvent current;
+    current = *event;
+    nova_q_head = (nova_q_head + 1) % NOVA_GUI_QUEUE;
+    return current.kind;
+}
+
+int64_t nova_gui_event_code(void) {
+    return nova_queue[(nova_q_head + NOVA_GUI_QUEUE - 1) % NOVA_GUI_QUEUE].code;
+}
+
+int64_t nova_gui_event_x(void) {
+    return nova_queue[(nova_q_head + NOVA_GUI_QUEUE - 1) % NOVA_GUI_QUEUE].x;
+}
+
+int64_t nova_gui_event_y(void) {
+    return nova_queue[(nova_q_head + NOVA_GUI_QUEUE - 1) % NOVA_GUI_QUEUE].y;
+}
+
+int64_t nova_gui_event_mods(void) {
+    return nova_queue[(nova_q_head + NOVA_GUI_QUEUE - 1) % NOVA_GUI_QUEUE].mods;
+}
+
+int64_t nova_gui_event_delta(void) {
+    return nova_queue[(nova_q_head + NOVA_GUI_QUEUE - 1) % NOVA_GUI_QUEUE].delta;
+}
+
+void nova_gui_set_title(nova_str title) {
+    if (!nova_window) return;
+    NSString *text = [[NSString alloc] initWithBytes:title.ptr ? title.ptr : ""
+                                              length:(NSUInteger)(title.len > 0 ? title.len : 0)
+                                            encoding:NSUTF8StringEncoding];
+    if (text) nova_window.title = text;
+}
+
+void nova_gui_close(void) {
+    nova_running = 0;
+    if (nova_window) [nova_window orderOut:nil];
+}
+
+/* ------------------------------------------------------------------ */
+/* Workspace access and process running                               */
+/* ------------------------------------------------------------------ */
+
+/* Nova's stdlib is still a placeholder, so a GUI workbench needs the host to
+ * read, list and write files and to run a compiler. These functions are part
+ * of the macOS nova-gui host, which is linked only into GUI programs. They are
+ * deliberately not a sandbox: the caller decides which paths are allowed. */
+
+static char *nova_gui_cstr(nova_str text) {
+    char *buffer = (char *)malloc((size_t)(text.len > 0 ? text.len : 0) + 1);
+    if (!buffer) return NULL;
+    if (text.len > 0 && text.ptr) memcpy(buffer, text.ptr, (size_t)text.len);
+    buffer[text.len > 0 ? text.len : 0] = '\0';
+    return buffer;
+}
+
+static nova_str nova_gui_empty(void) {
+    nova_str empty = {"", 0};
+    return empty;
+}
+
+/* Reads a whole file. An unreadable path yields an empty string, which the
+ * caller can distinguish with nova_fs_exists. */
+nova_str nova_fs_read(nova_str path) {
+    char *name = nova_gui_cstr(path);
+    if (!name) return nova_gui_empty();
+    FILE *file = fopen(name, "rb");
+    free(name);
+    if (!file) return nova_gui_empty();
+    size_t cap = 8192;
+    size_t len = 0;
+    char *buffer = (char *)malloc(cap);
+    if (!buffer) {
+        fclose(file);
+        return nova_gui_empty();
+    }
+    for (;;) {
+        if (len + 4096 > cap) {
+            cap *= 2;
+            char *grown = (char *)realloc(buffer, cap);
+            if (!grown) break;
+            buffer = grown;
+        }
+        size_t got = fread(buffer + len, 1, 4096, file);
+        len += got;
+        if (got == 0) break;
+    }
+    fclose(file);
+    buffer[len] = '\0';
+    nova_str result = {buffer, (int64_t)len};
+    return result;
+}
+
+int64_t nova_fs_write(nova_str path, nova_str data) {
+    char *name = nova_gui_cstr(path);
+    if (!name) return 0;
+    FILE *file = fopen(name, "wb");
+    free(name);
+    if (!file) return 0;
+    int ok = 1;
+    if (data.len > 0 && data.ptr) ok = fwrite(data.ptr, 1, (size_t)data.len, file) == (size_t)data.len;
+    if (fclose(file) != 0) ok = 0;
+    return ok ? 1 : 0;
+}
+
+int64_t nova_fs_exists(nova_str path) {
+    char *name = nova_gui_cstr(path);
+    if (!name) return 0;
+    struct stat info;
+    int exists = stat(name, &info) == 0;
+    free(name);
+    return exists ? 1 : 0;
+}
+
+int64_t nova_fs_is_dir(nova_str path) {
+    char *name = nova_gui_cstr(path);
+    if (!name) return 0;
+    struct stat info;
+    int is_dir = stat(name, &info) == 0 && S_ISDIR(info.st_mode);
+    free(name);
+    return is_dir ? 1 : 0;
+}
+
+/* Directories sort before files, then by name, so a Nova file tree does not
+ * need a string comparison of its own to present a stable order. */
+static int nova_gui_entry_compare(const void *left, const void *right) {
+    const struct dirent *a = *(const struct dirent *const *)left;
+    const struct dirent *b = *(const struct dirent *const *)right;
+    int a_dir = a->d_type == DT_DIR;
+    int b_dir = b->d_type == DT_DIR;
+    if (a_dir != b_dir) return a_dir ? -1 : 1;
+    return strcmp(a->d_name, b->d_name);
+}
+
+/* Lists a directory as one entry per line: "d<TAB>name" or "f<TAB>name" for
+ * children only, directories first, with no dot entries. Missing or unreadable
+ * directories list as empty, which the caller renders as an empty tree. */
+nova_str nova_fs_list(nova_str path) {
+    char *name = nova_gui_cstr(path);
+    if (!name) return nova_gui_empty();
+    struct dirent **entries = NULL;
+    int count = scandir(name, &entries, NULL, NULL);
+    free(name);
+    if (count < 0) {
+        if (entries) free(entries);
+        return nova_gui_empty();
+    }
+    qsort(entries, (size_t)count, sizeof(struct dirent *), nova_gui_entry_compare);
+
+    size_t cap = 4096;
+    size_t len = 0;
+    char *buffer = (char *)malloc(cap);
+    if (!buffer) {
+        for (int i = 0; i < count; i++) free(entries[i]);
+        free(entries);
+        return nova_gui_empty();
+    }
+    for (int i = 0; i < count; i++) {
+        const char *child_name = entries[i]->d_name;
+        if (child_name[0] == '.') continue; /* hidden files stay out of the tree */
+        size_t need = strlen(child_name) + 3;
+        if (len + need + 1 > cap) {
+            while (len + need + 1 > cap) cap *= 2;
+            char *grown = (char *)realloc(buffer, cap);
+            if (!grown) break;
+            buffer = grown;
+        }
+        buffer[len++] = entries[i]->d_type == DT_DIR ? 'd' : 'f';
+        buffer[len++] = '\t';
+        memcpy(buffer + len, child_name, strlen(child_name));
+        len += strlen(child_name);
+        buffer[len++] = '\n';
+    }
+    for (int i = 0; i < count; i++) free(entries[i]);
+    free(entries);
+    buffer[len] = '\0';
+    nova_str result = {buffer, (int64_t)len};
+    return result;
+}
+
+static int nova_gui_exit_status = -1;
+
+/* Runs a shell command in a directory and returns its combined output. The
+ * compiler is invoked with a command string the app builds from fixed parts. */
+nova_str nova_process_run(nova_str command, nova_str cwd) {
+    char *cmd = nova_gui_cstr(command);
+    char *dir = nova_gui_cstr(cwd);
+    if (!cmd || !dir) {
+        free(cmd);
+        free(dir);
+        return nova_gui_empty();
+    }
+    size_t size = strlen(cmd) + strlen(dir) + 32;
+    char *full = (char *)malloc(size);
+    if (!full) {
+        free(cmd);
+        free(dir);
+        return nova_gui_empty();
+    }
+    snprintf(full, size, "cd '%s' && %s 2>&1", dir, cmd);
+    free(cmd);
+    free(dir);
+
+    FILE *pipe = popen(full, "r");
+    free(full);
+    if (!pipe) {
+        nova_gui_exit_status = -1;
+        return nova_gui_empty();
+    }
+    size_t cap = 8192;
+    size_t len = 0;
+    char *buffer = (char *)malloc(cap);
+    if (!buffer) {
+        pclose(pipe);
+        return nova_gui_empty();
+    }
+    for (;;) {
+        if (len + 4096 > cap) {
+            cap *= 2;
+            char *grown = (char *)realloc(buffer, cap);
+            if (!grown) break;
+            buffer = grown;
+        }
+        size_t got = fread(buffer + len, 1, 4096, pipe);
+        len += got;
+        if (got == 0) break;
+    }
+    int status = pclose(pipe);
+    nova_gui_exit_status = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    buffer[len] = '\0';
+    nova_str result = {buffer, (int64_t)len};
+    return result;
+}
+
+int64_t nova_process_status(void) {
+    return nova_gui_exit_status;
+}
+
+nova_str nova_fs_cwd(void) {
+    char buffer[4096];
+    if (!getcwd(buffer, sizeof(buffer))) return nova_gui_empty();
+    size_t len = strlen(buffer);
+    char *copy = (char *)malloc(len + 1);
+    if (!copy) return nova_gui_empty();
+    memcpy(copy, buffer, len + 1);
+    nova_str result = {copy, (int64_t)len};
+    return result;
+}
+
+nova_str nova_env(nova_str name) {
+    char *key = nova_gui_cstr(name);
+    if (!key) return nova_gui_empty();
+    const char *value = getenv(key);
+    free(key);
+    if (!value) return nova_gui_empty();
+    size_t len = strlen(value);
+    char *copy = (char *)malloc(len + 1);
+    if (!copy) return nova_gui_empty();
+    memcpy(copy, value, len + 1);
+    nova_str result = {copy, (int64_t)len};
+    return result;
+}
+
+/* Writes the current framebuffer to a PNG. This exists so a headless run can
+ * verify what the window drew without a screen recorder. */
+int64_t nova_gui_save_png(nova_str path) {
+    if (!nova_ctx) return 0;
+    char *name = nova_gui_cstr(path);
+    if (!name) return 0;
+    CGImageRef image = CGBitmapContextCreateImage(nova_ctx);
+    CFStringRef target = CFStringCreateWithCString(NULL, name, kCFStringEncodingUTF8);
+    free(name);
+    if (!image || !target) {
+        if (image) CGImageRelease(image);
+        if (target) CFRelease(target);
+        return 0;
+    }
+    CFURLRef url = CFURLCreateWithFileSystemPath(NULL, target, kCFURLPOSIXPathStyle, false);
+    int64_t ok = 0;
+    if (url) {
+        CGImageDestinationRef destination = CGImageDestinationCreateWithURL(url, CFSTR("public.png"), 1, NULL);
+        if (destination) {
+            CGImageDestinationAddImage(destination, image, NULL);
+            ok = CGImageDestinationFinalize(destination) ? 1 : 0;
+            CFRelease(destination);
+        }
+        CFRelease(url);
+    }
+    CFRelease(target);
+    CGImageRelease(image);
+    return ok;
+}

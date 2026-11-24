@@ -27,6 +27,10 @@
 /// copy cannot drift from the compiler that emits calls into it.
 pub const RUNTIME_C: &str = include_str!("runtime.c");
 
+/// nova-gui host source (macOS AppKit). The compiler links it only when a
+/// program references `nova_gui_` symbols, so other programs never pay for it.
+pub const GUI_M: &str = include_str!("gui.m");
+
 /// Version of the runtime ABI. Bump when a generated program's expectations
 /// change; the CLI records this in `nova doctor` output.
 pub const ABI_VERSION: u32 = 1;
