@@ -118,7 +118,7 @@ absent from the corpus are not covered yet, and the AST is not wired into
 
 Test state: `sh examples/nova-tool/tests/toolchain.sh` → **passed 117, failed 0**
 (including formatting the studio source), `sh examples/nova-tool/tests/parser.sh`
-→ **passed 21, failed 0** (including the 27-file AST corpus), and
+→ **passed 48, failed 0** (including the 27-file AST corpus), and
 `sh examples/nova-tool/tests/boxes.sh`
 → **passed 64, failed 0**. No Rust crate has been deleted yet: the bootstrap
 compiler (lexer, parser, sema, codegen, CLI, LSP) is still Rust, and phases 2–4

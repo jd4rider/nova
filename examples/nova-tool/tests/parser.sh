@@ -43,6 +43,16 @@ printf 'fn main( {\n' > "$tmp/broken.nova"
 out=$(NOVA_TOOL=ast-dump NOVA_TOOL_PATH="$tmp/broken.nova" "$tool")
 echo "$out" | grep -q "error:" && ok || no "ast reports a parse error"
 
+# The AST must read every library and tool source without a parse error.
+for file in "$root"/libraries/*/src/*.nova "$root"/examples/nova-tool/src/*.nova; do
+    out=$(NOVA_TOOL=ast-dump NOVA_TOOL_PATH="$file" "$tool")
+    if echo "$out" | grep -q '^error:'; then
+        no "ast $(basename "$file")"
+    else
+        ok
+    fi
+done
+
 for file in "$root"/libraries/*/src/*.nova; do
     if ! NOVA_TOOL=parse NOVA_TOOL_PATH="$file" "$tool" >/dev/null 2>&1; then
         no "parse $(basename "$file")"
