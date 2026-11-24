@@ -4,7 +4,13 @@ The game engine today is Breakout-shaped: one struct, one pure step, one
 renderer. This is the path to a general engine with a Unity-style editor, and
 the rule that keeps it buildable: every phase ships a working tool.
 
-## Phase 0 — Scene and components (foundation)
+## Phase 0 — Scene and components (foundation) — started
+
+`libraries/nova-engine/src/scene.nova` exists: `Scene` holds id/name/tag,
+transform, velocity, half-extents, colour and a solid flag in parallel lists;
+`scene_spawn`, `scene_set_velocity`, `scene_tick`, and accessors by id. The tick
+applies gravity and resolves every dynamic entity against every solid through
+the swept-AABB core, then clamps to the field. Verified by the physics lab.
 
 - `libraries/nova-engine/src/scene.nova`: `Entity` (id, name, tags), component
   lists (`Transform`, `Body`, `Sprite`, `Box`), and `Scene` as a value that
@@ -13,8 +19,8 @@ the rule that keeps it buildable: every phase ships a working tool.
   integer millipixels, no wall-clock inside the simulation.
 - Spawn/despawn by id with a free list, not list compaction, so references stay
   valid for a frame.
-- Acceptance: a scene of 200 falling boxes runs 10,000 ticks with no drift and
-  no allocation growth.
+- Remaining: despawn/free list, 200-body soak test, and a renderer that draws a
+  Scene the way `breakout-gui` draws a Game.
 
 ## Phase 1 — Editor
 

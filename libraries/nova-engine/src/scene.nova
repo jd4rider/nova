@@ -1,0 +1,202 @@
+// Engine Phase 0: entities and components as a pure scene value.
+//
+// Component lists are parallel and index-aligned; ids are stable so a script
+// or an inspector can hold a reference across ticks. The tick integrates
+// velocity, applies gravity and resolves against solid entities through the
+// same swept-AABB core Breakout uses.
+
+import "../../nova-game/src/physics.nova"
+
+struct Scene {
+    ids: List<Int>,
+    names: List<String>,
+    tags: List<String>,
+    xs: List<Int>,
+    ys: List<Int>,
+    vxs: List<Int>,
+    vys: List<Int>,
+    hws: List<Int>,
+    hhs: List<Int>,
+    colours: List<Int>,
+    solids: List<Bool>,
+    gravity: Int,
+    next_id: Int,
+}
+
+fn scene_new(gravity: Int) -> Scene {
+    var ids: List<Int> = []
+    var names: List<String> = []
+    var tags: List<String> = []
+    var xs: List<Int> = []
+    var ys: List<Int> = []
+    var vxs: List<Int> = []
+    var vys: List<Int> = []
+    var hws: List<Int> = []
+    var hhs: List<Int> = []
+    var colours: List<Int> = []
+    var solids: List<Bool> = []
+    return Scene {
+        ids: ids,
+        names: names,
+        tags: tags,
+        xs: xs,
+        ys: ys,
+        vxs: vxs,
+        vys: vys,
+        hws: hws,
+        hhs: hhs,
+        colours: colours,
+        solids: solids,
+        gravity: gravity,
+        next_id: 1,
+    }
+}
+
+fn scene_count(scene: Scene) -> Int {
+    return scene.ids.len()
+}
+
+// x and y are the centre in pixels; w and h are the full size.
+fn scene_spawn(scene: Scene, name: String, tag: String, x: Int, y: Int, w: Int, h: Int, colour: Int, solid: Bool) -> Scene {
+    var ids = scene.ids
+    var names = scene.names
+    var tags = scene.tags
+    var xs = scene.xs
+    var ys = scene.ys
+    var vxs = scene.vxs
+    var vys = scene.vys
+    var hws = scene.hws
+    var hhs = scene.hhs
+    var colours = scene.colours
+    var solids = scene.solids
+    ids.push(scene.next_id)
+    names.push(name)
+    tags.push(tag)
+    xs.push(x)
+    ys.push(y)
+    vxs.push(0)
+    vys.push(0)
+    hws.push(w / 2)
+    hhs.push(h / 2)
+    colours.push(colour)
+    solids.push(solid)
+    return Scene {
+        ids: ids,
+        names: names,
+        tags: tags,
+        xs: xs,
+        ys: ys,
+        vxs: vxs,
+        vys: vys,
+        hws: hws,
+        hhs: hhs,
+        colours: colours,
+        solids: solids,
+        gravity: scene.gravity,
+        next_id: scene.next_id + 1,
+    }
+}
+
+fn scene_index(scene: Scene, id: Int) -> Int {
+    var i = 0
+    while i < scene.ids.len() {
+        if scene.ids[i] == id {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+fn scene_x(scene: Scene, id: Int) -> Int {
+    let i = scene_index(scene, id)
+    if i < 0 {
+        return 0
+    }
+    return scene.xs[i]
+}
+
+fn scene_y(scene: Scene, id: Int) -> Int {
+    let i = scene_index(scene, id)
+    if i < 0 {
+        return 0
+    }
+    return scene.ys[i]
+}
+
+fn scene_colour(scene: Scene, id: Int) -> Int {
+    let i = scene_index(scene, id)
+    if i < 0 {
+        return 0
+    }
+    return scene.colours[i]
+}
+
+fn scene_tag(scene: Scene, id: Int) -> String {
+    let i = scene_index(scene, id)
+    if i < 0 {
+        return ""
+    }
+    return scene.tags[i]
+}
+
+fn scene_set_velocity(scene: Scene, id: Int, vx: Int, vy: Int) -> Scene {
+    let index = scene_index(scene, id)
+    if index < 0 {
+        return scene
+    }
+    var vxs = scene.vxs
+    var vys = scene.vys
+    vxs[index] = vx
+    vys[index] = vy
+    return scene
+}
+
+// One fixed step: gravity, swept collision against every solid, then bounds.
+fn scene_tick(scene: Scene) -> Scene {
+    var xs = scene.xs
+    var ys = scene.ys
+    var vxs = scene.vxs
+    var vys = scene.vys
+    let ids = scene.ids
+    let solids = scene.solids
+    let hws = scene.hws
+    let hhs = scene.hhs
+
+    var i = 0
+    while i < ids.len() {
+        if !solids[i] {
+            var body = ph_body(xs[i], ys[i], hws[i] * 2, hhs[i] * 2)
+            body = ph_with_bounce(body, 0)
+            body = ph_with_velocity(body, vxs[i], vys[i])
+            body = ph_gravity(body, scene.gravity)
+            var best = ph_miss()
+            var hit = -1
+            var j = 0
+            while j < ids.len() {
+                if solids[j] {
+                    let wall = ph_solid_box(xs[j] - hws[j], ys[j] - hhs[j], hws[j] * 2, hhs[j] * 2)
+                    let when = ph_sweep(body, wall)
+                    if when < best {
+                        best = when
+                        hit = j
+                    }
+                }
+                j = j + 1
+            }
+            if hit >= 0 && best < ph_miss() {
+                let wall = ph_solid_box(xs[hit] - hws[hit], ys[hit] - hhs[hit], hws[hit] * 2, hhs[hit] * 2)
+                body = ph_resolve(body, wall)
+            } else {
+                body = ph_advance(body)
+            }
+            body = ph_clamp(body, 0, 0, 800, 600)
+            xs[i] = ph_px(body.x)
+            ys[i] = ph_px(body.y)
+            vxs[i] = body.vx
+            vys[i] = body.vy
+        }
+        i = i + 1
+    }
+    return scene
+}

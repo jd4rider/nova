@@ -1,0 +1,60 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      html, body { margin: 0; width: 1024px; height: 1024px; background: #0a0c10; }
+      .icon {
+        box-sizing: border-box;
+        width: 1024px;
+        height: 1024px;
+        padding: 110px 96px;
+        background: radial-gradient(circle at 32% 18%, #1b2430 0%, #10151c 52%, #0a0c10 100%);
+        border: 10px solid #232c38;
+        border-radius: 200px;
+        display: grid;
+        align-content: center;
+        justify-content: center;
+        gap: 26px;
+      }
+      .row { display: flex; gap: 20px; justify-content: center; }
+      .brick {
+        width: 132px; height: 46px; border-radius: 9px;
+        box-shadow: inset 0 6px 0 rgba(255,255,255,.28), inset 0 -6px 0 rgba(0,0,0,.25), 0 6px 16px rgba(0,0,0,.45);
+      }
+      .r { background: #f14c4c; }
+      .o { background: #ce9178; }
+      .y { background: #cca700; }
+      .g { background: #89d185; }
+      .a { background: #4ec9b0; }
+      .field { position: relative; height: 250px; margin-top: 18px; }
+      .ball {
+        position: absolute; left: 476px; top: 44px; width: 92px; height: 92px; border-radius: 50%;
+        background: #fff; box-shadow: 0 0 0 12px rgba(55,148,255,.28), 0 0 46px rgba(255,255,255,.75);
+      }
+      .paddle {
+        position: absolute; left: 322px; top: 196px; width: 380px; height: 34px; border-radius: 17px;
+        background: linear-gradient(#3d9bff, #0078d4);
+        box-shadow: inset 0 5px 0 rgba(255,255,255,.5), 0 10px 24px rgba(0,120,212,.55);
+      }
+      .caps {
+        position: absolute; left: 744px; top: 118px; width: 56px; height: 56px; border-radius: 14px;
+        background: #89d185; box-shadow: 0 0 26px rgba(137,209,133,.6);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="icon">
+      <div class="row"><div class="brick r"></div><div class="brick r"></div><div class="brick r"></div><div class="brick r"></div><div class="brick r"></div></div>
+      <div class="row"><div class="brick o"></div><div class="brick o"></div><div class="brick o"></div><div class="brick o"></div><div class="brick o"></div></div>
+      <div class="row"><div class="brick y"></div><div class="brick y"></div><div class="brick g"></div><div class="brick y"></div><div class="brick y"></div></div>
+      <div class="row"><div class="brick g"></div><div class="brick g"></div><div class="brick g"></div><div class="brick g"></div><div class="brick g"></div></div>
+      <div class="row"><div class="brick a"></div><div class="brick a"></div><div class="brick a"></div><div class="brick a"></div><div class="brick a"></div></div>
+      <div class="field">
+        <div class="ball"></div>
+        <div class="caps"></div>
+        <div class="paddle"></div>
+      </div>
+    </div>
+  </body>
+</html>

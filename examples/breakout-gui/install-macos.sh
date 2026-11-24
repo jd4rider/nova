@@ -8,6 +8,7 @@ NOVA="$ROOT/target/debug/nova"
 DIST="$HERE/dist"
 APP_NAME="${APP_NAME:-Nova Breakout}"
 APP="$DIST/$APP_NAME.app"
+CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
 [ -x "$NOVA" ] || { echo "install: build the compiler first (cargo build -p nova-cli)" >&2; exit 1; }
 (cd "$HERE" && "$NOVA" build)
@@ -19,6 +20,36 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/breakout-gui"
 chmod +x "$APP/Contents/MacOS/breakout-gui"
+
+# The icon is a web page: Chrome renders it once at 1024px, then iconutil packs
+# the sizes macOS asks for.
+ICONSET="$DIST/icon.iconset"
+rm -rf "$ICONSET" "$DIST/icon.png"
+mkdir -p "$ICONSET"
+if [ -x "$CHROME" ]; then
+  "$CHROME" --headless=new --disable-gpu --hide-scrollbars \
+    --screenshot="$DIST/icon.png" --window-size=1024,1024 \
+    "file://$HERE/icon.html" >/dev/null 2>&1 || true
+else
+  echo "install: Chrome not found; the app will use the default icon" >&2
+fi
+if [ -f "$DIST/icon.png" ]; then
+  for size in 16 32 64 128 256 512 1024; do
+    sips -z "$size" "$size" "$DIST/icon.png" --out "$ICONSET/icon_${size}.png" >/dev/null
+  done
+  cp "$ICONSET/icon_32.png" "$ICONSET/icon_16x16@2x.png"
+  cp "$ICONSET/icon_64.png" "$ICONSET/icon_32x32@2x.png"
+  cp "$ICONSET/icon_256.png" "$ICONSET/icon_128x128@2x.png"
+  cp "$ICONSET/icon_512.png" "$ICONSET/icon_256x256@2x.png"
+  cp "$ICONSET/icon_1024.png" "$ICONSET/icon_512x512@2x.png"
+  mv "$ICONSET/icon_16.png" "$ICONSET/icon_16x16.png"
+  mv "$ICONSET/icon_32.png" "$ICONSET/icon_32x32.png"
+  mv "$ICONSET/icon_128.png" "$ICONSET/icon_128x128.png"
+  mv "$ICONSET/icon_256.png" "$ICONSET/icon_256x256.png"
+  mv "$ICONSET/icon_512.png" "$ICONSET/icon_512x512.png"
+  rm -f "$ICONSET/icon_64.png" "$ICONSET/icon_1024.png"
+  iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
+fi
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -32,6 +63,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>0.1</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleExecutable</key><string>breakout-gui</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>NSHighResolutionCapable</key><true/>
 </dict>

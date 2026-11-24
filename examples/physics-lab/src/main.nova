@@ -1,6 +1,7 @@
 import std.io { println }
 import "../../../libraries/nova-game/src/engine.nova"
 import "../../../libraries/nova-game/src/physics.nova"
+import "../../../libraries/nova-engine/src/scene.nova"
 
 // A deterministic physics lab: every scenario runs the same on every machine,
 // because positions and velocities are integers in millipixels.
@@ -66,7 +67,39 @@ fn main() {
     failures = failures + report(game.score == (brick_count() - bricks_left(game)) * 10, "score matches the bricks removed")
     failures = failures + report(game.vy != 0, "the ball keeps moving")
 
-    let total = 11
+    let lvl = level_game(1, 0, 3)
+    failures = failures + report(bricks_left(lvl) < brick_count(), "level 1 is not a full grid")
+    failures = failures + report(level_count() >= 4, "four levels exist")
+    failures = failures + report(bricks_left(level_game(0, 0, 3)) == brick_count(), "level 0 is a full grid")
+
+    var drop = launch(level_game(0, 0, 3))
+    var seen_capsule = false
+    var drop_steps = 0
+    while drop_steps < 4000 && !seen_capsule {
+        drop = step(drop, ball_px_x(drop))
+        if drop.caps_alive {
+            seen_capsule = true
+        }
+        drop_steps = drop_steps + 1
+    }
+    failures = failures + report(seen_capsule, "bricks drop power-up capsules")
+
+    let eased = step(level_game(0, 0, 3), 800)
+    failures = failures + report(eased.paddle - 400 <= paddle_speed(), "the paddle eases toward its target")
+
+    var world = scene_new(30)
+    world = scene_spawn(world, "floor", "solid", 400, 590, 800, 20, 0, true)
+    world = scene_spawn(world, "crate", "demo", 400, 120, 40, 40, 0, false)
+    failures = failures + report(scene_count(world) == 2, "the scene spawns entities")
+    var ticks = 0
+    while ticks < 240 {
+        world = scene_tick(world)
+        ticks = ticks + 1
+    }
+    failures = failures + report(scene_y(world, 2) > 120, "scene gravity moves a dynamic entity")
+    failures = failures + report(scene_y(world, 2) < 570, "a solid entity stops it")
+
+    let total = 17
     println("")
     println("passed " + "${total - failures}" + ", failed " + "${failures}")
     if failures > 0 {

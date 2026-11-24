@@ -126,3 +126,43 @@ The terminal demo uses the [Nova TUI](../tui/) runtime: a model of `Game` plus a
 - **One ball and one paddle.** The engine models exactly the Breakout pieces.
 - **Approximate terminal rendering.** The view maps an 800×520 field onto a character grid; it is a demo renderer, not a pixel-accurate one.
 - **Desktop only.** The engine is pure Nova and portable, but the included game runs in a terminal through nova-tui.
+
+## Levels, power-ups and the menu
+
+The engine carries a `level` and four layouts (`FULL HOUSE`, `CHECKERBOARD`,
+`DIAMOND`, `PYRAMID`) through `level_brick(level, column, row)`, so the same
+10×5 grid produces a different board without touching a renderer.
+`level_game(level, score, lives)` starts one directly and `next_level(game)`
+advances, wrapping to level 0 after the last board.
+
+`breakout-gui` adds the app shell: a menu with a level picker (arrows or A/D),
+a pause screen (`P` or `Esc`), and click-to-act. Space and a click are the same
+verb — start, launch, next level, retry or resume depending on state.
+
+Power-ups drop deterministically rather than randomly: every fifth cleared
+brick (score 30, 80, 130, …) releases a capsule from the brick's centre that
+falls at 4 px/tick. Kinds cycle with the drop:
+
+| kind | label | effect |
+| --- | --- | --- |
+| 1 | `W` | wide paddle (180 px) for 8 s |
+| 2 | `S` | slow ball, rally ramp suspended, for 7 s |
+| 3 | `♥` | extra life |
+
+Timers live in `wide` and `slow` (ticks) on `Game`; the renderer reads them via
+`paddle_width_of(game)` and the HUD chips. Because the drop depends only on
+score, a recorded input sequence replays the same game.
+
+The paddle is eased by the engine: `step` moves it at most `paddle_speed()`
+(18 px/tick) toward the requested target and stores the difference as
+`paddle_v`, which still drives the kinematic spin on contact. Keyboard taps and
+mouse drags share one smooth path, and the paddle cannot teleport.
+
+## Engine Phase 0: scenes
+
+`libraries/nova-engine/src/scene.nova` is the first piece of the general engine.
+`Scene` keeps id, name, tag, transform, velocity, half-extents, colour and a
+solid flag in index-aligned lists. `scene_spawn` returns a new scene value,
+`scene_tick` applies gravity and resolves every dynamic entity against every
+solid through the same swept-AABB core, and accessors (`scene_x`, `scene_y`,
+`scene_count`, `scene_tag`) work by stable id. `examples/physics-lab` covers it.
