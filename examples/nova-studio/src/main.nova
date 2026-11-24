@@ -2961,7 +2961,6 @@ fn click(app: App, mx: Int, my: Int) -> App {
     if app.sidebar && mx < activity_width() + sidebar_width() {
         if my < title_height() + 35 && mx > activity_width() + sidebar_width() - 40 {
             app.nodes = build_nodes(app.root, 0, app.expanded)
-    app.plugins = load_plugins(app.root)
             return app
         }
         let start_y = title_height() + 62
@@ -3191,6 +3190,7 @@ fn main() {
         plugins: [],
     }
     app.nodes = build_nodes(app.root, 0, app.expanded)
+    app.plugins = load_plugins(app.root)
     if capture.len() > 0 && app.nodes.len() > 0 {
         let first_dir = app.nodes[0].is_dir
         println("studio: " + "${app.nodes.len()}" + " rows, first is dir=" + "${first_dir}" + ", plugins=" + "${app.plugins.len()}")
