@@ -3,9 +3,9 @@
 Updated: 2026-11-24
 Master directive: owner-supplied; parity matrix in `engineering/continuation/`.
 Repository / branch: `nova` / `selfhost/pure-nova`
-HEAD: build-ir checkpoint (see `git log`); prior `74124f8`.
-Working tree: self-hosting files have the uncommitted build-ir checkpoint;
-unrelated `editor/` and playground changes remain untouched.
+HEAD: `332555b` (build-ir); prior `74124f8`.
+Working tree: clean for self-hosting; unrelated `editor/` and playground changes
+remain untouched.
 
 Active milestone: `CODEGEN-01` — Nova LLVM IR lowering
 Active task: `CODEGEN-01.04` — finish Int/Unit/string ABI parity

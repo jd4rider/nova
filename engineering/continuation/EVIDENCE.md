@@ -68,7 +68,7 @@ and cancellation are absent even in Rust.
 
 ## Commit history
 
-- build-ir checkpoint — branch HEAD.
+- `332555b` — Nova tool invokes clang and builds a native binary.
 - `8092f97` — Int ABI alignment.
 - `98c1ded` — native control flow and parity matrix.
 - `0fa226f` — SSA immutable bindings and performance gate.
