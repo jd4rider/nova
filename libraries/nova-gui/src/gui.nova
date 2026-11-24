@@ -75,6 +75,7 @@ extern "C" fn nova_sha256_file(path: String) -> String
 extern "C" fn nova_fs_write(path: String, data: String) -> Int
 extern "C" fn nova_fs_exists(path: String) -> Int
 extern "C" fn nova_fs_is_dir(path: String) -> Int
+extern "C" fn nova_fs_mkdir(path: String) -> Int
 extern "C" fn nova_fs_list(path: String) -> String
 extern "C" fn nova_gui_panel(mode: Int) -> String
 extern "C" fn nova_gui_clipboard_get() -> String
@@ -515,6 +516,10 @@ fn exists(path: String) -> Bool {
 
 fn is_dir(path: String) -> Bool {
     return nova_fs_is_dir(path) == 1
+}
+
+fn mkdir(path: String) -> Bool {
+    return nova_fs_mkdir(path) == 1
 }
 
 // Directory entries as "d<TAB>name" or "f<TAB>name", one per line.

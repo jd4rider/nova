@@ -8,8 +8,11 @@ fail with an explicit message.
   dependency is rejected with "registry-only".
 - **Archives are uncompressed.** `.box` is a valid gzip stream, but deflate
   uses stored blocks, so files are archived, not shrunk.
-- **No safe extraction command.** `verify` lists entries and checks CRC32 and
-  SHA-256; it does not write files, so path traversal is not yet exercised.
+- **No compression.** Deflate blocks are stored, so `.box` files are larger
+  than a normal `.tar.gz`.
+- **`unpack` restores files only.** Symlinks, hardlinks and device entries are
+  rejected; ownership and permissions are not restored. Names containing `..`,
+  absolute paths and backslashes are refused before any write.
 - **No authentication.** `nova box login/logout` are absent; no token is read
   or stored.
 - **Small CLI surface.** `nova box tree/check/lock/metadata/resolve` run today;

@@ -24,7 +24,7 @@ a **box**; the tooling is written in Nova and exposed through `nova box`.
 | SemVer | `libraries/nova-boxes/src/semver.nova` | parsing, ordering, caret/tilde/range/wildcard requirements |
 | Resolution | `libraries/nova-boxes/src/resolve.nova` | path dependencies, requirement checks, cycles |
 | Reports | `libraries/nova-boxes/src/report.nova` | `Box.lock`, tree, metadata |
-| Archives | `libraries/nova-boxes/src/archive.nova` | deterministic tar + stored gzip, entry listing |
+| Archives | `libraries/nova-boxes/src/archive.nova` | deterministic tar + stored gzip, entry listing, safe extraction |
 | Command surface | `examples/nova-tool` + `nova box` | tool modes and CLI dispatch |
 
 ## Decisions

@@ -1308,6 +1308,21 @@ int64_t nova_fs_exists(nova_str path) {
     return exists ? 1 : 0;
 }
 
+/* Creates one directory. Returns 1 when it exists afterwards, so callers can
+ * treat "already there" as success and build nested paths without a separate
+ * create_dir_all primitive. */
+int64_t nova_fs_mkdir(nova_str path) {
+    char *name = nova_gui_cstr(path);
+    if (!name) return 0;
+    int ok = mkdir(name, 0755) == 0;
+    if (!ok && errno == EEXIST) {
+        struct stat info;
+        ok = stat(name, &info) == 0 && S_ISDIR(info.st_mode);
+    }
+    free(name);
+    return ok ? 1 : 0;
+}
+
 int64_t nova_fs_is_dir(nova_str path) {
     char *name = nova_gui_cstr(path);
     if (!name) return 0;

@@ -125,6 +125,11 @@ fn main() {
         println(ar_pack(rs_dirname(path), out))
         return
     }
+    if mode == "box-unpack" {
+        let out = gui.env("NOVA_TOOL_OUT")
+        println(ar_unpack(path, out))
+        return
+    }
     if mode == "box-verify" {
         println(ar_verify(path))
         return

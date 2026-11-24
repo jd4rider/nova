@@ -75,6 +75,24 @@ if [ -x "$nova" ]; then
     ( cd "$tmp/archive/app" && NOVA_TOOL_BIN="$tool" "$nova" box verify "$tmp/archive/app.box" ) 2>/dev/null | grep -q "sha256=$sha" && ok || no "nova box verify sha256"
     ( cd "$tmp/archive/app" && NOVA_TOOL_BIN="$tool" "$nova" box pack "$tmp/archive/again.box" ) >/dev/null 2>&1
     cmp -s "$tmp/archive/app.box" "$tmp/archive/again.box" && ok || no "archive is deterministic"
+    ( cd "$tmp/archive/app" && NOVA_TOOL_BIN="$tool" "$nova" box pack && NOVA_TOOL_BIN="$tool" "$nova" box unpack "$tmp/archive/app/Box.box" "$tmp/archive/unpacked" ) >/dev/null 2>&1 && ok || no "nova box unpack"
+    cmp -s "$tmp/archive/unpacked/Box.toml" "$tmp/archive/app/Box.toml" && ok || no "unpack restores manifest"
+    if command -v python3 >/dev/null 2>&1; then
+        python3 - "$tmp" <<'PY' >/dev/null 2>&1
+import gzip, tarfile, io, sys
+root = sys.argv[1]
+buf = io.BytesIO()
+with tarfile.open(fileobj=buf, mode="w") as tar:
+    info = tarfile.TarInfo("../escaped.txt")
+    payload = b"nope"
+    info.size = len(payload)
+    tar.addfile(info, io.BytesIO(payload))
+with open(root + "/evil.box", "wb") as f:
+    f.write(gzip.compress(buf.getvalue()))
+PY
+        ( cd "$tmp/archive/app" && NOVA_TOOL_BIN="$tool" "$nova" box unpack "$tmp/evil.box" "$tmp/archive/evil-out" ) >/dev/null 2>&1
+        if [ $? -ne 0 ] && [ ! -f "$tmp/escaped.txt" ] && [ ! -f "$tmp/archive/escaped.txt" ]; then ok; else no "unpack rejects traversal"; fi
+    fi
 fi
 
 echo "passed $pass, failed $fail"

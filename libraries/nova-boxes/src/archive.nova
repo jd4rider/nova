@@ -393,19 +393,153 @@ fn ar_pack(root: String, out_path: String) -> String {
     return "packed ${out_path} bytes=${gz.len()} sha256=${gui.sha256(out_path)}"
 }
 
-fn ar_name_at(tar: List<Int>, pos: Int) -> String {
+fn ar_text_at(tar: List<Int>, pos: Int, width: Int) -> String {
     var bytes: List<Int> = []
     var i = 0
-    while i < 100 && pos + i < tar.len() {
+    while i < width && pos + i < tar.len() {
         let value = tar[pos + i]
         if value == 0 {
-            i = 100
+            i = width
         } else {
             bytes.push(value)
             i = i + 1
         }
     }
     return bytes.utf8()
+}
+
+fn ar_name_at(tar: List<Int>, pos: Int) -> String {
+    return ar_text_at(tar, pos, 100)
+}
+
+fn ar_safe_name(name: String) -> Bool {
+    if name.len() == 0 || name.starts_with("/") || name.contains("\\") {
+        return false
+    }
+    let parts = name.split("/")
+    var i = 0
+    while i < parts.len() {
+        let part = parts[i]
+        if part == ".." {
+            return false
+        }
+        if part.len() == 0 && i + 1 < parts.len() {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+fn ar_mkdirs(path: String) -> Bool {
+    let absolute = path.starts_with("/")
+    var prefix = ""
+    let parts = path.split("/")
+    var i = 0
+    while i < parts.len() {
+        let part = parts[i]
+        if part.len() > 0 && part != "." {
+            if prefix.len() == 0 {
+                if absolute {
+                    prefix = "/" + part
+                } else {
+                    prefix = part
+                }
+            } else {
+                prefix = prefix + "/" + part
+            }
+            if !gui.exists(prefix) {
+                if !gui.mkdir(prefix) {
+                    return false
+                }
+            } else if !gui.is_dir(prefix) {
+                return false
+            }
+        }
+        i = i + 1
+    }
+    return true
+}
+
+fn ar_parent(path: String) -> String {
+    var cut = 0 - 1
+    var i = 0
+    let chars = path.chars()
+    while i < chars.len() {
+        if chars[i] == "/" {
+            cut = i
+        }
+        i = i + 1
+    }
+    if cut <= 0 {
+        return ""
+    }
+    var out = ""
+    var j = 0
+    while j < cut {
+        out = out + chars[j]
+        j = j + 1
+    }
+    return out
+}
+
+/* Extracts a verified archive. Every name is checked before anything is
+ * written, and each file is written only under the requested directory. */
+fn ar_unpack(path: String, out_dir: String) -> String {
+    let raw = gui.read_bytes(path)
+    if raw.len() < 18 || raw[0] != 31 || raw[1] != 139 {
+        return "error: ${path} is not a gzip .box"
+    }
+    let tar = ar_gunzip(raw)
+    if tar.len() == 0 {
+        return "error: ${path} has no stored deflate payload"
+    }
+    let crc = ar_crc32(tar)
+    let stored = raw[raw.len() - 8] + raw[raw.len() - 7] * 256 + raw[raw.len() - 6] * 65536 + raw[raw.len() - 5] * 16777216
+    if crc != stored {
+        return "error: ${path} failed CRC32"
+    }
+    if !ar_mkdirs(out_dir) {
+        return "error: cannot create ${out_dir}"
+    }
+    var pos = 0
+    var count = 0
+    while pos + 512 <= tar.len() {
+        let name = ar_name_at(tar, pos)
+        if name.len() == 0 {
+            pos = tar.len()
+        } else {
+            let prefix = ar_text_at(tar, pos + 345, 155)
+            var full_name = name
+            if prefix.len() > 0 {
+                full_name = prefix + "/" + name
+            }
+            if !ar_safe_name(full_name) {
+                return "error: refusing unsafe archive path ${full_name}"
+            }
+            let kind = tar[pos + 156]
+            let size = ar_read_octal(tar, pos + 124, 12)
+            let target = out_dir + "/" + full_name
+            if kind == 53 {
+                if !ar_mkdirs(target) {
+                    return "error: cannot create ${target}"
+                }
+            } else if kind == 48 || kind == 0 {
+                let parent = ar_parent(target)
+                if parent.len() > 0 && !ar_mkdirs(parent) {
+                    return "error: cannot create ${parent}"
+                }
+                if !gui.write_bytes(target, ar_slice(tar, pos + 512, pos + 512 + size)) {
+                    return "error: cannot write ${target}"
+                }
+            } else {
+                return "error: unsupported tar entry type ${kind} for ${full_name}"
+            }
+            count = count + 1
+            pos = pos + 512 + ((size + 511) / 512) * 512
+        }
+    }
+    return "unpacked ${count} entries into ${out_dir}"
 }
 
 fn ar_read_octal(tar: List<Int>, pos: Int, width: Int) -> Int {

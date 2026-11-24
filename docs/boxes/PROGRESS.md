@@ -11,7 +11,7 @@ Status is evidence-based: a milestone is only marked done when its tests pass.
 | Deterministic lockfile, tree, metadata | done | lock compared byte-for-byte |
 | `nova box` CLI dispatch | done | tree/check/lock/metadata/resolve/pack/verify |
 | Sparse index client | not started | — |
-| `.box` archive pack/verify | done | gzip/tar/SHA-256 tests |
+| `.box` archive pack/verify/unpack | done | gzip/tar/SHA-256/traversal tests |
 | Registry publishing (reviewed PR) | not started | — |
 | Cache, fetch, offline mode | not started | — |
 | Studio and language-server integration | not started | — |
@@ -25,7 +25,8 @@ nova box check        # validate manifest, requirements, cycles
 nova box lock         # write/print Box.lock
 nova box metadata     # machine-readable graph
 nova box pack [OUT]   # deterministic .box archive (default Box.box)
-nova box verify [OUT] # list entries and print SHA-256
+nova box verify [FILE] # list entries and print SHA-256
+nova box unpack [ARCHIVE] [DIR]  # extract with CRC and path checks
 ```
 
 Path dependencies are resolved from `Box.toml`/`nova.toml`; version-only

@@ -908,9 +908,20 @@ fn cmd_box(action: &str, args: &[String]) -> i32 {
                 None => root.join("Box.box"),
             };
         }
+        "unpack" => {
+            mode = "box-unpack";
+            tool_path = match args.first() {
+                Some(path) => PathBuf::from(path),
+                None => root.join("Box.box"),
+            };
+            out = match args.get(1) {
+                Some(path) => path.clone(),
+                None => root.join("Boxes").to_string_lossy().into_owned(),
+            };
+        }
         _ => {
             eprintln!(
-                "nova box: `{action}` is not implemented yet; available: tree, check, lock, metadata, resolve, pack, verify"
+                "nova box: `{action}` is not implemented yet; available: tree, check, lock, metadata, resolve, pack, verify, unpack"
             );
             return EXIT_UNSUPPORTED;
         }
