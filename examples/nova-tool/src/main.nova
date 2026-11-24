@@ -48,6 +48,33 @@ fn main() {
         return
     }
 
+    if mode == "box-add" || mode == "box-remove" {
+        let arg = gui.env("NOVA_TOOL_ARG")
+        if mode == "box-add" {
+            let pair = rg_split_spec(arg)
+            if !rg_valid_name(pair.0) {
+                println("error: `${pair.0}` is not a canonical registry name; use @publisher/box")
+            } else if !rg_requirement_ok(pair.1) {
+                println("error: `${pair.1}` is not a SemVer requirement")
+            } else {
+                println(bx_set_dependency(source, pair.0, pair.1))
+            }
+        } else {
+            let edit = bx_remove_dependency(source, arg)
+            if !edit.1 {
+                println("error: no dependency `${arg}` in this manifest")
+            } else {
+                println(edit.0)
+            }
+        }
+        return
+    }
+
+    if mode == "box-update" {
+        println(rg_update(source, rs_dirname(path), rg_root()))
+        return
+    }
+
     if mode == "box-json" {
         let doc = js_parse(source)
         if doc.error.len() > 0 {

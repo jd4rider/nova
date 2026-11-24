@@ -175,9 +175,33 @@ fn bx_table_value(text: String, key: String) -> String {
     return ""
 }
 
+// Manifest keys may be bare (`util`) or quoted (`"@nova/util"`). Unquoting a
+// bare key would erase it, so only quoted keys lose their quotes.
+fn bx_unquote_key(text: String) -> String {
+    if text.starts_with("\"") {
+        return bx_unquote(text)
+    }
+    return text.trim()
+}
+
 fn bx_valid_name(name: String) -> Bool {
     if name.len() == 0 {
         return false
+    }
+    // Scoped registry names are canonical only in lowercase; local names keep
+    // accepting mixed case so existing manifests are not rewritten.
+    if name.starts_with("@") {
+        if name.len() > 64 {
+            return false
+        }
+        let parts = name.split("/")
+        if parts.len() != 2 || parts[1].starts_with("@") {
+            return false
+        }
+        if !bx_scoped_part_ok(parts[0]) || !bx_scoped_part_ok(parts[1]) {
+            return false
+        }
+        return true
     }
     let chars = name.chars()
     var i = 0
@@ -219,7 +243,7 @@ fn bx_parse_manifest(source: String) -> BoxManifest {
             }
         } else {
             let parts = bx_split_key(line)
-            let key = parts.0
+            let key = bx_unquote_key(parts.0)
             let value = parts.1
             if section == "package" && key == "name" {
                 name = bx_unquote(value)
@@ -321,6 +345,181 @@ fn bx_imports(source: String) -> List<String> {
         }
     }
     return found
+}
+
+fn bx_scoped_part_ok(part: String) -> Bool {
+    if part.len() == 0 {
+        return false
+    }
+    let chars = part.chars()
+    var start = 0
+    if chars[0] == "@" {
+        start = 1
+    }
+    if start >= chars.len() {
+        return false
+    }
+    let first = chars[start]
+    for digit in "0123456789".chars() {
+        if first == digit {
+            return false
+        }
+    }
+    let allowed = "abcdefghijklmnopqrstuvwxyz0123456789_-"
+    var i = 0
+    while i < chars.len() {
+        let c = chars[i]
+        if i != 0 || c != "@" {
+            var ok = false
+            for known in allowed.chars() {
+                if c == known {
+                    ok = true
+                }
+            }
+            if !ok {
+                return false
+            }
+        }
+        i = i + 1
+    }
+    return true
+}
+
+// A dependency key is quoted when it is not a bare TOML key, which is the case
+// for every scoped registry name (`"@nova/math" = "^1.0.0"`).
+fn bx_key(name: String) -> String {
+    let allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+    for c in name.chars() {
+        var ok = false
+        for known in allowed.chars() {
+            if c == known {
+                ok = true
+            }
+        }
+        if !ok {
+            return "\"" + name + "\""
+        }
+    }
+    return name
+}
+
+fn bx_join_lines(lines: List<String>) -> String {
+    var out = ""
+    for line in lines {
+        out = out + line + "\n"
+    }
+    return out
+}
+
+fn bx_section_start(lines: List<String>, header: String) -> Int {
+    var i = 0
+    while i < lines.len() {
+        if bx_trim(bx_strip_comment(lines[i])) == header {
+            return i
+        }
+        i = i + 1
+    }
+    return 0 - 1
+}
+
+fn bx_section_end(lines: List<String>, start: Int) -> Int {
+    var i = start + 1
+    while i < lines.len() {
+        if bx_trim(lines[i]).starts_with("[") {
+            return i
+        }
+        i = i + 1
+    }
+    return lines.len()
+}
+
+fn bx_dep_line(lines: List<String>, start: Int, end: Int, name: String) -> Int {
+    var i = start + 1
+    while i < end {
+        let line = bx_trim(bx_strip_comment(lines[i]))
+        if line.len() > 0 && !line.starts_with("#") {
+            let parts = bx_split_key(line)
+            if bx_unquote_key(parts.0) == name {
+                return i
+            }
+        }
+        i = i + 1
+    }
+    return 0 - 1
+}
+
+// Adds or replaces `name` in `[dependencies]`, leaving every other line and
+// comment untouched. This is what `nova box add` writes back to Box.toml.
+fn bx_set_dependency(source: String, name: String, requirement: String) -> String {
+    let lines = bx_lines(source)
+    let entry = bx_key(name) + " = \"" + requirement + "\""
+    let start = bx_section_start(lines, "[dependencies]")
+    if start < 0 {
+        var out = source
+        if out.len() > 0 && !out.ends_with("\n") {
+            out = out + "\n"
+        }
+        return out + "\n[dependencies]\n" + entry + "\n"
+    }
+    let end = bx_section_end(lines, start)
+    let existing = bx_dep_line(lines, start, end, name)
+    if existing >= 0 {
+        var copy: List<String> = []
+        var i = 0
+        while i < lines.len() {
+            if i == existing {
+                copy.push(entry)
+            } else {
+                copy.push(lines[i])
+            }
+            i = i + 1
+        }
+        return bx_join_lines(copy)
+    }
+    var insert = start + 1
+    var i = start + 1
+    while i < end {
+        if bx_trim(lines[i]).len() > 0 {
+            insert = i + 1
+        }
+        i = i + 1
+    }
+    var out_lines: List<String> = []
+    var k = 0
+    while k < lines.len() {
+        if k == insert {
+            out_lines.push(entry)
+        }
+        out_lines.push(lines[k])
+        k = k + 1
+    }
+    if insert >= lines.len() {
+        out_lines.push(entry)
+    }
+    return bx_join_lines(out_lines)
+}
+
+// Removes `name` from `[dependencies]`. The bool says whether it was present.
+fn bx_remove_dependency(source: String, name: String) -> (String, Bool) {
+    let lines = bx_lines(source)
+    let start = bx_section_start(lines, "[dependencies]")
+    if start < 0 {
+        return (source, false)
+    }
+    let end = bx_section_end(lines, start)
+    let existing = bx_dep_line(lines, start, end, name)
+    if existing < 0 {
+        return (source, false)
+    }
+    var out: List<String> = []
+    var i = 0
+    while i < lines.len() {
+        if i != existing {
+            out.push(lines[i])
+        }
+        i = i + 1
+    }
+    return (bx_join_lines(out), true)
 }
 
 fn bx_manifest_ok(manifest: BoxManifest) -> Bool {

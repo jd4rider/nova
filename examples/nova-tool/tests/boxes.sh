@@ -119,15 +119,25 @@ if [ -x "$nova" ]; then
     h=$(printf '%s' '@nova/app' | shasum -a 256 | cut -d' ' -f1)
     aa=$(printf '%s' "$h" | cut -c1-2)
     bb=$(printf '%s' "$h" | cut -c3-4)
-    mkdir -p "$reg/index/v1/packages/$aa/$bb"
-    cat > "$reg/index/v1/packages/$aa/$bb/@nova%2Fapp.json" <<JSON
-{"name":"@nova/app","versions":[{"version":"1.0.0","dependencies":[],"license":"MIT","nova":">=0.1.0","archive":"files/app-1.0.0.box","sha256":"$sha","size":$size,"published":"2026-01-01T00:00:00Z","yanked":false},{"version":"1.1.0","dependencies":[],"license":"MIT","nova":">=0.1.0","archive":"files/app-1.0.0.box","sha256":"$sha","size":$size,"published":"2026-01-02T00:00:00Z","yanked":true}]}
+    mkdir -p "$reg/index/v1/packages/$aa/$bb/nova"
+    cat > "$reg/index/v1/packages/$aa/$bb/nova/app.json" <<JSON
+{"name":"@nova/app","versions":[{"version":"1.0.0","dependencies":[{"name":"@nova/math","req":"^0.2.0"}],"license":"MIT","nova":">=0.1.0","archive":"files/app-1.0.0.box","sha256":"$sha","size":$size,"published":"2026-01-01T00:00:00Z","yanked":false},{"version":"1.1.0","dependencies":[],"license":"MIT","nova":">=0.1.0","archive":"files/app-1.0.0.box","sha256":"$sha","size":$size,"published":"2026-01-02T00:00:00Z","yanked":true}]}
 JSON
     cat > "$reg/config.json" <<'JSON'
 {"protocol_version":1,"index":"index/","publishing":"github-pr","capabilities":["sparse-index","sha256","yank"]}
 JSON
     cat > "$reg/index/v1/catalogue.json" <<'JSON'
 {"packages":[{"name":"@nova/app","version":"1.0.0","description":"Fixture application"},{"name":"@nova/math","version":"0.2.3","description":"Vectors and matrices"}]}
+JSON
+    cp -R "$root/examples/nova-tool/tests/boxes/math" "$tmp/pkgmath"
+    ( cd "$tmp/pkgmath" && NOVA_TOOL_BIN="$tool" "$nova" box pack "$reg/files/math-0.2.3.box" ) >/dev/null 2>&1
+    msha=$(shasum -a 256 "$reg/files/math-0.2.3.box" | cut -d' ' -f1)
+    mh=$(printf '%s' '@nova/math' | shasum -a 256 | cut -d' ' -f1)
+    ma=$(printf '%s' "$mh" | cut -c1-2)
+    mb=$(printf '%s' "$mh" | cut -c3-4)
+    mkdir -p "$reg/index/v1/packages/$ma/$mb/nova"
+    cat > "$reg/index/v1/packages/$ma/$mb/nova/math.json" <<JSON
+{"name":"@nova/math","versions":[{"version":"0.2.3","dependencies":[],"license":"MIT","archive":"files/math-0.2.3.box","sha256":"$msha","yanked":false}]}
 JSON
 
     out=$( cd "$tmp" && NOVA_BOXES_REGISTRY="$reg" NOVA_TOOL_BIN="$tool" "$nova" box search math )
@@ -143,13 +153,13 @@ JSON
 
     out=$( cd "$tmp" && NOVA_BOXES_REGISTRY="$reg" NOVA_BOXES_CACHE="$tmp/cache" NOVA_TOOL_BIN="$tool" "$nova" box fetch "@nova/app@^1.0.0" )
     echo "$out" | grep -q "fetched @nova/app 1.0.0" && ok || no "fetch skips yanked versions"
-    [ -f "$tmp/cache/src/@nova%2Fapp/1.0.0/Box.toml" ] && ok || no "fetch unpacks into the cache"
+    [ -f "$tmp/cache/src/nova/app/1.0.0/Box.toml" ] && ok || no "fetch unpacks into the cache"
 
     badreg="$tmp/badreg"
-    mkdir -p "$badreg/index/v1/packages/$aa/$bb" "$badreg/files"
+    mkdir -p "$badreg/index/v1/packages/$aa/$bb/nova" "$badreg/files"
     cp "$reg/config.json" "$badreg/config.json"
     cp "$reg/files/app-1.0.0.box" "$badreg/files/app-1.0.0.box"
-    cat > "$badreg/index/v1/packages/$aa/$bb/@nova%2Fapp.json" <<'JSON'
+    cat > "$badreg/index/v1/packages/$aa/$bb/nova/app.json" <<'JSON'
 {"name":"@nova/app","versions":[{"version":"1.0.0","dependencies":[],"license":"MIT","archive":"files/app-1.0.0.box","sha256":"0000000000000000000000000000000000000000000000000000000000000000","yanked":false}]}
 JSON
     ( cd "$tmp" && NOVA_BOXES_REGISTRY="$badreg" NOVA_BOXES_CACHE="$tmp/badcache" NOVA_TOOL_BIN="$tool" "$nova" box fetch @nova/app ) > "$tmp/badfetch.log" 2>&1
@@ -166,6 +176,43 @@ JSON
     ( cd "$tmp" && NOVA_TOOL_BIN="$tool" "$nova" box search ) > "$tmp/noreg.log" 2>&1
     status=$?
     [ $status -ne 0 ] && grep -q "NOVA_BOXES_REGISTRY" "$tmp/noreg.log" && ok || no "missing registry reports the variable"
+
+    # ---- Manifest editing and registry-backed update --------------------
+    cp -R "$root/examples/nova-tool/tests/boxes" "$tmp/edit-project"
+    ( cd "$tmp/edit-project/app" && NOVA_TOOL_BIN="$tool" "$nova" box add '@nova/app@^1.0.0' ) > "$tmp/add.log" 2>&1 && ok || no "nova box add"
+    grep -q '"@nova/app" = "^1.0.0"' "$tmp/edit-project/app/Box.toml" && ok || no "add writes a quoted dependency"
+    ( cd "$tmp/edit-project/app" && NOVA_TOOL_BIN="$tool" "$nova" box add '@nova/app@~1.0.0' ) >/dev/null 2>&1
+    [ "$(grep -c '"@nova/app"' "$tmp/edit-project/app/Box.toml")" = "1" ] && grep -q '~1.0.0' "$tmp/edit-project/app/Box.toml" && ok || no "add replaces instead of duplicating"
+    ( cd "$tmp/edit-project/app" && NOVA_TOOL_BIN="$tool" "$nova" box add '@nova/math@nonsense' ) > "$tmp/addbad.log" 2>&1
+    status=$?
+    [ $status -ne 0 ] && grep -q "not a SemVer requirement" "$tmp/addbad.log" && ok || no "add rejects a bad requirement"
+
+    ( cd "$tmp/edit-project/app" && NOVA_BOXES_REGISTRY="$reg" NOVA_TOOL_BIN="$tool" "$nova" box update ) > "$tmp/update.log" 2>&1 && ok || no "nova box update"
+    grep -q 'box "@nova/app" "1.0.0" registry' "$tmp/edit-project/app/Box.lock" && ok || no "update records a registry box"
+    grep -q 'box "@nova/math" "0.2.3" registry' "$tmp/edit-project/app/Box.lock" && ok || no "update walks registry dependencies"
+    grep -q 'sha256 "' "$tmp/edit-project/app/Box.lock" && ok || no "update records the checksum"
+    grep -q 'box "util" "1.0.0" path' "$tmp/edit-project/app/Box.lock" && ok || no "update keeps path boxes"
+
+    ( cd "$tmp/edit-project/app" && NOVA_TOOL_BIN="$tool" "$nova" box remove '@nova/app' ) >/dev/null 2>&1 && ok || no "nova box remove"
+    grep -q '"@nova/app"' "$tmp/edit-project/app/Box.toml" && no "remove leaves the dependency" || ok
+    ( cd "$tmp/edit-project/app" && NOVA_TOOL_BIN="$tool" "$nova" box remove '@nova/app' ) > "$tmp/remove.log" 2>&1
+    status=$?
+    [ $status -ne 0 ] && grep -q "no dependency" "$tmp/remove.log" && ok || no "remove reports a missing dependency"
+
+    # ---- HTTP read path, against a local static server ------------------
+    if command -v python3 >/dev/null 2>&1 && command -v curl >/dev/null 2>&1; then
+        port=$((21000 + $$ % 10000))
+        python3 -m http.server "$port" --directory "$reg" >/dev/null 2>&1 &
+        server=$!
+        for _ in $(seq 1 50); do
+            curl -fsS "http://127.0.0.1:$port/config.json" >/dev/null 2>&1 && break
+            sleep 0.1
+        done
+        out=$( cd "$tmp" && NOVA_BOXES_REGISTRY="http://127.0.0.1:$port" NOVA_TOOL_BIN="$tool" "$nova" box info @nova/app )
+        echo "$out" | grep -q "versions: 2" && ok || no "http index read"
+        kill "$server" 2>/dev/null
+        wait "$server" 2>/dev/null
+    fi
 fi
 
 echo "passed $pass, failed $fail"

@@ -9,9 +9,11 @@ Status is evidence-based: a milestone is only marked done when its tests pass.
 | Path dependency resolution | done | nested app → util → math |
 | Cycle detection and normalization | done | c1 ↔ c2 fixture |
 | Deterministic lockfile, tree, metadata | done | lock compared byte-for-byte |
-| `nova box` CLI dispatch | done | tree/check/lock/metadata/resolve/pack/verify |
+| `nova box` CLI dispatch | done | tree/check/lock/update/metadata/resolve/pack/verify |
 | JSON reader and writer | done | compact round trip against Python's `json` |
-| Sparse index client | done | sharded record lookup, search, info |
+| Sparse index client | done | sharded record lookup, search, info; local and HTTP reads |
+| Manifest editing | done | `add`/`remove` keep other lines and comments |
+| Registry-backed `update` | done | `Box.lock` records versions, sources and SHA-256 |
 | `.box` archive pack/verify/unpack | done | gzip/tar/SHA-256/traversal tests |
 | Cache and `fetch` | done | SHA-256 verified fetch unpacks into the cache |
 | Offline mode | partial | local mirrors work; no `--offline` flag yet |
@@ -32,6 +34,9 @@ nova box unpack [ARCHIVE] [DIR]  # extract with CRC and path checks
 nova box search [QUERY]          # catalogue search
 nova box info NAME               # versions, dependencies, checksums
 nova box fetch NAME[@REQ]        # download, verify and unpack into the cache
+nova box add NAME[@REQ]          # add or replace a dependency in Box.toml
+nova box remove NAME             # remove a dependency from Box.toml
+nova box update                   # resolve path and registry deps into Box.lock
 ```
 
 Path dependencies are resolved from `Box.toml`/`nova.toml`; version-only
@@ -51,10 +56,10 @@ guess.
 
 ## Next
 
-1. Manifest editing: `nova box add NAME@VERSION` and `nova box update`, then
-   registry-backed resolution in `Box.lock`.
-2. Compiler import resolution from fetched boxes (`nova build` currently reads
-   `nova.toml` and resolves paths only).
+1. Compiler import resolution from fetched boxes (`nova build` currently reads
+   `nova.toml`, refuses dependencies and does not consult `Box.lock`).
+2. Yarn-style yank warning when an existing lock pins a version the index now
+   marks yanked.
 3. Nova Studio box panel and language-server completion for registry names.
 4. Website catalogue page generated from the same index.
 5. Reviewed publishing workflow, after the repository and Pages exist.

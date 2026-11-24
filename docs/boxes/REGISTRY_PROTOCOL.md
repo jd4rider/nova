@@ -44,13 +44,14 @@ record.
 
 ## Package records
 
-Path: `index/v1/packages/<aa>/<bb>/<encoded-name>.json`, where `aa` and `bb`
+Path: `index/v1/packages/<aa>/<bb>/<publisher>/<box>.json`, where `aa` and `bb`
 are the first two and next two lowercase hex digits of the SHA-256 of the
 canonical package name (UTF-8, lowercase, no scope separator normalization
-beyond the rules below). `encoded-name` is the canonical name percent-encoded as one path segment:
-`[a-z0-9_.@-]` stay literal and `/` becomes `%2F` (for example
-`@nova%2Fjson.json`). The client derives the same path locally, so a mirror
-must preserve case in the encoding (uppercase hex).
+beyond the rules below). `@nova/json` therefore lives at
+`index/v1/packages/<aa>/<bb>/nova/json.json`. The scope is a real directory
+rather than a percent-encoded segment: static servers decode `%2F` before
+routing, so an encoded slash would be unreachable over HTTP. The client
+derives the same path locally.
 
 ```json
 {
@@ -96,9 +97,9 @@ carry no name or timestamp. Limits: 10 MiB compressed, 100 MiB expanded,
 
 Extraction verifies the SHA-256 of the downloaded bytes, checks every path
 against the destination, and unpacks under
-`<cache>/src/<encoded-name>/<version>`. The archive is kept at
-`<cache>/archives/<encoded-name>-<version>.box`. `NOVA_BOXES_CACHE` selects the
-cache root; the default is `~/.nova/boxes`. A checksum mismatch leaves the
+`<cache>/src/<publisher>/<box>/<version>`. The archive is kept at
+`<cache>/archives/<publisher>-<box>-<version>.box`. `NOVA_BOXES_CACHE` selects
+the cache root; the default is `~/.nova/boxes`. A checksum mismatch leaves the
 downloaded file for inspection and returns a non-zero exit code.
 
 ## Publishing

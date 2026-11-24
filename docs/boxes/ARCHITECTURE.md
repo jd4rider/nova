@@ -42,13 +42,18 @@ a **box**; the tooling is written in Nova and exposed through `nova box`.
 4. **Two manifests are accepted.** `Box.toml` wins; `nova.toml` is read for
    existing projects. There is no automatic rewrite.
 5. **The index is sharded by the name's hash.** A client fetches `config.json`
-   once, then one record per box at `index/v1/packages/<aa>/<bb>/<encoded>`.
-   Search reads a separate `catalogue.json`; a sparse index cannot enumerate
-   itself, and pretending otherwise would mean downloading every record.
+   once, then one record per box at
+   `index/v1/packages/<aa>/<bb>/<publisher>/<box>.json`. Search reads a
+   separate `catalogue.json`; a sparse index cannot enumerate itself, and
+   pretending otherwise would mean downloading every record.
 6. **Reads work against a directory or HTTPS.** The same code reads a local
-   mirror with ordinary file I/O and a server with `http_get`. Local reads are
-   how the tests exercise the protocol without network access.
-7. **No default registry URL.** Until a registry is deployed, an unset
+   mirror with ordinary file I/O and a server with `http_get`. The tests cover
+   both paths, the HTTP one against a local static server, so the protocol does
+   not depend on a live third-party host.
+7. **Records use real scope directories.** Percent-encoding `/` would be
+   decoded by a static server before routing, so `@publisher/box` maps to
+   `<publisher>/<box>.json` instead of one encoded segment.
+8. **No default registry URL.** Until a registry is deployed, an unset
    `NOVA_BOXES_REGISTRY` is an error rather than a guess at someone's domain.
 
 ## Planned layers

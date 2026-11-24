@@ -13,6 +13,8 @@
 import "../../nova-gui/src/gui.nova" as gui
 import "./json.nova"
 import "./semver.nova"
+import "./boxes.nova"
+import "./resolve.nova"
 import "./archive.nova"
 
 fn rg_root() -> String {
@@ -135,27 +137,34 @@ fn rg_valid_name(name: String) -> Bool {
     return true
 }
 
-fn rg_percent_byte(code: Int) -> String {
-    return "%" + js_hex_digit(code / 16) + js_hex_digit(code % 16)
+// `@publisher/box` becomes the two path-safe segments `publisher` and `box`.
+// Percent-encoding `/` would be decoded by static servers before lookup, so
+// the index uses real directories instead.
+fn rg_publisher(name: String) -> String {
+    let parts = name.split("/")
+    if parts.len() != 2 {
+        return ""
+    }
+    var publisher = parts[0]
+    if publisher.starts_with("@") {
+        let chars = publisher.chars()
+        var out = ""
+        var i = 1
+        while i < chars.len() {
+            out = out + chars[i]
+            i = i + 1
+        }
+        publisher = out
+    }
+    return publisher
 }
 
-// Percent-encodes a canonical name for use as one URL path segment. `@` and
-// the name alphabet stay literal; `/` becomes `%2F`.
-fn rg_encode(name: String) -> String {
-    var out = ""
-    for c in name.chars() {
-        if rg_name_char(c) || c == "@" || c == "." || c == "-" || c == "_" {
-            out = out + c
-        } else {
-            let bytes = c.bytes()
-            var i = 0
-            while i < bytes.len() {
-                out = out + rg_percent_byte(bytes[i])
-                i = i + 1
-            }
-        }
+fn rg_box(name: String) -> String {
+    let parts = name.split("/")
+    if parts.len() != 2 {
+        return ""
     }
-    return out
+    return parts[1]
 }
 
 // `<aa>/<bb>`: the first four lowercase hex digits of SHA-256(name).
@@ -171,7 +180,7 @@ fn rg_shard(name: String, offset: Int) -> String {
 fn rg_record_path(name: String) -> String {
     let aa = rg_shard(name, 0)
     let bb = rg_shard(name, 2)
-    return "index/v1/packages/${aa}/${bb}/${rg_encode(name)}.json"
+    return "index/v1/packages/" + aa + "/" + bb + "/" + rg_publisher(name) + "/" + rg_box(name) + ".json"
 }
 
 fn rg_cache_root() -> String {
@@ -370,6 +379,38 @@ fn rg_info(root: String, name: String) -> String {
     return out
 }
 
+// A requirement is valid when SemVer can parse its body. Wildcards are the
+// only form without a version body.
+fn rg_requirement_ok(requirement: String) -> Bool {
+    let text = requirement.trim()
+    if text.len() == 0 {
+        return false
+    }
+    if text == "*" || text == "x" || text == "X" {
+        return true
+    }
+    let op = sv_op(text)
+    var body = text
+    if op.len() > 0 {
+        let chars = text.chars()
+        var rest = ""
+        var i = op.len()
+        while i < chars.len() {
+            rest = rest + chars[i]
+            i = i + 1
+        }
+        body = rest.trim()
+    }
+    if body == "*" || body == "x" || body == "X" {
+        return true
+    }
+    let star = body.split(".*")
+    if star.len() > 1 {
+        return sv_parse(star[0]).ok
+    }
+    return sv_parse(body).ok
+}
+
 fn rg_resolve_url(root: String, location: String) -> String {
     if location.starts_with("http://") || location.starts_with("https://") || location.starts_with("file://") || location.starts_with("/") {
         return location
@@ -390,6 +431,204 @@ fn rg_download(url: String, destination: String) -> Bool {
         return false
     }
     return gui.write_bytes(destination, body.bytes())
+}
+
+struct RegistryBox {
+    name: String,
+    version: String,
+    source: String,
+    location: String,
+    sha256: String,
+    depth: Int,
+}
+
+struct RegistryUpdate {
+    boxes: List<RegistryBox>,
+    errors: List<String>,
+}
+
+fn rg_box_index(boxes: List<RegistryBox>, name: String) -> Int {
+    var i = 0
+    while i < boxes.len() {
+        if boxes[i].name == name {
+            return i
+        }
+        i = i + 1
+    }
+    return 0 - 1
+}
+
+fn rg_pick(doc: JsonDoc, versions: Int, requirement: String) -> Int {
+    var best = 0 - 1
+    var best_version = sv_parse("0.0.0")
+    var i = 0
+    while i < js_len(doc, versions) {
+        let item = js_at(doc, versions, i)
+        let version = sv_parse(js_str(doc, js_get(doc, item, "version")))
+        if version.ok && !js_bool(doc, js_get(doc, item, "yanked")) && sv_satisfies(version, requirement) {
+            if best < 0 || sv_cmp(version, best_version) > 0 {
+                best = i
+                best_version = version
+            }
+        }
+        i = i + 1
+    }
+    return best
+}
+
+fn rg_version_deps(doc: JsonDoc, version: Int) -> List<BoxDep> {
+    var deps: List<BoxDep> = []
+    let list = js_get(doc, version, "dependencies")
+    var i = 0
+    while i < js_len(doc, list) {
+        let item = js_at(doc, list, i)
+        deps.push(
+            BoxDep {
+                name: js_str(doc, js_get(doc, item, "name")),
+                path: "",
+                version: js_str(doc, js_get(doc, item, "req")),
+            }
+        )
+        i = i + 1
+    }
+    return deps
+}
+
+// Resolves path and registry dependencies depth-first in manifest order. The
+// first resolution of a name wins; a later requirement it cannot satisfy is a
+// conflict rather than a second copy of the same box.
+fn rg_walk(
+    deps: List<BoxDep>,
+    base: String,
+    depth: Int,
+    registry_root: String,
+    boxes: List<RegistryBox>,
+    errors: List<String>,
+) -> RegistryUpdate {
+    var found = boxes
+    var problems = errors
+    for dep in deps {
+        let existing = rg_box_index(found, dep.name)
+        if existing >= 0 {
+            if dep.version.len() > 0 && !sv_satisfies(sv_parse(found[existing].version), dep.version) {
+                problems.push(
+                    "conflict: `${dep.name}` is already ${found[existing].version}, which does not satisfy `${dep.version}`"
+                )
+            }
+        } else if dep.path.len() > 0 {
+            let path = rs_join(base, dep.path)
+            var source = gui.read(rs_join(path, "Box.toml"))
+            if source.len() == 0 {
+                source = gui.read(rs_join(path, "nova.toml"))
+            }
+            if source.len() == 0 {
+                problems.push("cannot read manifest for `${dep.name}` at ${path}")
+            } else {
+                let child = bx_parse_manifest(source)
+                if child.name != dep.name {
+                    problems.push("`${dep.name}` declares itself `${child.name}` at ${path}")
+                } else if dep.version.len() > 0 && !sv_satisfies(sv_parse(child.version), dep.version) {
+                    problems.push("`${dep.name}` ${child.version} does not satisfy `${dep.version}`")
+                } else {
+                    found.push(
+                        RegistryBox {
+                            name: dep.name,
+                            version: child.version,
+                            source: "path",
+                            location: dep.path,
+                            sha256: "",
+                            depth: depth,
+                        }
+                    )
+                    let nested = rg_walk(child.deps, path, depth + 1, registry_root, found, problems)
+                    found = nested.boxes
+                    problems = nested.errors
+                }
+            }
+        } else if !rg_valid_name(dep.name) {
+            problems.push(
+                "`${dep.name}` has no path and is not a canonical registry name (@publisher/box)"
+            )
+        } else if registry_root.len() == 0 {
+            problems.push("NOVA_BOXES_REGISTRY is not set; cannot resolve `${dep.name}`")
+        } else {
+            let record_path = rg_record_path(dep.name)
+            let text = rg_read(registry_root, record_path)
+            if text.len() == 0 {
+                problems.push("`${dep.name}` is not in the registry index (${record_path})")
+            } else {
+                let doc = js_parse(text)
+                if doc.error.len() > 0 {
+                    problems.push("invalid index record for ${dep.name}: ${doc.error}")
+                } else {
+                    let record = doc.nodes.len() - 1
+                    var requirement = dep.version.trim()
+                    if requirement.len() == 0 {
+                        requirement = "*"
+                    }
+                    let versions = rg_versions(doc, record)
+                    let chosen = rg_pick(doc, versions, requirement)
+                    if chosen < 0 {
+                        problems.push("no version of ${dep.name} satisfies `${requirement}`")
+                    } else {
+                        let item = js_at(doc, versions, chosen)
+                        let version_text = sv_text(sv_parse(js_str(doc, js_get(doc, item, "version"))))
+                        found.push(
+                            RegistryBox {
+                                name: dep.name,
+                                version: version_text,
+                                source: "registry",
+                                location: js_str(doc, js_get(doc, item, "archive")),
+                                sha256: js_str(doc, js_get(doc, item, "sha256")),
+                                depth: depth,
+                            }
+                        )
+                        let nested = rg_walk(
+                            rg_version_deps(doc, item),
+                            "",
+                            depth + 1,
+                            registry_root,
+                            found,
+                            problems,
+                        )
+                        found = nested.boxes
+                        problems = nested.errors
+                    }
+                }
+            }
+        }
+    }
+    return RegistryUpdate { boxes: found, errors: problems }
+}
+
+fn rg_lock_text(manifest: BoxManifest, update: RegistryUpdate) -> String {
+    var out = "# generated by nova-boxes — do not edit\nversion = 1\n"
+    out = out + "package = \"" + manifest.name + "\"\n"
+    out = out + "package-version = \"" + manifest.version + "\"\n"
+    for box in update.boxes {
+        out = out + "box \"" + box.name + "\" \"" + box.version + "\" " + box.source + " \"" + box.location + "\""
+        if box.sha256.len() > 0 {
+            out = out + " sha256 \"" + box.sha256 + "\""
+        }
+        out = out + "\n"
+    }
+    return out
+}
+
+// `nova box update`: resolve the manifest against local manifests and the
+// registry index, then render Box.lock. Errors are reported one per line and no
+// partial lockfile is produced.
+fn rg_update(source: String, base: String, registry_root: String) -> String {
+    let manifest = bx_parse_manifest(source)
+    let result = rg_walk(manifest.deps, base, 1, registry_root, [], [])
+    if result.errors.len() > 0 {
+        var out = ""
+        for message in result.errors {
+            out = out + "error: " + message + "\n"
+        }
+        return out
+    }
+    return rg_lock_text(manifest, result)
 }
 
 fn rg_fetch(root: String, spec: String) -> String {
@@ -446,7 +685,7 @@ fn rg_fetch(root: String, spec: String) -> String {
     if !ar_mkdirs(archives) {
         return "error: cannot create ${archives}"
     }
-    let destination = "${archives}/${rg_encode(name)}-${version_text}.box"
+    let destination = archives + "/" + rg_publisher(name) + "-" + rg_box(name) + "-" + version_text + ".box"
     let url = rg_resolve_url(root, archive)
     if !rg_download(url, destination) {
         return "error: cannot download ${url}"
@@ -455,7 +694,7 @@ fn rg_fetch(root: String, spec: String) -> String {
     if actual != expected {
         return "error: checksum mismatch for ${name} ${version_text}: expected ${expected}, got ${actual}"
     }
-    let target = "${cache}/src/${rg_encode(name)}/${version_text}"
+    let target = cache + "/src/" + rg_publisher(name) + "/" + rg_box(name) + "/" + version_text
     let unpacked = ar_unpack(destination, target)
     if unpacked.starts_with("error:") {
         return unpacked

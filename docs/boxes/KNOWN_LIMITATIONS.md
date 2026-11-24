@@ -6,27 +6,27 @@ fail with an explicit message.
 - **Publishing is not implemented.** `nova box publish` and `login` report
   unsupported. There is no registry repository, Pages site or release workflow
   yet, and no default registry URL: `NOVA_BOXES_REGISTRY` must be set.
-- **No manifest editing.** `nova box add NAME@VERSION`, `remove` and `update`
-  are absent; dependencies are still edited by hand.
-- **`fetch` does not write the lockfile.** It downloads and unpacks a box, but
-  resolution ignores fetched boxes, so a version-only dependency is still
-  rejected by `tree`/`check`/`lock`.
-- **HTTP reads are unverified in this environment.** The HTTPS path uses the
-  host `curl` through `http_get`; the tests exercise the identical code against
-  a filesystem mirror. Proxy configuration, redirects and TLS errors have not
-  been tested here.
-- **No yank caching or offline flag.** Every command re-reads the index; there
-  is no cached catalogue, no `--offline` and no warning when a locked version
-  was yanked after the lock was written.
+- **Builds ignore `Box.lock`.** `nova box update` resolves path and registry
+  dependencies into a lockfile, but `nova build` still refuses any project with
+  `[dependencies]` and resolves imports by path only. `tree` and `check` remain
+  path-only as well.
+- **No yank warning.** `update` never selects a yanked version, but an existing
+  lock that pins one is not flagged.
+- **No cached index or `--offline`.** Every command re-reads `config.json` and
+  the record it needs; there is no catalogue cache and no offline mode beyond
+  pointing `NOVA_BOXES_REGISTRY` at a local mirror.
+- **HTTPS is exercised indirectly.** The HTTP branch is tested against a local
+  static server through the same `http_get`/`curl` path. Proxies, custom CAs,
+  redirects across hosts and TLS failures have not been tested here.
 - **Archives are uncompressed.** `.box` is a valid gzip stream, but deflate
   uses stored blocks, so files are archived, not shrunk.
 - **`unpack` restores files only.** Symlinks, hardlinks and device entries are
   rejected; ownership and permissions are not restored. Names containing `..`,
   absolute paths and backslashes are refused before any write.
 - **No authentication.** No token is read or stored; reads are anonymous.
-- **Lockfile scope.** `nova box lock` writes one `Box.lock` per manifest, but
-  builds do not consult it (`--locked` is not integrated with Boxes).
 - **`nova.toml` is still accepted.** New projects should use `Box.toml`.
+- **Registry manifests are not supported as roots.** `nova box add` only adds
+  scoped registry names; path dependencies remain the local-development path.
 - **Studio and the language server** resolve imports by path only; they do not
   query Nova Boxes.
 - **The website** has no package catalogue page yet.

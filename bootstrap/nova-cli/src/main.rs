@@ -927,7 +927,23 @@ fn cmd_box(action: &str, args: &[String]) -> i32 {
     let mut mode = "";
     let mut tool_path = manifest.clone();
     let mut out = String::new();
+    let mut arg = String::new();
     match action {
+        "add" | "remove" => {
+            if args.len() != 1 {
+                eprintln!("nova box {action}: expected one box name");
+                return EXIT_UNSUPPORTED;
+            }
+            mode = if action == "add" { "box-add" } else { "box-remove" };
+            arg = args[0].clone();
+        }
+        "update" => {
+            if !args.is_empty() {
+                eprintln!("nova box update: arguments are not supported");
+                return EXIT_UNSUPPORTED;
+            }
+            mode = "box-update";
+        }
         "tree" | "resolve" | "check" => {
             if !args.is_empty() {
                 eprintln!("nova box {action}: arguments are not supported");
@@ -976,7 +992,7 @@ fn cmd_box(action: &str, args: &[String]) -> i32 {
         }
         _ => {
             eprintln!(
-                "nova box: `{action}` is not implemented yet; available: tree, check, lock, metadata, resolve, pack, verify, unpack, search, info, fetch"
+                "nova box: `{action}` is not implemented yet; available: add, remove, tree, check, lock, update, metadata, resolve, pack, verify, unpack, search, info, fetch"
             );
             return EXIT_UNSUPPORTED;
         }
@@ -992,6 +1008,7 @@ fn cmd_box(action: &str, args: &[String]) -> i32 {
         .env("NOVA_TOOL", mode)
         .env("NOVA_TOOL_PATH", &tool_path)
         .env("NOVA_TOOL_OUT", &out)
+        .env("NOVA_TOOL_ARG", &arg)
         .output()
     {
         Ok(output) => output,
@@ -1001,7 +1018,26 @@ fn cmd_box(action: &str, args: &[String]) -> i32 {
         }
     };
     let text = String::from_utf8_lossy(&output.stdout);
-    if action == "lock" {
+    if action == "add" || action == "remove" {
+        if !output.status.success() || text.contains("error:") {
+            print!("{text}");
+            eprint!("{}", String::from_utf8_lossy(&output.stderr));
+            return EXIT_ERROR;
+        }
+        if let Err(error) = fs::write(&manifest, text.as_bytes()) {
+            eprintln!("nova box: could not write {}: {error}", manifest.display());
+            return EXIT_ERROR;
+        }
+        let verb = if action == "add" { "Added" } else { "Removed" };
+        println!("{verb} `{}` in {}", args[0], manifest.display());
+        return EXIT_OK;
+    }
+    if action == "lock" || action == "update" {
+        if !output.status.success() || text.contains("error:") {
+            print!("{text}");
+            eprint!("{}", String::from_utf8_lossy(&output.stderr));
+            return EXIT_ERROR;
+        }
         let path = root.join("Box.lock");
         if let Err(error) = fs::write(&path, text.as_bytes()) {
             eprintln!("nova box: could not write {}: {error}", path.display());
