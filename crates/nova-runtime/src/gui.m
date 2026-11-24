@@ -22,7 +22,7 @@
 
 #include <math.h>
 #include <stdint.h>
-#include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 #include <dirent.h>
 #include <stdlib.h>
@@ -95,6 +95,26 @@ static NSWindow *nova_window = nil;
 static NSView *nova_view = nil;
 static NSMutableString *nova_title = nil;
 
+/* Opt-in event trace: NOVA_GUI_TRACE=/path appends one line per input and
+ * activation change. Headless checks read it to tell "the click never arrived"
+ * apart from "the click arrived and the UI ignored it". */
+static void nova_gui_trace(const char *format, ...) {
+    static FILE *log = NULL;
+    static int tried = 0;
+    if (!tried) {
+        tried = 1;
+        const char *path = getenv("NOVA_GUI_TRACE");
+        if (path && *path) log = fopen(path, "a");
+    }
+    if (!log) return;
+    va_list args;
+    va_start(args, format);
+    vfprintf(log, format, args);
+    va_end(args);
+    fputc('\n', log);
+    fflush(log);
+}
+
 /* Brings the app forward and makes the window key. A window launched from a
  * shell script does not become active on its own, and macOS tints inactive
  * windows, which reads as a greyed-out, frozen application. */
@@ -102,12 +122,17 @@ static void nova_gui_activate_window(void) {
     if (!nova_window) return;
     [nova_window makeKeyAndOrderFront:nil];
     [nova_window makeKeyWindow];
-    if (nova_view) [nova_window makeFirstResponder:nova_view];
+    if (nova_view) {
+        BOOL made = [nova_window makeFirstResponder:nova_view];
+        nova_gui_trace("firstResponder made=%d responder=%s", (int)made,
+                       [[[nova_window firstResponder] className] UTF8String]);
+    }
     if ([NSApp respondsToSelector:@selector(activate)]) {
         [NSApp activate];
-    } else {
-        [NSApp activateIgnoringOtherApps:YES];
     }
+    /* Still honoured on current macOS, and the only call that pulls a window
+     * forward when the launch was not user-initiated. */
+    [NSApp activateIgnoringOtherApps:YES];
 }
 
 static void nova_gui_emit(int64_t kind, int64_t code, int64_t x, int64_t y, int64_t mods, int64_t delta) {
@@ -165,6 +190,8 @@ static int64_t nova_gui_modifiers(NSEventModifierFlags flags) {
 
 - (void)keyDown:(NSEvent *)event {
     int64_t mods = nova_gui_modifiers(event.modifierFlags);
+    nova_gui_trace("keyDown keyCode=%d mods=%lld key=%d active=%d", (int)event.keyCode,
+                   mods, (int)nova_window.isKeyWindow, (int)NSApp.isActive);
     int64_t code = 0;
     switch (event.keyCode) {
         case 36: code = NOVA_KEY_ENTER; break;
@@ -208,6 +235,14 @@ static int64_t nova_gui_modifiers(NSEventModifierFlags flags) {
     nova_gui_activate_window();
     NSPoint point = [self nova_point:event];
     nova_gui_emit(NOVA_GUI_MOUSE_DOWN, 0, (int64_t)point.x, (int64_t)point.y, nova_gui_modifiers(event.modifierFlags), 1);
+    nova_gui_trace("mouseDown point=%.0f,%.0f frame=%dx%d viewH=%.0f key=%d active=%d",
+                   point.x, point.y, (int)nova_w, (int)nova_h, self.bounds.size.height,
+                   (int)nova_window.isKeyWindow, (int)NSApp.isActive);
+    /* The window draws its own title strip and hides the system one, so the
+     * top few pixels stand in for the title bar and drag the window. */
+    if (point.y < 12) {
+        [nova_window performWindowDragWithEvent:event];
+    }
 }
 
 - (void)mouseUp:(NSEvent *)event {
@@ -273,6 +308,7 @@ static int64_t nova_gui_modifiers(NSEventModifierFlags flags) {
  * events but no key events at all — which looks like a frozen editor. */
 - (void)applicationDidBecomeActive:(NSNotification *)notification {
     (void)notification;
+    nova_gui_trace("applicationDidBecomeActive window=%p", (__bridge void *)nova_window);
     if (nova_window) {
         [nova_window makeKeyAndOrderFront:nil];
         if (nova_view) [nova_window makeFirstResponder:nova_view];
@@ -282,11 +318,13 @@ static int64_t nova_gui_modifiers(NSEventModifierFlags flags) {
 
 - (void)windowDidBecomeKey:(NSNotification *)notification {
     (void)notification;
+    nova_gui_trace("windowDidBecomeKey");
     nova_gui_emit(NOVA_GUI_REPAINT, 0, 0, 0, 0, 0);
 }
 
 - (void)windowDidResignKey:(NSNotification *)notification {
     (void)notification;
+    nova_gui_trace("windowDidResignKey active=%d", (int)NSApp.isActive);
     nova_gui_emit(NOVA_GUI_REPAINT, 0, 0, 0, 0, 0);
 }
 
@@ -299,6 +337,131 @@ static int64_t nova_gui_modifiers(NSEventModifierFlags flags) {
 @end
 
 static NovaGuiDelegate *nova_delegate = nil;
+
+/* ------------------------------------------------------------------ */
+/* Menu bar                                                           */
+/* ------------------------------------------------------------------ */
+
+/* A menu item enqueues the same key event the keyboard would produce, so a
+ * command and its shortcut take exactly one path through the program. */
+@interface NovaGuiMenuTarget : NSObject
+@end
+
+static NovaGuiMenuTarget *nova_menu_target = nil;
+
+@implementation NovaGuiMenuTarget
+
+- (void)menuCommand:(id)sender {
+    int64_t tag = (int64_t)[(NSMenuItem *)sender tag];
+    nova_gui_emit(NOVA_GUI_KEY, tag & 0xFFFF, 0, 0, (tag >> 16) & 0xF, 0);
+}
+
+- (void)openDocs:(id)sender {
+    (void)sender;
+    NSURL *url = [NSURL URLWithString:@"https://jd4rider.github.io/nova/"];
+    if (url) [[NSWorkspace sharedWorkspace] openURL:url];
+}
+
+@end
+
+static void nova_gui_menu_item(NSMenu *menu, NSString *title, NSString *key,
+                               NSEventModifierFlags mask, int64_t mods, int64_t code) {
+    NSMenuItem *item = [menu addItemWithTitle:title action:@selector(menuCommand:)
+                                keyEquivalent:key ? key : @""];
+    item.tag = (code & 0xFFFF) | ((mods & 0xF) << 16);
+    item.keyEquivalentModifierMask = mask;
+    item.target = nova_menu_target;
+}
+
+/* Without a menu bar the app looks like a stray window: macOS only gives a
+ * process its own menu bar when the app is properly launched and activated. */
+static void nova_gui_build_menu(void) {
+    nova_menu_target = [[NovaGuiMenuTarget alloc] init];
+    NSMenu *menubar = [[NSMenu alloc] init];
+    NSEventModifierFlags command = NSEventModifierFlagCommand;
+
+    NSMenuItem *app_item = [[NSMenuItem alloc] init];
+    [menubar addItem:app_item];
+    NSMenu *app = [[NSMenu alloc] initWithTitle:@"Nova Studio"];
+    [app addItemWithTitle:@"About Nova Studio" action:@selector(orderFrontStandardAboutPanel:)
+           keyEquivalent:@""];
+    [app addItem:[NSMenuItem separatorItem]];
+    nova_gui_menu_item(app, @"Settings…", @",", command, NOVA_MOD_COMMAND, ',');
+    [app addItem:[NSMenuItem separatorItem]];
+    [app addItemWithTitle:@"Hide Nova Studio" action:@selector(hide:) keyEquivalent:@"h"];
+    NSMenuItem *hide_others = [app addItemWithTitle:@"Hide Others"
+                                            action:@selector(hideOtherApplications:)
+                                     keyEquivalent:@"h"];
+    hide_others.keyEquivalentModifierMask = command | NSEventModifierFlagOption;
+    [app addItemWithTitle:@"Show All" action:@selector(unhideAllApplications:) keyEquivalent:@""];
+    [app addItem:[NSMenuItem separatorItem]];
+    [app addItemWithTitle:@"Quit Nova Studio" action:@selector(terminate:) keyEquivalent:@"q"];
+    app_item.submenu = app;
+
+    NSMenuItem *file_item = [[NSMenuItem alloc] init];
+    [menubar addItem:file_item];
+    NSMenu *file = [[NSMenu alloc] initWithTitle:@"File"];
+    nova_gui_menu_item(file, @"Go to File…", @"p", command, NOVA_MOD_COMMAND, 'p');
+    nova_gui_menu_item(file, @"Close Tab", @"w", command, NOVA_MOD_COMMAND, 'w');
+    [file addItem:[NSMenuItem separatorItem]];
+    nova_gui_menu_item(file, @"Save", @"s", command, NOVA_MOD_COMMAND, 's');
+    [file addItem:[NSMenuItem separatorItem]];
+    nova_gui_menu_item(file, @"Build", @"b", command, NOVA_MOD_COMMAND, 'b');
+    nova_gui_menu_item(file, @"Check", @"B", command | NSEventModifierFlagShift,
+                       NOVA_MOD_COMMAND | NOVA_MOD_SHIFT, 'b');
+    nova_gui_menu_item(file, @"Build and Run in Terminal", @"r", command, NOVA_MOD_COMMAND, 'r');
+    file_item.submenu = file;
+
+    NSMenuItem *edit_item = [[NSMenuItem alloc] init];
+    [menubar addItem:edit_item];
+    NSMenu *edit = [[NSMenu alloc] initWithTitle:@"Edit"];
+    nova_gui_menu_item(edit, @"Undo", @"z", command, NOVA_MOD_COMMAND, 'z');
+    nova_gui_menu_item(edit, @"Redo", @"Z", command | NSEventModifierFlagShift,
+                       NOVA_MOD_COMMAND | NOVA_MOD_SHIFT, 'z');
+    [edit addItem:[NSMenuItem separatorItem]];
+    nova_gui_menu_item(edit, @"Cut", @"x", command, NOVA_MOD_COMMAND, 'x');
+    nova_gui_menu_item(edit, @"Copy", @"c", command, NOVA_MOD_COMMAND, 'c');
+    nova_gui_menu_item(edit, @"Paste", @"v", command, NOVA_MOD_COMMAND, 'v');
+    nova_gui_menu_item(edit, @"Select All", @"a", command, NOVA_MOD_COMMAND, 'a');
+    [edit addItem:[NSMenuItem separatorItem]];
+    nova_gui_menu_item(edit, @"Find", @"f", command, NOVA_MOD_COMMAND, 'f');
+    edit_item.submenu = edit;
+
+    NSMenuItem *view_item = [[NSMenuItem alloc] init];
+    [menubar addItem:view_item];
+    NSMenu *view = [[NSMenu alloc] initWithTitle:@"View"];
+    nova_gui_menu_item(view, @"Command Palette…", @"P", command | NSEventModifierFlagShift,
+                       NOVA_MOD_COMMAND | NOVA_MOD_SHIFT, 'p');
+    nova_gui_menu_item(view, @"Toggle Sidebar", @"E", command | NSEventModifierFlagShift,
+                       NOVA_MOD_COMMAND | NOVA_MOD_SHIFT, 'e');
+    nova_gui_menu_item(view, @"Toggle Panel", @"`", command, NOVA_MOD_COMMAND, '`');
+    view_item.submenu = view;
+
+    NSMenuItem *window_item = [[NSMenuItem alloc] init];
+    [menubar addItem:window_item];
+    NSMenu *window = [[NSMenu alloc] initWithTitle:@"Window"];
+    [window addItemWithTitle:@"Minimize" action:@selector(performMiniaturize:) keyEquivalent:@"m"];
+    [window addItemWithTitle:@"Zoom" action:@selector(performZoom:) keyEquivalent:@""];
+    [window addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *full = [window addItemWithTitle:@"Enter Full Screen"
+                                         action:@selector(toggleFullScreen:)
+                                  keyEquivalent:@"f"];
+    full.keyEquivalentModifierMask = command | NSEventModifierFlagControl;
+    window_item.submenu = window;
+    [NSApp setWindowsMenu:window];
+
+    NSMenuItem *help_item = [[NSMenuItem alloc] init];
+    [menubar addItem:help_item];
+    NSMenu *help = [[NSMenu alloc] initWithTitle:@"Help"];
+    NSMenuItem *docs = [help addItemWithTitle:@"Nova Documentation"
+                                       action:@selector(openDocs:)
+                                keyEquivalent:@""];
+    docs.target = nova_menu_target;
+    help_item.submenu = help;
+    [NSApp setHelpMenu:help];
+
+    [NSApp setMainMenu:menubar];
+}
 
 /* ------------------------------------------------------------------ */
 /* Framebuffer                                                        */
@@ -409,14 +572,7 @@ int64_t nova_gui_open(nova_str title, int64_t width, int64_t height) {
         [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
         [NSApp finishLaunching];
 
-        /* A minimal menu so Cmd+Q reaches the app like any other Mac window. */
-        NSMenu *menubar = [[NSMenu alloc] init];
-        NSMenuItem *appItem = [[NSMenuItem alloc] init];
-        [menubar addItem:appItem];
-        [NSApp setMainMenu:menubar];
-        NSMenu *appMenu = [[NSMenu alloc] init];
-        [[appMenu addItemWithTitle:@"Quit Nova" action:@selector(terminate:) keyEquivalent:@"q"] setTarget:NSApp];
-        [appItem setSubmenu:appMenu];
+        nova_gui_build_menu();
 
         NSRect frame = NSMakeRect(0, 0, (CGFloat)width, (CGFloat)height);
         NSWindowStyleMask style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
@@ -444,6 +600,8 @@ int64_t nova_gui_open(nova_str title, int64_t width, int64_t height) {
         [nova_window makeKeyAndOrderFront:nil];
         [nova_window makeFirstResponder:nova_view];
         nova_gui_activate_window();
+        nova_gui_trace("open %dx%d key=%d active=%d", (int)nova_w, (int)nova_h,
+                       (int)nova_window.isKeyWindow, (int)NSApp.isActive);
         /* One turn so the window is ordered and its first frame can commit. */
         [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode
                                  beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];

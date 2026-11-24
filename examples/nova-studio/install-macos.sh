@@ -52,19 +52,12 @@ if [ -f "$DIST/icon.png" ]; then
   iconutil -c icns "$DIST/icon.iconset" -o "$APP/Contents/Resources/AppIcon.icns"
 fi
 
-cp "$GAME" "$APP/Contents/Resources/nova-studio"
-chmod +x "$APP/Contents/Resources/nova-studio"
-
-# Environment for Finder launches: the workspace the app was installed from,
-# and the compiler this build was verified against. Both are overridable.
-cat > "$APP/Contents/MacOS/launch" <<LAUNCH
-#!/bin/sh
-HERE="\$(cd "\$(dirname "\$0")/../Resources" && pwd)"
-export NOVA_STUDIO_ROOT="\${NOVA_STUDIO_ROOT:-$ROOT}"
-export NOVA_BIN="\${NOVA_BIN:-$NOVA}"
-exec "\$HERE/nova-studio"
-LAUNCH
-chmod +x "$APP/Contents/MacOS/launch"
+# The GUI binary is the bundle's main executable. macOS only treats a process
+# as an app — menu bar, click-to-activate, draggable window — when the binary
+# LaunchServices launched is CFBundleExecutable inside Contents/MacOS. A shell
+# script there execs a child that macOS considers an outsider.
+cp "$GAME" "$APP/Contents/MacOS/nova-studio"
+chmod +x "$APP/Contents/MacOS/nova-studio"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -77,7 +70,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key><string>0.1.0</string>
   <key>CFBundleShortVersionString</key><string>0.1</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleExecutable</key><string>launch</string>
+  <key>CFBundleExecutable</key><string>nova-studio</string>
+  <key>LSEnvironment</key>
+  <dict>
+    <key>NOVA_STUDIO_ROOT</key><string>$ROOT</string>
+    <key>NOVA_BIN</key><string>$NOVA</string>
+  </dict>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
@@ -88,6 +86,10 @@ PLIST
 
 plutil -lint "$APP/Contents/Info.plist" >/dev/null
 printf 'APPL????' > "$APP/Contents/PkgInfo"
+
+# An ad-hoc signature gives the bundle a stable identity, which keeps
+# LaunchServices from treating each rebuilt copy as a different app.
+codesign --force --sign - "$APP" >/dev/null 2>&1 || true
 
 TARGET="/Applications"
 if [ ! -w "$TARGET" ]; then
@@ -103,7 +105,7 @@ mkdir -p "$BIN_DIR"
 cat > "$BIN_DIR/nova-studio" <<CLI
 #!/bin/sh
 export NOVA_BIN="\${NOVA_BIN:-$NOVA}"
-exec "$TARGET/$APP_NAME.app/Contents/Resources/nova-studio" "\$@"
+exec "$TARGET/$APP_NAME.app/Contents/MacOS/nova-studio" "\$@"
 CLI
 chmod +x "$BIN_DIR/nova-studio"
 
