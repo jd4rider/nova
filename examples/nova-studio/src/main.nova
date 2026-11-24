@@ -2192,10 +2192,10 @@ fn draw_panel(app: App, x: Int, y: Int, w: Int, h: Int) {
     }
     if app.bottom == "terminal" {
         let pal = terminal_palette(app)
-        let grid_y = body_y + 6
-        let grid_h = body_h - 34
-        vt.tm_draw(app.term, x + 14, grid_y, w - 28, grid_h, 12, pal)
-        vt.tm_draw_rail(app.term, x + 6, grid_y, grid_h, 12, pal)
+        let grid_y = body_y + 10
+        let grid_h = body_h - 40
+        vt.tm_draw(app.term, x + 18, grid_y, w - 36, grid_h, 12, pal)
+        vt.tm_draw_rail(app.term, x + 8, grid_y, grid_h, 12, pal)
         if app.term_sel && vt.tm_view(app.term) == 0 {
             let cell_h = vt.tm_cell_height(12)
             let cell_w = gui.advance(12)
@@ -2212,7 +2212,7 @@ fn draw_panel(app: App, x: Int, y: Int, w: Int, h: Int) {
                 } else if r == app.term_r1 {
                     c1 = app.term_c1
                 }
-                gui.rect_alpha(x + 14 + c0 * cell_w, grid_y + r * cell_h, (c1 - c0 + 1) * cell_w, cell_h, pal.cursor, 70)
+                gui.rect_alpha(x + 18 + c0 * cell_w, grid_y + r * cell_h, (c1 - c0 + 1) * cell_w, cell_h, pal.cursor, 70)
                 r = r + 1
             }
         }
@@ -2244,7 +2244,8 @@ fn draw_panel(app: App, x: Int, y: Int, w: Int, h: Int) {
         if app.term_focus {
             gui.text(x + w - 150, footer_y, "typing - esc returns to the editor", 10, theme.faint)
         } else {
-            gui.text(x + w - 250, footer_y, gui.mono_font(), 10, theme.faint)
+            gui.line(x + 12, footer_y - 6, x + w - 12, footer_y - 6, theme.border)
+        gui.text(x + w - 250, footer_y, gui.mono_font(), 10, theme.faint)
         if !gui.pty_running(app.term_slot) {
             gui.text(x + w - 118, footer_y, "restart shell", 10, theme.faint)
         } else {
@@ -3668,6 +3669,14 @@ fn sync_term(app: App) -> App {
     return app
 }
 
+fn term_pad_x(left: Int) -> Int {
+    return left + 18
+}
+
+fn term_pad_y(panel_y: Int) -> Int {
+    return panel_y + 45
+}
+
 fn terminal_palette(app: App) -> vt.Palette {
     if app.theme_name.contains("Gruvbox") {
         return vt.tm_palette_gruvbox()
@@ -3832,6 +3841,9 @@ fn run_script(app: App, path: String) -> App {
                 if gui.pty_open(app.term_slot, words[1], app.root, app.term_cols, app.term_rows) {
                     app.task_running = true
                 }
+            }
+            if cmd == "termsync" {
+                app = sync_term(app)
             }
             if cmd == "termfeed" && words.len() >= 2 {
                 var payload = ""
@@ -4882,8 +4894,8 @@ fn click(app: App, mx: Int, my: Int, mods: Int) -> App {
                 }
                 let cell_h = vt.tm_cell_height(12)
                 let cell_w = gui.advance(12)
-                let grid_x = left + 14
-                let grid_y = panel_y + 41
+                let grid_x = term_pad_x(left)
+                let grid_y = term_pad_y(panel_y)
                 var row = (my - grid_y) / cell_h
                 var col = (mx - grid_x) / cell_w
                 row = gui.clamp(row, 0, app.term_rows - 1)
