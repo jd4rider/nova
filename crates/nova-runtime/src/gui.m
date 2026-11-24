@@ -322,6 +322,19 @@ static int64_t nova_gui_modifiers(NSEventModifierFlags flags) {
     nova_gui_emit(NOVA_GUI_REPAINT, 0, 0, 0, 0, 0);
 }
 
+/* Clicking the Dock icon, or opening an already running app, arrives as a
+ * reopen. Without this the window stays behind whatever is in front, which
+ * looks exactly like an app that ignores clicks. */
+- (BOOL)applicationShouldHandleReopen:(NSApplication *)app hasVisibleWindows:(BOOL)visible {
+    (void)app;
+    nova_gui_trace("reopen visible=%d", (int)visible);
+    if (nova_window) {
+        if (!visible) [nova_window makeKeyAndOrderFront:nil];
+        nova_gui_activate_window();
+    }
+    return YES;
+}
+
 - (void)windowDidResignKey:(NSNotification *)notification {
     (void)notification;
     nova_gui_trace("windowDidResignKey active=%d", (int)NSApp.isActive);
