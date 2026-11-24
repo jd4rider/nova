@@ -1,6 +1,59 @@
+import "std/io.nova" as io
+
+struct Point {
+    x: Int,
+    y: Int,
+}
+
+enum Color {
+    Red,
+    Green(Int),
+    Blue,
+}
+
+extern "C" fn abs(value: Int) -> Int
+
 fn add(a: Int, b: Int) -> Int {
     let sum = a + b
     return sum
+}
+
+fn identity<T>(value: T) -> T {
+    return value
+}
+
+fn make() -> Point {
+    return Point { x: 1, y: 2 }
+}
+
+fn pair() -> (Int, Int) {
+    let xs = [1, 2]
+    return (xs[0], xs[1])
+}
+
+fn halt(cmd: Color) -> Bool {
+    match cmd {
+        Red => true
+        Green(_) => false
+        Blue => true
+    }
+}
+
+fn control(limit: Int) -> Int {
+    var total = 0
+    var i = 0
+    while i < limit {
+        if i == 1 {
+            total = total + 1
+        } else {
+            total = total + 2
+        }
+        i += 1
+    }
+    for n in 0..3 {
+        total = total + n
+    }
+    return total
 }
 
 fn main() {

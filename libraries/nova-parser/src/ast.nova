@@ -31,6 +31,14 @@ struct AStep {
     failed: Bool,
 }
 
+struct AParams {
+    ast: Ast,
+    pos: Int,
+    nodes: List<Int>,
+    failed: Bool,
+    error: AStep,
+}
+
 fn ak_file() -> Int {
     return 1
 }
@@ -97,6 +105,78 @@ fn ak_member() -> Int {
 
 fn ak_index() -> Int {
     return 17
+}
+
+fn ak_import() -> Int {
+    return 18
+}
+
+fn ak_struct() -> Int {
+    return 19
+}
+
+fn ak_field() -> Int {
+    return 20
+}
+
+fn ak_extern() -> Int {
+    return 21
+}
+
+fn ak_if() -> Int {
+    return 22
+}
+
+fn ak_while() -> Int {
+    return 23
+}
+
+fn ak_for() -> Int {
+    return 24
+}
+
+fn ak_break() -> Int {
+    return 25
+}
+
+fn ak_continue() -> Int {
+    return 26
+}
+
+fn ak_impl() -> Int {
+    return 27
+}
+
+fn ak_struct_lit() -> Int {
+    return 28
+}
+
+fn ak_field_init() -> Int {
+    return 29
+}
+
+fn ak_enum() -> Int {
+    return 30
+}
+
+fn ak_variant() -> Int {
+    return 31
+}
+
+fn ak_tuple() -> Int {
+    return 32
+}
+
+fn ak_list() -> Int {
+    return 33
+}
+
+fn ak_match() -> Int {
+    return 34
+}
+
+fn ak_arm() -> Int {
+    return 35
 }
 
 fn a_empty() -> Ast {
@@ -173,7 +253,7 @@ fn a_child(ast: Ast, node: Int, index: Int) -> Int {
 }
 
 fn a_prec(op: String) -> Int {
-    if op == "=" {
+    if op == "=" || op == "+=" || op == "-=" || op == "*=" || op == "/=" || op == "%=" {
         return 1
     }
     if op == "||" {
@@ -263,6 +343,9 @@ fn a_args(tokens: List<Token>, ast: Ast, pos: Int) -> AStep {
             i = arg.pos
             if i < tokens.len() && tokens[i].text == "," {
                 i = i + 1
+                if i < tokens.len() && tokens[i].text == ")" {
+                    done = true
+                }
             } else {
                 done = true
             }
@@ -295,18 +378,64 @@ fn a_primary(tokens: List<Token>, ast: Ast, pos: Int) -> AStep {
     var work = ast
     var node = 0 - 1
     if token.text == "(" {
-        let inner = a_expr(tokens, work, i + 1, 1)
-        if inner.failed {
-            return inner
-        }
-        work = inner.ast
-        i = inner.pos
-        if i < tokens.len() && tokens[i].text == ")" {
-            i = i + 1
+        if i + 1 < tokens.len() && tokens[i + 1].text == ")" {
+            let added = a_add(work, ak_tuple(), "", "", [], token)
+            work = added.0
+            node = added.1
+            i = i + 2
         } else {
-            return a_fail(work, a_token(tokens, i), "expected ')'")
+            let first = a_expr(tokens, work, i + 1, 1)
+            if first.failed {
+                return first
+            }
+            work = first.ast
+            i = first.pos
+            if i < tokens.len() && tokens[i].text == "," {
+                var items: List<Int> = []
+                items.push(first.node)
+                var done = false
+                while i < tokens.len() && !done {
+                    if tokens[i].text == "," {
+                        i = i + 1
+                        if i < tokens.len() && tokens[i].text == ")" {
+                            done = true
+                        } else {
+                            let next = a_expr(tokens, work, i, 1)
+                            if next.failed {
+                                return next
+                            }
+                            work = next.ast
+                            items.push(next.node)
+                            i = next.pos
+                        }
+                    } else {
+                        done = true
+                    }
+                }
+                if i >= tokens.len() || tokens[i].text != ")" {
+                    return a_fail(work, a_token(tokens, i), "expected ')'")
+                }
+                i = i + 1
+                let added = a_add(work, ak_tuple(), "", "", items, token)
+                work = added.0
+                node = added.1
+            } else {
+                if i < tokens.len() && tokens[i].text == ")" {
+                    i = i + 1
+                } else {
+                    return a_fail(work, a_token(tokens, i), "expected ')'")
+                }
+                node = first.node
+            }
         }
-        node = inner.node
+    } else if token.text == "[" {
+        let list = a_list_lit(tokens, work, i)
+        if list.failed {
+            return list
+        }
+        work = list.ast
+        node = list.node
+        i = list.pos
     } else if token.kind == lx_number() {
         let added = a_add(work, ak_number(), token.text, "", [], token)
         work = added.0
@@ -322,6 +451,22 @@ fn a_primary(tokens: List<Token>, ast: Ast, pos: Int) -> AStep {
         work = added.0
         node = added.1
         i = i + 1
+    } else if token.text == "if" {
+        let branch = a_if(tokens, work, i)
+        if branch.failed {
+            return branch
+        }
+        work = branch.ast
+        node = branch.node
+        i = branch.pos
+    } else if token.text == "match" {
+        let matched = a_match(tokens, work, i)
+        if matched.failed {
+            return matched
+        }
+        work = matched.ast
+        node = matched.node
+        i = matched.pos
     } else if token.kind == lx_ident() {
         let added = a_add(work, ak_ident(), token.text, "", [], token)
         work = added.0
@@ -363,6 +508,14 @@ fn a_primary(tokens: List<Token>, ast: Ast, pos: Int) -> AStep {
             work = added.0
             node = added.1
             i = i + 2
+        } else if part.text == "{" && work.nodes[node].kind == ak_ident() && a_upper(work.nodes[node].text) {
+            let lit = a_struct_lit(tokens, work, i, work.nodes[node].text)
+            if lit.failed {
+                return lit
+            }
+            work = lit.ast
+            node = lit.node
+            i = lit.pos
         } else if part.text == "[" {
             let inner = a_expr(tokens, work, i + 1, 1)
             if inner.failed {
@@ -412,9 +565,187 @@ fn a_skip_semis(tokens: List<Token>, pos: Int) -> Int {
     return i
 }
 
+fn a_upper(text: String) -> Bool {
+    if text.len() == 0 {
+        return false
+    }
+    return "ABCDEFGHIJKLMNOPQRSTUVWXYZ".contains(text.chars()[0])
+}
+
+fn a_list_lit(tokens: List<Token>, ast: Ast, pos: Int) -> AStep {
+    let token = a_token(tokens, pos)
+    var work = ast
+    var items: List<Int> = []
+    var i = pos + 1
+    var done = false
+    while i < tokens.len() && !done {
+        if tokens[i].text == "]" {
+            i = i + 1
+            done = true
+        } else {
+            let item = a_expr(tokens, work, i, 1)
+            if item.failed {
+                return item
+            }
+            work = item.ast
+            items.push(item.node)
+            i = item.pos
+            if i < tokens.len() && tokens[i].text == "," {
+                i = i + 1
+            }
+        }
+    }
+    if !done {
+        return a_fail(work, token, "unterminated list literal")
+    }
+    let added = a_add(work, ak_list(), "", "", items, token)
+    return AStep { ast: added.0, pos: i, node: added.1, failed: false }
+}
+
+fn a_struct_lit(tokens: List<Token>, ast: Ast, pos: Int, type_name: String) -> AStep {
+    let token = a_token(tokens, pos)
+    var work = ast
+    var fields: List<Int> = []
+    var i = pos + 1
+    var done = false
+    while i < tokens.len() && !done {
+        let part = a_token(tokens, i)
+        if part.text == "}" {
+            i = i + 1
+            done = true
+        } else if part.kind == lx_eof() {
+            return a_fail(work, token, "unterminated struct literal")
+        } else if part.text == "," || part.text == ";" {
+            i = i + 1
+        } else {
+            if part.kind != lx_ident() {
+                return a_fail(work, part, "expected a field name")
+            }
+            i = i + 1
+            if i >= tokens.len() || tokens[i].text != ":" {
+                return a_fail(work, a_token(tokens, i), "expected ':'")
+            }
+            let value = a_expr(tokens, work, i + 1, 1)
+            if value.failed {
+                return value
+            }
+            work = value.ast
+            var children: List<Int> = []
+            children.push(value.node)
+            let field = a_add(work, ak_field_init(), part.text, "", children, part)
+            work = field.0
+            fields.push(field.1)
+            i = value.pos
+        }
+    }
+    if !done {
+        return a_fail(work, token, "unterminated struct literal")
+    }
+    let added = a_add(work, ak_struct_lit(), type_name, "", fields, token)
+    return AStep { ast: added.0, pos: i, node: added.1, failed: false }
+}
+
+fn a_if(tokens: List<Token>, ast: Ast, pos: Int) -> AStep {
+    let token = a_token(tokens, pos)
+    let cond = a_expr(tokens, ast, pos + 1, 1)
+    if cond.failed {
+        return cond
+    }
+    let body = a_block(tokens, cond.ast, cond.pos)
+    if body.failed {
+        return body
+    }
+    var work = body.ast
+    var children: List<Int> = []
+    children.push(cond.node)
+    children.push(body.node)
+    var i = body.pos
+    if i < tokens.len() && tokens[i].text == "else" {
+        if i + 1 < tokens.len() && tokens[i + 1].text == "if" {
+            let nested = a_if(tokens, work, i + 1)
+            if nested.failed {
+                return nested
+            }
+            work = nested.ast
+            children.push(nested.node)
+            i = nested.pos
+        } else {
+            let other = a_block(tokens, work, i + 1)
+            if other.failed {
+                return other
+            }
+            work = other.ast
+            children.push(other.node)
+            i = other.pos
+        }
+    }
+    let added = a_add(work, ak_if(), "", "", children, token)
+    return AStep { ast: added.0, pos: i, node: added.1, failed: false }
+}
+
+fn a_while(tokens: List<Token>, ast: Ast, pos: Int) -> AStep {
+    let token = a_token(tokens, pos)
+    let cond = a_expr(tokens, ast, pos + 1, 1)
+    if cond.failed {
+        return cond
+    }
+    let body = a_block(tokens, cond.ast, cond.pos)
+    if body.failed {
+        return body
+    }
+    var children: List<Int> = []
+    children.push(cond.node)
+    children.push(body.node)
+    let added = a_add(body.ast, ak_while(), "", "", children, token)
+    return AStep { ast: added.0, pos: body.pos, node: added.1, failed: false }
+}
+
+fn a_for(tokens: List<Token>, ast: Ast, pos: Int) -> AStep {
+    let token = a_token(tokens, pos)
+    let name = a_token(tokens, pos + 1)
+    if name.kind != lx_ident() {
+        return a_fail(ast, name, "expected a loop binding")
+    }
+    if pos + 2 >= tokens.len() || tokens[pos + 2].text != "in" {
+        return a_fail(ast, a_token(tokens, pos + 2), "expected 'in'")
+    }
+    let iter = a_expr(tokens, ast, pos + 3, 1)
+    if iter.failed {
+        return iter
+    }
+    let body = a_block(tokens, iter.ast, iter.pos)
+    if body.failed {
+        return body
+    }
+    var children: List<Int> = []
+    children.push(iter.node)
+    children.push(body.node)
+    let added = a_add(body.ast, ak_for(), name.text, "", children, token)
+    return AStep { ast: added.0, pos: body.pos, node: added.1, failed: false }
+}
+
 fn a_stmt(tokens: List<Token>, ast: Ast, pos: Int) -> AStep {
     var i = pos
     let token = a_token(tokens, i)
+    if token.text == "if" {
+        return a_if(tokens, ast, i)
+    }
+    if token.text == "while" {
+        return a_while(tokens, ast, i)
+    }
+    if token.text == "for" {
+        return a_for(tokens, ast, i)
+    }
+    if token.text == "break" || token.text == "continue" {
+        let kind = if token.text == "break" { ak_break() } else { ak_continue() }
+        let added = a_add(ast, kind, "", "", [], token)
+        return AStep {
+            ast: added.0,
+            pos: a_skip_semis(tokens, i + 1),
+            node: added.1,
+            failed: false,
+        }
+    }
     if token.text == "let" || token.text == "var" {
         let name = a_token(tokens, i + 1)
         if name.kind != lx_ident() {
@@ -525,40 +856,24 @@ fn a_fn(tokens: List<Token>, ast: Ast, pos: Int) -> AStep {
         return a_fail(ast, name, "expected a function name")
     }
     var i = pos + 2
-    if i >= tokens.len() || tokens[i].text != "(" {
-        return a_fail(ast, a_token(tokens, i), "expected '('")
-    }
-    i = i + 1
-    var work = ast
-    var params: List<Int> = []
-    if i < tokens.len() && tokens[i].text != ")" {
-        var done = false
-        while i < tokens.len() && !done {
-            let param_name = a_token(tokens, i)
-            if param_name.kind != lx_ident() {
-                return a_fail(work, param_name, "expected a parameter name")
+    if i < tokens.len() && tokens[i].text == "<" {
+        var depth = 1
+        i = i + 1
+        while i < tokens.len() && depth > 0 {
+            if tokens[i].text == "<" {
+                depth = depth + 1
+            } else if tokens[i].text == ">" {
+                depth = depth - 1
             }
             i = i + 1
-            var type_text = ""
-            if i < tokens.len() && tokens[i].text == ":" {
-                let typed = a_type_text(tokens, i + 1, ",", ")")
-                type_text = typed.0
-                i = typed.1
-            }
-            let added = a_add(work, ak_param(), param_name.text, type_text, [], param_name)
-            work = added.0
-            params.push(added.1)
-            if i < tokens.len() && tokens[i].text == "," {
-                i = i + 1
-            } else {
-                done = true
-            }
         }
     }
-    if i >= tokens.len() || tokens[i].text != ")" {
-        return a_fail(work, a_token(tokens, i), "expected ')'")
+    let params = a_params(tokens, ast, i)
+    if params.failed {
+        return params.error
     }
-    i = i + 1
+    var work = params.ast
+    i = params.pos
     var return_type = ""
     if i < tokens.len() && tokens[i].text == "->" {
         let typed = a_type_text(tokens, i + 1, "{", "")
@@ -571,12 +886,475 @@ fn a_fn(tokens: List<Token>, ast: Ast, pos: Int) -> AStep {
     }
     work = body.ast
     var children: List<Int> = []
-    for param in params {
+    for param in params.nodes {
         children.push(param)
     }
     children.push(body.node)
     let added = a_add(work, ak_fn(), name.text, return_type, children, fn_token)
     return AStep { ast: added.0, pos: body.pos, node: added.1, failed: false }
+}
+
+fn a_type_line(tokens: List<Token>, pos: Int) -> (String, Int) {
+    if pos >= tokens.len() {
+        return ("", pos)
+    }
+    let line = tokens[pos].line
+    var text = ""
+    var i = pos
+    while i < tokens.len() && tokens[i].line == line {
+        let part = tokens[i].text
+        if part == "" || part == "{" || part == "}" || part == "," || part == ";" {
+            return (text, i)
+        }
+
+        text = text + part
+        i = i + 1
+    }
+    return (text, i)
+}
+
+fn a_param_type(tokens: List<Token>, pos: Int) -> (String, Int) {
+    var text = ""
+    var i = pos
+    var parens = 0
+    var angles = 0
+    while i < tokens.len() {
+        let part = tokens[i].text
+        if part == "" {
+            return (text, i)
+        }
+        if parens == 0 && angles == 0 && (part == "," || part == ")") {
+            return (text, i)
+        }
+        if part == "(" {
+            parens = parens + 1
+        } else if part == ")" {
+            parens = parens - 1
+        } else if part == "<" {
+            angles = angles + 1
+        } else if part == ">" && angles > 0 {
+            angles = angles - 1
+        }
+        text = text + part
+        i = i + 1
+    }
+    return (text, i)
+}
+
+fn a_params(tokens: List<Token>, ast: Ast, pos: Int) -> AParams {
+    var i = pos
+    var work = ast
+    var params: List<Int> = []
+    if i >= tokens.len() || tokens[i].text != "(" {
+        return AParams {
+            ast: work,
+            pos: i,
+            nodes: params,
+            failed: true,
+            error: a_fail(work, a_token(tokens, i), "expected '('"),
+        }
+    }
+    i = i + 1
+    if i < tokens.len() && tokens[i].text == ")" {
+        return AParams {
+            ast: work,
+            pos: i + 1,
+            nodes: params,
+            failed: false,
+            error: a_fail(work, a_token(tokens, i), ""),
+        }
+    }
+    var done = false
+    while i < tokens.len() && !done {
+        let param_name = a_token(tokens, i)
+        if param_name.kind != lx_ident() {
+            return AParams {
+                ast: work,
+                pos: i,
+                nodes: params,
+                failed: true,
+                error: a_fail(work, param_name, "expected a parameter name"),
+            }
+        }
+        i = i + 1
+        var type_text = ""
+        if i < tokens.len() && tokens[i].text == ":" {
+            let typed = a_param_type(tokens, i + 1)
+            type_text = typed.0
+            i = typed.1
+        }
+        let added = a_add(work, ak_param(), param_name.text, type_text, [], param_name)
+        work = added.0
+        params.push(added.1)
+        if i < tokens.len() && tokens[i].text == "," {
+            i = i + 1
+            if i < tokens.len() && tokens[i].text == ")" {
+                done = true
+            }
+        } else {
+            done = true
+        }
+    }
+    if i >= tokens.len() || tokens[i].text != ")" {
+        return AParams {
+            ast: work,
+            pos: i,
+            nodes: params,
+            failed: true,
+            error: a_fail(work, a_token(tokens, i), "expected ')'"),
+        }
+    }
+    return AParams {
+        ast: work,
+        pos: i + 1,
+        nodes: params,
+        failed: false,
+        error: a_fail(work, a_token(tokens, i), ""),
+    }
+}
+
+fn a_extern(tokens: List<Token>, ast: Ast, pos: Int) -> AStep {
+    let token = a_token(tokens, pos)
+    var i = pos + 1
+    var abi = ""
+    if i < tokens.len() && tokens[i].kind == lx_string() {
+        abi = tokens[i].text
+        i = i + 1
+    }
+    if i >= tokens.len() || tokens[i].text != "fn" {
+        return a_fail(ast, a_token(tokens, i), "expected 'fn' after extern")
+    }
+    let name = a_token(tokens, i + 1)
+    if name.kind != lx_ident() {
+        return a_fail(ast, name, "expected an extern name")
+    }
+    let params = a_params(tokens, ast, i + 2)
+    if params.failed {
+        return params.error
+    }
+    var work = params.ast
+    i = params.pos
+    var return_type = ""
+    if i < tokens.len() && tokens[i].text == "->" {
+        let typed = a_type_line(tokens, i + 1)
+        return_type = typed.0
+        i = typed.1
+    }
+    var children: List<Int> = []
+    for param in params.nodes {
+        children.push(param)
+    }
+    let added = a_add(work, ak_extern(), name.text, return_type, children, token)
+    return AStep { ast: added.0, pos: i, node: added.1, failed: false }
+}
+
+fn a_import(tokens: List<Token>, ast: Ast, pos: Int) -> AStep {
+    let token = a_token(tokens, pos)
+    var i = pos + 1
+    var path = ""
+    if i < tokens.len() && tokens[i].kind == lx_string() {
+        let raw = tokens[i].text
+        if raw.len() >= 2 {
+            path = lx_slice(raw.chars(), 1, raw.len() - 1)
+        } else {
+            path = raw
+        }
+        i = i + 1
+    } else {
+        let line = a_token(tokens, i).line
+        var more = true
+        while i < tokens.len() && more {
+            let part = tokens[i]
+            if part.line != line || part.text == "as" || part.text == "{" || part.kind == lx_eof() {
+                more = false
+            } else {
+                path = path + part.text
+                i = i + 1
+            }
+        }
+    }
+    var alias = ""
+    if i < tokens.len() && tokens[i].text == "as" {
+        alias = a_token(tokens, i + 1).text
+        i = i + 2
+    }
+    var work = ast
+    var names: List<Int> = []
+    if i < tokens.len() && tokens[i].text == "{" {
+        i = i + 1
+        var done = false
+        while i < tokens.len() && !done {
+            let part = a_token(tokens, i)
+            if part.text == "}" {
+                i = i + 1
+                done = true
+            } else if part.kind == lx_ident() {
+                let added = a_add(work, ak_ident(), part.text, "", [], part)
+                work = added.0
+                names.push(added.1)
+                i = i + 1
+                if i < tokens.len() && tokens[i].text == "," {
+                    i = i + 1
+                }
+            } else {
+                return a_fail(work, part, "expected an imported name")
+            }
+        }
+    }
+    let added = a_add(work, ak_import(), path, alias, names, token)
+    return AStep { ast: added.0, pos: i, node: added.1, failed: false }
+}
+
+fn a_struct(tokens: List<Token>, ast: Ast, pos: Int) -> AStep {
+    let token = a_token(tokens, pos)
+    let name = a_token(tokens, pos + 1)
+    if name.kind != lx_ident() {
+        return a_fail(ast, name, "expected a struct name")
+    }
+    var i = pos + 2
+    if i < tokens.len() && tokens[i].text == "<" {
+        while i < tokens.len() && tokens[i].text != ">" {
+            i = i + 1
+        }
+        i = i + 1
+    }
+    if i >= tokens.len() || tokens[i].text != "{" {
+        return a_fail(ast, a_token(tokens, i), "expected '{'")
+    }
+    i = i + 1
+    var work = ast
+    var fields: List<Int> = []
+    var done = false
+    while i < tokens.len() && !done {
+        let part = a_token(tokens, i)
+        if part.text == "}" {
+            i = i + 1
+            done = true
+        } else if part.kind == lx_eof() {
+            return a_fail(work, token, "unterminated struct")
+        } else if part.text == "," || part.text == ";" {
+            i = i + 1
+        } else {
+            let field_name = part
+            if field_name.kind != lx_ident() {
+                return a_fail(work, field_name, "expected a field name")
+            }
+            i = i + 1
+            if i >= tokens.len() || tokens[i].text != ":" {
+                return a_fail(work, a_token(tokens, i), "expected ':'")
+            }
+            let typed = a_type_line(tokens, i + 1)
+            let added = a_add(work, ak_field(), field_name.text, typed.0, [], field_name)
+            work = added.0
+            fields.push(added.1)
+            i = typed.1
+        }
+    }
+    if !done {
+        return a_fail(work, token, "unterminated struct")
+    }
+    let added = a_add(work, ak_struct(), name.text, "", fields, token)
+    return AStep { ast: added.0, pos: i, node: added.1, failed: false }
+}
+
+fn a_impl(tokens: List<Token>, ast: Ast, pos: Int) -> AStep {
+    let token = a_token(tokens, pos)
+    let typed = a_type_text(tokens, pos + 1, "{", "")
+    if typed.1 >= tokens.len() || tokens[typed.1].text != "{" {
+        return a_fail(ast, a_token(tokens, typed.1), "expected '{'")
+    }
+    var work = ast
+    var methods: List<Int> = []
+    var i = typed.1 + 1
+    var done = false
+    while i < tokens.len() && !done {
+        let part = a_token(tokens, i)
+        if part.text == "}" {
+            i = i + 1
+            done = true
+        } else if part.kind == lx_eof() {
+            return a_fail(work, token, "unterminated impl")
+        } else if part.text == "fn" {
+            let method = a_fn(tokens, work, i)
+            if method.failed {
+                return method
+            }
+            work = method.ast
+            methods.push(method.node)
+            i = method.pos
+        } else {
+            return a_fail(work, part, "unsupported impl item `" + part.text + "`")
+        }
+    }
+    if !done {
+        return a_fail(work, token, "unterminated impl")
+    }
+    let added = a_add(work, ak_impl(), typed.0, "", methods, token)
+    return AStep { ast: added.0, pos: i, node: added.1, failed: false }
+}
+
+fn a_match(tokens: List<Token>, ast: Ast, pos: Int) -> AStep {
+    let token = a_token(tokens, pos)
+    let scrutinee = a_expr(tokens, ast, pos + 1, 1)
+    if scrutinee.failed {
+        return scrutinee
+    }
+    var work = scrutinee.ast
+    var i = scrutinee.pos
+    if i >= tokens.len() || tokens[i].text != "{" {
+        return a_fail(work, a_token(tokens, i), "expected '{' after match")
+    }
+    i = i + 1
+    var arms: List<Int> = []
+    var done = false
+    while i < tokens.len() && !done {
+        let part = a_token(tokens, i)
+        if part.text == "}" {
+            i = i + 1
+            done = true
+        } else if part.kind == lx_eof() {
+            return a_fail(work, token, "unterminated match")
+        } else if part.text == "," || part.text == ";" {
+            i = i + 1
+        } else {
+            var pattern = ""
+            var parens = 0
+            var scanning = true
+            while i < tokens.len() && scanning {
+                let piece = tokens[i].text
+                if parens == 0 && piece == "=>" {
+                    scanning = false
+                } else {
+                    if piece == "(" {
+                        parens = parens + 1
+                    } else if piece == ")" {
+                        parens = parens - 1
+                    }
+                    pattern = pattern + piece
+                    i = i + 1
+                }
+            }
+            if i >= tokens.len() || tokens[i].text != "=>" {
+                return a_fail(work, a_token(tokens, i), "expected '=>' in match arm")
+            }
+            i = i + 1
+            var body = a_fail(work, a_token(tokens, i), "expected a match arm body")
+            if i < tokens.len() && tokens[i].text == "{" {
+                body = a_block(tokens, work, i)
+            } else {
+                body = a_expr(tokens, work, i, 1)
+            }
+            if body.failed {
+                return body
+            }
+            work = body.ast
+            i = body.pos
+            var children: List<Int> = []
+            children.push(body.node)
+            let arm = a_add(work, ak_arm(), pattern, "", children, part)
+            work = arm.0
+            arms.push(arm.1)
+        }
+    }
+    if !done {
+        return a_fail(work, token, "unterminated match")
+    }
+    var children: List<Int> = []
+    children.push(scrutinee.node)
+    for arm in arms {
+        children.push(arm)
+    }
+    let added = a_add(work, ak_match(), "", "", children, token)
+    return AStep { ast: added.0, pos: i, node: added.1, failed: false }
+}
+
+fn a_enum(tokens: List<Token>, ast: Ast, pos: Int) -> AStep {
+    let token = a_token(tokens, pos)
+    let name = a_token(tokens, pos + 1)
+    if name.kind != lx_ident() {
+        return a_fail(ast, name, "expected an enum name")
+    }
+    var i = pos + 2
+    if i < tokens.len() && tokens[i].text == "<" {
+        while i < tokens.len() && tokens[i].text != ">" {
+            i = i + 1
+        }
+        i = i + 1
+    }
+    if i >= tokens.len() || tokens[i].text != "{" {
+        return a_fail(ast, a_token(tokens, i), "expected '{'")
+    }
+    i = i + 1
+    var work = ast
+    var variants: List<Int> = []
+    var done = false
+    while i < tokens.len() && !done {
+        let part = a_token(tokens, i)
+        if part.text == "}" {
+            i = i + 1
+            done = true
+        } else if part.kind == lx_eof() {
+            return a_fail(work, token, "unterminated enum")
+        } else if part.text == "," || part.text == ";" {
+            i = i + 1
+        } else {
+            if part.kind != lx_ident() {
+                return a_fail(work, part, "expected a variant name")
+            }
+            i = i + 1
+            var payload = ""
+            if i < tokens.len() && tokens[i].text == "(" {
+                i = i + 1
+                var depth = 1
+                while i < tokens.len() && depth > 0 {
+                    let inner = tokens[i].text
+                    if inner == "(" {
+                        depth = depth + 1
+                        payload = payload + inner
+                    } else if inner == ")" {
+                        depth = depth - 1
+                        if depth > 0 {
+                            payload = payload + inner
+                        }
+                    } else {
+                        payload = payload + inner
+                    }
+                    i = i + 1
+                }
+            }
+            let added = a_add(work, ak_variant(), part.text, payload, [], part)
+            work = added.0
+            variants.push(added.1)
+        }
+    }
+    if !done {
+        return a_fail(work, token, "unterminated enum")
+    }
+    let added = a_add(work, ak_enum(), name.text, "", variants, token)
+    return AStep { ast: added.0, pos: i, node: added.1, failed: false }
+}
+
+fn a_item(tokens: List<Token>, ast: Ast, pos: Int) -> AStep {
+    let token = a_token(tokens, pos)
+    if token.text == "fn" {
+        return a_fn(tokens, ast, pos)
+    }
+    if token.text == "struct" {
+        return a_struct(tokens, ast, pos)
+    }
+    if token.text == "enum" {
+        return a_enum(tokens, ast, pos)
+    }
+    if token.text == "extern" {
+        return a_extern(tokens, ast, pos)
+    }
+    if token.text == "import" {
+        return a_import(tokens, ast, pos)
+    }
+    if token.text == "impl" {
+        return a_impl(tokens, ast, pos)
+    }
+    return a_fail(ast, token, "unsupported item `" + token.text + "`")
 }
 
 fn a_parse(source: String) -> Ast {
@@ -585,19 +1363,13 @@ fn a_parse(source: String) -> Ast {
     var items: List<Int> = []
     var i = 0
     while i < tokens.len() && tokens[i].kind != lx_eof() {
-        let token = tokens[i]
-        if token.text == "fn" {
-            let item = a_fn(tokens, work, i)
-            if item.failed {
-                return item.ast
-            }
-            work = item.ast
-            items.push(item.node)
-            i = item.pos
-        } else {
-            let failed = a_fail(work, token, "unsupported item `" + token.text + "`")
-            return failed.ast
+        let item = a_item(tokens, work, i)
+        if item.failed {
+            return item.ast
         }
+        work = item.ast
+        items.push(item.node)
+        i = item.pos
     }
     let added = a_add(work, ak_file(), "", "", items, a_token(tokens, 0))
     return added.0
@@ -617,6 +1389,132 @@ fn a_render(ast: Ast, node: Int) -> String {
     let item = ast.nodes[node]
     if item.kind == ak_ident() || item.kind == ak_number() || item.kind == ak_string() || item.kind == ak_bool() {
         return item.text
+    }
+    if item.kind == ak_import() {
+        var out = "(import " + item.text
+        if item.aux.len() > 0 {
+            out = out + " as " + item.aux
+        }
+        var i = 0
+        while i < item.count {
+            out = out + " " + a_render(ast, a_child(ast, node, i))
+            i = i + 1
+        }
+        return out + ")"
+    }
+    if item.kind == ak_struct() {
+        var out = "(struct " + item.text
+        var i = 0
+        while i < item.count {
+            out = out + " " + a_render(ast, a_child(ast, node, i))
+            i = i + 1
+        }
+        return out + ")"
+    }
+    if item.kind == ak_field() {
+        return "(field " + item.text + ":" + item.aux + ")"
+    }
+    if item.kind == ak_enum() {
+        var out = "(enum " + item.text
+        var i = 0
+        while i < item.count {
+            out = out + " " + a_render(ast, a_child(ast, node, i))
+            i = i + 1
+        }
+        return out + ")"
+    }
+    if item.kind == ak_variant() {
+        if item.aux.len() > 0 {
+            return "(variant " + item.text + " " + item.aux + ")"
+        }
+        return "(variant " + item.text + ")"
+    }
+    if item.kind == ak_list() {
+        var out = "(list"
+        var i = 0
+        while i < item.count {
+            out = out + " " + a_render(ast, a_child(ast, node, i))
+            i = i + 1
+        }
+        return out + ")"
+    }
+    if item.kind == ak_tuple() {
+        var out = "(tuple"
+        var i = 0
+        while i < item.count {
+            out = out + " " + a_render(ast, a_child(ast, node, i))
+            i = i + 1
+        }
+        return out + ")"
+    }
+    if item.kind == ak_struct_lit() {
+        var out = "(lit " + item.text
+        var i = 0
+        while i < item.count {
+            out = out + " " + a_render(ast, a_child(ast, node, i))
+            i = i + 1
+        }
+        return out + ")"
+    }
+    if item.kind == ak_field_init() {
+        return "(init " + item.text + " " + a_render(ast, a_child(ast, node, 0)) + ")"
+    }
+    if item.kind == ak_match() {
+        var out = "(match " + a_render(ast, a_child(ast, node, 0))
+        var i = 1
+        while i < item.count {
+            out = out + " " + a_render(ast, a_child(ast, node, i))
+            i = i + 1
+        }
+        return out + ")"
+    }
+    if item.kind == ak_arm() {
+        return "(arm " + item.text + " " + a_render(ast, a_child(ast, node, 0)) + ")"
+    }
+    if item.kind == ak_extern() {
+        var out = "(extern " + item.text
+        var i = 0
+        while i < item.count {
+            out = out + " " + a_render(ast, a_child(ast, node, i))
+            i = i + 1
+        }
+        if item.aux.len() > 0 {
+            out = out + " -> " + item.aux
+        }
+        return out + ")"
+    }
+    if item.kind == ak_impl() {
+        var out = "(impl " + item.text
+        var i = 0
+        while i < item.count {
+            out = out + " " + a_render(ast, a_child(ast, node, i))
+            i = i + 1
+        }
+        return out + ")"
+    }
+    if item.kind == ak_if() {
+        var out = "(if " + a_render(ast, a_child(ast, node, 0))
+        out = out + " " + a_render(ast, a_child(ast, node, 1))
+        if item.count > 2 {
+            out = out + " " + a_render(ast, a_child(ast, node, 2))
+        }
+        return out + ")"
+    }
+    if item.kind == ak_while() {
+        var out = "(while " + a_render(ast, a_child(ast, node, 0))
+        out = out + " " + a_render(ast, a_child(ast, node, 1)) + ")"
+        return out
+    }
+    if item.kind == ak_for() {
+        var out = "(for " + item.text + " " + a_render(ast, a_child(ast, node, 0))
+        out = out + " " + a_render(ast, a_child(ast, node, 1)) + ")"
+        return out
+    }
+    if item.kind == ak_break() {
+        return "(break)"
+    }
+    if item.kind == ak_continue() {
+        return "(continue)"
     }
     if item.kind == ak_param() {
         if item.aux.len() > 0 {
