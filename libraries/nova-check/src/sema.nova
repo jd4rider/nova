@@ -741,6 +741,10 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
         if callee_node.kind == ak_member() {
             let object = sa_expr(ctx, a_child(ctx.ast, callee, 0))
             var work = sa_args(object.ctx, node, 1, [], false)
+            if callee_node.text == "index_of" && object.type_name == "List<Int>" {
+                work = sa_args(work, node, 1, ["Int"], true)
+                return sa_result(work, "Int")
+            }
             if callee_node.text == "contains" && object.type_name == "List<Int>" {
                 work = sa_args(work, node, 1, ["Int"], true)
                 return sa_result(work, "Bool")

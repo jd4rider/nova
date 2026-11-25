@@ -1,0 +1,6 @@
+fn main() -> Int {
+    let values = [3, 8, 13]
+    let hit = values.index_of(8)
+    let miss = values.index_of(4)
+    return hit * 10 + miss + 2
+}

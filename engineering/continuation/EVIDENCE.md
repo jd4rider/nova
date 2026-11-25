@@ -56,7 +56,7 @@ Result: PASS — passed 4, failed 0.
 sh examples/nova-tool/tests/codegen.sh
 ```
 
-Result: PASS — passed 177, failed 0.
+Result: PASS — passed 180, failed 0.
 
 - Straight-line Int module: no `alloca` for immutable params/`let`.
 - Mutable module compiles and exits 2.
@@ -126,6 +126,8 @@ element slot; the runtime grows with `realloc`, copies the element and updates
   sorted ends produce 13.
 - List sum fixture accumulates `[1, 2, 3, 4]` through `nova_list_at`; result 10.
 - List extremes fixture scans `[5, 2, 9]`; min 2 and max 9 produce 29.
+- List index_of fixture finds 8 at index 1, misses 4 with -1, and combines the
+  results into 11.
 - Assert fixtures emit `nova_assert_fail`; the passing program exits 5 and the
   failing program exits 1 with `assertion failed` on stderr.
 - Struct fixture emits `%nova.struct.Point` and `%nova.struct.Pair` aggregate
@@ -170,6 +172,7 @@ and cancellation are absent even in Rust.
 
 ## Commit history
 
+- List index_of checkpoint — 180/0 codegen, 28/0 sema.
 - List min/max checkpoint — 177/0 codegen, 28/0 sema.
 - List sum checkpoint — 174/0 codegen, 28/0 sema.
 - List sort checkpoint — 171/0 codegen, 28/0 sema.

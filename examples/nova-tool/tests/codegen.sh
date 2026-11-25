@@ -391,6 +391,23 @@ else
     no "enum binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-list-index-of.nova" "$tool")
+echo "$out" | grep -q "call ptr @nova_list_at" && ok || no "list index_of uses nova_list_at"
+printf '%s\n' "$out" > "$tmp/list-index-of.ll"
+if clang_ir "$tmp/list-index-of.ll" "$tmp/list-index-of" "$tmp/list-index-of-clang.log"; then
+    ok
+else
+    no "clang rejects list index_of IR"
+    cat "$tmp/list-index-of-clang.log"
+fi
+if [ -x "$tmp/list-index-of" ]; then
+    "$tmp/list-index-of"
+    code=$?
+    [ "$code" -eq 11 ] && ok || no "list index_of result (got $code, expected 11)"
+else
+    no "list index_of binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-list-extremes.nova" "$tool")
 echo "$out" | grep -q "call ptr @nova_list_at" && ok || no "list min/max use nova_list_at"
 printf '%s\n' "$out" > "$tmp/list-extremes.ll"

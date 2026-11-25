@@ -4,7 +4,7 @@ Updated: 2026-11-24
 Master directive: owner-supplied; parity matrix in `engineering/continuation/`.
 Repository / branch: `nova` / `selfhost/pure-nova`
 HEAD: this checkpoint is committed by the accompanying code/doc commits; prior
-`346e6af`.
+`16a5c8f`.
 Working tree: unrelated `editor/` and playground changes remain untouched.
 
 Active milestone: `COMP-01` / `CODEGEN-01` — frontend and LLVM lowering
@@ -14,7 +14,7 @@ Status: PARTIAL (Int/Bool/String payloads and slices work; nested patterns remai
 
 ## Last verified behavior
 
-- `sh examples/nova-tool/tests/codegen.sh` → passed 177, failed 0.
+- `sh examples/nova-tool/tests/codegen.sh` → passed 180, failed 0.
   - `List<Int>` literals allocate with libc `malloc`; empty lists supported.
   - List parameters and returns use by-value `%nova.list`; a literal survives
     return, identity and indexing (native 13).
@@ -66,7 +66,8 @@ Status: PARTIAL (Int/Bool/String payloads and slices work; nested patterns remai
     `contains(value)` scans with the same runtime check (native 16), and
     `reverse()` copies through the runtime (native 31), and `sort()` uses a
     native int64 comparator (native 13), and `sum()` accumulates values (native 10).
-    `min()`/`max()` scan through the same runtime (native 29).
+    `min()`/`max()` scan through the same runtime (native 29), and `index_of`
+    returns the first index or -1 (native 11).
   - `ptr %arg_env`, `nova_user_<index>` and the `@main` wrapper are emitted.
 - `sh examples/nova-tool/tests/parser.sh` → passed 50, failed 0.
 - `sh examples/nova-tool/tests/sema-ast.sh` → passed 28, failed 0.
@@ -149,7 +150,7 @@ Status: PARTIAL (Int/Bool/String payloads and slices work; nested patterns remai
 - Command: `(cd examples/nova-tool && ../../target/debug/nova build)`
 - Result: PASS
 - Command: `sh examples/nova-tool/tests/codegen.sh`
-- Result: PASS (177/0)
+- Result: PASS (180/0)
 - Command: `sh examples/nova-tool/tests/sema-ast.sh`
 - Result: PASS (28/0)
 
