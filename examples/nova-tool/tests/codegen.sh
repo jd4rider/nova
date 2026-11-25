@@ -391,6 +391,26 @@ else
     no "enum binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-string-methods.nova" "$tool")
+echo "$out" | grep -q "call %nova.string @nova_string_trim" && ok || no "String trim call"
+echo "$out" | grep -q "call i32 @nova_string_starts_with" && ok || no "String starts_with call"
+echo "$out" | grep -q "call i32 @nova_string_ends_with" && ok || no "String ends_with call"
+echo "$out" | grep -q "call i32 @nova_string_contains" && ok || no "String contains call"
+printf '%s\n' "$out" > "$tmp/string-methods.ll"
+if clang_ir "$tmp/string-methods.ll" "$tmp/string-methods" "$tmp/string-methods-clang.log"; then
+    ok
+else
+    no "clang rejects String method IR"
+    cat "$tmp/string-methods-clang.log"
+fi
+if [ -x "$tmp/string-methods" ]; then
+    "$tmp/string-methods"
+    code=$?
+    [ "$code" -eq 5 ] && ok || no "String methods result (got $code, expected 5)"
+else
+    no "String methods binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-list-concat.nova" "$tool")
 echo "$out" | grep -q "call ptr @nova_list_at" && ok || no "list concat read call"
 echo "$out" | grep -q "call void @nova_list_push" && ok || no "list concat push call"

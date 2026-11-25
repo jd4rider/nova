@@ -741,6 +741,20 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
         if callee_node.kind == ak_member() {
             let object = sa_expr(ctx, a_child(ctx.ast, callee, 0))
             var work = sa_args(object.ctx, node, 1, [], false)
+            if callee_node.text == "contains" || callee_node.text == "starts_with" || callee_node.text == "ends_with" {
+                if object.type_name != "?" && object.type_name != "String" {
+                    work = sa_error(work, node, "E0309", callee_node.text + " requires a String receiver")
+                }
+                work = sa_args(work, node, 1, ["String"], true)
+                return sa_result(work, "Bool")
+            }
+            if callee_node.text == "trim" || callee_node.text == "trim_start" || callee_node.text == "trim_end" {
+                if object.type_name != "?" && object.type_name != "String" {
+                    work = sa_error(work, node, "E0309", callee_node.text + " requires a String receiver")
+                }
+                work = sa_args(work, node, 1, [], false)
+                return sa_result(work, "String")
+            }
             if callee_node.text == "len" {
                 return sa_result(work, "Int")
             }

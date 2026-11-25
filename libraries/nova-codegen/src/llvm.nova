@@ -1027,6 +1027,12 @@ fn cg_compile(source: String) -> CgResult {
     out = out + "declare void @nova_panic_str(%nova.string, i64)\n"
     out = out + "declare %nova.string @nova_string_concat(%nova.string, %nova.string)\n"
     out = out + "declare i32 @nova_string_eq(%nova.string, %nova.string)\n"
+    out = out + "declare i32 @nova_string_contains(%nova.string, %nova.string)\n"
+    out = out + "declare i32 @nova_string_starts_with(%nova.string, %nova.string)\n"
+    out = out + "declare i32 @nova_string_ends_with(%nova.string, %nova.string)\n"
+    out = out + "declare %nova.string @nova_string_trim(%nova.string)\n"
+    out = out + "declare %nova.string @nova_string_trim_start(%nova.string)\n"
+    out = out + "declare %nova.string @nova_string_trim_end(%nova.string)\n"
     out = out + "declare void @nova_print_str(%nova.string, i32, i32)\n"
     out = out + "declare void @nova_print_i64(i64, i32, i32)\n"
     out = out + "declare void @nova_print_bool(i32, i32, i32)\n"
@@ -2217,6 +2223,42 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
         if callee >= 0 && ast.nodes[callee].kind == ak_member() {
             if ast.nodes[callee].text == "push" {
                 return cg_list_push(ast, state, node)
+            }
+            if ast.nodes[callee].text == "contains" || ast.nodes[callee].text == "starts_with" || ast.nodes[callee].text == "ends_with" {
+                let got = ast.nodes[node].count - 1
+                if got != 1 {
+                    return cg_val(cg_error(state, ast.nodes[callee].text + " expects one argument"), "0")
+                }
+                let recv = cg_expr2(ast, state, a_child(ast, callee, 0))
+                let arg = cg_expr2(ast, recv.state, a_child(ast, node, 1))
+                if recv.ty != "%nova.string" || arg.ty != "%nova.string" {
+                    return cg_val(cg_error(arg.state, ast.nodes[callee].text + " requires Strings"), "0")
+                }
+                let symbol = "@nova_string_" + ast.nodes[callee].text
+                let result_result = cg_temp(arg.state)
+                var work = result_result.0
+                let result = result_result.1
+                work = cg_line(work, "  " + result + " = call i32 " + symbol + "(%nova.string " + recv.value + ", %nova.string " + arg.value + ")")
+                let cond_result = cg_temp(work)
+                work = cond_result.0
+                let cond = cond_result.1
+                work = cg_line(work, "  " + cond + " = icmp ne i32 " + result + ", 0")
+                return cg_val_typed(work, cond, "i1")
+            }
+            if ast.nodes[callee].text == "trim" || ast.nodes[callee].text == "trim_start" || ast.nodes[callee].text == "trim_end" {
+                if ast.nodes[node].count - 1 != 0 {
+                    return cg_val(cg_error(state, ast.nodes[callee].text + " takes no arguments"), "0")
+                }
+                let recv = cg_expr2(ast, state, a_child(ast, callee, 0))
+                if recv.ty != "%nova.string" {
+                    return cg_val(cg_error(recv.state, ast.nodes[callee].text + " requires a String"), "0")
+                }
+                let symbol = "@nova_string_" + ast.nodes[callee].text
+                let result_result = cg_temp(recv.state)
+                var work = result_result.0
+                let result = result_result.1
+                work = cg_line(work, "  " + result + " = call %nova.string " + symbol + "(%nova.string " + recv.value + ")")
+                return cg_val_typed(work, result, "%nova.string")
             }
             if ast.nodes[callee].text != "len" {
                 return cg_val(cg_error(state, "unsupported method " + ast.nodes[callee].text), "0")

@@ -1,0 +1,15 @@
+fn main() -> Int {
+    let text = "  hello  "
+    let trimmed = text.trim()
+    let starts = trimmed.starts_with("he")
+    let ends = trimmed.ends_with("lo")
+    let has = trimmed.contains("ell")
+    if starts {
+        if ends {
+            if has {
+                return trimmed.len()
+            }
+        }
+    }
+    return 0
+}
