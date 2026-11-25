@@ -1,9 +1,10 @@
 // Nova LLVM IR lowering.
 //
 // Scope: Int, Unit and String functions; let/var; integer, string and list
-// literals; String.len/List.len; list indexing; arithmetic; if/else/while;
-// direct calls; seed-shaped ABI (`ptr %arg_env`, `nova_user_N`, `%nova.string`,
-// `%nova.list`). Maps, structs and the full runtime ABI are later tasks.
+// literals; String.len/List.len; list indexing and push; arithmetic;
+// if/else/while; direct calls; seed-shaped ABI (`ptr %arg_env`, `nova_user_N`,
+// `%nova.string`, `%nova.list`). Maps, structs and the full runtime ABI are
+// later tasks.
 //
 // Unsupported syntax returns an error instead of emitting guessed IR.
 
@@ -369,6 +370,128 @@ fn cg_index(ast: Ast, state: CgState, node: Int) -> CgVal {
     return cg_val(work, val)
 }
 
+fn cg_list_push(ast: Ast, state: CgState, node: Int) -> CgVal {
+    let got = ast.nodes[node].count - 1
+    if got != 1 {
+        return cg_val(cg_error(state, "push expects one argument"), "0")
+    }
+    let callee = a_child(ast, node, 0)
+    let recv = a_child(ast, callee, 0)
+    if recv < 0 || ast.nodes[recv].kind != ak_ident() {
+        return cg_val(cg_error(state, "push requires a mutable list variable"), "0")
+    }
+    let index = cg_local_index(state.locals, ast.nodes[recv].text)
+    if index < 0 {
+        return cg_val(cg_error(state, "unknown local " + ast.nodes[recv].text), "0")
+    }
+    let local = state.locals[index]
+    if local.ty != "%nova.list" {
+        return cg_val(cg_error(state, "push expects List<Int>"), "0")
+    }
+    if !local.mutable || local.slot.len() == 0 {
+        return cg_val(cg_error(state, "push requires a mutable list variable"), "0")
+    }
+    let value = cg_expr2(ast, state, a_child(ast, node, 1))
+    var work = value.state
+    if value.ty != "i64" {
+        return cg_val(cg_error(work, "only List<Int>.push is supported"), "0")
+    }
+    let len_ptr_result = cg_temp(work)
+    work = len_ptr_result.0
+    let len_ptr = len_ptr_result.1
+    work = cg_line(work, "  " + len_ptr + " = getelementptr %nova.list, ptr " + local.slot + ", i64 0, i32 1")
+    let len_result = cg_temp(work)
+    work = len_result.0
+    let len = len_result.1
+    work = cg_line(work, "  " + len + " = load i64, ptr " + len_ptr)
+    let cap_ptr_result = cg_temp(work)
+    work = cap_ptr_result.0
+    let cap_ptr = cap_ptr_result.1
+    work = cg_line(work, "  " + cap_ptr + " = getelementptr %nova.list, ptr " + local.slot + ", i64 0, i32 2")
+    let cap_result = cg_temp(work)
+    work = cap_result.0
+    let cap = cap_result.1
+    work = cg_line(work, "  " + cap + " = load i64, ptr " + cap_ptr)
+    let data_ptr_result = cg_temp(work)
+    work = data_ptr_result.0
+    let data_ptr = data_ptr_result.1
+    work = cg_line(work, "  " + data_ptr + " = getelementptr %nova.list, ptr " + local.slot + ", i64 0, i32 0")
+    let full_result = cg_temp(work)
+    work = full_result.0
+    let full = full_result.1
+    work = cg_line(work, "  " + full + " = icmp sge i64 " + len + ", " + cap)
+    let grow_result = cg_label(work)
+    work = grow_result.0
+    let grow = grow_result.1
+    let store_result = cg_label(work)
+    work = store_result.0
+    let store = store_result.1
+    work = cg_line(work, "  br i1 " + full + ", label %" + grow + ", label %" + store)
+    work = cg_line(work, grow + ":")
+    let double_result = cg_temp(work)
+    work = double_result.0
+    let doubled = double_result.1
+    work = cg_line(work, "  " + doubled + " = mul i64 " + cap + ", 2")
+    let empty_result = cg_temp(work)
+    work = empty_result.0
+    let empty = empty_result.1
+    work = cg_line(work, "  " + empty + " = icmp eq i64 " + cap + ", 0")
+    let newcap_result = cg_temp(work)
+    work = newcap_result.0
+    let newcap = newcap_result.1
+    work = cg_line(work, "  " + newcap + " = select i1 " + empty + ", i64 4, i64 " + doubled)
+    let bytes_result = cg_temp(work)
+    work = bytes_result.0
+    let bytes = bytes_result.1
+    work = cg_line(work, "  " + bytes + " = mul i64 " + newcap + ", 8")
+    let old_data_result = cg_temp(work)
+    work = old_data_result.0
+    let old_data = old_data_result.1
+    work = cg_line(work, "  " + old_data + " = load ptr, ptr " + data_ptr)
+    let grown_result = cg_temp(work)
+    work = grown_result.0
+    let grown = grown_result.1
+    work = cg_line(work, "  " + grown + " = call ptr @realloc(ptr " + old_data + ", i64 " + bytes + ")")
+    let null_result = cg_temp(work)
+    work = null_result.0
+    let is_null = null_result.1
+    work = cg_line(work, "  " + is_null + " = icmp eq ptr " + grown + ", null")
+    let bad_result = cg_label(work)
+    work = bad_result.0
+    let bad = bad_result.1
+    let grown_ok_result = cg_label(work)
+    work = grown_ok_result.0
+    let grown_ok = grown_ok_result.1
+    work = cg_line(work, "  br i1 " + is_null + ", label %" + bad + ", label %" + grown_ok)
+    work = cg_line(work, bad + ":")
+    work = cg_line(work, "  call void @llvm.trap()")
+    work = cg_line(work, "  unreachable")
+    work = cg_line(work, grown_ok + ":")
+    work = cg_line(work, "  store ptr " + grown + ", ptr " + data_ptr)
+    work = cg_line(work, "  store i64 " + newcap + ", ptr " + cap_ptr)
+    work = cg_line(work, "  br label %" + store)
+    work = cg_line(work, store + ":")
+    let final_len_result = cg_temp(work)
+    work = final_len_result.0
+    let final_len = final_len_result.1
+    work = cg_line(work, "  " + final_len + " = load i64, ptr " + len_ptr)
+    let final_data_result = cg_temp(work)
+    work = final_data_result.0
+    let final_data = final_data_result.1
+    work = cg_line(work, "  " + final_data + " = load ptr, ptr " + data_ptr)
+    let at_result = cg_temp(work)
+    work = at_result.0
+    let at = at_result.1
+    work = cg_line(work, "  " + at + " = getelementptr i64, ptr " + final_data + ", i64 " + final_len)
+    work = cg_line(work, "  store i64 " + value.value + ", ptr " + at)
+    let next_result = cg_temp(work)
+    work = next_result.0
+    let next = next_result.1
+    work = cg_line(work, "  " + next + " = add i64 " + final_len + ", 1")
+    work = cg_line(work, "  store i64 " + next + ", ptr " + len_ptr)
+    return cg_val_typed(work, "", "void")
+}
+
 fn cg_compile(source: String) -> CgResult {
     let ast = a_parse(source)
     if ast.error.len() > 0 {
@@ -420,6 +543,7 @@ fn cg_compile(source: String) -> CgResult {
     out = out + "%nova.list = type { ptr, i64, i64 }\n"
     out = out + "declare void @llvm.trap()\n"
     out = out + "declare ptr @malloc(i64)\n"
+    out = out + "declare ptr @realloc(ptr, i64)\n"
     var emitted = 0
     while emitted < fns.len() {
         let sig = fns[emitted]
@@ -776,6 +900,9 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
     if item.kind == ak_call() {
         let callee = a_child(ast, node, 0)
         if callee >= 0 && ast.nodes[callee].kind == ak_member() {
+            if ast.nodes[callee].text == "push" {
+                return cg_list_push(ast, state, node)
+            }
             if ast.nodes[callee].text != "len" {
                 return cg_val(cg_error(state, "unsupported method " + ast.nodes[callee].text), "0")
             }

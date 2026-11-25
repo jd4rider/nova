@@ -173,6 +173,26 @@ else
     no "list ABI binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-list-push.nova" "$tool")
+echo "$out" | grep -q "declare ptr @realloc(ptr, i64)" && ok || no "list growth declaration"
+echo "$out" | grep -q "call ptr @realloc" && ok || no "list growth call"
+echo "$out" | grep -q "getelementptr %nova.list" && ok || no "list field addressing"
+echo "$out" | grep -q "store i64 12, ptr" && ok || no "pushed element store"
+printf '%s\n' "$out" > "$tmp/list-push.ll"
+if clang -x ir "$tmp/list-push.ll" -o "$tmp/list-push" > "$tmp/list-push-clang.log" 2>&1; then
+    ok
+else
+    no "clang rejects list push IR"
+    cat "$tmp/list-push-clang.log"
+fi
+if [ -x "$tmp/list-push" ]; then
+    "$tmp/list-push"
+    code=$?
+    [ "$code" -eq 16 ] && ok || no "list push result (got $code, expected 16)"
+else
+    no "list push binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-unit-main.nova" "$tool")
 echo "$out" | grep -q "define void @nova_user_0(ptr %arg_env)" && ok || no "Unit main signature"
 echo "$out" | grep -q "call void @nova_user_0(ptr null)" && ok || no "Unit main call"

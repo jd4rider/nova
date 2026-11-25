@@ -1,0 +1,11 @@
+fn grown() -> List<Int> {
+    var points = [10, 20]
+    points.push(30)
+    points.push(12)
+    return points
+}
+
+fn main() -> Int {
+    let points = grown()
+    return points.len() + points[3]
+}

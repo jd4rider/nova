@@ -43,7 +43,7 @@ Result: PASS — passed 4, failed 0.
 sh examples/nova-tool/tests/codegen.sh
 ```
 
-Result: PASS — passed 48, failed 0.
+Result: PASS — passed 54, failed 0.
 
 - Straight-line Int module: no `alloca` for immutable params/`let`.
 - Mutable module compiles and exits 2.
@@ -62,16 +62,19 @@ Result: PASS — passed 48, failed 0.
 - List ABI fixture emits by-value `%nova.list` parameter/return signatures and
   calls: a literal returned by one function passes through an identity function
   and is indexed by another; native result 13.
+- List push fixture emits `realloc` growth, struct-field addressing, an element
+  store and an updated length; a grown list is returned and indexed by the
+  caller. Native result 16.
 - `NOVA_TOOL=build-ir` invokes clang, checks status and produces a native binary;
   the test executes that Nova-built binary.
 - Host clang accepted every module; Mach-O confirmed on this host.
 
 Limit: ABI parity covers Int, Unit, the string-literal/len subset and the
-`List<Int>` literal/parameter/return subset. List push, mutation, slices and the
-`nova_list_*` runtime are not implemented. Literals use libc `malloc` and are
-never freed; the bounds trap is not a Nova panic. Maps, sets, structs, enums,
-tuples, arrays and Option/Result remain. `emit-ir` is still not the full CLI.
-This is not a compiler-speed measurement.
+`List<Int>` literal/parameter/return/push subset. Index assignment, slices and
+the `nova_list_*` runtime are not implemented; push uses libc `realloc` rather
+than the seed allocator. List storage is never freed; the bounds trap is not a
+Nova panic. Maps, sets, structs, enums, tuples, arrays and Option/Result remain.
+`emit-ir` is still not the full CLI. This is not a compiler-speed measurement.
 
 ## Parity audit
 
@@ -83,6 +86,7 @@ and cancellation are absent even in Rust.
 
 ## Commit history
 
+- `List<Int>` push checkpoint — 54/0.
 - `List<Int>` ABI checkpoint — 48/0.
 - `List<Int>` literals/indexing checkpoint — 41/0.
 - Unit/String ABI checkpoint — 32/0.
