@@ -584,6 +584,24 @@ else
     no "list slice binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-enum-struct.nova" "$tool")
+echo "$out" | grep -q "%nova.enum.Shape = type { i32, i64, i64, i64, i64 }" && ok || no "struct enum slot layout"
+echo "$out" | grep -q "%nova.struct.Labeled" && ok || no "nested struct payload type"
+printf '%s\n' "$out" > "$tmp/enum-struct.ll"
+if clang_ir "$tmp/enum-struct.ll" "$tmp/enum-struct" "$tmp/enum-struct-clang.log"; then
+    ok
+else
+    no "clang rejects struct enum IR"
+    cat "$tmp/enum-struct-clang.log"
+fi
+if [ -x "$tmp/enum-struct" ]; then
+    "$tmp/enum-struct"
+    code=$?
+    [ "$code" -eq 9 ] && ok || no "struct enum result (got $code, expected 9)"
+else
+    no "struct enum binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-enum-string.nova" "$tool")
 echo "$out" | grep -q "%nova.enum.Message = type { i32, i64, i64, i64, i64 }" && ok || no "String enum slot layout"
 echo "$out" | grep -q "extractvalue %nova.string" && ok || no "String enum payload packing"

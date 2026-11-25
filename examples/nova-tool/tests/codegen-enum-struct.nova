@@ -1,0 +1,27 @@
+struct Point {
+    x: Int
+    y: Int
+}
+
+struct Labeled {
+    name: String
+    point: Point
+}
+
+enum Shape {
+    Empty
+    Dot(Point)
+    LabeledShape(Labeled)
+}
+
+fn score(shape: Shape) -> Int {
+    return match shape {
+        Empty => 0
+        Dot(point) => point.x + point.y
+        LabeledShape(label) => label.name.len() + label.point.x
+    }
+}
+
+fn main() -> Int {
+    return score(Dot(Point { x: 1, y: 2 })) + score(LabeledShape(Labeled { name: "hi", point: Point { x: 4, y: 5 } }))
+}

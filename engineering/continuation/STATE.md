@@ -4,7 +4,7 @@ Updated: 2026-11-24
 Master directive: owner-supplied; parity matrix in `engineering/continuation/`.
 Repository / branch: `nova` / `selfhost/pure-nova`
 HEAD: this checkpoint is committed by the accompanying code/doc commits; prior
-`16a5c8f`.
+`3d8ea3d`.
 Working tree: unrelated `editor/` and playground changes remain untouched.
 
 Active milestone: `COMP-01` / `CODEGEN-01` — frontend and LLVM lowering
@@ -14,7 +14,7 @@ Status: PARTIAL (Int/Bool/String payloads and slices work; nested patterns remai
 
 ## Last verified behavior
 
-- `sh examples/nova-tool/tests/codegen.sh` → passed 180, failed 0.
+- `sh examples/nova-tool/tests/codegen.sh` → passed 184, failed 0.
   - `List<Int>` literals allocate with libc `malloc`; empty lists supported.
   - List parameters and returns use by-value `%nova.list`; a literal survives
     return, identity and indexing (native 13).
@@ -67,7 +67,8 @@ Status: PARTIAL (Int/Bool/String payloads and slices work; nested patterns remai
     `reverse()` copies through the runtime (native 31), and `sort()` uses a
     native int64 comparator (native 13), and `sum()` accumulates values (native 10).
     `min()`/`max()` scan through the same runtime (native 29), and `index_of`
-    returns the first index or -1 (native 11).
+    returns the first index or -1 (native 11). Enum payloads may now be structs;
+    recursive slot packing/unpacking handles nested struct fields (native 9).
   - `ptr %arg_env`, `nova_user_<index>` and the `@main` wrapper are emitted.
 - `sh examples/nova-tool/tests/parser.sh` → passed 50, failed 0.
 - `sh examples/nova-tool/tests/sema-ast.sh` → passed 28, failed 0.
@@ -129,8 +130,8 @@ Status: PARTIAL (Int/Bool/String payloads and slices work; nested patterns remai
   overflow, division-by-zero and alignment checks remain.
 - Structs and enums are value-only: no generics, methods, references, tuples
   or arrays. Struct/enum equality and printing remain.
-- Enum payloads support `Int`, `Bool` and `String` in codegen; struct/enum
-  payloads and payloads nested in other value types are rejected with an error.
+- Enum payloads support `Int`, `Bool`, `String` and struct values in codegen;
+  enum-typed payloads and payloads nested in other value types remain.
 - Maps and sets remain.
 - Strings lack interpolation, ordering, and the wider method/runtime surface.
 - Overflow checks and the full runtime ABI remain.
@@ -141,7 +142,7 @@ Status: PARTIAL (Int/Bool/String payloads and slices work; nested patterns remai
 ## Resume here
 
 1. Add nested enum patterns and match guards.
-2. Add struct/enum payloads and match guards.
+2. Add enum-typed payloads and match guards.
 3. Run codegen/parser/sema suites; update `STATE.md`, `EVIDENCE.md`,
    `TASKS.md` and `PARITY.md`; commit.
 
@@ -150,7 +151,7 @@ Status: PARTIAL (Int/Bool/String payloads and slices work; nested patterns remai
 - Command: `(cd examples/nova-tool && ../../target/debug/nova build)`
 - Result: PASS
 - Command: `sh examples/nova-tool/tests/codegen.sh`
-- Result: PASS (180/0)
+- Result: PASS (184/0)
 - Command: `sh examples/nova-tool/tests/sema-ast.sh`
 - Result: PASS (28/0)
 
