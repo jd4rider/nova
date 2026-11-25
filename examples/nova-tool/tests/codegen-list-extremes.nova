@@ -1,0 +1,4 @@
+fn main() -> Int {
+    let values = [5, 2, 9]
+    return values.min() * 10 + values.max()
+}

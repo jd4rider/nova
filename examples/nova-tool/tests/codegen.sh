@@ -391,6 +391,23 @@ else
     no "enum binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-list-extremes.nova" "$tool")
+echo "$out" | grep -q "call ptr @nova_list_at" && ok || no "list min/max use nova_list_at"
+printf '%s\n' "$out" > "$tmp/list-extremes.ll"
+if clang_ir "$tmp/list-extremes.ll" "$tmp/list-extremes" "$tmp/list-extremes-clang.log"; then
+    ok
+else
+    no "clang rejects list min/max IR"
+    cat "$tmp/list-extremes-clang.log"
+fi
+if [ -x "$tmp/list-extremes" ]; then
+    "$tmp/list-extremes"
+    code=$?
+    [ "$code" -eq 29 ] && ok || no "list min/max result (got $code, expected 29)"
+else
+    no "list min/max binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-list-sum.nova" "$tool")
 echo "$out" | grep -q "call ptr @nova_list_at" && ok || no "list sum uses nova_list_at"
 printf '%s\n' "$out" > "$tmp/list-sum.ll"
