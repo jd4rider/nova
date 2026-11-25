@@ -90,6 +90,63 @@ else
     no "Nova-built binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-unit.nova" "$tool")
+echo "$out" | grep -q "define void @nova_user_0(ptr %arg_env)" && ok || no "Unit signature"
+echo "$out" | grep -q "call void @nova_user_0(ptr null)" && ok || no "Unit call"
+printf '%s\n' "$out" > "$tmp/unit.ll"
+if clang -x ir "$tmp/unit.ll" -o "$tmp/unit" > "$tmp/unit-clang.log" 2>&1; then
+    ok
+else
+    no "clang rejects Unit IR"
+    cat "$tmp/unit-clang.log"
+fi
+if [ -x "$tmp/unit" ]; then
+    "$tmp/unit"
+    code=$?
+    [ "$code" -eq 4 ] && ok || no "Unit result (got $code, expected 4)"
+else
+    no "Unit binary missing"
+fi
+
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-string.nova" "$tool")
+echo "$out" | grep -q "%nova.string = type { ptr, i64 }" && ok || no "string type declaration"
+echo "$out" | grep -q "define %nova.string @nova_user_0(ptr %arg_env)" && ok || no "String return signature"
+echo "$out" | grep -q "define i64 @nova_user_1(ptr %arg_env, %nova.string %p0)" && ok || no "String parameter signature"
+echo "$out" | grep -q 'c"hello"' && ok || no "string literal global"
+echo "$out" | grep -q "extractvalue %nova.string" && ok || no "String.len lowering"
+printf '%s\n' "$out" > "$tmp/string.ll"
+if clang -x ir "$tmp/string.ll" -o "$tmp/string" > "$tmp/string-clang.log" 2>&1; then
+    ok
+else
+    no "clang rejects string IR"
+    cat "$tmp/string-clang.log"
+fi
+if [ -x "$tmp/string" ]; then
+    "$tmp/string"
+    code=$?
+    [ "$code" -eq 5 ] && ok || no "string length result (got $code, expected 5)"
+else
+    no "string binary missing"
+fi
+
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-unit-main.nova" "$tool")
+echo "$out" | grep -q "define void @nova_user_0(ptr %arg_env)" && ok || no "Unit main signature"
+echo "$out" | grep -q "call void @nova_user_0(ptr null)" && ok || no "Unit main call"
+printf '%s\n' "$out" > "$tmp/unit-main.ll"
+if clang -x ir "$tmp/unit-main.ll" -o "$tmp/unit-main" > "$tmp/unit-main-clang.log" 2>&1; then
+    ok
+else
+    no "clang rejects Unit main IR"
+    cat "$tmp/unit-main-clang.log"
+fi
+if [ -x "$tmp/unit-main" ]; then
+    "$tmp/unit-main"
+    code=$?
+    [ "$code" -eq 0 ] && ok || no "Unit main result (got $code, expected 0)"
+else
+    no "Unit main binary missing"
+fi
+
 printf 'fn main() -> Int {\n    return "x"\n}\n' > "$tmp/bad.nova"
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$tmp/bad.nova" "$tool")
 echo "$out" | grep -q "^error:" && ok || no "unsupported expression is reported"

@@ -1,9 +1,9 @@
-// Nova LLVM IR lowering, first slice.
+// Nova LLVM IR lowering.
 //
-// Scope: functions with Int parameters and Int return, let/var, assignment,
-// integer literals, + - * /, direct calls and return. The emitted module is
-// self-contained and deliberately does not use the seed compiler's hidden
-// environment pointer; aligning with that ABI is a later task.
+// Scope: Int, Unit and String functions; let/var; integer and string literals;
+// String.len; arithmetic; if/else/while; direct calls; seed-shaped ABI
+// (`ptr %arg_env`, `nova_user_N`, `%nova.string`). Collections and the full
+// runtime ABI are later tasks.
 //
 // Unsupported syntax returns an error instead of emitting guessed IR.
 
@@ -12,6 +12,7 @@ import "../../nova-parser/src/ast.nova"
 struct CgSig {
     name: String,
     params: List<String>,
+    param_types: List<String>,
     ret: String,
     body: Int,
     index: Int,
@@ -19,6 +20,7 @@ struct CgSig {
 
 struct CgLocal {
     name: String,
+    ty: String,
     slot: String,
     value: String,
     mutable: Bool,
@@ -30,6 +32,10 @@ struct CgState {
     slots: Int,
     locals: List<CgLocal>,
     fns: List<CgSig>,
+    globals: List<String>,
+    strings: Int,
+    fn_index: Int,
+    ret: String,
     terminated: Bool,
     error: String,
 }
@@ -60,9 +66,39 @@ fn cg_state(
         slots: slots,
         locals: locals,
         fns: state.fns,
+        globals: state.globals,
+        strings: state.strings,
+        fn_index: state.fn_index,
+        ret: state.ret,
         terminated: terminated,
         error: error,
     }
+}
+
+fn cg_state_globals(state: CgState, globals: List<String>, strings: Int) -> CgState {
+    return CgState {
+        lines: state.lines,
+        temps: state.temps,
+        slots: state.slots,
+        locals: state.locals,
+        fns: state.fns,
+        globals: globals,
+        strings: strings,
+        fn_index: state.fn_index,
+        ret: state.ret,
+        terminated: state.terminated,
+        error: state.error,
+    }
+}
+
+fn cg_llvm_type(type_name: String) -> String {
+    if type_name == "String" {
+        return "%nova.string"
+    }
+    if type_name == "Unit" || type_name == "" {
+        return "void"
+    }
+    return "i64"
 }
 
 fn cg_line(state: CgState, text: String) -> CgState {
@@ -140,6 +176,80 @@ fn cg_label(state: CgState) -> (CgState, String) {
     return (cg_state(state, state.lines, next, state.slots, state.locals, state.terminated, state.error), name)
 }
 
+fn cg_string_unquote(raw: String) -> String {
+    let chars = raw.chars()
+    if chars.len() < 2 {
+        return ""
+    }
+    var out = ""
+    var i = 1
+    while i < chars.len() - 1 {
+        let c = chars[i]
+        if c == "\\" && i + 1 < chars.len() - 1 {
+            i = i + 1
+            let escaped = chars[i]
+            if escaped == "n" {
+                out = out + "\n"
+            } else if escaped == "t" {
+                out = out + "\t"
+            } else if escaped == "r" {
+                out = out + "\r"
+            } else if escaped == "\\" {
+                out = out + "\\"
+            } else if escaped == "\"" {
+                out = out + "\""
+            } else {
+                out = out + escaped
+            }
+        } else {
+            out = out + c
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn cg_llvm_escape(text: String) -> String {
+    var out = ""
+    for c in text.chars() {
+        if c == "\"" {
+            out = out + "\\22"
+        } else if c == "\\" {
+            out = out + "\\5C"
+        } else if c == "\n" {
+            out = out + "\\0A"
+        } else if c == "\t" {
+            out = out + "\\09"
+        } else if c == "\r" {
+            out = out + "\\0D"
+        } else {
+            out = out + c
+        }
+    }
+    return out
+}
+
+fn cg_string_lit(state: CgState, raw: String) -> CgVal {
+    let text = cg_string_unquote(raw)
+    let symbol = "@nova.str." + state.fn_index.to_string() + "." + state.strings.to_string()
+    var definition = symbol + " = private unnamed_addr constant [1 x i8] zeroinitializer, align 1"
+    if text.len() > 0 {
+        definition = symbol + " = private unnamed_addr constant [" + text.len().to_string() + " x i8] c\"" + cg_llvm_escape(text) + "\", align 1"
+    }
+    var globals = state.globals
+    globals.push(definition)
+    var work = cg_state_globals(state, globals, state.strings + 1)
+    let first_result = cg_temp(work)
+    work = first_result.0
+    let first = first_result.1
+    work = cg_line(work, "  " + first + " = insertvalue %nova.string { ptr null, i64 0 }, ptr " + symbol + ", 0")
+    let second_result = cg_temp(work)
+    work = second_result.0
+    let second = second_result.1
+    work = cg_line(work, "  " + second + " = insertvalue %nova.string " + first + ", i64 " + text.len().to_string() + ", 1")
+    return cg_val_typed(work, second, "%nova.string")
+}
+
 fn cg_compile(source: String) -> CgResult {
     let ast = a_parse(source)
     if ast.error.len() > 0 {
@@ -152,35 +262,42 @@ fn cg_compile(source: String) -> CgResult {
         let node = a_child(ast, file, i)
         let item = ast.nodes[node]
         if item.kind == ak_fn() {
-            if item.aux != "Int" {
+            var ret = item.aux
+            if ret == "" {
+                ret = "Unit"
+            }
+            if ret != "Int" && ret != "String" && ret != "Unit" {
                 return CgResult { ir: "", error: "unsupported return type on " + item.text }
             }
             if cg_fn_index(fns, item.text) >= 0 {
                 return CgResult { ir: "", error: "duplicate function " + item.text }
             }
             var params: List<String> = []
+            var param_types: List<String> = []
             var k = 0
             while k < item.count - 1 {
                 let param = ast.nodes[a_child(ast, node, k)]
-                if param.aux != "Int" {
+                if param.aux != "Int" && param.aux != "String" {
                     return CgResult { ir: "", error: "unsupported parameter type on " + param.text }
                 }
                 params.push(param.text)
+                param_types.push(param.aux)
                 k = k + 1
             }
             let index = fns.len()
-            fns.push(CgSig { name: item.text, params: params, ret: item.aux, body: a_child(ast, node, item.count - 1), index: index })
+            fns.push(CgSig { name: item.text, params: params, param_types: param_types, ret: ret, body: a_child(ast, node, item.count - 1), index: index })
         }
         i = i + 1
     }
     if cg_fn_index(fns, "main") < 0 {
-        return CgResult { ir: "", error: "missing fn main() -> Int" }
+        return CgResult { ir: "", error: "missing fn main()" }
     }
     let main_index = cg_fn_index(fns, "main")
     if fns[main_index].params.len() != 0 {
         return CgResult { ir: "", error: "main must take no parameters" }
     }
     var out = "; generated by Nova codegen (CODEGEN-01.01)\n"
+    out = out + "%nova.string = type { ptr, i64 }\n"
     var emitted = 0
     while emitted < fns.len() {
         let sig = fns[emitted]
@@ -192,9 +309,17 @@ fn cg_compile(source: String) -> CgResult {
         emitted = emitted + 1
     }
     out = out + "define i32 @main() {\n"
-    out = out + "  %nova_result = call i64 @nova_user_" + fns[main_index].index.to_string() + "(ptr null)\n"
-    out = out + "  %nova_exit = trunc i64 %nova_result to i32\n"
-    out = out + "  ret i32 %nova_exit\n"
+    if fns[main_index].ret == "Unit" {
+        out = out + "  call void @nova_user_" + fns[main_index].index.to_string() + "(ptr null)\n"
+        out = out + "  ret i32 0\n"
+    } else if fns[main_index].ret == "String" {
+        out = out + "  %nova_result = call %nova.string @nova_user_" + fns[main_index].index.to_string() + "(ptr null)\n"
+        out = out + "  ret i32 0\n"
+    } else {
+        out = out + "  %nova_result = call i64 @nova_user_" + fns[main_index].index.to_string() + "(ptr null)\n"
+        out = out + "  %nova_exit = trunc i64 %nova_result to i32\n"
+        out = out + "  ret i32 %nova_exit\n"
+    }
     out = out + "}\n"
     return CgResult { ir: out, error: "" }
 }
@@ -206,6 +331,10 @@ fn cg_emit_fn(ast: Ast, fns: List<CgSig>, sig: CgSig) -> CgResult {
         slots: 0,
         locals: [],
         fns: fns,
+        globals: [],
+        strings: 0,
+        fn_index: sig.index,
+        ret: sig.ret,
         terminated: false,
         error: "",
     }
@@ -214,7 +343,7 @@ fn cg_emit_fn(ast: Ast, fns: List<CgSig>, sig: CgSig) -> CgResult {
         // Parameters are immutable Nova values: keep them in SSA instead of
         // spilling to the stack.
         var locals = state.locals
-        locals.push(CgLocal { name: sig.params[i], slot: "", value: "%p" + i.to_string(), mutable: false })
+        locals.push(CgLocal { name: sig.params[i], ty: cg_llvm_type(sig.param_types[i]), slot: "", value: "%p" + i.to_string(), mutable: false })
         state = cg_state(state, state.lines, state.temps, state.slots, locals, state.terminated, state.error)
         i = i + 1
     }
@@ -223,13 +352,23 @@ fn cg_emit_fn(ast: Ast, fns: List<CgSig>, sig: CgSig) -> CgResult {
         return CgResult { ir: "", error: state.error }
     }
     if !state.terminated {
-        return CgResult { ir: "", error: "function " + sig.name + " does not end with return" }
+        if sig.ret == "Unit" {
+            state = cg_line(state, "  ret void")
+            state = cg_state(state, state.lines, state.temps, state.slots, state.locals, true, state.error)
+        } else {
+            return CgResult { ir: "", error: "function " + sig.name + " does not end with return" }
+        }
     }
     let symbol = "nova_user_" + sig.index.to_string()
-    var text = "define i64 @" + symbol + "(ptr %arg_env"
+    let ret_llvm = cg_llvm_type(sig.ret)
+    var text = ""
+    for global in state.globals {
+        text = text + global + "\n"
+    }
+    text = text + "define " + ret_llvm + " @" + symbol + "(ptr %arg_env"
     var k = 0
     while k < sig.params.len() {
-        text = text + ", i64 %p" + k.to_string()
+        text = text + ", " + cg_llvm_type(sig.param_types[k]) + " %p" + k.to_string()
         k = k + 1
     }
     text = text + ") {\n"
@@ -347,28 +486,42 @@ fn cg_stmt(ast: Ast, state: CgState, node: Int) -> CgState {
     if item.kind == ak_let() || item.kind == ak_var() {
         let value = cg_expr2(ast, state, a_child(ast, node, 0))
         var work = value.state
+        if value.ty == "void" {
+            return cg_error(work, "cannot bind a Unit value")
+        }
         if item.kind == ak_let() {
             // Immutable bindings can name the SSA value directly.
             var locals = work.locals
-            locals.push(CgLocal { name: item.text, slot: "", value: value.value, mutable: false })
+            locals.push(CgLocal { name: item.text, ty: value.ty, slot: "", value: value.value, mutable: false })
             return cg_state(work, work.lines, work.temps, work.slots, locals, work.terminated, work.error)
         }
         let slot_result = cg_slot(work)
         work = slot_result.0
         let slot = slot_result.1
-        work = cg_line(work, "  " + slot + " = alloca i64")
-        work = cg_line(work, "  store i64 " + value.value + ", ptr " + slot)
+        work = cg_line(work, "  " + slot + " = alloca " + value.ty)
+        work = cg_line(work, "  store " + value.ty + " " + value.value + ", ptr " + slot)
         var locals = work.locals
-        locals.push(CgLocal { name: item.text, slot: slot, value: "", mutable: true })
+        locals.push(CgLocal { name: item.text, ty: value.ty, slot: slot, value: "", mutable: true })
         return cg_state(work, work.lines, work.temps, work.slots, locals, work.terminated, work.error)
     }
     if item.kind == ak_return() {
         if item.count == 0 {
-            return cg_error(state, "return needs an Int value")
+            if state.ret != "Unit" {
+                return cg_error(state, "return needs a value")
+            }
+            let work = cg_line(state, "  ret void")
+            return cg_state(work, work.lines, work.temps, work.slots, work.locals, true, work.error)
         }
         let value = cg_expr2(ast, state, a_child(ast, node, 0))
         var work = value.state
-        work = cg_line(work, "  ret i64 " + value.value)
+        if state.ret == "Unit" {
+            return cg_error(work, "Unit function cannot return a value")
+        }
+        let expected = cg_llvm_type(state.ret)
+        if value.ty != expected {
+            return cg_error(work, "return type mismatch")
+        }
+        work = cg_line(work, "  ret " + expected + " " + value.value)
         return cg_state(work, work.lines, work.temps, work.slots, work.locals, true, work.error)
     }
     if item.kind == ak_expr_stmt() {
@@ -396,19 +549,22 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
         }
         return cg_val(state, number)
     }
+    if item.kind == ak_string() {
+        return cg_string_lit(state, item.text)
+    }
     if item.kind == ak_ident() {
         let index = cg_local_index(state.locals, item.text)
         if index < 0 {
             return cg_val(cg_error(state, "unknown local " + item.text), "0")
         }
         if state.locals[index].value.len() > 0 {
-            return cg_val(state, state.locals[index].value)
+            return cg_val_typed(state, state.locals[index].value, state.locals[index].ty)
         }
         let temp_result = cg_temp(state)
         var work = temp_result.0
         let temp = temp_result.1
-        work = cg_line(work, "  " + temp + " = load i64, ptr " + state.locals[index].slot)
-        return cg_val(work, temp)
+        work = cg_line(work, "  " + temp + " = load " + state.locals[index].ty + ", ptr " + state.locals[index].slot)
+        return cg_val_typed(work, temp, state.locals[index].ty)
     }
     if item.kind == ak_unary() {
         let value = cg_expr2(ast, state, a_child(ast, node, 0))
@@ -436,8 +592,11 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
                 return cg_val(cg_error(state, "cannot assign to immutable binding " + ast.nodes[left].text), "0")
             }
             let value = cg_expr2(ast, state, a_child(ast, node, 1))
-            let work = cg_line(value.state, "  store i64 " + value.value + ", ptr " + state.locals[index].slot)
-            return cg_val(work, value.value)
+            if value.ty != state.locals[index].ty {
+                return cg_val(cg_error(value.state, "assignment type mismatch"), "0")
+            }
+            let work = cg_line(value.state, "  store " + value.ty + " " + value.value + ", ptr " + state.locals[index].slot)
+            return cg_val_typed(work, value.value, value.ty)
         }
         if op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=" {
             let left = cg_expr2(ast, state, a_child(ast, node, 0))
@@ -485,6 +644,20 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
     }
     if item.kind == ak_call() {
         let callee = a_child(ast, node, 0)
+        if callee >= 0 && ast.nodes[callee].kind == ak_member() {
+            if ast.nodes[callee].text != "len" {
+                return cg_val(cg_error(state, "unsupported method " + ast.nodes[callee].text), "0")
+            }
+            let recv = cg_expr2(ast, state, a_child(ast, callee, 0))
+            if recv.ty != "%nova.string" {
+                return cg_val(cg_error(recv.state, "len() expects String"), "0")
+            }
+            let temp_result = cg_temp(recv.state)
+            var work = temp_result.0
+            let temp = temp_result.1
+            work = cg_line(work, "  " + temp + " = extractvalue %nova.string " + recv.value + ", 1")
+            return cg_val(work, temp)
+        }
         if callee < 0 || ast.nodes[callee].kind != ak_ident() {
             return cg_val(cg_error(state, "only direct function calls are supported"), "0")
         }
@@ -504,22 +677,31 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
         while k < got {
             let arg = cg_expr2(ast, work, a_child(ast, node, k + 1))
             work = arg.state
+            let expected = cg_llvm_type(sig.param_types[k])
+            if arg.ty != expected {
+                return cg_val(cg_error(work, name + " argument " + k.to_string() + " type mismatch"), "0")
+            }
             if k > 0 {
                 args = args + ", "
             }
-            args = args + "i64 " + arg.value
+            args = args + expected + " " + arg.value
             k = k + 1
         }
-        let temp_result = cg_temp(work)
-        work = temp_result.0
-        let temp = temp_result.1
         let symbol = "nova_user_" + sig.index.to_string()
         var call_args = "ptr null"
         if args.len() > 0 {
             call_args = call_args + ", " + args
         }
-        work = cg_line(work, "  " + temp + " = call i64 @" + symbol + "(" + call_args + ")")
-        return cg_val(work, temp)
+        let ret_ty = cg_llvm_type(sig.ret)
+        if ret_ty == "void" {
+            work = cg_line(work, "  call void @" + symbol + "(" + call_args + ")")
+            return cg_val_typed(work, "", "void")
+        }
+        let temp_result = cg_temp(work)
+        work = temp_result.0
+        let temp = temp_result.1
+        work = cg_line(work, "  " + temp + " = call " + ret_ty + " @" + symbol + "(" + call_args + ")")
+        return cg_val_typed(work, temp, ret_ty)
     }
     return cg_val(cg_error(state, "unsupported expression"), "0")
 }

@@ -1,0 +1,11 @@
+fn greeting() -> String {
+    return "hello"
+}
+
+fn length(text: String) -> Int {
+    return text.len()
+}
+
+fn main() -> Int {
+    return length(greeting())
+}

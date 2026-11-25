@@ -1,0 +1,8 @@
+fn noop() {
+    let x = 1
+}
+
+fn main() -> Int {
+    noop()
+    return 4
+}

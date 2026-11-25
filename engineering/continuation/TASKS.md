@@ -28,11 +28,13 @@ and integration gate pass. The full matrix is `PARITY.md`.
   `while`, `icmp`, labels; loop/branch binary exits 17.
 - CODEGEN-01.05 — Immutable-binding SSA lowering: **VERIFIED**. No `alloca` for
   params/`let`; mutable fixture exits 2.
-- CODEGEN-01.04 — Runtime ABI alignment: **PARTIAL**. Int signatures/calls now
-  use `ptr %arg_env`, `nova_user_<index>` symbols and the `@main` wrapper;
-  Unit/void, strings/lists and runtime-call ABI remain. Evidence: 17/0.
+- CODEGEN-01.04 — Runtime ABI alignment: **PARTIAL**. Int/Unit/String
+  signatures and calls use `ptr %arg_env`, `nova_user_<index>`, `void` returns,
+  `%nova.string` by value and the `@main` wrapper; lists and runtime-call ABI
+  remain. Evidence: 32/0.
 - CODEGEN-01.06 — Strings, lists, maps, sets, structs, enums, tuples, arrays,
-  Option/Result: **TODO**.
+  Option/Result: **PARTIAL**. String literals, parameters/returns and `.len()`
+  are verified; concat/equality/runtime and every collection remain.
 - CODEGEN-01.07 — Overflow, division-by-zero, bounds and alignment checks:
   **TODO**.
 - CODEGEN-01.08 — `for`, `match`, `break`/`continue`, short-circuit booleans:

@@ -3,19 +3,22 @@
 Updated: 2026-11-24
 Master directive: owner-supplied; parity matrix in `engineering/continuation/`.
 Repository / branch: `nova` / `selfhost/pure-nova`
-HEAD: `332555b` (build-ir); prior `74124f8`.
-Working tree: clean for self-hosting; unrelated `editor/` and playground changes
-remain untouched.
+HEAD: Unit/String ABI checkpoint; prior `332555b`.
+Working tree: this checkpoint is committed by the accompanying code/doc
+commits; unrelated `editor/` and playground changes remain untouched.
 
 Active milestone: `CODEGEN-01` — Nova LLVM IR lowering
-Active task: `CODEGEN-01.04` — finish Int/Unit/string ABI parity
-Status: PARTIAL
+Active task: `CODEGEN-01.06` — collections/structs and runtime types
+Status: PARTIAL (Int, Unit and string-literal/len slices verified)
 
 ## Last verified behavior
 
-- `sh examples/nova-tool/tests/codegen.sh` → passed 17, failed 0.
-  - `build-ir` writes IR, invokes clang with quoted paths and checks status.
-  - Native binaries exit 9, 2 and 17.
+- `sh examples/nova-tool/tests/codegen.sh` → passed 32, failed 0.
+  - Unit functions use `void`, implicit `ret void` and `call void`; caller exits 4.
+  - Unit `main` calls the entry and exits 0.
+  - String functions use `%nova.string { ptr, i64 }`, literal globals and
+    by-value parameters/returns; `String.len()` uses `extractvalue`; result 5.
+  - Int binaries exit 9, 2 and 17; `build-ir` invokes clang.
   - `ptr %arg_env`, `nova_user_<index>` and the `@main` wrapper are emitted.
   - Immutable params/`let` stay in SSA.
 - `sh examples/nova-tool/tests/parser.sh` → passed 50, failed 0.
@@ -25,28 +28,30 @@ Status: PARTIAL
 
 ## Work completed since previous checkpoint
 
-- `CODEGEN-01.09`: `NOVA_TOOL=build-ir` invokes host clang and produces a
-  native binary; the test executes the Nova-built binary.
-- Shell-safe single-quote path escaping in the tool.
-- Int ABI shape and control-flow lowering from the previous checkpoint.
+- `CODEGEN-01.04` advanced: Unit/void returns, Unit `main`, implicit Unit return,
+  Unit calls, String literals, String parameters/returns and `String.len()`.
+- String globals are emitted per function with stable `@nova.str.<fn>.<n>` names.
+- Shell-safe clang invocation from `build-ir` retained.
 
 ## Incomplete work / known failures
 
-- ABI parity is Int-only: Unit/void, strings, lists, structs and runtime calls.
-- Codegen has no `for`/`match`, strings, collections, structs, enums, overflow
-  or bounds checks.
+- ABI parity is not complete: lists, maps, structs, enums, tuples and runtime
+  calls remain; no list/runtime-call ABI.
+- Strings are partial: no concat, equality, interpolation, format/runtime calls
+  or non-literal construction.
+- Codegen has no collections, `for`/`match`, overflow or bounds checks.
 - `nova build` still uses the Rust seed; the Nova tool is not yet the CLI.
 - Sema lacks modules, generics, traits, methods and full diagnostics.
 - No Nova LSP or stdio transport; no differential Rust/Nova harness.
 
 ## Resume here
 
-1. Extend `CODEGEN-01.04`: inspect the seed's Unit/void and string ABI, then
-   implement Unit returns and string literals without claiming full parity.
-2. Add native tests for a Unit function and a string result.
+1. Extend `CODEGEN-01.06` to `List<Int>` literals, indexing and `.len()` using
+   the seed `%nova.list { ptr, i64, i64 }` shape.
+2. Add native tests for list construction, indexing and length.
 3. Run codegen/parser/sema suites; update `STATE.md`, `EVIDENCE.md`,
    `TASKS.md` and `PARITY.md`; commit.
-4. Then `CODEGEN-01.06` collections/structs, `CODEGEN-01.07` checks, and
+4. Then structs/strings runtime operations, `CODEGEN-01.07` checks, and
    `CLI-01.01`.
 
 ## Validation
@@ -54,10 +59,10 @@ Status: PARTIAL
 - Command: `(cd examples/nova-tool && ../../target/debug/nova build)`
 - Result: PASS
 - Command: `sh examples/nova-tool/tests/codegen.sh`
-- Result: PASS (17/0)
+- Result: PASS (32/0)
 
 ## Blockers and approvals
 
-- No external blocker for ABI work.
+- No external blocker for collection ABI work.
 - Push, publish, deployment and branch deletion require owner authorization.
 - LSP needs sema, stdio and the parity slices above.
