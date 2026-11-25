@@ -1027,6 +1027,9 @@ fn cg_compile(source: String) -> CgResult {
     out = out + "declare void @nova_panic_str(%nova.string, i64)\n"
     out = out + "declare %nova.string @nova_string_concat(%nova.string, %nova.string)\n"
     out = out + "declare i32 @nova_string_eq(%nova.string, %nova.string)\n"
+    out = out + "declare void @nova_print_str(%nova.string, i32, i32)\n"
+    out = out + "declare void @nova_print_i64(i64, i32, i32)\n"
+    out = out + "declare void @nova_print_bool(i32, i32, i32)\n"
     var emitted = 0
     while emitted < fns.len() {
         let sig = fns[emitted]
@@ -2043,6 +2046,43 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
             return cg_val(cg_error(state, "only direct function calls are supported"), "0")
         }
         let name = ast.nodes[callee].text
+        let got = ast.nodes[node].count - 1
+        if name == "print" || name == "println" {
+            if got != 1 {
+                return cg_val(cg_error(state, name + " expects one argument"), "0")
+            }
+            let value = cg_expr2(ast, state, a_child(ast, node, 1))
+            var work = value.state
+            let newline = if name == "println" { "1" } else { "0" }
+            if value.ty == "i64" {
+                work = cg_line(work, "  call void @nova_print_i64(i64 " + value.value + ", i32 " + newline + ", i32 0)")
+            } else if value.ty == "%nova.string" {
+                work = cg_line(work, "  call void @nova_print_str(%nova.string " + value.value + ", i32 " + newline + ", i32 0)")
+            } else if value.ty == "i1" {
+                let wide_result = cg_temp(work)
+                work = wide_result.0
+                let wide = wide_result.1
+                work = cg_line(work, "  " + wide + " = zext i1 " + value.value + " to i32")
+                work = cg_line(work, "  call void @nova_print_bool(i32 " + wide + ", i32 " + newline + ", i32 0)")
+            } else {
+                return cg_val(cg_error(work, name + " supports Int, Bool or String"), "0")
+            }
+            return cg_val_typed(work, "", "void")
+        }
+        if name == "panic" {
+            if got != 1 {
+                return cg_val(cg_error(state, "panic expects one argument"), "0")
+            }
+            let value = cg_expr2(ast, state, a_child(ast, node, 1))
+            var work = value.state
+            if value.ty != "%nova.string" {
+                return cg_val(cg_error(work, "panic expects a String"), "0")
+            }
+            work = cg_line(work, "  call void @nova_panic_str(%nova.string " + value.value + ", i64 " + ast.nodes[node].line.to_string() + ")")
+            work = cg_line(work, "  unreachable")
+            work = cg_state(work, work.lines, work.temps, work.slots, work.locals, true, work.error)
+            return cg_val_typed(work, "", "void")
+        }
         let variant = cg_find_variant(state.enums, name)
         if variant.0 >= 0 {
             return cg_enum_call(ast, state, node, name)
@@ -2052,7 +2092,6 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
             return cg_val(cg_error(state, "unknown function " + name), "0")
         }
         let sig = state.fns[index]
-        let got = ast.nodes[node].count - 1
         if got != sig.params.len() {
             return cg_val(cg_error(state, name + " arity mismatch"), "0")
         }

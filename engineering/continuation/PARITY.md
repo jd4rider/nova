@@ -57,7 +57,7 @@ workspace indexing and cancellation are absent even in Rust.
   binding types are checked, match patterns are validated, block-arm bodies are
   checked, mixed arm types are errors, and Int/Bool/enum matches must be
   exhaustive (`E0311`–`E0313`).
-- Codegen: `tests/codegen.sh` → 107/0; SSA params/`let`; seed-shaped
+- Codegen: `tests/codegen.sh` → 113/0; SSA params/`let`; seed-shaped
   `ptr %arg_env`/`nova_user_N` ABI; Int, Unit/void, `%nova.string` and
   `%nova.list` declarations; string literals and `.len()`; heap-backed
   `List<Int>` literals/params/returns, runtime-linked indexing/assignment/push,
@@ -66,8 +66,8 @@ workspace indexing and cancellation are absent even in Rust.
   matches call the runtime panic; value structs with nested fields,
   construction, reads, assignment and by-value parameters/returns; `build-ir`
   invokes clang. Native results 9, 2, 17, 4, 5, 23, 13, 16, 10, 45, 8, 30, 60,
-  9, struct 14, enum 36 and Unit `main` 0; String match 13; panic exit 1;
-  Mach-O confirmed on this host.
+  9, struct 14, enum 36 and Unit `main` 0; String match 13; print stdout and
+  exit 7; panic exit 1; Mach-O confirmed on this host.
 
 ## Rule
 

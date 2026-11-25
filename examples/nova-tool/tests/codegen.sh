@@ -391,6 +391,27 @@ else
     no "enum binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-print.nova" "$tool")
+echo "$out" | grep -q "call void @nova_print_str" && ok || no "println String call"
+echo "$out" | grep -q "call void @nova_print_i64" && ok || no "print Int call"
+echo "$out" | grep -q "call void @nova_print_bool" && ok || no "println Bool call"
+printf '%s\n' "$out" > "$tmp/print.ll"
+if clang_ir "$tmp/print.ll" "$tmp/print" "$tmp/print-clang.log"; then
+    ok
+else
+    no "clang rejects print IR"
+    cat "$tmp/print-clang.log"
+fi
+if [ -x "$tmp/print" ]; then
+    "$tmp/print" > "$tmp/print.out"
+    code=$?
+    printf 'hello\n12true\n' > "$tmp/print.expected"
+    if cmp -s "$tmp/print.out" "$tmp/print.expected"; then ok; else no "print output"; fi
+    [ "$code" -eq 7 ] && ok || no "print exit (got $code, expected 7)"
+else
+    no "print binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-string-match.nova" "$tool")
 echo "$out" | grep -q "call %nova.string @nova_string_concat" && ok || no "string concatenation call"
 echo "$out" | grep -q "call i32 @nova_string_eq" && ok || no "string equality call"

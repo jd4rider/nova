@@ -56,7 +56,7 @@ Result: PASS — passed 4, failed 0.
 sh examples/nova-tool/tests/codegen.sh
 ```
 
-Result: PASS — passed 107, failed 0.
+Result: PASS — passed 113, failed 0.
 
 - Straight-line Int module: no `alloca` for immutable params/`let`.
 - Mutable module compiles and exits 2.
@@ -96,6 +96,8 @@ element slot; the runtime grows with `realloc`, copies the element and updates
   `non-exhaustive match`; the binary exits 1 and prints the panic.
 - String fixture emits `nova_string_concat`/`nova_string_eq`, matches a
   concatenated String against literal patterns and returns 13.
+- Print fixture emits `nova_print_str`, `nova_print_i64` and `nova_print_bool`;
+  stdout is exactly `hello\n12true\n` and the process exits 7.
 - Struct fixture emits `%nova.struct.Point` and `%nova.struct.Pair` aggregate
   declarations, `insertvalue` construction, `extractvalue` field reads, a
   rebuilt-and-stored aggregate for field assignment, and by-value struct
@@ -138,6 +140,7 @@ and cancellation are absent even in Rust.
 
 ## Commit history
 
+- Output builtins checkpoint — 113/0 codegen, 28/0 sema.
 - String operations/pattern checkpoint — 107/0 codegen, 28/0 sema.
 - Match failure panic checkpoint — 101/0 codegen, 24/0 sema.
 - List runtime checkpoint — 97/0 codegen, 24/0 sema.

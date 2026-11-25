@@ -1,0 +1,6 @@
+fn main() -> Int {
+    println("hello")
+    print(12)
+    println(true)
+    return 7
+}
