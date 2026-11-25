@@ -1,0 +1,6 @@
+fn main() -> Int {
+    let text = "Hello Hello"
+    let replaced = text.replace("Hello", "Hi")
+    let lower = text.lower()
+    return replaced.len() + lower.len()
+}

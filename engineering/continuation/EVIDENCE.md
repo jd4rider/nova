@@ -56,7 +56,7 @@ Result: PASS — passed 4, failed 0.
 sh examples/nova-tool/tests/codegen.sh
 ```
 
-Result: PASS — passed 145, failed 0.
+Result: PASS — passed 149, failed 0.
 
 - Straight-line Int module: no `alloca` for immutable params/`let`.
 - Mutable module compiles and exits 2.
@@ -111,6 +111,8 @@ element slot; the runtime grows with `realloc`, copies the element and updates
   `Label(String, String)` into four slots, then rebuilds both bindings; native 10.
 - List slice fixture copies `values[1..4]`, verifies an empty `[2..2]` slice, and
   uses the copied elements; native 10.
+- String transform fixture calls `nova_string_replace` and `nova_string_lower`;
+  the transformed lengths sum to 16.
 - Assert fixtures emit `nova_assert_fail`; the passing program exits 5 and the
   failing program exits 1 with `assertion failed` on stderr.
 - Struct fixture emits `%nova.struct.Point` and `%nova.struct.Pair` aggregate
@@ -155,6 +157,7 @@ and cancellation are absent even in Rust.
 
 ## Commit history
 
+- String replace/lower checkpoint — 149/0 codegen, 28/0 sema.
 - List slices checkpoint — 145/0 codegen, 28/0 sema.
 - String enum payloads checkpoint — 141/0 codegen, 28/0 sema.
 - Nested match PHI fix checkpoint — 137/0 codegen, 28/0 sema.

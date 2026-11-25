@@ -1173,6 +1173,8 @@ fn cg_compile(source: String) -> CgResult {
     out = out + "declare %nova.string @nova_string_trim(%nova.string)\n"
     out = out + "declare %nova.string @nova_string_trim_start(%nova.string)\n"
     out = out + "declare %nova.string @nova_string_trim_end(%nova.string)\n"
+    out = out + "declare %nova.string @nova_string_replace(%nova.string, %nova.string, %nova.string)\n"
+    out = out + "declare %nova.string @nova_string_lower(%nova.string)\n"
     out = out + "declare void @nova_print_str(%nova.string, i32, i32)\n"
     out = out + "declare void @nova_print_i64(i64, i32, i32)\n"
     out = out + "declare void @nova_print_bool(i32, i32, i32)\n"
@@ -2433,6 +2435,37 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
                 let cond = cond_result.1
                 work = cg_line(work, "  " + cond + " = icmp ne i32 " + result + ", 0")
                 return cg_val_typed(work, cond, "i1")
+            }
+            if ast.nodes[callee].text == "replace" {
+                let got = ast.nodes[node].count - 1
+                if got != 2 {
+                    return cg_val(cg_error(state, "replace expects two arguments"), "0")
+                }
+                let recv = cg_expr2(ast, state, a_child(ast, callee, 0))
+                let from = cg_expr2(ast, recv.state, a_child(ast, node, 1))
+                let to = cg_expr2(ast, from.state, a_child(ast, node, 2))
+                if recv.ty != "%nova.string" || from.ty != "%nova.string" || to.ty != "%nova.string" {
+                    return cg_val(cg_error(to.state, "replace requires Strings"), "0")
+                }
+                let result_result = cg_temp(to.state)
+                var work = result_result.0
+                let result = result_result.1
+                work = cg_line(work, "  " + result + " = call %nova.string @nova_string_replace(%nova.string " + recv.value + ", %nova.string " + from.value + ", %nova.string " + to.value + ")")
+                return cg_val_typed(work, result, "%nova.string")
+            }
+            if ast.nodes[callee].text == "lower" {
+                if ast.nodes[node].count - 1 != 0 {
+                    return cg_val(cg_error(state, "lower takes no arguments"), "0")
+                }
+                let recv = cg_expr2(ast, state, a_child(ast, callee, 0))
+                if recv.ty != "%nova.string" {
+                    return cg_val(cg_error(recv.state, "lower requires a String"), "0")
+                }
+                let result_result = cg_temp(recv.state)
+                var work = result_result.0
+                let result = result_result.1
+                work = cg_line(work, "  " + result + " = call %nova.string @nova_string_lower(%nova.string " + recv.value + ")")
+                return cg_val_typed(work, result, "%nova.string")
             }
             if ast.nodes[callee].text == "trim" || ast.nodes[callee].text == "trim_start" || ast.nodes[callee].text == "trim_end" {
                 if ast.nodes[node].count - 1 != 0 {

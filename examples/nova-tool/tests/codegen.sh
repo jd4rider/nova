@@ -391,6 +391,24 @@ else
     no "enum binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-string-transform.nova" "$tool")
+echo "$out" | grep -q "call %nova.string @nova_string_replace" && ok || no "String replace call"
+echo "$out" | grep -q "call %nova.string @nova_string_lower" && ok || no "String lower call"
+printf '%s\n' "$out" > "$tmp/string-transform.ll"
+if clang_ir "$tmp/string-transform.ll" "$tmp/string-transform" "$tmp/string-transform-clang.log"; then
+    ok
+else
+    no "clang rejects String transform IR"
+    cat "$tmp/string-transform-clang.log"
+fi
+if [ -x "$tmp/string-transform" ]; then
+    "$tmp/string-transform"
+    code=$?
+    [ "$code" -eq 16 ] && ok || no "String transform result (got $code, expected 16)"
+else
+    no "String transform binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-list-slice.nova" "$tool")
 echo "$out" | grep -q "call ptr @nova_list_at" && ok || no "slice reads through nova_list_at"
 echo "$out" | grep -q "call void @nova_list_push" && ok || no "slice pushes through nova_list_push"
