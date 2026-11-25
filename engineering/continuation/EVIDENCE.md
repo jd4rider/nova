@@ -137,8 +137,9 @@ implemented. Indexing, assignment and push use `nova_list_at`/`nova_list_push`;
 bounds failure is the runtime's Nova panic. List literals still allocate with
 libc `malloc` and storage is never freed. Structs are value-only: no generics,
 methods, equality, printing or
-references. Enum payloads are Int-only in codegen. Maps, sets, non-Int enum
-payloads, tuples, arrays and Option/Result remain.
+references. Enum payloads support Int and Bool in codegen. String/struct
+payloads, nested match expressions, maps, sets, tuples, arrays and Option/Result
+remain.
 `emit-ir` is still not the full CLI. This is not a compiler-speed measurement.
 
 ## Parity audit

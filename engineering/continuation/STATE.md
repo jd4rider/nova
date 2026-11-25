@@ -117,8 +117,8 @@ Status: PARTIAL (concat/equality/literal match work; nested patterns remain)
   overflow, division-by-zero and alignment checks remain.
 - Structs and enums are value-only: no generics, methods, references, tuples
   or arrays. Struct/enum equality and printing remain.
-- Enum payloads are `Int`-only in codegen; String/struct payloads and payloads
-  nested in other value types are rejected with an error.
+- Enum payloads support `Int` and `Bool` in codegen; String/struct payloads
+  and payloads nested in other value types are rejected with an error.
 - Maps and sets remain.
 - Strings lack interpolation, ordering, and the wider method/runtime surface.
 - Overflow checks and the full runtime ABI remain.
@@ -128,9 +128,8 @@ Status: PARTIAL (concat/equality/literal match work; nested patterns remain)
 
 ## Resume here
 
-1. Add nested enum patterns and match guards.
-2. Broaden enum payloads beyond Int and add list concat/equality through the
-   runtime.
+1. Fix nested match expression PHIs, then add nested enum patterns and guards.
+2. Add enum payloads beyond Bool (String/struct) and list slices.
 3. Run codegen/parser/sema suites; update `STATE.md`, `EVIDENCE.md`,
    `TASKS.md` and `PARITY.md`; commit.
 
