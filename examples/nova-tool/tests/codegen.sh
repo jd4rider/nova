@@ -391,6 +391,24 @@ else
     no "enum binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-list-concat.nova" "$tool")
+echo "$out" | grep -q "call ptr @nova_list_at" && ok || no "list concat read call"
+echo "$out" | grep -q "call void @nova_list_push" && ok || no "list concat push call"
+printf '%s\n' "$out" > "$tmp/list-concat.ll"
+if clang_ir "$tmp/list-concat.ll" "$tmp/list-concat" "$tmp/list-concat-clang.log"; then
+    ok
+else
+    no "clang rejects list concat IR"
+    cat "$tmp/list-concat-clang.log"
+fi
+if [ -x "$tmp/list-concat" ]; then
+    "$tmp/list-concat"
+    code=$?
+    [ "$code" -eq 11 ] && ok || no "list concat result (got $code, expected 11)"
+else
+    no "list concat binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-list-eq.nova" "$tool")
 echo "$out" | grep -q "phi i1" && ok || no "list equality phi"
 printf '%s\n' "$out" > "$tmp/list-eq.ll"

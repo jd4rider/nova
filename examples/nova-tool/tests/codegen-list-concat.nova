@@ -1,0 +1,9 @@
+fn main() -> Int {
+    let a = [1, 2]
+    let b = [3, 4]
+    let c = a + b
+    if c == [1, 2, 3, 4] {
+        return c.len() * 2 + 3
+    }
+    return 0
+}

@@ -655,6 +655,9 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
         if op == "+" && l == "String" && r == "String" {
             return sa_result(work, "String")
         }
+        if op == "+" && l == "List<Int>" && r == "List<Int>" {
+            return sa_result(work, "List<Int>")
+        }
         if op == "+" || op == "-" || op == "*" || op == "/" || op == "%" {
             if l == "Int" && r == "Int" {
                 return sa_result(work, "Int")

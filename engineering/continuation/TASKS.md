@@ -35,7 +35,7 @@ and integration gate pass. The full matrix is `PARITY.md`.
   signatures and calls use `ptr %arg_env`, `nova_user_<index>`, `void` returns,
   `%nova.string` and `%nova.list` by value, and the `@main` wrapper; list
   `nova_list_at`/`nova_list_push` calls and the linked C runtime are verified.
-  Evidence: 122/0.
+  Evidence: 126/0.
 - CODEGEN-01.06 — Strings, lists, maps, sets, structs, enums, tuples, arrays,
   Option/Result: **PARTIAL**. String literals, parameters/returns and `.len()`  are verified; `List<Int>` literals (including empty), `.len()`, by-value
   parameters/returns and runtime-linked indexing/assignment/push are verified.
@@ -46,8 +46,8 @@ and integration gate pass. The full matrix is `PARITY.md`.
   verified with tags, Int payloads, construction, payload bindings, wildcard
   arms, exhaustive matching and by-value parameters/returns. Lists index, assign
   and push through `nova_list_at`/`nova_list_push`; literals use malloc-backed
-  storage, and `==`/`!=` compare lengths/elements. Concat, slices, maps, sets,
-  non-Int enum payloads, tuples,
+  storage, `==`/`!=` compare lengths/elements, and `+` concatenates. Slices,
+  maps, sets, non-Int enum payloads, tuples,
   arrays and Option/Result remain. String concatenation, equality and literal
   match patterns are verified through the runtime.
 - CODEGEN-01.07 — Overflow, division-by-zero, bounds and alignment checks:
@@ -65,7 +65,7 @@ and integration gate pass. The full matrix is `PARITY.md`.
 - CODEGEN-01.09 — Clang invocation and linking from the Nova tool: **VERIFIED**.
   `build-ir` writes IR, invokes clang with quoted paths, checks exit status and
   produces a native binary and compiles/links `runtime/runtime.c` for list
-  runtime calls. Evidence: `tests/codegen.sh` → 122/0.
+  runtime calls. Evidence: `tests/codegen.sh` → 126/0.
 - CODEGEN-01.10 — Optimization pipeline parity: **TODO**.
 
 ## CLI-01 — Self-hosted driver

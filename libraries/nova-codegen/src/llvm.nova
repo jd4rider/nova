@@ -1490,6 +1490,78 @@ fn cg_int_pattern(text: String) -> String {
     return cg_number(text)
 }
 
+fn cg_list_append(state: CgState, result_slot: String, source: CgVal) -> CgState {
+    let source_slot_result = cg_entry_slot(state, "%nova.list")
+    var work = source_slot_result.0
+    let source_slot = source_slot_result.1
+    work = cg_line(work, "  store %nova.list " + source.value + ", ptr " + source_slot)
+    let loaded_result = cg_temp(work)
+    work = loaded_result.0
+    let loaded = loaded_result.1
+    work = cg_line(work, "  " + loaded + " = load %nova.list, ptr " + source_slot)
+    let len_result = cg_temp(work)
+    work = len_result.0
+    let len = len_result.1
+    work = cg_line(work, "  " + len + " = extractvalue %nova.list " + loaded + ", 1")
+    let index_result = cg_entry_slot(work, "i64")
+    work = index_result.0
+    let index_slot = index_result.1
+    work = cg_line(work, "  store i64 0, ptr " + index_slot)
+    let header_result = cg_label(work)
+    work = header_result.0
+    let header = header_result.1
+    let body_result = cg_label(work)
+    work = body_result.0
+    let body = body_result.1
+    let next_result = cg_label(work)
+    work = next_result.0
+    let next = next_result.1
+    let end_result = cg_label(work)
+    work = end_result.0
+    let end_label = end_result.1
+    work = cg_line(work, "  br label %" + header)
+    work = cg_line(work, header + ":")
+    let index_load_result = cg_temp(work)
+    work = index_load_result.0
+    let index_load = index_load_result.1
+    work = cg_line(work, "  " + index_load + " = load i64, ptr " + index_slot)
+    let cond_result = cg_temp(work)
+    work = cond_result.0
+    let cond = cond_result.1
+    work = cg_line(work, "  " + cond + " = icmp slt i64 " + index_load + ", " + len)
+    work = cg_line(work, "  br i1 " + cond + ", label %" + body + ", label %" + end_label)
+    work = cg_line(work, body + ":")
+    let at_result = cg_temp(work)
+    work = at_result.0
+    let at = at_result.1
+    work = cg_line(work, "  " + at + " = call ptr @nova_list_at(ptr " + source_slot + ", i64 " + index_load + ", i64 8, i64 0)")
+    work = cg_line(work, "  call void @nova_list_push(ptr " + result_slot + ", ptr " + at + ", i64 8)")
+    work = cg_line(work, "  br label %" + next)
+    work = cg_line(work, next + ":")
+    let next_index_result = cg_temp(work)
+    work = next_index_result.0
+    let next_index = next_index_result.1
+    work = cg_line(work, "  " + next_index + " = add i64 " + index_load + ", 1")
+    work = cg_line(work, "  store i64 " + next_index + ", ptr " + index_slot)
+    work = cg_line(work, "  br label %" + header)
+    work = cg_line(work, end_label + ":")
+    return cg_state(work, work.lines, work.temps, work.slots, work.locals, false, work.error)
+}
+
+fn cg_list_concat(state: CgState, left: CgVal, right: CgVal) -> CgVal {
+    let result_slot_result = cg_entry_slot(state, "%nova.list")
+    var work = result_slot_result.0
+    let result_slot = result_slot_result.1
+    work = cg_line(work, "  store %nova.list zeroinitializer, ptr " + result_slot)
+    work = cg_list_append(work, result_slot, left)
+    work = cg_list_append(work, result_slot, right)
+    let loaded_result = cg_temp(work)
+    work = loaded_result.0
+    let loaded = loaded_result.1
+    work = cg_line(work, "  " + loaded + " = load %nova.list, ptr " + result_slot)
+    return cg_val_typed(work, loaded, "%nova.list")
+}
+
 fn cg_list_eq(state: CgState, left: CgVal, right: CgVal, negate: Bool) -> CgVal {
     let left_slot_result = cg_entry_slot(state, "%nova.list")
     var work = left_slot_result.0
@@ -2112,6 +2184,9 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
         }
         let left = cg_expr2(ast, state, a_child(ast, node, 0))
         let right = cg_expr2(ast, left.state, a_child(ast, node, 1))
+        if op == "+" && left.ty == "%nova.list" && right.ty == "%nova.list" {
+            return cg_list_concat(right.state, left, right)
+        }
         if op == "+" && left.ty == "%nova.string" && right.ty == "%nova.string" {
             let temp_result = cg_temp(right.state)
             var work = temp_result.0
