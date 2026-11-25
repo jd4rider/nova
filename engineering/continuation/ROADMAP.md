@@ -19,7 +19,8 @@ The detailed matrix is `PARITY.md`.
 ## Current verified slice
 
 - AST parser 29/29 corpus files.
-- Body sema 9/0.
+- Body sema 15/0, including match pattern validation and Int/Bool
+exhaustiveness.
 - Int/control-flow codegen 15/0; native binaries exit 9, 2 and 17.
 - No claim of compiler/LSP parity or speed.
 

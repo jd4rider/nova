@@ -4,12 +4,12 @@ Updated: 2026-11-24
 Master directive: owner-supplied; parity matrix in `engineering/continuation/`.
 Repository / branch: `nova` / `selfhost/pure-nova`
 HEAD: this checkpoint is committed by the accompanying code/doc commits; prior
-`ddebf4f`.
+`c7d273f`.
 Working tree: unrelated `editor/` and playground changes remain untouched.
 
-Active milestone: `CODEGEN-01` — Nova LLVM IR lowering
-Active task: `CODEGEN-01.08` — loops, match and control flow
-Status: PARTIAL (Int/Bool match; enum patterns and exhaustiveness pending)
+Active milestone: `COMP-01` / `CODEGEN-01` — frontend and LLVM lowering
+Active task: `COMP-01.02` / `CODEGEN-01.08` — match semantics and control flow
+Status: PARTIAL (Int/Bool match and sema validation; enum patterns pending)
 
 ## Last verified behavior
 
@@ -35,20 +35,29 @@ Status: PARTIAL (Int/Bool match; enum patterns and exhaustiveness pending)
     Int 9/2/17; Unit caller 4; Unit `main` 0; string 5.
   - `ptr %arg_env`, `nova_user_<index>` and the `@main` wrapper are emitted.
 - `sh examples/nova-tool/tests/parser.sh` → passed 50, failed 0.
-- `sh examples/nova-tool/tests/sema-ast.sh` → passed 9, failed 0.
+- `sh examples/nova-tool/tests/sema-ast.sh` → passed 15, failed 0.
+  - Int/Bool patterns are validated against the scrutinee.
+  - Unsupported and empty patterns report `E0311`; duplicate or unreachable arms
+    report `E0312`; empty/non-exhaustive matches report `E0313`.
+  - Int matches require `_`; Bool matches require both literals or `_`.
+  - Mixed expression-arm types report `E0301`; Unit block-arm bodies are checked
+    with `sa_block` instead of being skipped.
 - `sh examples/nova-tool/tests/sema.sh` → passed 4, failed 0.
 - Mach-O confirmed on this Apple Silicon host.
 
 ## Work completed since previous checkpoint
 
-- Int/Bool match expressions with literal and wildcard patterns.
+- Int/Bool match codegen with literal and wildcard patterns.
 - Unit block match arms, nested match expressions and phi-based result merging.
-- Native fixtures for Int and Bool/Unit matches.
+- Match semantic validation, block-arm body checking, arm type consistency and
+  Int/Bool exhaustiveness.
+- Focused native and diagnostic fixtures.
 
 ## Incomplete work / known failures
 
-- Match lacks enum/struct/string/binding patterns, exhaustiveness diagnostics
-  and an explicit no-match panic; sema does not validate match patterns.
+- Match lacks enum/struct/string/binding patterns and an explicit no-match
+  panic. Sema rejects unsupported patterns, so they no longer reach codegen
+  silently.
 - No short-circuit `&&`/`||` or first-class `Range` values.
 - `for` supports only exclusive ranges and `List<Int>`.
 - Assignment only writes an existing element of a mutable local list; there is
@@ -65,8 +74,7 @@ Status: PARTIAL (Int/Bool match; enum patterns and exhaustiveness pending)
 
 ## Resume here
 
-1. Add sema diagnostics for match patterns and exhaustiveness, or implement
-   structs/enums so enum match patterns become possible.
+1. Implement structs or enums, then extend match to enum variants and payloads.
 2. Design seed runtime linkage for `nova_list_push`/`nova_list_at`; do not stub
    it.
 3. Run codegen/parser/sema suites; update `STATE.md`, `EVIDENCE.md`,
@@ -78,10 +86,12 @@ Status: PARTIAL (Int/Bool match; enum patterns and exhaustiveness pending)
 - Result: PASS
 - Command: `sh examples/nova-tool/tests/codegen.sh`
 - Result: PASS (73/0)
+- Command: `sh examples/nova-tool/tests/sema-ast.sh`
+- Result: PASS (15/0)
 
 ## Blockers and approvals
 
-- No external blocker for sema match validation or structs/enums.
+- No external blocker for structs/enums or seed runtime linkage.
 - Seed runtime linkage remains an explicit design decision; do not claim
   `nova_list_*` parity while push uses libc.
 - Push, publish, deployment and branch deletion require owner authorization.

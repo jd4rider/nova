@@ -6,8 +6,9 @@ and integration gate pass. The full matrix is `PARITY.md`.
 ## COMP-01 — Nova compiler frontend
 
 - COMP-01.01 — AST parser corpus: **VERIFIED**. 50/0, 29-file corpus.
-- COMP-01.02 — Body semantic slice: **PARTIAL**. 9/0; declarations, scopes,
-  expression/return types, calls, fields, control-flow conditions.
+- COMP-01.02 — Body semantic slice: **PARTIAL**. 15/0; declarations, scopes,
+  expression/return types, calls, fields, control-flow conditions, match pattern
+  validation, block-arm checking and Int/Bool exhaustiveness.
 - COMP-01.03 — Module/import resolution: **READY**. Load relative imports,
   collect declarations, diagnose unknown imports, test a two-file program.
 - COMP-01.04 — Generics, methods, traits, closures: **TODO**.
@@ -43,8 +44,9 @@ and integration gate pass. The full matrix is `PARITY.md`.
   **TODO**.
 - CODEGEN-01.08 — `for`, `match`, `break`/`continue`, short-circuit booleans:
   **PARTIAL**. Range/list/nested `for`, `break`/`continue`, Int/Bool `match`
-  expressions and Unit block arms are verified natively. Enum/string/binding
-  patterns, exhaustiveness diagnostics, an explicit no-match panic and
+  expressions and Unit block arms are verified natively. Sema rejects
+  enum/string/binding patterns and duplicate or unreachable arms, checks arm
+  types and enforces Int/Bool exhaustiveness. An explicit no-match panic and
   short-circuit boolean evaluation remain.
 - CODEGEN-01.09 — Clang invocation and linking from the Nova tool: **VERIFIED**.
   `build-ir` writes IR, invokes clang with quoted paths, checks exit status and

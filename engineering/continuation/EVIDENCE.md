@@ -27,7 +27,13 @@ Commits: `93d61dc`, `983fd6a`.
 sh examples/nova-tool/tests/sema-ast.sh
 ```
 
-Result: PASS — passed 9, failed 0. Commit `47302b6`.
+Result: PASS — passed 15, failed 0.
+
+- Exhaustive Int and Bool matches are accepted.
+- Duplicate arms report `E0312`; unsupported binding patterns report `E0311`;
+  an incomplete Bool match reports `E0313`.
+- Mixed arm types report `E0301`, and a Unit block-arm body is checked rather
+  than skipped.
 
 ## Declaration sema
 
@@ -85,9 +91,10 @@ Limit: ABI parity covers Int, Unit, the string-literal/len subset and the
 `List<Int>` literal/parameter/return/push/assignment subset. `for` supports
 exclusive integer ranges and `List<Int>` only; range values outside `for`
 remain. `match` supports Int/Bool scrutinees, integer/Bool literals, `_`,
-expression arms and Unit block arms; enum/string/binding patterns,
-exhaustiveness diagnostics and short-circuit booleans remain. An unmatched
-match reaches `unreachable`, not a Nova panic. Assignment only writes an
+expression arms and Unit block arms; sema rejects enum/string/binding patterns
+and duplicate or unreachable arms, checks arm types and enforces Int/Bool
+exhaustiveness. Short-circuit booleans remain. An unmatched match reaches
+`unreachable`, not a Nova panic. Assignment only writes an
 existing element of a mutable local list; slices, insertion, removal and the
 `nova_list_*` runtime are not implemented. Push uses libc `realloc` rather than
 the seed allocator. List storage is never freed; the bounds trap is not a Nova
@@ -104,7 +111,8 @@ and cancellation are absent even in Rust.
 
 ## Commit history
 
-- `match` checkpoint — 73/0.
+- `match` sema checkpoint — 73/0 codegen, 15/0 sema.
+- `match` codegen checkpoint — 73/0.
 - `for`/loop-control checkpoint — 67/0.
 - `List<Int>` assignment checkpoint — 58/0.
 - `List<Int>` push checkpoint — 54/0.

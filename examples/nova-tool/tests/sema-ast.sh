@@ -59,5 +59,43 @@ printf 'fn same() {\n}\n\nfn same() {\n}\n' > "$tmp/dup.nova"
 out=$(NOVA_TOOL=sema-ast NOVA_TOOL_PATH="$tmp/dup.nova" "$tool")
 echo "$out" | grep -q "E0307" && ok || no "duplicate declaration"
 
+cat > "$tmp/match-ok.nova" <<'NOVA'
+fn classify(n: Int) -> Int {
+    return match n {
+        1 => 10
+        _ => 20
+    }
+}
+
+fn main() {
+    let b = match true {
+        true => 1
+        false => 2
+    }
+}
+NOVA
+out=$(NOVA_TOOL=sema-ast NOVA_TOOL_PATH="$tmp/match-ok.nova" "$tool")
+echo "$out" | grep -q "^OK " && ok || no "exhaustive match"
+
+printf 'fn main() {\n    let x = match 1 {\n        1 => 1\n        1 => 2\n        _ => 3\n    }\n}\n' > "$tmp/match-dup.nova"
+out=$(NOVA_TOOL=sema-ast NOVA_TOOL_PATH="$tmp/match-dup.nova" "$tool")
+echo "$out" | grep -q "E0312" && ok || no "duplicate match arm"
+
+printf 'fn main() {\n    let x = match 1 {\n        n => 2\n        _ => 3\n    }\n}\n' > "$tmp/match-bind.nova"
+out=$(NOVA_TOOL=sema-ast NOVA_TOOL_PATH="$tmp/match-bind.nova" "$tool")
+echo "$out" | grep -q "E0311" && ok || no "unsupported match pattern"
+
+printf 'fn main() {\n    let x = match true {\n        true => 1\n    }\n}\n' > "$tmp/match-exhaustive.nova"
+out=$(NOVA_TOOL=sema-ast NOVA_TOOL_PATH="$tmp/match-exhaustive.nova" "$tool")
+echo "$out" | grep -q "E0313" && ok || no "non-exhaustive Bool match"
+
+printf 'fn main() {\n    let x = match 1 {\n        1 => 1\n        _ => "bad"\n    }\n}\n' > "$tmp/match-types.nova"
+out=$(NOVA_TOOL=sema-ast NOVA_TOOL_PATH="$tmp/match-types.nova" "$tool")
+echo "$out" | grep -q "match arms must return the same type" && ok || no "match arm type"
+
+printf 'fn main() {\n    let n = 1\n    match n {\n        _ => {\n            let x: Int = "bad"\n        }\n    }\n}\n' > "$tmp/match-block.nova"
+out=$(NOVA_TOOL=sema-ast NOVA_TOOL_PATH="$tmp/match-block.nova" "$tool")
+echo "$out" | grep -q "E0301" && ok || no "match block arm body"
+
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]

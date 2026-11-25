@@ -137,6 +137,127 @@ fn sa_elem_type(name: String) -> String {
     return "?"
 }
 
+fn sa_int_pattern(text: String) -> Bool {
+    let chars = text.chars()
+    if chars.len() == 0 {
+        return false
+    }
+    var i = 0
+    if chars[0] == "-" {
+        i = 1
+    }
+    if i >= chars.len() {
+        return false
+    }
+    while i < chars.len() {
+        if !"0123456789_".contains(chars[i]) {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+fn sa_match_expr(ctx: SaCtx, node: Int, scrutinee: String) -> SaResult {
+    let item = ctx.ast.nodes[node]
+    var work = ctx
+    var result = ""
+    var wildcard = false
+    var has_true = false
+    var has_false = false
+    var seen: List<String> = []
+    let supported = scrutinee == "Int" || scrutinee == "Bool" || scrutinee == "?"
+    if !supported {
+        work = sa_error(work, node, "E0311", "match supports Int or Bool scrutinees, got " + scrutinee)
+    }
+    var i = 1
+    while i < item.count {
+        let arm = a_child(ctx.ast, node, i)
+        if arm < 0 {
+            work = sa_error(work, node, "E0311", "invalid match arm")
+        } else {
+            let pattern = ctx.ast.nodes[arm].text
+            if pattern.len() == 0 {
+                work = sa_error(work, arm, "E0311", "empty match pattern")
+            } else if wildcard {
+                work = sa_error(work, arm, "E0312", "unreachable match arm after `_`")
+            } else if pattern == "_" {
+                wildcard = true
+            } else if supported && scrutinee == "Int" {
+                if pattern == "true" || pattern == "false" {
+                    work = sa_error(
+                        work,
+                        arm,
+                        "E0311",
+                        "Bool pattern `" + pattern + "` requires a Bool scrutinee"
+                    )
+                } else if !sa_int_pattern(pattern) {
+                    work = sa_error(work, arm, "E0311", "unsupported match pattern `" + pattern + "` for Int")
+                } else if sa_has(seen, pattern) {
+                    work = sa_error(work, arm, "E0312", "duplicate match arm `" + pattern + "`")
+                } else {
+                    seen.push(pattern)
+                }
+            } else if supported && scrutinee == "Bool" {
+                if pattern == "true" || pattern == "false" {
+                    if sa_has(seen, pattern) {
+                        work = sa_error(work, arm, "E0312", "duplicate match arm `" + pattern + "`")
+                    } else {
+                        seen.push(pattern)
+                        if pattern == "true" {
+                            has_true = true
+                        } else {
+                            has_false = true
+                        }
+                    }
+                } else if sa_int_pattern(pattern) {
+                    work = sa_error(
+                        work,
+                        arm,
+                        "E0311",
+                        "integer pattern `" + pattern + "` requires an Int scrutinee"
+                    )
+                } else {
+                    work = sa_error(work, arm, "E0311", "unsupported match pattern `" + pattern + "` for Bool")
+                }
+            }
+            let body = a_child(ctx.ast, arm, 0)
+            var body_ty = "?"
+            if body >= 0 && ctx.ast.nodes[body].kind == ak_block() {
+                work = sa_block(work, body)
+                body_ty = "Unit"
+            } else {
+                let value = sa_expr(work, body)
+                work = value.ctx
+                body_ty = value.type_name
+            }
+            if result.len() == 0 {
+                result = body_ty
+            } else if body_ty != "?" && result != "?" && !sa_same(result, body_ty) {
+                work = sa_error(
+                    work,
+                    body,
+                    "E0301",
+                    "match arms must return the same type, got " + result + " and " + body_ty
+                )
+                result = "?"
+            }
+        }
+        i = i + 1
+    }
+    if item.count == 1 {
+        work = sa_error(work, node, "E0313", "match has no arms")
+    } else if scrutinee == "Int" && !wildcard {
+        work = sa_error(work, node, "E0313", "non-exhaustive match on Int; add `_`")
+    } else if scrutinee == "Bool" && !wildcard && !(has_true && has_false) {
+        work = sa_error(work, node, "E0313", "non-exhaustive match on Bool; cover true and false or add `_`")
+    }
+    if result.len() == 0 {
+        result = "?"
+    }
+    return sa_result(work, result)
+}
+
 fn sa_same(expected: String, actual: String) -> Bool {
     if expected == "?" || actual == "?" || expected == "Any" {
         return true
@@ -493,22 +614,7 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
     }
     if item.kind == ak_match() {
         let scrutinee = sa_expr(ctx, a_child(ctx.ast, node, 0))
-        var work = scrutinee.ctx
-        var result = ""
-        var i = 1
-        while i < item.count {
-            let arm = a_child(ctx.ast, node, i)
-            let body = a_child(ctx.ast, arm, 0)
-            let value = sa_expr(work, body)
-            work = value.ctx
-            if result.len() == 0 {
-                result = value.type_name
-            } else if !sa_same(result, value.type_name) {
-                result = "?"
-            }
-            i = i + 1
-        }
-        return sa_result(work, result)
+        return sa_match_expr(scrutinee.ctx, node, scrutinee.type_name)
     }
     if item.kind == ak_if() {
         var work = sa_check_bool(ctx, a_child(ctx.ast, node, 0))
