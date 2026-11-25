@@ -784,6 +784,22 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
     }
     if item.kind == ak_index() {
         let object = sa_expr(ctx, a_child(ctx.ast, node, 0))
+        let index_node = a_child(ctx.ast, node, 1)
+        if index_node >= 0 && ctx.ast.nodes[index_node].kind == ak_binary() && ctx.ast.nodes[index_node].text == ".." {
+            let start = sa_expr(object.ctx, a_child(ctx.ast, index_node, 0))
+            let end = sa_expr(start.ctx, a_child(ctx.ast, index_node, 1))
+            var work = end.ctx
+            if object.type_name != "List<Int>" && object.type_name != "?" {
+                work = sa_error(work, node, "E0301", "slicing expects List<Int>, got " + object.type_name)
+            }
+            if !sa_same("Int", start.type_name) && start.type_name != "?" {
+                work = sa_error(work, a_child(ctx.ast, index_node, 0), "E0301", "slice start must be Int, got " + start.type_name)
+            }
+            if !sa_same("Int", end.type_name) && end.type_name != "?" {
+                work = sa_error(work, a_child(ctx.ast, index_node, 1), "E0301", "slice end must be Int, got " + end.type_name)
+            }
+            return sa_result(work, "List<Int>")
+        }
         let index = sa_expr(object.ctx, a_child(ctx.ast, node, 1))
         var work = index.ctx
         if !sa_same("Int", index.type_name) && index.type_name != "?" {

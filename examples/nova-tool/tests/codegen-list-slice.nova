@@ -1,0 +1,9 @@
+fn main() -> Int {
+    let values = [1, 2, 3, 4, 5]
+    let middle = values[1..4]
+    let empty = values[2..2]
+    if empty.len() != 0 {
+        return 0
+    }
+    return middle.len() * 2 + middle[2]
+}

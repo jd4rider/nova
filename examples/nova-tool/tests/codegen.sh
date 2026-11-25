@@ -391,6 +391,24 @@ else
     no "enum binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-list-slice.nova" "$tool")
+echo "$out" | grep -q "call ptr @nova_list_at" && ok || no "slice reads through nova_list_at"
+echo "$out" | grep -q "call void @nova_list_push" && ok || no "slice pushes through nova_list_push"
+printf '%s\n' "$out" > "$tmp/list-slice.ll"
+if clang_ir "$tmp/list-slice.ll" "$tmp/list-slice" "$tmp/list-slice-clang.log"; then
+    ok
+else
+    no "clang rejects list slice IR"
+    cat "$tmp/list-slice-clang.log"
+fi
+if [ -x "$tmp/list-slice" ]; then
+    "$tmp/list-slice"
+    code=$?
+    [ "$code" -eq 10 ] && ok || no "list slice result (got $code, expected 10)"
+else
+    no "list slice binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-enum-string.nova" "$tool")
 echo "$out" | grep -q "%nova.enum.Message = type { i32, i64, i64, i64, i64 }" && ok || no "String enum slot layout"
 echo "$out" | grep -q "extractvalue %nova.string" && ok || no "String enum payload packing"

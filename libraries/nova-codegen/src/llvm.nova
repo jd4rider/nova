@@ -830,7 +830,84 @@ fn cg_list_lit(ast: Ast, state: CgState, node: Int) -> CgVal {
     return cg_val_typed(work, third, "%nova.list")
 }
 
+fn cg_list_slice(ast: Ast, state: CgState, node: Int, base_node: Int, range_node: Int) -> CgVal {
+    let base = cg_expr2(ast, state, base_node)
+    let start = cg_expr2(ast, base.state, a_child(ast, range_node, 0))
+    let end = cg_expr2(ast, start.state, a_child(ast, range_node, 1))
+    if base.ty != "%nova.list" {
+        return cg_val(cg_error(end.state, "slicing expects List<Int>"), "0")
+    }
+    if start.ty != "i64" || end.ty != "i64" {
+        return cg_val(cg_error(end.state, "slice bounds must be Int"), "0")
+    }
+    let base_slot_result = cg_entry_slot(end.state, "%nova.list")
+    var work = base_slot_result.0
+    let base_slot = base_slot_result.1
+    work = cg_line(work, "  store %nova.list " + base.value + ", ptr " + base_slot)
+    let result_slot_result = cg_entry_slot(work, "%nova.list")
+    work = result_slot_result.0
+    let result_slot = result_slot_result.1
+    work = cg_line(work, "  store %nova.list zeroinitializer, ptr " + result_slot)
+    let elem_slot_result = cg_entry_slot(work, "i64")
+    work = elem_slot_result.0
+    let elem_slot = elem_slot_result.1
+    let index_slot_result = cg_entry_slot(work, "i64")
+    work = index_slot_result.0
+    let index_slot = index_slot_result.1
+    work = cg_line(work, "  store i64 " + start.value + ", ptr " + index_slot)
+    let header_result = cg_label(work)
+    work = header_result.0
+    let header = header_result.1
+    let body_result = cg_label(work)
+    work = body_result.0
+    let body = body_result.1
+    let done_result = cg_label(work)
+    work = done_result.0
+    let done = done_result.1
+    work = cg_line(work, "  br label %" + header)
+    work = cg_line(work, header + ":")
+    let index_load_result = cg_temp(work)
+    work = index_load_result.0
+    let index_load = index_load_result.1
+    work = cg_line(work, "  " + index_load + " = load i64, ptr " + index_slot)
+    let condition_result = cg_temp(work)
+    work = condition_result.0
+    let condition = condition_result.1
+    work = cg_line(work, "  " + condition + " = icmp slt i64 " + index_load + ", " + end.value)
+    work = cg_line(work, "  br i1 " + condition + ", label %" + body + ", label %" + done)
+    work = cg_line(work, body + ":")
+    let ptr_result = cg_temp(work)
+    work = ptr_result.0
+    let ptr = ptr_result.1
+    work = cg_line(
+        work,
+        "  " + ptr + " = call ptr @nova_list_at(ptr " + base_slot + ", i64 " + index_load + ", i64 8, i64 " + ast.nodes[node].line.to_string() + ")",
+    )
+    let value_result = cg_temp(work)
+    work = value_result.0
+    let value = value_result.1
+    work = cg_line(work, "  " + value + " = load i64, ptr " + ptr)
+    work = cg_line(work, "  store i64 " + value + ", ptr " + elem_slot)
+    work = cg_line(work, "  call void @nova_list_push(ptr " + result_slot + ", ptr " + elem_slot + ", i64 8)")
+    let next_result = cg_temp(work)
+    work = next_result.0
+    let next = next_result.1
+    work = cg_line(work, "  " + next + " = add i64 " + index_load + ", 1")
+    work = cg_line(work, "  store i64 " + next + ", ptr " + index_slot)
+    work = cg_line(work, "  br label %" + header)
+    work = cg_line(work, done + ":")
+    let result_result = cg_temp(work)
+    work = result_result.0
+    let result = result_result.1
+    work = cg_line(work, "  " + result + " = load %nova.list, ptr " + result_slot)
+    return cg_val_typed(work, result, "%nova.list")
+}
+
 fn cg_index(ast: Ast, state: CgState, node: Int) -> CgVal {
+    let index_node = a_child(ast, node, 1)
+    if index_node >= 0 && ast.nodes[index_node].kind == ak_binary() && ast.nodes[index_node].text == ".." {
+        return cg_list_slice(ast, state, node, a_child(ast, node, 0), index_node)
+    }
     let base = cg_expr2(ast, state, a_child(ast, node, 0))
     let index = cg_expr2(ast, base.state, a_child(ast, node, 1))
     if base.ty != "%nova.list" {

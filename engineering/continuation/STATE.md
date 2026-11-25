@@ -13,7 +13,7 @@ Status: PARTIAL (concat/equality/literal match work; nested patterns remain)
 
 ## Last verified behavior
 
-- `sh examples/nova-tool/tests/codegen.sh` → passed 141, failed 0.
+- `sh examples/nova-tool/tests/codegen.sh` → passed 145, failed 0.
   - `List<Int>` literals allocate with libc `malloc`; empty lists supported.
   - List parameters and returns use by-value `%nova.list`; a literal survives
     return, identity and indexing (native 13).
@@ -56,7 +56,8 @@ Status: PARTIAL (concat/equality/literal match work; nested patterns remain)
     match expressions merge through per-arm completion blocks.
   - `List<Int> ==`/`!=` compare lengths and elements through `nova_list_at`;
     empty, equal and unequal lists are verified natively (12). `List + List`
-    concatenates through `nova_list_at`/`nova_list_push` (11).
+    concatenates through `nova_list_at`/`nova_list_push` (11). Slices
+    `values[start..end]` build a new list through the same runtime (10).
   - `ptr %arg_env`, `nova_user_<index>` and the `@main` wrapper are emitted.
 - `sh examples/nova-tool/tests/parser.sh` → passed 50, failed 0.
 - `sh examples/nova-tool/tests/sema-ast.sh` → passed 28, failed 0.
@@ -111,7 +112,7 @@ Status: PARTIAL (concat/equality/literal match work; nested patterns remain)
 - No short-circuit `&&`/`||` or first-class `Range` values.
 - `for` supports only exclusive ranges and `List<Int>`.
 - Assignment only writes an existing element of a mutable local list; there is
-  no insertion, removal or slicing.
+  no insertion or removal.
 - List literals still allocate their backing array directly with libc
   `malloc`; storage is never freed and ownership/GC is unresolved.
 - `nova_list_at` now supplies the seed bounds panic for indexing and assignment;
@@ -130,7 +131,7 @@ Status: PARTIAL (concat/equality/literal match work; nested patterns remain)
 ## Resume here
 
 1. Add nested enum patterns and match guards.
-2. Add struct/enum payloads and list slices.
+2. Add struct/enum payloads and match guards.
 3. Run codegen/parser/sema suites; update `STATE.md`, `EVIDENCE.md`,
    `TASKS.md` and `PARITY.md`; commit.
 
