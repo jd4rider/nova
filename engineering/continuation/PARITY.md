@@ -26,7 +26,7 @@ baseline suite was not rerun in this session. Status: `VERIFIED`, `PARTIAL`,
 | Optimization parity | Rust LLVM pipeline | TODO | CODEGEN-01.10 |
 | Differential Rust/Nova tests | — | TODO | DIFF-01.01, DIFF-01.02 |
 | Stage 1/2/3 bootstrap | Rust seed | PARTIAL — the Nova tool builds itself through three generations and each binary compiles the native sample (exit 9); hashes differ, so no byte-identical fixed point is claimed | BOOT-02.01–03 |
-| Nova compiler built by itself | — | PARTIAL — the driver/parser/sema/codegen tool self-builds; full compiler parity and the LSP remain | BOOT-02.04 |
+| Nova compiler built by itself | — | PARTIAL — the driver/parser/sema/codegen tool self-builds and includes the LSP diagnostics slice; full compiler parity and LSP feature parity remain | BOOT-02.04 |
 
 ## LSP
 
@@ -38,17 +38,17 @@ workspace indexing and cancellation are absent even in Rust.
 
 | LSP capability | Rust | Nova | Task |
 |---|---|---|---|
-| stdio/JSON-RPC transport | present | TODO | LSP-01.01 |
-| initialize/capabilities | present | TODO | LSP-01.02 |
-| full document sync | present | TODO | LSP-01.02 |
-| diagnostics | present | TODO | LSP-01.02 |
+| stdio/JSON-RPC transport | present | present — Content-Length framing, `tests/lsp.sh` | LSP-01.01 |
+| initialize/capabilities | present | present — advertises full-document sync | LSP-01.02 |
+| full document sync | present | present — didOpen/didChange/didSave/didClose | LSP-01.02 |
+| diagnostics | present | present — Nova parser/sema diagnostics, cleared on close | LSP-01.02 |
 | completion | present | TODO | LSP-01.03 |
 | hover, definition, document symbols | present | TODO | LSP-01.04 |
 | formatting | present | TODO | LSP-01.05 |
 | incremental sync / incomplete source | absent in Rust | TODO | LSP-01.06 |
 | rename, references, semantic tokens, code actions, cancellation | absent in Rust | TODO | LSP-01.07 |
-| protocol transcript tests | partial unit tests | TODO | LSP-01.08 |
-| Studio integration | Rust server | TODO | LSP-01.08, BOOT-02.05 |
+| protocol transcript tests | partial unit tests | present for transport/sync/diagnostics (`tests/lsp.sh`); feature transcripts TODO | LSP-01.08 |
+| Studio integration | Rust server | TODO — `nova lsp` still launches Rust; the Nova server is `nova-tool lsp` | LSP-01.08, BOOT-02.05 |
 
 ## Verified Nova slices
 
@@ -58,6 +58,10 @@ workspace indexing and cancellation are absent even in Rust.
   binding types are checked, match patterns are validated, block-arm bodies are
   checked, mixed arm types are errors, and Int/Bool/enum matches must be
   exhaustive (`E0311`–`E0313`).
+- Nova LSP: `tests/lsp.sh` → PASS; framed stdio, initialize, full-document
+  sync and diagnostics. The invalid-buffer fixture reports `E0301`; the fixed
+  buffer and `didClose` report none. Passes against the seed-built tool and
+  `/tmp/nova-self`/`/tmp/nova-self-2`/`/tmp/nova-self-3`.
 - Codegen: `tests/codegen.sh` → 221/0; SSA params/`let`; seed-shaped
   `ptr %arg_env`/`nova_user_N` ABI; Int, Unit/void, `%nova.string` and
   `%nova.list` declarations; string literals and `.len()`; heap-backed

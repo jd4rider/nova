@@ -19,6 +19,22 @@ sh examples/nova-tool/tests/cli.sh
 
 Result: PASS — passed 11, failed 0.
 
+## Nova LSP
+
+```sh
+sh examples/nova-tool/tests/lsp.sh
+sh examples/nova-tool/tests/lsp.sh /tmp/nova-self
+sh examples/nova-tool/tests/lsp.sh /tmp/nova-self-2
+```
+
+Result: PASS. `nova-tool lsp` reads Content-Length-framed JSON-RPC from stdin
+and writes framed responses/notifications to stdout. It implements `initialize`
+(full-document sync capability), `shutdown`, `exit`, `didOpen`, `didChange`,
+`didSave` and `didClose`. Diagnostics come from the Nova parser/sema slice; an
+invalid `Int` binding reports `E0301` at the source position, the fixed buffer
+reports none, and closing the document clears diagnostics. Completion, hover,
+definition, formatting and `nova lsp`/Studio wiring are not implemented.
+
 The Nova tool now reads process arguments, accepts `build` with no arguments
 for a project or `build <source> [output]` for one file, prints `built <path>`,
 and returns the native exit status. The single-file fixture exits 7 and the
@@ -215,6 +231,16 @@ generation compiled `tests/codegen-sample.nova`, and the native program exited
 not a byte-identical fixed-point claim. `nova build` still runs the Rust seed
 and no Rust crate has been deleted.
 
+The LSP protocol test also passes against generation 1 and generation 2:
+
+```sh
+sh examples/nova-tool/tests/lsp.sh /tmp/nova-self
+sh examples/nova-tool/tests/lsp.sh /tmp/nova-self-2
+sh examples/nova-tool/tests/lsp.sh /tmp/nova-self-3
+```
+
+Result: PASS — all three Nova-built binaries returned `nova-lsp diagnostics ok`.
+
 ## Parity audit
 
 `PARITY.md` maps every audited compiler and LSP capability to a stable task ID.
@@ -225,6 +251,8 @@ and cancellation are absent even in Rust.
 
 ## Commit history
 
+- Nova LSP diagnostics checkpoint — 221/0 codegen, 11/0 CLI, 125/0 toolchain,
+  LSP protocol PASS.
 - Stage 1/2/3 Nova-tool bootstrap checkpoint — 221/0 codegen, 11/0 CLI.
 - Self-build prerequisites checkpoint — 209/0 codegen, 11/0 CLI.
 - Nova CLI build/run/check checkpoint — 184/0 codegen, 9/0 CLI.

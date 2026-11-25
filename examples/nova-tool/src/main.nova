@@ -16,6 +16,7 @@ import "../../../libraries/nova-boxes/src/report.nova"
 import "../../../libraries/nova-boxes/src/archive.nova"
 import "../../../libraries/nova-boxes/src/json.nova"
 import "../../../libraries/nova-boxes/src/registry.nova"
+import "../../../libraries/nova-lsp/src/lsp.nova"
 
 // nova-tool: the phase-1 self-hosted toolchain, in Nova.
 //
@@ -349,6 +350,9 @@ fn nt_build_source(path: String, source: String, target: String) -> Int {
 
 fn main() {
     let argc = gui.args_count()
+    if argc >= 2 && gui.arg(1) == "lsp" {
+        gui.exit(lsp_run_stdio())
+    }
     if argc >= 2 && gui.arg(1) == "build" {
         if argc < 3 {
             gui.exit(nt_build_project())

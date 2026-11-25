@@ -1,0 +1,229 @@
+// A small, real Nova language server over stdio.
+//
+// This is the first LSP slice: length-framed JSON-RPC transport, initialize,
+// shutdown, full-document sync and published semantic diagnostics. Formatting,
+// completion, hover and navigation are intentionally not advertised yet.
+
+import "../../nova-boxes/src/json.nova"
+import "../../nova-check/src/sema.nova"
+
+extern "C" fn nova_stdin_read_line() -> String
+extern "C" fn nova_stdin_read_bytes(count: Int) -> String
+
+struct LspMessage {
+    body: String,
+    ok: Bool,
+}
+
+struct LspDiag {
+    code: String,
+    message: String,
+    line: Int,
+    column: Int,
+}
+
+fn lsp_digit(c: String) -> Int {
+    let digits = "0123456789".chars()
+    var i = 0
+    while i < digits.len() {
+        if digits[i] == c {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+fn lsp_int(text: String) -> Int {
+    var value = 0
+    var seen = false
+    for c in text.trim().chars() {
+        let digit = lsp_digit(c)
+        if digit < 0 {
+            if seen {
+                return value
+            }
+        } else {
+            value = value * 10 + digit
+            seen = true
+        }
+    }
+    return value
+}
+
+fn lsp_read_message() -> LspMessage {
+    var length = 0 - 1
+    var reading = true
+    while reading {
+        let line = nova_stdin_read_line()
+        if line.len() == 0 {
+            return LspMessage { body: "", ok: false }
+        }
+        let text = line.trim()
+        if text.len() == 0 {
+            reading = false
+        } else if text.starts_with("Content-Length:") {
+            let parts = text.split(":")
+            if parts.len() >= 2 {
+                length = lsp_int(parts[1])
+            }
+        }
+    }
+    if length < 0 {
+        return LspMessage { body: "", ok: false }
+    }
+    let body = nova_stdin_read_bytes(length)
+    return LspMessage { body: body, ok: body.len() == length }
+}
+
+fn lsp_send(body: String) {
+    print("Content-Length: " + body.len().to_string() + "\r\n\r\n" + body)
+}
+
+fn lsp_response(id: String, result: String) -> String {
+    return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":" + result + "}"
+}
+
+fn lsp_error(id: String, code: Int, message: String) -> String {
+    return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"error\":{\"code\":" + code.to_string() + ",\"message\":" + js_quote(message) + "}}"
+}
+
+fn lsp_after_first_space(text: String) -> String {
+    var out = ""
+    var found = false
+    for c in text.chars() {
+        if !found && c == " " {
+            found = true
+        } else if found {
+            out = out + c
+        }
+    }
+    return out
+}
+
+fn lsp_diag_parts(text: String) -> LspDiag {
+    var head = text
+    var line = 0
+    var column = 0
+    let located = text.split(" at line ")
+    if located.len() >= 2 {
+        head = located[0]
+        let place = located[1].split(", column ")
+        if place.len() >= 2 {
+            line = lsp_int(place[0])
+            column = lsp_int(place[1])
+        }
+    }
+    var code = ""
+    let words = head.split(" ")
+    if words.len() > 0 {
+        code = words[0]
+    }
+    return LspDiag {
+        code: code,
+        message: lsp_after_first_space(head),
+        line: line,
+        column: column,
+    }
+}
+
+fn lsp_diagnostics(source: String) -> String {
+    let errors = sa_check(source)
+    var out = "["
+    var i = 0
+    while i < errors.len() {
+        if i > 0 {
+            out = out + ","
+        }
+        let d = lsp_diag_parts(errors[i])
+        var line = d.line - 1
+        var column = d.column - 1
+        if line < 0 {
+            line = 0
+        }
+        if column < 0 {
+            column = 0
+        }
+        let end = column + 1
+        out = out + "{\"range\":{\"start\":{\"line\":" + line.to_string() + ",\"character\":" + column.to_string() + "},\"end\":{\"line\":" + line.to_string() + ",\"character\":" + end.to_string() + "}},\"severity\":1,\"code\":" + js_quote(d.code) + ",\"source\":\"nova\",\"message\":" + js_quote(d.message) + "}"
+        i = i + 1
+    }
+    return out + "]"
+}
+
+fn lsp_publish(uri: String, text: String) {
+    let body = "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":" + js_quote(uri) + ",\"diagnostics\":" + lsp_diagnostics(text) + "}}"
+    lsp_send(body)
+}
+
+fn lsp_json_string(doc: JsonDoc, node: Int, key: String) -> String {
+    return js_str(doc, js_get(doc, node, key))
+}
+
+fn lsp_run_stdio() -> Int {
+    var running = true
+    while running {
+        let message = lsp_read_message()
+        if !message.ok {
+            running = false
+        } else {
+            let doc = js_parse(message.body)
+            if doc.error.len() == 0 {
+                let root = doc.nodes.len() - 1
+                let method = lsp_json_string(doc, root, "method")
+                let id_node = js_get(doc, root, "id")
+                let has_id = id_node >= 0
+                if method == "exit" {
+                    running = false
+                } else if method == "initialize" {
+                    var id = "null"
+                    if has_id {
+                        id = js_render(doc, id_node)
+                    }
+                    let result = "{\"capabilities\":{\"textDocumentSync\":1},\"serverInfo\":{\"name\":\"nova-lsp\",\"version\":\"0.1.0\"}}"
+                    lsp_send(lsp_response(id, result))
+                } else if method == "shutdown" {
+                    var id = "null"
+                    if has_id {
+                        id = js_render(doc, id_node)
+                    }
+                    lsp_send(lsp_response(id, "null"))
+                } else if method == "textDocument/didOpen" {
+                    let params = js_get(doc, root, "params")
+                    let document = js_get(doc, params, "textDocument")
+                    let uri = lsp_json_string(doc, document, "uri")
+                    let text = lsp_json_string(doc, document, "text")
+                    lsp_publish(uri, text)
+                } else if method == "textDocument/didChange" {
+                    let params = js_get(doc, root, "params")
+                    let document = js_get(doc, params, "textDocument")
+                    let uri = lsp_json_string(doc, document, "uri")
+                    let changes = js_get(doc, params, "contentChanges")
+                    var text = ""
+                    let count = js_len(doc, changes)
+                    if count > 0 {
+                        text = lsp_json_string(doc, js_at(doc, changes, count - 1), "text")
+                    }
+                    lsp_publish(uri, text)
+                } else if method == "textDocument/didClose" {
+                    let params = js_get(doc, root, "params")
+                    let document = js_get(doc, params, "textDocument")
+                    let uri = lsp_json_string(doc, document, "uri")
+                    lsp_publish(uri, "")
+                } else if method == "textDocument/didSave" {
+                    let params = js_get(doc, root, "params")
+                    let document = js_get(doc, params, "textDocument")
+                    let uri = lsp_json_string(doc, document, "uri")
+                    let text = lsp_json_string(doc, params, "text")
+                    if text.len() > 0 {
+                        lsp_publish(uri, text)
+                    }
+                } else if has_id {
+                    let id = js_render(doc, id_node)
+                    lsp_send(lsp_error(id, 0 - 32601, "method not implemented"))
+                }
+            }
+        }
+    }
+    return 0
+}

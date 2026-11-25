@@ -84,8 +84,14 @@ and integration gate pass. The full matrix is `PARITY.md`.
 
 ## LSP-01 — Nova language server
 
-- LSP-01.01 — Stdio/JSON-RPC streaming primitive: **TODO** (internal dependency).
-- LSP-01.02 — initialize, capabilities, document sync, diagnostics: **TODO**.
+- LSP-01.01 — Stdio/JSON-RPC streaming primitive: **VERIFIED**. Content-Length
+  framing over stdio, including a blank-line/EOF distinction; evidence:
+  `tests/lsp.sh`.
+- LSP-01.02 — initialize, capabilities, document sync, diagnostics: **VERIFIED**
+  for the Nova sema slice. `initialize` advertises full-document sync;
+  `didOpen`/`didChange`/`didSave` publish diagnostics and `didClose` clears
+  them. Evidence: `tests/lsp.sh` against the seed-built tool and two Nova-built
+  generations.
 - LSP-01.03 — Completion: **TODO**.
 - LSP-01.04 — Hover, definition, document symbols: **TODO**.
 - LSP-01.05 — Whole-document formatting: **TODO**.
@@ -115,5 +121,9 @@ and integration gate pass. The full matrix is `PARITY.md`.
 - BOOT-02.03 — Generation 3 and comparison: **PARTIAL**. `/tmp/nova-self-2`
   built `/tmp/nova-self-3` and its sample exited 9; the three SHA-256 hashes
   differ, so no byte-identical fixed point is claimed.
-- BOOT-02.04 — Build the Nova LSP with the self-hosted compiler: **TODO**.
+- BOOT-02.04 — Build the Nova LSP with the self-hosted compiler: **PARTIAL**.
+  `nova-tool lsp` contains the transport/sync/diagnostics slice, and
+  `/tmp/nova-self`, `/tmp/nova-self-2` and `/tmp/nova-self-3` all pass
+  `tests/lsp.sh`. Completion,
+  hover, definition, formatting and the `nova lsp` entry point remain.
 - BOOT-02.05 — Studio uses the Nova-built LSP: **TODO**.

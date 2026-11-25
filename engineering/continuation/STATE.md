@@ -4,14 +4,15 @@ Updated: 2026-11-25
 Master directive: owner-supplied; parity matrix in `engineering/continuation/`.
 Repository / branch: `nova` / `selfhost/pure-nova`
 HEAD: this checkpoint is committed by the accompanying code/doc commits; prior
-`7518333`.
+`ba662cb`.
 Working tree: unrelated `editor/` and playground changes remain untouched.
 
 Active milestone: `BOOT-02` / `CODEGEN-01` — self-compilation and LLVM lowering
-Active task: `BOOT-02.01`–`BOOT-02.03` — generation 1/2/3 of the Nova tool
+Active task: `BOOT-02.03`–`BOOT-02.04` — bootstrap generations and the Nova LSP diagnostics slice
 Status: PARTIAL — the Nova tool builds itself through three generations and
-compiles a native sample; full compiler/LSP parity, module/Box semantics and
-Rust seed removal remain.
+compiles a native sample; the Nova LSP transport/diagnostics slice is built by
+the self-hosted tool. Full compiler/LSP parity, module/Box semantics and Rust
+seed removal remain.
 
 ## Last verified behavior
 
@@ -102,6 +103,13 @@ Rust seed removal remain.
 - `sh examples/nova-tool/tests/sema-ast.sh` → passed 28, failed 0.
 - `sh examples/nova-tool/tests/sema.sh` → passed 4, failed 0.
 - `sh examples/nova-tool/tests/cli.sh` → passed 11, failed 0.
+- `sh examples/nova-tool/tests/lsp.sh` → PASS.
+  - `nova-tool lsp` speaks Content-Length-framed JSON-RPC over stdio.
+  - `initialize` advertises full-document sync; `didOpen`/`didChange`/`didSave`
+    publish `textDocument/publishDiagnostics`, and `didClose` clears it.
+  - Diagnostics come from the Nova parser/sema slice; the invalid-buffer
+    fixture reports `E0301` and the fixed buffer reports none.
+- `sh examples/nova-tool/tests/toolchain.sh` → passed 125, failed 0.
 - Self-build, generation 1:
   `./target/nova/nova-tool build` with `NOVA_TOOL_OUT=/tmp/nova-self`
   produced a native `/tmp/nova-self`; it built
@@ -110,6 +118,8 @@ Rust seed removal remain.
   `/tmp/nova-self-2`; it built the sample and the program exited 9.
 - Self-build, generation 3: `/tmp/nova-self-2 build` produced
   `/tmp/nova-self-3`; it built the sample and the program exited 9.
+- The LSP protocol test also passes against `/tmp/nova-self`,
+  `/tmp/nova-self-2` and `/tmp/nova-self-3`.
 - The three binary SHA-256 values differ, so this is behavioral bootstrap
   evidence, not a byte-identical fixed-point claim.
 - Mach-O confirmed on this Apple Silicon host.
@@ -127,14 +137,27 @@ Rust seed removal remain.
 - A regression fixture pushes through two copies of the same list and returns 7.
 - New native fixtures: `codegen-if-expr.nova`, `codegen-builtins.nova`,
   `codegen-http-get.nova`; the CLI project now uses an aliased qualified call.
-- Full codegen/CLI/parser/sema/sema-ast suites remain green at 221/11/50/28/4.
+- Full codegen/CLI/parser/sema/sema-ast suites remain green at 221/11/50/28/4;
+  toolchain is 125/0.
+- Added `libraries/nova-lsp/src/lsp.nova`: framed stdio transport, initialize,
+  shutdown, full-document sync and semantic diagnostics. It is wired into
+  `nova-tool lsp` and exercised by `tests/lsp.sh`.
+- Added runtime stdin primitives `nova_stdin_read_line` and
+  `nova_stdin_read_bytes`; the seed compiler embeds `runtime/runtime.c`, so
+  `cargo build -p nova-cli` must run after runtime changes.
+- The LSP protocol test passes against the seed-built tool, `/tmp/nova-self`
+  (generation 1), `/tmp/nova-self-2` (generation 2) and `/tmp/nova-self-3`
+  (generation 3).
 
 ## Incomplete work / known failures
 
 - `nova build` still runs the Rust CLI for stage 0; no Rust crate has been
   deleted. Do not claim “pure Nova” before `BOOT-02.04` and LSP parity.
-- `BOOT-02.04` (build the Nova LSP with the self-hosted compiler) and
-  `BOOT-02.05` (Studio uses it) remain TODO.
+- `BOOT-02.04` is PARTIAL: the self-hosted tool contains a working LSP
+  transport/diagnostics slice, but completion, hover, definition, formatting
+  and Studio wiring remain. `BOOT-02.05` remains TODO.
+- `nova lsp` still launches the Rust LSP; the Nova server is currently
+  `nova-tool lsp`.
 - Mutable list initialization and reassignment clone the backing array, but
   function arguments and `let` bindings still pass headers by value; nested
   list ownership and GC are unresolved.
@@ -142,8 +165,8 @@ Rust seed removal remain.
   ownership/GC is unresolved.
 - Box dependencies, standard-library module semantics and full module/import
   resolution remain.
-- Sema lacks generics, traits, methods and full diagnostics; the Nova LSP does
-  not exist.
+- Sema lacks generics, traits, methods and full diagnostics; the Nova LSP
+  covers transport, full-document sync and diagnostics only.
 - Overflow, division-by-zero and alignment checks remain.
 - Match lacks nested enum/struct patterns and enum-typed payloads; maps, sets
   and arrays remain.
@@ -151,8 +174,8 @@ Rust seed removal remain.
 
 ## Resume here
 
-1. `BOOT-02.04`: build the Nova LSP with the self-hosted compiler, then
-   `BOOT-02.05`.
+1. Continue `LSP-01` feature slices (completion, hover, definition,
+   formatting), then wire the Nova server into `nova lsp`/Studio (`BOOT-02.05`).
 2. Add Box dependency and std-module resolution to the Nova CLI.
 3. Replace the remaining Rust stage-0 path only after full sema/codegen parity
    and a reproducible bootstrap comparison.
@@ -166,6 +189,11 @@ Rust seed removal remain.
 - Result: PASS (221/0)
 - Command: `sh examples/nova-tool/tests/cli.sh`
 - Result: PASS (11/0)
+- Command: `sh examples/nova-tool/tests/lsp.sh`
+- Result: PASS (seed-built, `/tmp/nova-self`, `/tmp/nova-self-2`,
+  `/tmp/nova-self-3`)
+- Command: `sh examples/nova-tool/tests/toolchain.sh`
+- Result: PASS (125/0)
 - Command: `sh examples/nova-tool/tests/parser.sh`
 - Result: PASS (50/0)
 - Command: `sh examples/nova-tool/tests/sema-ast.sh`
@@ -181,4 +209,5 @@ Rust seed removal remain.
 - Push, publish, deployment and branch deletion require owner authorization.
 - List ownership/copy semantics are a known correctness limit; do not claim full
   runtime parity.
-- The LSP needs full sema, stdio and the parity slices above.
+- The Nova LSP has stdio and diagnostics; completion, hover, definition,
+  formatting and Studio wiring remain.

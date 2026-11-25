@@ -112,6 +112,49 @@ nova_str nova_args_get(int64_t index) {
 #endif
 }
 
+/* One line including its trailing newline, or "" at EOF. A blank line is
+ * therefore "\n" (or "\r\n"), which lets a framed-protocol reader distinguish
+ * the end of the headers from the end of the stream. */
+nova_str nova_stdin_read_line(void) {
+    int64_t cap = 256;
+    int64_t len = 0;
+    char *buffer = (char *)nova_alloc(cap);
+    int c = EOF;
+    while ((c = fgetc(stdin)) != EOF) {
+        if (len + 1 >= cap) {
+            cap *= 2;
+            char *grown = (char *)realloc(buffer, (size_t)cap);
+            if (!grown) nova_die_oom();
+            buffer = grown;
+        }
+        buffer[len++] = (char)c;
+        if (c == '\n') break;
+    }
+    if (len == 0 && c == EOF) {
+        free(buffer);
+        return nova_copy_str("", 0);
+    }
+    nova_str result = nova_copy_str(buffer, len);
+    free(buffer);
+    return result;
+}
+
+/* Reads exactly `count` bytes, stopping only at EOF. LSP bodies are length-
+ * framed, so this is the byte-oriented companion to nova_stdin_read_line. */
+nova_str nova_stdin_read_bytes(int64_t count) {
+    if (count < 0) count = 0;
+    char *buffer = (char *)nova_alloc(count + 1);
+    int64_t got = 0;
+    while (got < count) {
+        size_t n = fread(buffer + got, 1, (size_t)(count - got), stdin);
+        if (n == 0) break;
+        got += (int64_t)n;
+    }
+    nova_str result = nova_copy_str(buffer, got);
+    free(buffer);
+    return result;
+}
+
 static int nova_utf8_decode(
     const unsigned char *text, int64_t len, int64_t index, uint32_t *cp, int64_t *next
 );

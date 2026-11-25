@@ -40,14 +40,15 @@ The audited compiler/LSP matrix and stable slice IDs are in
 2. Finish sema coverage over the AST: generics, methods/impl resolution,
    imported modules, builtin method tables and diagnostics parity.
 3. Make the Nova compiler driver build a nontrivial example end to end.
-4. Port the CLI build/run flow, then the LSP over the same semantic API.
+4. Port the remaining LSP feature slices over the same semantic API; the Nova
+   stdio transport and diagnostics slice now exist in `nova-tool lsp`.
 5. Only then delete `bootstrap/`, after stage-2/stage-3 conformance and a
    documented seed-recovery route.
 
 ## Known blockers
 
-- LSP needs streaming stdin/stdout; the current Nova host exposes command and
-  file calls but not a line-oriented stdio loop.
+- The Nova LSP now has framed stdin/stdout and diagnostics; completion, hover,
+  definition, formatting and Studio wiring remain.
 - Sema needs module/import resolution; `ast.nova` records imports but does not
   load them.
 - Codegen needs a backend decision and ABI acceptance tests before replacing
