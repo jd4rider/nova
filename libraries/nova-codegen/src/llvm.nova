@@ -1823,6 +1823,78 @@ fn cg_list_eq(state: CgState, left: CgVal, right: CgVal, negate: Bool) -> CgVal 
     return cg_val_typed(work, phi, "i1")
 }
 
+fn cg_list_sum(ast: Ast, node: Int, recv: CgVal) -> CgVal {
+    let list_slot_result = cg_entry_slot(recv.state, "%nova.list")
+    var work = list_slot_result.0
+    let list_slot = list_slot_result.1
+    work = cg_line(work, "  store %nova.list " + recv.value + ", ptr " + list_slot)
+    let total_slot_result = cg_entry_slot(work, "i64")
+    work = total_slot_result.0
+    let total_slot = total_slot_result.1
+    work = cg_line(work, "  store i64 0, ptr " + total_slot)
+    let len_result = cg_temp(work)
+    work = len_result.0
+    let len = len_result.1
+    work = cg_line(work, "  " + len + " = extractvalue %nova.list " + recv.value + ", 1")
+    let index_slot_result = cg_entry_slot(work, "i64")
+    work = index_slot_result.0
+    let index_slot = index_slot_result.1
+    work = cg_line(work, "  store i64 0, ptr " + index_slot)
+    let header_result = cg_label(work)
+    work = header_result.0
+    let header = header_result.1
+    let body_result = cg_label(work)
+    work = body_result.0
+    let body = body_result.1
+    let done_result = cg_label(work)
+    work = done_result.0
+    let done = done_result.1
+    work = cg_line(work, "  br label %" + header)
+    work = cg_line(work, header + ":")
+    let index_load_result = cg_temp(work)
+    work = index_load_result.0
+    let index_load = index_load_result.1
+    work = cg_line(work, "  " + index_load + " = load i64, ptr " + index_slot)
+    let condition_result = cg_temp(work)
+    work = condition_result.0
+    let condition = condition_result.1
+    work = cg_line(work, "  " + condition + " = icmp slt i64 " + index_load + ", " + len)
+    work = cg_line(work, "  br i1 " + condition + ", label %" + body + ", label %" + done)
+    work = cg_line(work, body + ":")
+    let ptr_result = cg_temp(work)
+    work = ptr_result.0
+    let ptr = ptr_result.1
+    work = cg_line(
+        work,
+        "  " + ptr + " = call ptr @nova_list_at(ptr " + list_slot + ", i64 " + index_load + ", i64 8, i64 " + ast.nodes[node].line.to_string() + ")",
+    )
+    let value_result = cg_temp(work)
+    work = value_result.0
+    let value = value_result.1
+    work = cg_line(work, "  " + value + " = load i64, ptr " + ptr)
+    let total_result = cg_temp(work)
+    work = total_result.0
+    let total = total_result.1
+    work = cg_line(work, "  " + total + " = load i64, ptr " + total_slot)
+    let next_total_result = cg_temp(work)
+    work = next_total_result.0
+    let next_total = next_total_result.1
+    work = cg_line(work, "  " + next_total + " = add i64 " + total + ", " + value)
+    work = cg_line(work, "  store i64 " + next_total + ", ptr " + total_slot)
+    let next_result = cg_temp(work)
+    work = next_result.0
+    let next = next_result.1
+    work = cg_line(work, "  " + next + " = add i64 " + index_load + ", 1")
+    work = cg_line(work, "  store i64 " + next + ", ptr " + index_slot)
+    work = cg_line(work, "  br label %" + header)
+    work = cg_line(work, done + ":")
+    let result_result = cg_temp(work)
+    work = result_result.0
+    let result = result_result.1
+    work = cg_line(work, "  " + result + " = load i64, ptr " + total_slot)
+    return cg_val_typed(work, result, "i64")
+}
+
 fn cg_list_reverse(ast: Ast, node: Int, recv: CgVal) -> CgVal {
     let list_slot_result = cg_entry_slot(recv.state, "%nova.list")
     var work = list_slot_result.0
@@ -2598,6 +2670,16 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
                 let cond = cond_result.1
                 work = cg_line(work, "  " + cond + " = icmp ne i32 " + result + ", 0")
                 return cg_val_typed(work, cond, "i1")
+            }
+            if ast.nodes[callee].text == "sum" {
+                if ast.nodes[node].count - 1 != 0 {
+                    return cg_val(cg_error(state, "sum takes no arguments"), "0")
+                }
+                let recv = cg_expr2(ast, state, a_child(ast, callee, 0))
+                if recv.ty != "%nova.list" {
+                    return cg_val(cg_error(recv.state, "sum requires a List<Int>"), "0")
+                }
+                return cg_list_sum(ast, node, recv)
             }
             if ast.nodes[callee].text == "sort" {
                 if ast.nodes[node].count - 1 != 0 {

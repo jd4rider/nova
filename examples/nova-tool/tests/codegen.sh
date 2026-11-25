@@ -391,6 +391,23 @@ else
     no "enum binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-list-sum.nova" "$tool")
+echo "$out" | grep -q "call ptr @nova_list_at" && ok || no "list sum uses nova_list_at"
+printf '%s\n' "$out" > "$tmp/list-sum.ll"
+if clang_ir "$tmp/list-sum.ll" "$tmp/list-sum" "$tmp/list-sum-clang.log"; then
+    ok
+else
+    no "clang rejects list sum IR"
+    cat "$tmp/list-sum-clang.log"
+fi
+if [ -x "$tmp/list-sum" ]; then
+    "$tmp/list-sum"
+    code=$?
+    [ "$code" -eq 10 ] && ok || no "list sum result (got $code, expected 10)"
+else
+    no "list sum binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-list-sort.nova" "$tool")
 echo "$out" | grep -q "call void @nova_list_sort" && ok || no "list sort call"
 echo "$out" | grep -q "call ptr @nova_list_at" && ok || no "list sort result access"
