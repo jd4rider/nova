@@ -193,6 +193,24 @@ else
     no "list push binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-list-set.nova" "$tool")
+echo "$out" | grep -q "store i64 40, ptr" && ok || no "list element assignment store"
+echo "$out" | grep -q "icmp sge i64" && ok || no "list assignment bounds check"
+printf '%s\n' "$out" > "$tmp/list-set.ll"
+if clang -x ir "$tmp/list-set.ll" -o "$tmp/list-set" > "$tmp/list-set-clang.log" 2>&1; then
+    ok
+else
+    no "clang rejects list assignment IR"
+    cat "$tmp/list-set-clang.log"
+fi
+if [ -x "$tmp/list-set" ]; then
+    "$tmp/list-set"
+    code=$?
+    [ "$code" -eq 45 ] && ok || no "list assignment result (got $code, expected 45)"
+else
+    no "list assignment binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-unit-main.nova" "$tool")
 echo "$out" | grep -q "define void @nova_user_0(ptr %arg_env)" && ok || no "Unit main signature"
 echo "$out" | grep -q "call void @nova_user_0(ptr null)" && ok || no "Unit main call"

@@ -1,10 +1,10 @@
 // Nova LLVM IR lowering.
 //
 // Scope: Int, Unit and String functions; let/var; integer, string and list
-// literals; String.len/List.len; list indexing and push; arithmetic;
-// if/else/while; direct calls; seed-shaped ABI (`ptr %arg_env`, `nova_user_N`,
-// `%nova.string`, `%nova.list`). Maps, structs and the full runtime ABI are
-// later tasks.
+// literals; String.len/List.len; list indexing, index assignment and push;
+// arithmetic; if/else/while; direct calls; seed-shaped ABI (`ptr %arg_env`,
+// `nova_user_N`, `%nova.string`, `%nova.list`). Maps, structs and the full
+// runtime ABI are later tasks.
 //
 // Unsupported syntax returns an error instead of emitting guessed IR.
 
@@ -368,6 +368,74 @@ fn cg_index(ast: Ast, state: CgState, node: Int) -> CgVal {
     let val = val_result.1
     work = cg_line(work, "  " + val + " = load i64, ptr " + ptr)
     return cg_val(work, val)
+}
+
+fn cg_index_assign(ast: Ast, state: CgState, target: Int, value_node: Int) -> CgVal {
+    let recv = a_child(ast, target, 0)
+    if recv < 0 || ast.nodes[recv].kind != ak_ident() {
+        return cg_val(cg_error(state, "index assignment requires a mutable list variable"), "0")
+    }
+    let index = cg_local_index(state.locals, ast.nodes[recv].text)
+    if index < 0 {
+        return cg_val(cg_error(state, "unknown local " + ast.nodes[recv].text), "0")
+    }
+    let local = state.locals[index]
+    if local.ty != "%nova.list" {
+        return cg_val(cg_error(state, "index assignment expects List<Int>"), "0")
+    }
+    if !local.mutable || local.slot.len() == 0 {
+        return cg_val(cg_error(state, "index assignment requires a mutable list variable"), "0")
+    }
+    let at = cg_expr2(ast, state, a_child(ast, target, 1))
+    if at.ty != "i64" {
+        return cg_val(cg_error(at.state, "list index must be Int"), "0")
+    }
+    let value = cg_expr2(ast, at.state, value_node)
+    var work = value.state
+    if value.ty != "i64" {
+        return cg_val(cg_error(work, "only List<Int> element assignment is supported"), "0")
+    }
+    let loaded_result = cg_temp(work)
+    work = loaded_result.0
+    let loaded = loaded_result.1
+    work = cg_line(work, "  " + loaded + " = load %nova.list, ptr " + local.slot)
+    let len_result = cg_temp(work)
+    work = len_result.0
+    let len = len_result.1
+    work = cg_line(work, "  " + len + " = extractvalue %nova.list " + loaded + ", 1")
+    let neg_result = cg_temp(work)
+    work = neg_result.0
+    let neg = neg_result.1
+    work = cg_line(work, "  " + neg + " = icmp slt i64 " + at.value + ", 0")
+    let big_result = cg_temp(work)
+    work = big_result.0
+    let big = big_result.1
+    work = cg_line(work, "  " + big + " = icmp sge i64 " + at.value + ", " + len)
+    let oob_result = cg_temp(work)
+    work = oob_result.0
+    let oob = oob_result.1
+    work = cg_line(work, "  " + oob + " = or i1 " + neg + ", " + big)
+    let bad_result = cg_label(work)
+    work = bad_result.0
+    let bad = bad_result.1
+    let ok_result = cg_label(work)
+    work = ok_result.0
+    let ok = ok_result.1
+    work = cg_line(work, "  br i1 " + oob + ", label %" + bad + ", label %" + ok)
+    work = cg_line(work, bad + ":")
+    work = cg_line(work, "  call void @llvm.trap()")
+    work = cg_line(work, "  unreachable")
+    work = cg_line(work, ok + ":")
+    let data_result = cg_temp(work)
+    work = data_result.0
+    let data = data_result.1
+    work = cg_line(work, "  " + data + " = extractvalue %nova.list " + loaded + ", 0")
+    let ptr_result = cg_temp(work)
+    work = ptr_result.0
+    let ptr = ptr_result.1
+    work = cg_line(work, "  " + ptr + " = getelementptr i64, ptr " + data + ", i64 " + at.value)
+    work = cg_line(work, "  store i64 " + value.value + ", ptr " + ptr)
+    return cg_val(work, value.value)
 }
 
 fn cg_list_push(ast: Ast, state: CgState, node: Int) -> CgVal {
@@ -836,6 +904,9 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
         let op = item.text
         if op == "=" {
             let left = a_child(ast, node, 0)
+            if left >= 0 && ast.nodes[left].kind == ak_index() {
+                return cg_index_assign(ast, state, left, a_child(ast, node, 1))
+            }
             if left < 0 || ast.nodes[left].kind != ak_ident() {
                 return cg_val(cg_error(state, "assignment target is not a local"), "0")
             }

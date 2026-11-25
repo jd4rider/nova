@@ -43,7 +43,7 @@ Result: PASS — passed 4, failed 0.
 sh examples/nova-tool/tests/codegen.sh
 ```
 
-Result: PASS — passed 54, failed 0.
+Result: PASS — passed 58, failed 0.
 
 - Straight-line Int module: no `alloca` for immutable params/`let`.
 - Mutable module compiles and exits 2.
@@ -65,16 +65,21 @@ Result: PASS — passed 54, failed 0.
 - List push fixture emits `realloc` growth, struct-field addressing, an element
   store and an updated length; a grown list is returned and indexed by the
   caller. Native result 16.
+- List assignment fixture emits a bounds check and element store through a
+  mutable local after a growth push; the mutated list is returned and summed by
+  the caller. Native result 45.
 - `NOVA_TOOL=build-ir` invokes clang, checks status and produces a native binary;
   the test executes that Nova-built binary.
 - Host clang accepted every module; Mach-O confirmed on this host.
 
 Limit: ABI parity covers Int, Unit, the string-literal/len subset and the
-`List<Int>` literal/parameter/return/push subset. Index assignment, slices and
-the `nova_list_*` runtime are not implemented; push uses libc `realloc` rather
-than the seed allocator. List storage is never freed; the bounds trap is not a
-Nova panic. Maps, sets, structs, enums, tuples, arrays and Option/Result remain.
-`emit-ir` is still not the full CLI. This is not a compiler-speed measurement.
+`List<Int>` literal/parameter/return/push/assignment subset. Assignment only
+writes an existing element of a mutable local list; slices, insertion, removal
+and the `nova_list_*` runtime are not implemented. Push uses libc `realloc`
+rather than the seed allocator. List storage is never freed; the bounds trap is
+not a Nova panic. Maps, sets, structs, enums, tuples, arrays and Option/Result
+remain. `emit-ir` is still not the full CLI. This is not a compiler-speed
+measurement.
 
 ## Parity audit
 
@@ -86,6 +91,7 @@ and cancellation are absent even in Rust.
 
 ## Commit history
 
+- `List<Int>` assignment checkpoint — 58/0.
 - `List<Int>` push checkpoint — 54/0.
 - `List<Int>` ABI checkpoint — 48/0.
 - `List<Int>` literals/indexing checkpoint — 41/0.
