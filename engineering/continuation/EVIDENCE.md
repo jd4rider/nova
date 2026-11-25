@@ -105,8 +105,8 @@ element slot; the runtime grows with `realloc`, copies the element and updates
 - String method fixture calls `nova_string_trim`, `starts_with`, `ends_with`
   and `contains`; the trimmed text length is 5.
 - Bool enum fixture stores and matches `Bool` payloads through zext/trunc in
-  the i64 slots; native 7. A nested-match variant exposed invalid PHIs and was
-  replaced with helper calls, leaving nested match expressions as a gap.
+  the i64 slots; native 7. The fixture keeps nested match expressions in its
+  arms, exercising the per-arm completion blocks that feed the outer merge PHI.
 - Assert fixtures emit `nova_assert_fail`; the passing program exits 5 and the
   failing program exits 1 with `assertion failed` on stderr.
 - Struct fixture emits `%nova.struct.Point` and `%nova.struct.Pair` aggregate
@@ -138,8 +138,7 @@ bounds failure is the runtime's Nova panic. List literals still allocate with
 libc `malloc` and storage is never freed. Structs are value-only: no generics,
 methods, equality, printing or
 references. Enum payloads support Int and Bool in codegen. String/struct
-payloads, nested match expressions, maps, sets, tuples, arrays and Option/Result
-remain.
+payloads, maps, sets, tuples, arrays and Option/Result remain.
 `emit-ir` is still not the full CLI. This is not a compiler-speed measurement.
 
 ## Parity audit
@@ -152,6 +151,7 @@ and cancellation are absent even in Rust.
 
 ## Commit history
 
+- Nested match PHI fix checkpoint — 137/0 codegen, 28/0 sema.
 - Bool enum payloads checkpoint — 137/0 codegen, 28/0 sema.
 - String methods checkpoint — 132/0 codegen, 28/0 sema.
 - List concat checkpoint — 126/0 codegen, 28/0 sema.

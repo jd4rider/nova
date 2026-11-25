@@ -1744,6 +1744,9 @@ fn cg_match(ast: Ast, state: CgState, node: Int) -> CgVal {
         let body_result = cg_label(work)
         work = body_result.0
         let body = body_result.1
+        let done_result = cg_label(work)
+        work = done_result.0
+        let done = done_result.1
         var bindings: List<String> = []
         var binding_types: List<String> = []
         var next = fail
@@ -1909,8 +1912,10 @@ fn cg_match(ast: Ast, state: CgState, node: Int) -> CgVal {
                     return cg_val(cg_error(work, "match arms have incompatible types"), "0")
                 }
                 values.push(arm_value)
-                value_labels.push(body)
+                value_labels.push(done)
             }
+            work = cg_line(work, "  br label %" + done)
+            work = cg_line(work, done + ":")
             work = cg_line(work, "  br label %" + merge)
         }
         i = i + 1

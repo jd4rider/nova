@@ -4,7 +4,7 @@ Updated: 2026-11-24
 Master directive: owner-supplied; parity matrix in `engineering/continuation/`.
 Repository / branch: `nova` / `selfhost/pure-nova`
 HEAD: this checkpoint is committed by the accompanying code/doc commits; prior
-`6211e03`.
+`be55809`.
 Working tree: unrelated `editor/` and playground changes remain untouched.
 
 Active milestone: `COMP-01` / `CODEGEN-01` — frontend and LLVM lowering
@@ -52,7 +52,8 @@ Status: PARTIAL (concat/equality/literal match work; nested patterns remain)
     `ends_with` call the runtime; a trimmed search program returns 5.
   - Enum payloads support Bool as well as Int; construction zero-extends into
     the i64 slot and binding truncates back to i1 (native 7). Nested match
-    expressions currently produce invalid PHIs and remain a known gap.
+    expressions now route each arm through a completion block before merging,
+    and are covered by the same native fixture.
   - `List<Int> ==`/`!=` compare lengths and elements through `nova_list_at`;
     empty, equal and unequal lists are verified natively (12). `List + List`
     concatenates through `nova_list_at`/`nova_list_push` (11).
@@ -128,7 +129,7 @@ Status: PARTIAL (concat/equality/literal match work; nested patterns remain)
 
 ## Resume here
 
-1. Fix nested match expression PHIs, then add nested enum patterns and guards.
+1. Add nested enum patterns and match guards.
 2. Add enum payloads beyond Bool (String/struct) and list slices.
 3. Run codegen/parser/sema suites; update `STATE.md`, `EVIDENCE.md`,
    `TASKS.md` and `PARITY.md`; commit.

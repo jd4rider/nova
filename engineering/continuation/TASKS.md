@@ -47,7 +47,7 @@ and integration gate pass. The full matrix is `PARITY.md`.
   arms, exhaustive matching and by-value parameters/returns. Lists index, assign
   and push through `nova_list_at`/`nova_list_push`; literals use malloc-backed
   storage, `==`/`!=` compare lengths/elements, and `+` concatenates. Slices,
-  maps, sets, enum payloads beyond Bool, nested match expressions, tuples,
+  maps, sets, enum payloads beyond Bool, tuples,
   arrays and Option/Result remain. String concatenation, equality and literal
   match patterns are verified through the runtime.
 - CODEGEN-01.07 — Overflow, division-by-zero, bounds and alignment checks:

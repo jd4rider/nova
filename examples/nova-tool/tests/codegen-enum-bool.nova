@@ -4,29 +4,20 @@ enum Flag {
     Pair(Bool, Bool)
 }
 
-fn on_score(v: Bool) -> Int {
-    if v {
-        return 4
-    }
-    return 1
-}
-
-fn pair_score(a: Bool, b: Bool) -> Int {
-    var score = 0
-    if a {
-        score = score + 2
-    }
-    if b {
-        score = score + 3
-    }
-    return score
-}
-
 fn score(flag: Flag) -> Int {
     return match flag {
         Off => 0
-        On(v) => on_score(v)
-        Pair(a, b) => pair_score(a, b)
+        On(v) => match v {
+            true => 4
+            false => 1
+        }
+        Pair(a, b) => match a {
+            true => 2
+            false => 0
+        } + match b {
+            true => 3
+            false => 0
+        }
     }
 }
 
