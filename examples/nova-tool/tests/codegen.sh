@@ -391,6 +391,23 @@ else
     no "enum binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-list-ends.nova" "$tool")
+echo "$out" | grep -q "call ptr @nova_list_at" && ok || no "list first/last use nova_list_at"
+printf '%s\n' "$out" > "$tmp/list-ends.ll"
+if clang_ir "$tmp/list-ends.ll" "$tmp/list-ends" "$tmp/list-ends-clang.log"; then
+    ok
+else
+    no "clang rejects list first/last IR"
+    cat "$tmp/list-ends-clang.log"
+fi
+if [ -x "$tmp/list-ends" ]; then
+    "$tmp/list-ends"
+    code=$?
+    [ "$code" -eq 49 ] && ok || no "list first/last result (got $code, expected 49)"
+else
+    no "list first/last binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-string-upper.nova" "$tool")
 echo "$out" | grep -q "call %nova.string @nova_string_upper" && ok || no "String upper call"
 echo "$out" | grep -q "call void @nova_string_bytes" && ok || no "String upper bytes call"

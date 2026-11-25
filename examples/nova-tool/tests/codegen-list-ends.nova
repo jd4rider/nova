@@ -1,0 +1,4 @@
+fn main() -> Int {
+    let values = [4, 7, 9]
+    return values.first() * 10 + values.last()
+}

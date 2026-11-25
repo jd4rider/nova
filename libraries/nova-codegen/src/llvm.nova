@@ -2438,6 +2438,43 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
                 work = cg_line(work, "  " + cond + " = icmp ne i32 " + result + ", 0")
                 return cg_val_typed(work, cond, "i1")
             }
+            if ast.nodes[callee].text == "first" || ast.nodes[callee].text == "last" {
+                if ast.nodes[node].count - 1 != 0 {
+                    return cg_val(cg_error(state, ast.nodes[callee].text + " takes no arguments"), "0")
+                }
+                let recv = cg_expr2(ast, state, a_child(ast, callee, 0))
+                if recv.ty != "%nova.list" {
+                    return cg_val(cg_error(recv.state, ast.nodes[callee].text + " requires a List<Int>"), "0")
+                }
+                let list_slot_result = cg_entry_slot(recv.state, "%nova.list")
+                var work = list_slot_result.0
+                let list_slot = list_slot_result.1
+                work = cg_line(work, "  store %nova.list " + recv.value + ", ptr " + list_slot)
+                var index = "0"
+                if ast.nodes[callee].text == "last" {
+                    let len_result = cg_temp(work)
+                    work = len_result.0
+                    let len = len_result.1
+                    work = cg_line(work, "  " + len + " = extractvalue %nova.list " + recv.value + ", 1")
+                    let index_result = cg_temp(work)
+                    work = index_result.0
+                    let last_index = index_result.1
+                    work = cg_line(work, "  " + last_index + " = sub i64 " + len + ", 1")
+                    index = last_index
+                }
+                let ptr_result = cg_temp(work)
+                work = ptr_result.0
+                let ptr = ptr_result.1
+                work = cg_line(
+                    work,
+                    "  " + ptr + " = call ptr @nova_list_at(ptr " + list_slot + ", i64 " + index + ", i64 8, i64 " + ast.nodes[node].line.to_string() + ")",
+                )
+                let value_result = cg_temp(work)
+                work = value_result.0
+                let value = value_result.1
+                work = cg_line(work, "  " + value + " = load i64, ptr " + ptr)
+                return cg_val_typed(work, value, "i64")
+            }
             if ast.nodes[callee].text == "is_empty" {
                 if ast.nodes[node].count - 1 != 0 {
                     return cg_val(cg_error(state, "is_empty takes no arguments"), "0")
