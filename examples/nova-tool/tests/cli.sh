@@ -36,5 +36,24 @@ else
     no "build produced no executable"
 fi
 
+cp -R "$root/examples/nova-tool/tests/cli-project" "$tmp/project"
+if (cd "$tmp/project" && NOVA_TOOL_RUNTIME="$root/runtime/runtime.c" "$tool" build >"$tmp/project.out" 2>"$tmp/project.err"); then
+    ok
+else
+    no "project build failed"
+    cat "$tmp/project.out" "$tmp/project.err"
+fi
+if [ -x "$tmp/project/target/nova/cli-project" ]; then
+    ok
+    if "$tmp/project/target/nova/cli-project"; then
+        code=0
+    else
+        code=$?
+    fi
+    [ "$code" -eq 10 ] && ok || no "project exit (got $code, expected 10)"
+else
+    no "project build produced no executable"
+fi
+
 echo "passed $passed, failed $failed"
 [ "$failed" -eq 0 ]

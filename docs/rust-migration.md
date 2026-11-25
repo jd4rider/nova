@@ -128,8 +128,10 @@ Test state: `sh examples/nova-tool/tests/toolchain.sh` → **passed 117, failed 
 `sh examples/nova-tool/tests/boxes.sh`
 → **passed 64, failed 0**, and `sh examples/nova-tool/tests/codegen.sh`
 → **passed 184, failed 0** (Nova tool invokes clang and links the C runtime; native execution on this host), and `sh examples/nova-tool/tests/cli.sh`
-→ **passed 4, failed 0**. The Nova tool now accepts `build <source> [output]`
-and returns the native status, but `nova build` still runs the Rust CLI. No Rust
+→ **passed 7, failed 0**. The Nova tool now accepts `build` for a project
+(discovering `nova.toml`, reading `[bin] path`, inlining relative imports and
+writing `target/nova/<name>`) or `build <source> [output]` for one file, and
+returns the native status, but `nova build` still runs the Rust CLI. No Rust
 crate has been deleted yet: the bootstrap compiler (lexer, parser, sema,
 codegen, CLI, LSP) is still Rust, and phases 2–4 of this document are what
 removes it. `nova fmt` runs the Nova formatter, and

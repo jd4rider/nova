@@ -23,6 +23,170 @@ import "../../../libraries/nova-boxes/src/registry.nova"
 // NOVA_TOOL_PATH to the file to inspect. `fmt` writes to NOVA_TOOL_OUT when it
 // is set, which is how the corpus test checks idempotence.
 
+struct NtExpanded {
+    text: String,
+    loaded: List<String>,
+    error: String,
+}
+
+fn nt_between_quotes(line: String) -> String {
+    let chars = line.chars()
+    var start = 0 - 1
+    var i = 0
+    while i < chars.len() {
+        if chars[i] == "\"" {
+            if start < 0 {
+                start = i + 1
+            } else {
+                return lx_slice(chars, start, i)
+            }
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+fn nt_manifest_value(source: String, wanted: String, key: String) -> String {
+    var section = ""
+    for line in source.split("\n") {
+        let text = line.trim()
+        if text.starts_with("[") && text.ends_with("]") {
+            section = text
+        } else if section == wanted && text.starts_with(key) {
+            let rest = lx_slice(text.chars(), key.len(), text.len()).trim()
+            if rest.starts_with("=") {
+                return nt_between_quotes(rest)
+            }
+        }
+    }
+    return ""
+}
+
+fn nt_find_root() -> String {
+    var dir = gui.cwd()
+    var searching = true
+    while searching {
+        if gui.exists(dir + "/nova.toml") || gui.exists(dir + "/Box.toml") {
+            return dir
+        }
+        let parent = rs_dirname(dir)
+        if parent == dir || parent.len() == 0 {
+            searching = false
+        } else {
+            dir = parent
+        }
+    }
+    return ""
+}
+
+fn nt_has_path(paths: List<String>, path: String) -> Bool {
+    for item in paths {
+        if item == path {
+            return true
+        }
+    }
+    return false
+}
+
+// Inlines relative `.nova` imports. Standard-library imports are dropped
+// because their functions are compiler builtins in this slice.
+fn nt_expand(path: String, source: String, loaded: List<String>) -> NtExpanded {
+    var text = ""
+    var seen = loaded
+    for line in source.split("\n") {
+        let trimmed = line.trim()
+        if trimmed.starts_with("import ") {
+            let relative = nt_between_quotes(trimmed)
+            if relative.ends_with(".nova") {
+                let child = rs_dirname(path) + "/" + relative
+                if !nt_has_path(seen, child) {
+                    var next_seen = seen
+                    next_seen.push(child)
+                    let child_source = gui.read(child)
+                    if child_source.len() == 0 && !gui.exists(child) {
+                        return NtExpanded {
+                            text: text,
+                            loaded: seen,
+                            error: "cannot read imported file " + child,
+                        }
+                    }
+                    let nested = nt_expand(child, child_source, next_seen)
+                    if nested.error.len() > 0 {
+                        return nested
+                    }
+                    text = text + nested.text + "\n"
+                    seen = nested.loaded
+                }
+            }
+        } else {
+            text = text + line + "\n"
+        }
+    }
+    return NtExpanded { text: text, loaded: seen, error: "" }
+}
+
+fn nt_find_runtime() -> String {
+    let explicit = gui.env("NOVA_TOOL_RUNTIME")
+    if explicit.len() > 0 {
+        return explicit
+    }
+    var dir = gui.cwd()
+    var searching = true
+    while searching {
+        let candidate = dir + "/runtime/runtime.c"
+        if gui.exists(candidate) {
+            return candidate
+        }
+        let parent = rs_dirname(dir)
+        if parent == dir || parent.len() == 0 {
+            searching = false
+        } else {
+            dir = parent
+        }
+    }
+    return ""
+}
+
+fn nt_build_project() -> Int {
+    let root = nt_find_root()
+    if root.len() == 0 {
+        println("error: no nova.toml or Box.toml found in this directory or its parents")
+        return 1
+    }
+    var manifest_path = root + "/Box.toml"
+    if !gui.exists(manifest_path) {
+        manifest_path = root + "/nova.toml"
+    }
+    let manifest = gui.read(manifest_path)
+    var name = nt_manifest_value(manifest, "[package]", "name")
+    if name.len() == 0 {
+        name = "app"
+    }
+    var bin = nt_manifest_value(manifest, "[bin]", "path")
+    if bin.len() == 0 {
+        bin = "src/main.nova"
+    }
+    let entry = root + "/" + bin
+    if !gui.exists(entry) {
+        println("error: binary source does not exist: " + entry)
+        return 1
+    }
+    let source = gui.read(entry)
+    let expanded = nt_expand(entry, source, [entry])
+    if expanded.error.len() > 0 {
+        println("error: " + expanded.error)
+        return 1
+    }
+    let target_dir = root + "/target/nova"
+    if !gui.exists(target_dir) {
+        if !gui.exists(root + "/target") {
+            gui.mkdir(root + "/target")
+        }
+        gui.mkdir(target_dir)
+    }
+    return nt_build_source(entry, expanded.text, target_dir + "/" + name)
+}
+
 fn nt_shell_quote(text: String) -> String {
     var out = "'"
     for c in text.chars() {
@@ -46,14 +210,8 @@ fn nt_build_source(path: String, source: String, target: String) -> Int {
         println("error: cannot write " + ir_path)
         return 1
     }
-    var runtime = gui.env("NOVA_TOOL_RUNTIME")
-    if runtime.len() == 0 {
-        runtime = gui.cwd() + "/runtime/runtime.c"
-        if !gui.exists(runtime) {
-            runtime = gui.cwd() + "/../runtime/runtime.c"
-        }
-    }
-    if !gui.exists(runtime) {
+    let runtime = nt_find_runtime()
+    if runtime.len() == 0 || !gui.exists(runtime) {
         println("error: cannot find runtime/runtime.c; set NOVA_TOOL_RUNTIME")
         return 1
     }
@@ -74,7 +232,7 @@ fn main() {
     let argc = gui.args_count()
     if argc >= 2 && gui.arg(1) == "build" {
         if argc < 3 {
-            println("usage: nova build <source> [output]")
+            nt_build_project()
             return
         }
         let source_path = gui.arg(2)

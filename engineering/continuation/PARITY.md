@@ -13,7 +13,7 @@ baseline suite was not rerun in this session. Status: `VERIFIED`, `PARTIAL`,
 | Name resolution / declarations | `bootstrap/nova-sema` (6,278 lines) | PARTIAL — functions, structs, enums, scopes | COMP-01.02 |
 | Type checking / inference | `bootstrap/nova-sema` | PARTIAL — Int/String/Bool, String concat/equality and literal patterns, calls, struct fields and duplicate-field checks, enum variants/payloads and duplicate checks, returns, match arm/payload types and Int/Bool/String/enum exhaustiveness; no generics/traits | COMP-01.02, COMP-01.04 |
 | Modules / imports / Box resolution | `bootstrap/nova-cli`, `nova-pkg` | TODO | COMP-01.03 |
-| CLI build driver | `bootstrap/nova-cli` | PARTIAL — Nova `build <source> [output]` reads argv, compiles, links and returns the native status for one file; project manifests, imports, `run` and seed fallback remain | CLI-01.01 |
+| CLI build driver | `bootstrap/nova-cli` | PARTIAL — Nova `build` discovers `nova.toml`/`Box.toml`, reads `[bin] path`, inlines relative `.nova` imports, builds to `target/nova/<name>` and returns the native status; `build <source> [output]` handles one file. Box dependencies, std-module semantics, `run` and seed fallback remain | CLI-01.01 |
 | Generics, methods, traits, closures | Rust compiler | TODO | COMP-01.04, CODEGEN-01.10 |
 | Diagnostic codes/spans/recovery | `bootstrap/nova-diag`, sema | PARTIAL — E03xx slice; no full parity | COMP-01.06 |
 | Int arithmetic | Rust codegen | PARTIAL — `+ - * /`, no overflow/div-zero checks | CODEGEN-01.01, CODEGEN-01.07 |
