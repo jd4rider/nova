@@ -1030,6 +1030,7 @@ fn cg_compile(source: String) -> CgResult {
     out = out + "declare void @nova_print_str(%nova.string, i32, i32)\n"
     out = out + "declare void @nova_print_i64(i64, i32, i32)\n"
     out = out + "declare void @nova_print_bool(i32, i32, i32)\n"
+    out = out + "declare void @nova_assert_fail(i64)\n"
     var emitted = 0
     while emitted < fns.len() {
         let sig = fns[emitted]
@@ -2081,6 +2082,28 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
             work = cg_line(work, "  call void @nova_panic_str(%nova.string " + value.value + ", i64 " + ast.nodes[node].line.to_string() + ")")
             work = cg_line(work, "  unreachable")
             work = cg_state(work, work.lines, work.temps, work.slots, work.locals, true, work.error)
+            return cg_val_typed(work, "", "void")
+        }
+        if name == "assert" {
+            if got != 1 {
+                return cg_val(cg_error(state, "assert expects one argument"), "0")
+            }
+            let value = cg_expr2(ast, state, a_child(ast, node, 1))
+            var work = value.state
+            if value.ty != "i1" {
+                return cg_val(cg_error(work, "assert expects Bool"), "0")
+            }
+            let ok_result = cg_label(work)
+            work = ok_result.0
+            let ok = ok_result.1
+            let fail_result = cg_label(work)
+            work = fail_result.0
+            let fail = fail_result.1
+            work = cg_line(work, "  br i1 " + value.value + ", label %" + ok + ", label %" + fail)
+            work = cg_line(work, fail + ":")
+            work = cg_line(work, "  call void @nova_assert_fail(i64 " + ast.nodes[node].line.to_string() + ")")
+            work = cg_line(work, "  unreachable")
+            work = cg_line(work, ok + ":")
             return cg_val_typed(work, "", "void")
         }
         let variant = cg_find_variant(state.enums, name)

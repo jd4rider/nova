@@ -391,6 +391,40 @@ else
     no "enum binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-assert.nova" "$tool")
+echo "$out" | grep -q "call void @nova_assert_fail" && ok || no "assert failure call"
+printf '%s\n' "$out" > "$tmp/assert.ll"
+if clang_ir "$tmp/assert.ll" "$tmp/assert" "$tmp/assert-clang.log"; then
+    ok
+else
+    no "clang rejects assert IR"
+    cat "$tmp/assert-clang.log"
+fi
+if [ -x "$tmp/assert" ]; then
+    "$tmp/assert"
+    code=$?
+    [ "$code" -eq 5 ] && ok || no "assert result (got $code, expected 5)"
+else
+    no "assert binary missing"
+fi
+
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-assert-fail.nova" "$tool")
+printf '%s\n' "$out" > "$tmp/assert-fail.ll"
+if clang_ir "$tmp/assert-fail.ll" "$tmp/assert-fail" "$tmp/assert-fail-clang.log"; then
+    ok
+else
+    no "clang rejects failing assert IR"
+    cat "$tmp/assert-fail-clang.log"
+fi
+if [ -x "$tmp/assert-fail" ]; then
+    "$tmp/assert-fail" > "$tmp/assert-fail.out" 2> "$tmp/assert-fail.err"
+    code=$?
+    [ "$code" -eq 1 ] && ok || no "assert failure exit (got $code, expected 1)"
+    grep -q "assertion failed" "$tmp/assert-fail.err" && ok || no "assert failure message"
+else
+    no "failing assert binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-print.nova" "$tool")
 echo "$out" | grep -q "call void @nova_print_str" && ok || no "println String call"
 echo "$out" | grep -q "call void @nova_print_i64" && ok || no "print Int call"
