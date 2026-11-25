@@ -127,7 +127,7 @@ Test state: `sh examples/nova-tool/tests/toolchain.sh` → **passed 117, failed 
 → **passed 50, failed 0** (including the 29-file AST corpus), and
 `sh examples/nova-tool/tests/boxes.sh`
 → **passed 64, failed 0**, and `sh examples/nova-tool/tests/codegen.sh`
-→ **passed 218, failed 0** (Nova tool invokes clang and links the C runtime; native execution on this host), and `sh examples/nova-tool/tests/cli.sh`
+→ **passed 221, failed 0** (Nova tool invokes clang and links the C runtime; native execution on this host), and `sh examples/nova-tool/tests/cli.sh`
 → **passed 11, failed 0**. The Nova tool now self-builds through three
 generations and each generation compiles the native sample (exit 9); the hashes
 differ, so this is behavioral bootstrap evidence, not a byte-identical fixed

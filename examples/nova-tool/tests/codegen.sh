@@ -927,6 +927,23 @@ else
     no "split/join binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-list-copy.nova" "$tool")
+echo "$out" | grep -q "call void @nova_list_clone" && ok || no "list copy clone call"
+printf '%s\n' "$out" > "$tmp/list-copy.ll"
+if clang_ir "$tmp/list-copy.ll" "$tmp/list-copy" "$tmp/list-copy-clang.log"; then
+    ok
+else
+    no "clang rejects list-copy IR"
+    cat "$tmp/list-copy-clang.log"
+fi
+if [ -x "$tmp/list-copy" ]; then
+    "$tmp/list-copy"
+    code=$?
+    [ "$code" -eq 7 ] && ok || no "list-copy result (got $code, expected 7)"
+else
+    no "list-copy binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-builtins.nova" "$tool")
 echo "$out" | grep -q "call %nova.string @nova_char_to_string(i32" && ok || no "char_string call"
 echo "$out" | grep -q "call %nova.string @nova_json_string" && ok || no "json_string call"

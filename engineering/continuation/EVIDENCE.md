@@ -75,7 +75,7 @@ Result: PASS — passed 4, failed 0.
 sh examples/nova-tool/tests/codegen.sh
 ```
 
-Result: PASS — passed 218, failed 0.
+Result: PASS — passed 221, failed 0.
 
 - Straight-line Int module: no `alloca` for immutable params/`let`.
 - Mutable module compiles and exits 2.
@@ -99,6 +99,8 @@ element slot; the runtime grows with `realloc`, copies the element and updates
   the length. A grown list is returned and indexed by the caller. Native 16.
 - List push-loop fixture pushes 5,000 elements in a `for` loop and indexes the
   final element through `nova_list_at`; native result 10.
+- List-copy fixture creates two mutable copies of one list, pushes through both,
+  and returns 7; without cloning the second `realloc` would use a stale pointer.
 - List assignment fixture emits a bounds check and element store through a
   mutable local after a growth push; the mutated list is returned and summed by
   the caller. Native result 45.
@@ -184,10 +186,10 @@ writes an
 existing element of a mutable local list; slices, insertion and removal are not
 implemented. Indexing, assignment and push use `nova_list_at`/`nova_list_push`;
 bounds failure is the runtime's Nova panic. List literals still allocate with
-libc `malloc` and storage is never freed. List headers are shallow-copied by
-value; `var next = seen` followed by `push` can leave the source list with a
-stale backing pointer after `realloc`. `cg_struct_cycle` now builds a fresh
-list before recursion, but a general copy/ownership model remains missing. Structs are value-only: no generics,
+libc `malloc` and storage is never freed. Mutable list initialization and
+reassignment clone the backing array through `nova_list_clone`, but function
+arguments and `let` bindings still pass headers by value; nested list ownership
+and GC remain missing. Structs are value-only: no generics,
 methods, equality, printing or
 references. Enum payloads support Int, Bool, String and struct values in codegen;
 enum-typed payloads, maps, sets, tuples, arrays and Option/Result remain.
@@ -223,7 +225,7 @@ and cancellation are absent even in Rust.
 
 ## Commit history
 
-- Stage 1/2/3 Nova-tool bootstrap checkpoint — 218/0 codegen, 11/0 CLI.
+- Stage 1/2/3 Nova-tool bootstrap checkpoint — 221/0 codegen, 11/0 CLI.
 - Self-build prerequisites checkpoint — 209/0 codegen, 11/0 CLI.
 - Nova CLI build/run/check checkpoint — 184/0 codegen, 9/0 CLI.
 - Nova CLI project build checkpoint — 184/0 codegen, 7/0 CLI.

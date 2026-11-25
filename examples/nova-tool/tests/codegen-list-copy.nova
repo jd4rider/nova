@@ -1,0 +1,11 @@
+fn add_twice(items: List<Int>) -> Int {
+    var left = items
+    var right = items
+    left.push(3)
+    right.push(4)
+    return left[2] + right[2]
+}
+
+fn main() -> Int {
+    return add_twice([1, 2])
+}

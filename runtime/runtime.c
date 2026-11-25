@@ -50,6 +50,7 @@ typedef struct {
 } nova_list;
 
 void nova_list_push(nova_list *list, void *elem, int64_t elem_size);
+void nova_list_clone(nova_list *source, nova_list *dest, int64_t elem_size);
 int32_t nova_term_leave_raw(void);
 
 static void nova_die_oom(void) {
@@ -1706,6 +1707,17 @@ void *nova_list_at(nova_list *list, int64_t index, int64_t elem_size, int64_t li
         nova_panic_bounds(index, list->len, line);
     }
     return (char *)list->data + (size_t)index * (size_t)elem_size;
+}
+
+void nova_list_clone(nova_list *source, nova_list *dest, int64_t elem_size) {
+    dest->data = NULL;
+    dest->len = source->len;
+    dest->cap = source->len;
+    if (source->len > 0 && elem_size > 0) {
+        size_t bytes = (size_t)source->len * (size_t)elem_size;
+        dest->data = nova_alloc((int64_t)bytes);
+        if (source->data) memcpy(dest->data, source->data, bytes);
+    }
 }
 
 void nova_list_push(nova_list *list, void *elem, int64_t elem_size) {

@@ -990,6 +990,26 @@ fn cg_elem_size(state: CgState, elem: String) -> (CgState, String) {
     return (work, size)
 }
 
+fn cg_clone_list(state: CgState, value: CgVal, elem: String) -> (CgState, String) {
+    let size_result = cg_elem_size(state, elem)
+    var work = size_result.0
+    let elem_size = size_result.1
+    let source_result = cg_entry_slot(work, "%nova.list")
+    work = source_result.0
+    let source_slot = source_result.1
+    work = cg_line(work, "  store %nova.list " + value.value + ", ptr " + source_slot)
+    let dest_result = cg_entry_slot(work, "%nova.list")
+    work = dest_result.0
+    let dest_slot = dest_result.1
+    work = cg_line(work, "  store %nova.list zeroinitializer, ptr " + dest_slot)
+    work = cg_line(work, "  call void @nova_list_clone(ptr " + source_slot + ", ptr " + dest_slot + ", i64 " + elem_size + ")")
+    let temp_result = cg_temp(work)
+    work = temp_result.0
+    let temp = temp_result.1
+    work = cg_line(work, "  " + temp + " = load %nova.list, ptr " + dest_slot)
+    return (work, temp)
+}
+
 fn cg_val_from_source(state: CgState, value: String, source_type: String) -> CgVal {
     if cg_is_list(source_type) {
         return cg_val_list(state, value, cg_list_elem(source_type))
@@ -1728,6 +1748,7 @@ fn cg_compile(source: String) -> CgResult {
     out = out + "declare ptr @malloc(i64)\n"
     out = out + "declare ptr @nova_list_at(ptr, i64, i64, i64)\n"
     out = out + "declare void @nova_list_push(ptr, ptr, i64)\n"
+    out = out + "declare void @nova_list_clone(ptr, ptr, i64)\n"
     out = out + "declare void @nova_panic_str(%nova.string, i64)\n"
     out = out + "declare %nova.string @nova_string_concat(%nova.string, %nova.string)\n"
     out = out + "declare i32 @nova_string_eq(%nova.string, %nova.string)\n"
@@ -2183,11 +2204,20 @@ fn cg_stmt(ast: Ast, state: CgState, node: Int) -> CgState {
             locals.push(CgLocal { name: item.text, ty: value.ty, slot: "", value: value.value, mutable: false, elem: elem })
             return cg_state(work, work.lines, work.temps, work.slots, locals, work.terminated, work.error)
         }
+        var init_value = value.value
+        if value.ty == "%nova.list" {
+            if elem.len() == 0 {
+                return cg_error(work, "list element type is unknown")
+            }
+            let clone_result = cg_clone_list(work, value, elem)
+            work = clone_result.0
+            init_value = clone_result.1
+        }
         let slot_result = cg_slot(work)
         work = slot_result.0
         let slot = slot_result.1
         work = cg_line(work, "  " + slot + " = alloca " + value.ty)
-        work = cg_line(work, "  store " + value.ty + " " + value.value + ", ptr " + slot)
+        work = cg_line(work, "  store " + value.ty + " " + init_value + ", ptr " + slot)
         var locals = work.locals
         locals.push(CgLocal { name: item.text, ty: value.ty, slot: slot, value: "", mutable: true, elem: elem })
         return cg_state(work, work.lines, work.temps, work.slots, locals, work.terminated, work.error)
@@ -3392,8 +3422,19 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
             if value.ty != state.locals[index].ty {
                 return cg_val(cg_error(value.state, "assignment type mismatch at line " + ast.nodes[node].line.to_string() + ": " + value.ty + " vs " + state.locals[index].ty), "0")
             }
-            let work = cg_line(value.state, "  store " + value.ty + " " + value.value + ", ptr " + state.locals[index].slot)
-            return cg_val_typed(work, value.value, value.ty)
+            var work = value.state
+            var assigned = value.value
+            if value.ty == "%nova.list" {
+                let elem = state.locals[index].elem
+                if elem.len() == 0 {
+                    return cg_val(cg_error(work, "list element type is unknown"), "0")
+                }
+                let clone_result = cg_clone_list(work, value, elem)
+                work = clone_result.0
+                assigned = clone_result.1
+            }
+            work = cg_line(work, "  store " + value.ty + " " + assigned + ", ptr " + state.locals[index].slot)
+            return cg_val_typed(work, assigned, value.ty)
         }
         if op == "&&" || op == "||" {
             return cg_logical(ast, state, node, op == "&&")

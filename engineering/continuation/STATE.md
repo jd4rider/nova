@@ -15,7 +15,7 @@ Rust seed removal remain.
 
 ## Last verified behavior
 
-- `sh examples/nova-tool/tests/codegen.sh` → passed 218, failed 0.
+- `sh examples/nova-tool/tests/codegen.sh` → passed 221, failed 0.
   - `List<Int>` literals allocate with libc `malloc`; empty lists supported.
   - List parameters and returns use by-value `%nova.list`; a literal survives
     return, identity and indexing (native 13).
@@ -121,11 +121,13 @@ Rust seed removal remain.
 - Modulo lowering and native builtin support for `char_string`, `json_string`
   and `http_get`.
 - GUI/fs/process host linking in the Nova driver, mirroring the Rust bootstrap.
-- `cg_struct_cycle` now builds a fresh `List<String>` before recursion instead
-  of shallow-copying a list header and pushing through it.
+- Mutable list bindings and list reassignment clone their backing storage via
+  `nova_list_clone`; `cg_struct_cycle` builds a fresh `List<String>` before
+  recursion instead of pushing through a shallow list-header copy.
+- A regression fixture pushes through two copies of the same list and returns 7.
 - New native fixtures: `codegen-if-expr.nova`, `codegen-builtins.nova`,
   `codegen-http-get.nova`; the CLI project now uses an aliased qualified call.
-- Full codegen/CLI/parser/sema/sema-ast suites remain green at 218/11/50/28/4.
+- Full codegen/CLI/parser/sema/sema-ast suites remain green at 221/11/50/28/4.
 
 ## Incomplete work / known failures
 
@@ -133,10 +135,9 @@ Rust seed removal remain.
   deleted. Do not claim “pure Nova” before `BOOT-02.04` and LSP parity.
 - `BOOT-02.04` (build the Nova LSP with the self-hosted compiler) and
   `BOOT-02.05` (Studio uses it) remain TODO.
-- List headers are still shallow-copied by value. `var next = seen` followed by
-  `push` can leave the source list with a stale backing pointer after `realloc`.
-  `cg_struct_cycle` avoids that pattern; a general copy/ownership model is
-  still missing.
+- Mutable list initialization and reassignment clone the backing array, but
+  function arguments and `let` bindings still pass headers by value; nested
+  list ownership and GC are unresolved.
 - List literals allocate with libc `malloc`; storage is never freed and
   ownership/GC is unresolved.
 - Box dependencies, standard-library module semantics and full module/import
@@ -162,7 +163,7 @@ Rust seed removal remain.
 - Command: `(cd examples/nova-tool && ../../target/debug/nova build)`
 - Result: PASS
 - Command: `sh examples/nova-tool/tests/codegen.sh`
-- Result: PASS (218/0)
+- Result: PASS (221/0)
 - Command: `sh examples/nova-tool/tests/cli.sh`
 - Result: PASS (11/0)
 - Command: `sh examples/nova-tool/tests/parser.sh`

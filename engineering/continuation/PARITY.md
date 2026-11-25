@@ -58,7 +58,7 @@ workspace indexing and cancellation are absent even in Rust.
   binding types are checked, match patterns are validated, block-arm bodies are
   checked, mixed arm types are errors, and Int/Bool/enum matches must be
   exhaustive (`E0311`–`E0313`).
-- Codegen: `tests/codegen.sh` → 218/0; SSA params/`let`; seed-shaped
+- Codegen: `tests/codegen.sh` → 221/0; SSA params/`let`; seed-shaped
   `ptr %arg_env`/`nova_user_N` ABI; Int, Unit/void, `%nova.string` and
   `%nova.list` declarations; string literals and `.len()`; heap-backed
   `List<Int>` literals/params/returns, runtime-linked indexing/assignment/push,
@@ -68,7 +68,7 @@ workspace indexing and cancellation are absent even in Rust.
   construction, reads, assignment and by-value parameters/returns; `build-ir`
   invokes clang. Native results 9, 2, 17, 4, 5, 23, 13, 16, 10, 45, 8, 30, 60,
   9, struct 14, enum 36 and Unit `main` 0; String match 13; print stdout and
-  exit 7; assert exit 5 and failure exit 1; list equality 12; list concat 11; String methods 5; Bool enum 7; String enum 10; list slice 10; String transform 16; String bytes 95; String upper 72; list first/last 49; list contains 16; list reverse 31; list sort 13; list sum 10; list min/max 29; list index_of 11; struct enum 9; expression `if` 13; builtins 5; `http_get` IR compiles; panic exit 1; Mach-O confirmed on this host.
+  exit 7; assert exit 5 and failure exit 1; list equality 12; list concat 11; String methods 5; Bool enum 7; String enum 10; list slice 10; String transform 16; String bytes 95; String upper 72; list first/last 49; list contains 16; list reverse 31; list sort 13; list sum 10; list min/max 29; list index_of 11; struct enum 9; expression `if` 13; list copy 7; builtins 5; `http_get` IR compiles; panic exit 1; Mach-O confirmed on this host.
 
 ## Rule
 
