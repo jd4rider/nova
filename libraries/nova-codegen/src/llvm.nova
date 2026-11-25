@@ -1023,6 +1023,7 @@ fn cg_compile(source: String) -> CgResult {
     out = out + "declare ptr @malloc(i64)\n"
     out = out + "declare ptr @nova_list_at(ptr, i64, i64, i64)\n"
     out = out + "declare void @nova_list_push(ptr, ptr, i64)\n"
+    out = out + "declare void @nova_panic_str(%nova.string, i64)\n"
     var emitted = 0
     while emitted < fns.len() {
         let sig = fns[emitted]
@@ -1503,6 +1504,9 @@ fn cg_match(ast: Ast, state: CgState, node: Int) -> CgVal {
     work = cg_line(work, "  store " + scrut.ty + " " + scrut.value + ", ptr " + slot)
     let arm_count = item.count - 1
     if arm_count == 0 {
+        let message = cg_string_lit(work, "\"non-exhaustive match\"")
+        work = message.state
+        work = cg_line(work, "  call void @nova_panic_str(%nova.string " + message.value + ", i64 " + ast.nodes[node].line.to_string() + ")")
         work = cg_line(work, "  unreachable")
         work = cg_state(work, work.lines, work.temps, work.slots, work.locals, true, work.error)
         return cg_val_typed(work, "", "void")
@@ -1675,6 +1679,9 @@ fn cg_match(ast: Ast, state: CgState, node: Int) -> CgVal {
     if !irrefutable {
         work = cg_state(work, work.lines, work.temps, work.slots, work.locals, false, work.error)
         work = cg_line(work, fail + ":")
+        let message = cg_string_lit(work, "\"non-exhaustive match\"")
+        work = message.state
+        work = cg_line(work, "  call void @nova_panic_str(%nova.string " + message.value + ", i64 " + ast.nodes[node].line.to_string() + ")")
         work = cg_line(work, "  unreachable")
     }
     if result_ty.len() == 0 {

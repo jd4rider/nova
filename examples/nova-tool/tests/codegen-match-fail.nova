@@ -1,0 +1,9 @@
+fn classify(n: Int) -> Int {
+    return match n {
+        1 => 10
+    }
+}
+
+fn main() -> Int {
+    return classify(2)
+}

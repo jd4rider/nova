@@ -21,8 +21,9 @@ The detailed matrix is `PARITY.md`.
 - AST parser 29/29 corpus files.
 - Body sema 24/0, including duplicate struct/enum checks, enum payload
 bindings, match pattern validation and Int/Bool/enum exhaustiveness.
-- Codegen 97/0 across Int/control flow, runtime-linked lists, match, value
-structs and enums; native binaries exit 9, 2, 10, 14, 17 and 36.
+- Codegen 101/0 across Int/control flow, runtime-linked lists, match, value
+structs and enums; native binaries exit 9, 2, 10, 14, 17 and 36, and an
+unmatched match panics with exit 1.
 - No claim of compiler/LSP parity or speed.
 
 ## Critical path

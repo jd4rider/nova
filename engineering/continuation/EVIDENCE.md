@@ -55,7 +55,7 @@ Result: PASS — passed 4, failed 0.
 sh examples/nova-tool/tests/codegen.sh
 ```
 
-Result: PASS — passed 97, failed 0.
+Result: PASS — passed 101, failed 0.
 
 - Straight-line Int module: no `alloca` for immutable params/`let`.
 - Mutable module compiles and exits 2.
@@ -91,6 +91,8 @@ element slot; the runtime grows with `realloc`, copies the element and updates
   native 60.
 - Bool-match fixture uses Unit block arms and a nested Int-match expression;
   native 9.
+- Unmatched-match fixture emits `call void @nova_panic_str` with the message
+  `non-exhaustive match`; the binary exits 1 and prints the panic.
 - Struct fixture emits `%nova.struct.Point` and `%nova.struct.Pair` aggregate
   declarations, `insertvalue` construction, `extractvalue` field reads, a
   rebuilt-and-stored aggregate for field assignment, and by-value struct
@@ -111,8 +113,9 @@ remain. `match` supports Int/Bool/enum scrutinees, integer/Bool literals,
 `Variant`, `Variant(_)` and `Variant(binding)` patterns, `_`, expression arms
 and Unit block arms; sema rejects string/nested patterns and duplicate or
 unreachable arms, checks arm/binding types and enforces Int/Bool/enum
-exhaustiveness. Short-circuit booleans remain. An unmatched match reaches
-`unreachable`, not a Nova panic. Assignment only writes an
+exhaustiveness. Short-circuit booleans remain. An unmatched or empty match calls
+`nova_panic_str` and exits 1 instead of reaching `unreachable`. Assignment only
+writes an
 existing element of a mutable local list; slices, insertion and removal are not
 implemented. Indexing, assignment and push use `nova_list_at`/`nova_list_push`;
 bounds failure is the runtime's Nova panic. List literals still allocate with
@@ -132,6 +135,7 @@ and cancellation are absent even in Rust.
 
 ## Commit history
 
+- Match failure panic checkpoint — 101/0 codegen, 24/0 sema.
 - List runtime checkpoint — 97/0 codegen, 24/0 sema.
 - Enum checkpoint — 91/0 codegen, 24/0 sema.
 - Struct checkpoint — 82/0 codegen, 17/0 sema.

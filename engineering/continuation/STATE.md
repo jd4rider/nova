@@ -4,16 +4,16 @@ Updated: 2026-11-24
 Master directive: owner-supplied; parity matrix in `engineering/continuation/`.
 Repository / branch: `nova` / `selfhost/pure-nova`
 HEAD: this checkpoint is committed by the accompanying code/doc commits; prior
-`f371170`.
+`4476a35`.
 Working tree: unrelated `editor/` and playground changes remain untouched.
 
 Active milestone: `COMP-01` / `CODEGEN-01` — frontend and LLVM lowering
-Active task: `CODEGEN-01.04` / `CODEGEN-01.06` — seed list runtime linkage
-Status: PARTIAL (list at/push call the C runtime; literals and ownership remain)
+Active task: `CODEGEN-01.08` — explicit unmatched-match panic
+Status: PARTIAL (failure path panics; string/nested patterns and guards remain)
 
 ## Last verified behavior
 
-- `sh examples/nova-tool/tests/codegen.sh` → passed 97, failed 0.
+- `sh examples/nova-tool/tests/codegen.sh` → passed 101, failed 0.
   - `List<Int>` literals allocate with libc `malloc`; empty lists supported.
   - List parameters and returns use by-value `%nova.list`; a literal survives
     return, identity and indexing (native 13).
@@ -31,8 +31,8 @@ Status: PARTIAL (list at/push call the C runtime; literals and ownership remain)
   - `match` supports Int/Bool/enum scrutinees, integer and `true`/`false`
     literal patterns, `Variant`, `Variant(_)` and `Variant(binding)` patterns,
     `_`, expression arms and Unit block arms. Expression arms merge through a
-    `phi`; unmatched matches reach `unreachable`. Native results: Int match 60,
-    Bool/Unit match 9, enum 36.
+    `phi`; an unmatched or empty match calls `nova_panic_str` and exits 1.
+    Native results: Int match 60, Bool/Unit match 9, enum 36, panic exit 1.
   - User structs are emitted as `%nova.struct.<Name>` aggregates with nested
     value fields. Literals use `insertvalue`, field reads use `extractvalue`,
     mutable local field assignment rebuilds and stores the aggregate, and
@@ -79,13 +79,15 @@ Status: PARTIAL (list at/push call the C runtime; literals and ownership remain)
   `nova_list_push` for growth; `build-ir` compiles and links `runtime/runtime.c`.
   New push/index temporaries are hoisted to the function prologue so loops do
   not grow the stack per iteration.
+- Unmatched and empty matches call `nova_panic_str("non-exhaustive match")`
+  instead of emitting LLVM `unreachable`.
 - Focused native and diagnostic fixtures.
 
 ## Incomplete work / known failures
 
-- Match lacks struct/string and nested enum patterns, guard expressions and
-  an explicit no-match panic. Sema rejects unsupported patterns, so they do not
-  reach codegen silently.
+- Match lacks struct/string and nested enum patterns, payload guards and
+  first-class match alternatives. Sema rejects unsupported patterns, so they do
+  not reach codegen silently.
 - No short-circuit `&&`/`||` or first-class `Range` values.
 - `for` supports only exclusive ranges and `List<Int>`.
 - Assignment only writes an existing element of a mutable local list; there is
@@ -107,7 +109,7 @@ Status: PARTIAL (list at/push call the C runtime; literals and ownership remain)
 
 ## Resume here
 
-1. Add the explicit no-match panic and string/nested enum patterns.
+1. Add string and nested enum patterns.
 2. Broaden enum payloads beyond Int and add list concat/equality through the
    runtime.
 3. Run codegen/parser/sema suites; update `STATE.md`, `EVIDENCE.md`,
@@ -118,7 +120,7 @@ Status: PARTIAL (list at/push call the C runtime; literals and ownership remain)
 - Command: `(cd examples/nova-tool && ../../target/debug/nova build)`
 - Result: PASS
 - Command: `sh examples/nova-tool/tests/codegen.sh`
-- Result: PASS (97/0)
+- Result: PASS (101/0)
 - Command: `sh examples/nova-tool/tests/sema-ast.sh`
 - Result: PASS (24/0)
 

@@ -276,6 +276,24 @@ else
     no "Unit match binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-match-fail.nova" "$tool")
+echo "$out" | grep -q "call void @nova_panic_str(%nova.string" && ok || no "unmatched match panic call"
+printf '%s\n' "$out" > "$tmp/match-fail.ll"
+if clang_ir "$tmp/match-fail.ll" "$tmp/match-fail" "$tmp/match-fail-clang.log"; then
+    ok
+else
+    no "clang rejects unmatched match IR"
+    cat "$tmp/match-fail-clang.log"
+fi
+if [ -x "$tmp/match-fail" ]; then
+    "$tmp/match-fail" > "$tmp/match-fail.out" 2> "$tmp/match-fail.err"
+    code=$?
+    [ "$code" -eq 1 ] && ok || no "unmatched match exit (got $code, expected 1)"
+    grep -q "non-exhaustive match" "$tmp/match-fail.err" && ok || no "unmatched match panic message"
+else
+    no "unmatched match binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-for.nova" "$tool")
 echo "$out" | grep -q "icmp slt i64" && ok || no "range loop condition"
 printf '%s\n' "$out" > "$tmp/for.ll"
