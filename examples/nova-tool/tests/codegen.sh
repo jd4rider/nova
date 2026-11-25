@@ -391,6 +391,24 @@ else
     no "enum binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-list-reverse.nova" "$tool")
+echo "$out" | grep -q "call ptr @nova_list_at" && ok || no "list reverse uses nova_list_at"
+echo "$out" | grep -q "call void @nova_list_push" && ok || no "list reverse uses nova_list_push"
+printf '%s\n' "$out" > "$tmp/list-reverse.ll"
+if clang_ir "$tmp/list-reverse.ll" "$tmp/list-reverse" "$tmp/list-reverse-clang.log"; then
+    ok
+else
+    no "clang rejects list reverse IR"
+    cat "$tmp/list-reverse-clang.log"
+fi
+if [ -x "$tmp/list-reverse" ]; then
+    "$tmp/list-reverse"
+    code=$?
+    [ "$code" -eq 31 ] && ok || no "list reverse result (got $code, expected 31)"
+else
+    no "list reverse binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-list-contains.nova" "$tool")
 echo "$out" | grep -q "call ptr @nova_list_at" && ok || no "list contains uses nova_list_at"
 printf '%s\n' "$out" > "$tmp/list-contains.ll"

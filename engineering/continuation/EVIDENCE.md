@@ -56,7 +56,7 @@ Result: PASS — passed 4, failed 0.
 sh examples/nova-tool/tests/codegen.sh
 ```
 
-Result: PASS — passed 163, failed 0.
+Result: PASS — passed 167, failed 0.
 
 - Straight-line Int module: no `alloca` for immutable params/`let`.
 - Mutable module compiles and exits 2.
@@ -121,6 +121,7 @@ element slot; the runtime grows with `realloc`, copies the element and updates
   values 4 and 9 produce 49.
 - List contains fixture finds 8 in `[3, 8, 13]`, rejects 4, and returns the end
   sum 16.
+- List reverse fixture copies `[1, 2, 3]` backwards; the reversed ends produce 31.
 - Assert fixtures emit `nova_assert_fail`; the passing program exits 5 and the
   failing program exits 1 with `assertion failed` on stderr.
 - Struct fixture emits `%nova.struct.Point` and `%nova.struct.Pair` aggregate
@@ -165,6 +166,7 @@ and cancellation are absent even in Rust.
 
 ## Commit history
 
+- List reverse checkpoint — 167/0 codegen, 28/0 sema.
 - List contains checkpoint — 163/0 codegen, 28/0 sema.
 - List first/last checkpoint — 160/0 codegen, 28/0 sema.
 - String upper checkpoint — 157/0 codegen, 28/0 sema.

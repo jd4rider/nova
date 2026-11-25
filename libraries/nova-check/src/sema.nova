@@ -759,6 +759,13 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
                 work = sa_args(work, node, 1, [], false)
                 return sa_result(work, "String")
             }
+            if callee_node.text == "reverse" {
+                if object.type_name != "?" && object.type_name != "List<Int>" {
+                    work = sa_error(work, node, "E0309", "reverse requires a List<Int> receiver")
+                }
+                work = sa_args(work, node, 1, [], false)
+                return sa_result(work, "List<Int>")
+            }
             if callee_node.text == "first" || callee_node.text == "last" {
                 if object.type_name != "?" && object.type_name != "List<Int>" {
                     work = sa_error(work, node, "E0309", callee_node.text + " requires a List<Int> receiver")
