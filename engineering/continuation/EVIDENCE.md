@@ -43,7 +43,7 @@ Result: PASS — passed 4, failed 0.
 sh examples/nova-tool/tests/codegen.sh
 ```
 
-Result: PASS — passed 32, failed 0.
+Result: PASS — passed 41, failed 0.
 
 - Straight-line Int module: no `alloca` for immutable params/`let`.
 - Mutable module compiles and exits 2.
@@ -55,13 +55,19 @@ Result: PASS — passed 32, failed 0.
   implicit return; caller exits 4. Unit `main` calls the entry and exits 0.
 - String function emits `%nova.string`, a literal global, by-value String
   parameter/return signatures, and `extractvalue` for `.len()`; native result 5.
+- List fixture emits `%nova.list { ptr, i64, i64 }`, a stack element array,
+  aggregate `insertvalue` construction (including empty list), `extractvalue`
+  for `.len()`, bounds-checked `getelementptr` indexing and `llvm.trap`; native
+  result 23.
 - `NOVA_TOOL=build-ir` invokes clang, checks status and produces a native binary;
   the test executes that Nova-built binary.
 - Host clang accepted every module; Mach-O confirmed on this host.
 
-Limit: ABI parity covers Int, Unit and the string-literal/len subset only. Lists,
-collections and runtime calls are not implemented; `emit-ir` remains IR-only.
-This is not a compiler-speed measurement.
+Limit: ABI parity covers Int, Unit, the string-literal/len subset and internal
+`List<Int>` literals only. List parameters/returns, push, mutation, maps, sets,
+structs and runtime calls are not implemented; list literals allocate on the
+stack and the bounds trap is not a Nova panic. `emit-ir` remains IR-only. This
+is not a compiler-speed measurement.
 
 ## Parity audit
 
@@ -73,6 +79,7 @@ and cancellation are absent even in Rust.
 
 ## Commit history
 
+- `List<Int>` literals/indexing checkpoint — 41/0.
 - Unit/String ABI checkpoint — 32/0.
 - `332555b` — Nova tool invokes clang and builds a native binary.
 - `8092f97` — Int ABI alignment.

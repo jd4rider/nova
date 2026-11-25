@@ -129,6 +129,29 @@ else
     no "string binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-list.nova" "$tool")
+echo "$out" | grep -q "%nova.list = type { ptr, i64, i64 }" && ok || no "list type declaration"
+echo "$out" | grep -q "alloca \[3 x i64\]" && ok || no "list element storage"
+echo "$out" | grep -q "insertvalue %nova.list" && ok || no "list aggregate construction"
+echo "$out" | grep -q "insertvalue %nova.list zeroinitializer, i64 0, 1" && ok || no "empty list construction"
+echo "$out" | grep -q "extractvalue %nova.list" && ok || no "List.len lowering"
+echo "$out" | grep -q "getelementptr i64" && ok || no "list index lowering"
+echo "$out" | grep -q "call void @llvm.trap()" && ok || no "list bounds trap"
+printf '%s\n' "$out" > "$tmp/list.ll"
+if clang -x ir "$tmp/list.ll" -o "$tmp/list" > "$tmp/list-clang.log" 2>&1; then
+    ok
+else
+    no "clang rejects list IR"
+    cat "$tmp/list-clang.log"
+fi
+if [ -x "$tmp/list" ]; then
+    "$tmp/list"
+    code=$?
+    [ "$code" -eq 23 ] && ok || no "list result (got $code, expected 23)"
+else
+    no "list binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-unit-main.nova" "$tool")
 echo "$out" | grep -q "define void @nova_user_0(ptr %arg_env)" && ok || no "Unit main signature"
 echo "$out" | grep -q "call void @nova_user_0(ptr null)" && ok || no "Unit main call"

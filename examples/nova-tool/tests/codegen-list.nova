@@ -1,0 +1,13 @@
+fn score() -> Int {
+    let points = [10, 20, 15]
+    return points[1] + points.len()
+}
+
+fn empty() -> Int {
+    let values = []
+    return values.len()
+}
+
+fn main() -> Int {
+    return score() + empty()
+}

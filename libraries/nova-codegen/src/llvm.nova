@@ -1,9 +1,9 @@
 // Nova LLVM IR lowering.
 //
-// Scope: Int, Unit and String functions; let/var; integer and string literals;
-// String.len; arithmetic; if/else/while; direct calls; seed-shaped ABI
-// (`ptr %arg_env`, `nova_user_N`, `%nova.string`). Collections and the full
-// runtime ABI are later tasks.
+// Scope: Int, Unit and String functions; let/var; integer, string and list
+// literals; String.len/List.len; list indexing; arithmetic; if/else/while;
+// direct calls; seed-shaped ABI (`ptr %arg_env`, `nova_user_N`, `%nova.string`,
+// `%nova.list`). Maps, structs and the full runtime ABI are later tasks.
 //
 // Unsupported syntax returns an error instead of emitting guessed IR.
 
@@ -94,6 +94,9 @@ fn cg_state_globals(state: CgState, globals: List<String>, strings: Int) -> CgSt
 fn cg_llvm_type(type_name: String) -> String {
     if type_name == "String" {
         return "%nova.string"
+    }
+    if type_name == "List<Int>" {
+        return "%nova.list"
     }
     if type_name == "Unit" || type_name == "" {
         return "void"
@@ -250,6 +253,103 @@ fn cg_string_lit(state: CgState, raw: String) -> CgVal {
     return cg_val_typed(work, second, "%nova.string")
 }
 
+fn cg_list_lit(ast: Ast, state: CgState, node: Int) -> CgVal {
+    let count = ast.nodes[node].count
+    if count == 0 {
+        let first_result = cg_temp(state)
+        var work = first_result.0
+        let first = first_result.1
+        work = cg_line(work, "  " + first + " = insertvalue %nova.list zeroinitializer, i64 0, 1")
+        let second_result = cg_temp(work)
+        work = second_result.0
+        let second = second_result.1
+        work = cg_line(work, "  " + second + " = insertvalue %nova.list " + first + ", i64 0, 2")
+        return cg_val_typed(work, second, "%nova.list")
+    }
+    let slot_result = cg_slot(state)
+    var work = slot_result.0
+    let array = slot_result.1
+    work = cg_line(work, "  " + array + " = alloca [" + count.to_string() + " x i64]")
+    var i = 0
+    while i < count {
+        let value = cg_expr2(ast, work, a_child(ast, node, i))
+        work = value.state
+        if value.ty != "i64" {
+            return cg_val(cg_error(work, "list elements must be Int"), "0")
+        }
+        let ptr_result = cg_temp(work)
+        work = ptr_result.0
+        let ptr = ptr_result.1
+        work = cg_line(work, "  " + ptr + " = getelementptr i64, ptr " + array + ", i64 " + i.to_string())
+        work = cg_line(work, "  store i64 " + value.value + ", ptr " + ptr)
+        i = i + 1
+    }
+    let first_result = cg_temp(work)
+    work = first_result.0
+    let first = first_result.1
+    work = cg_line(work, "  " + first + " = insertvalue %nova.list zeroinitializer, ptr " + array + ", 0")
+    let second_result = cg_temp(work)
+    work = second_result.0
+    let second = second_result.1
+    work = cg_line(work, "  " + second + " = insertvalue %nova.list " + first + ", i64 " + count.to_string() + ", 1")
+    let third_result = cg_temp(work)
+    work = third_result.0
+    let third = third_result.1
+    work = cg_line(work, "  " + third + " = insertvalue %nova.list " + second + ", i64 " + count.to_string() + ", 2")
+    return cg_val_typed(work, third, "%nova.list")
+}
+
+fn cg_index(ast: Ast, state: CgState, node: Int) -> CgVal {
+    let base = cg_expr2(ast, state, a_child(ast, node, 0))
+    let index = cg_expr2(ast, base.state, a_child(ast, node, 1))
+    if base.ty != "%nova.list" {
+        return cg_val(cg_error(index.state, "indexing expects List<Int>"), "0")
+    }
+    if index.ty != "i64" {
+        return cg_val(cg_error(index.state, "list index must be Int"), "0")
+    }
+    let ok_result = cg_label(index.state)
+    var work = ok_result.0
+    let ok = ok_result.1
+    let bad_result = cg_label(work)
+    work = bad_result.0
+    let bad = bad_result.1
+    let len_result = cg_temp(work)
+    work = len_result.0
+    let len = len_result.1
+    work = cg_line(work, "  " + len + " = extractvalue %nova.list " + base.value + ", 1")
+    let neg_result = cg_temp(work)
+    work = neg_result.0
+    let neg = neg_result.1
+    work = cg_line(work, "  " + neg + " = icmp slt i64 " + index.value + ", 0")
+    let big_result = cg_temp(work)
+    work = big_result.0
+    let big = big_result.1
+    work = cg_line(work, "  " + big + " = icmp sge i64 " + index.value + ", " + len)
+    let oob_result = cg_temp(work)
+    work = oob_result.0
+    let oob = oob_result.1
+    work = cg_line(work, "  " + oob + " = or i1 " + neg + ", " + big)
+    work = cg_line(work, "  br i1 " + oob + ", label %" + bad + ", label %" + ok)
+    work = cg_line(work, bad + ":")
+    work = cg_line(work, "  call void @llvm.trap()")
+    work = cg_line(work, "  unreachable")
+    work = cg_line(work, ok + ":")
+    let data_result = cg_temp(work)
+    work = data_result.0
+    let data = data_result.1
+    work = cg_line(work, "  " + data + " = extractvalue %nova.list " + base.value + ", 0")
+    let ptr_result = cg_temp(work)
+    work = ptr_result.0
+    let ptr = ptr_result.1
+    work = cg_line(work, "  " + ptr + " = getelementptr i64, ptr " + data + ", i64 " + index.value)
+    let val_result = cg_temp(work)
+    work = val_result.0
+    let val = val_result.1
+    work = cg_line(work, "  " + val + " = load i64, ptr " + ptr)
+    return cg_val(work, val)
+}
+
 fn cg_compile(source: String) -> CgResult {
     let ast = a_parse(source)
     if ast.error.len() > 0 {
@@ -298,6 +398,8 @@ fn cg_compile(source: String) -> CgResult {
     }
     var out = "; generated by Nova codegen (CODEGEN-01.01)\n"
     out = out + "%nova.string = type { ptr, i64 }\n"
+    out = out + "%nova.list = type { ptr, i64, i64 }\n"
+    out = out + "declare void @llvm.trap()\n"
     var emitted = 0
     while emitted < fns.len() {
         let sig = fns[emitted]
@@ -552,6 +654,12 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
     if item.kind == ak_string() {
         return cg_string_lit(state, item.text)
     }
+    if item.kind == ak_list() {
+        return cg_list_lit(ast, state, node)
+    }
+    if item.kind == ak_index() {
+        return cg_index(ast, state, node)
+    }
     if item.kind == ak_ident() {
         let index = cg_local_index(state.locals, item.text)
         if index < 0 {
@@ -649,13 +757,13 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
                 return cg_val(cg_error(state, "unsupported method " + ast.nodes[callee].text), "0")
             }
             let recv = cg_expr2(ast, state, a_child(ast, callee, 0))
-            if recv.ty != "%nova.string" {
-                return cg_val(cg_error(recv.state, "len() expects String"), "0")
+            if recv.ty != "%nova.string" && recv.ty != "%nova.list" {
+                return cg_val(cg_error(recv.state, "len() expects String or List"), "0")
             }
             let temp_result = cg_temp(recv.state)
             var work = temp_result.0
             let temp = temp_result.1
-            work = cg_line(work, "  " + temp + " = extractvalue %nova.string " + recv.value + ", 1")
+            work = cg_line(work, "  " + temp + " = extractvalue " + recv.ty + " " + recv.value + ", 1")
             return cg_val(work, temp)
         }
         if callee < 0 || ast.nodes[callee].kind != ak_ident() {
