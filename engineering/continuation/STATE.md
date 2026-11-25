@@ -4,12 +4,13 @@ Updated: 2026-11-24
 Master directive: owner-supplied; parity matrix in `engineering/continuation/`.
 Repository / branch: `nova` / `selfhost/pure-nova`
 HEAD: this checkpoint is committed by the accompanying code/doc commits; prior
-`28de2ac`.
+`a24880f`.
 Working tree: unrelated `editor/` and playground changes remain untouched.
 
 Active milestone: `COMP-01` / `CODEGEN-01` — frontend and LLVM lowering
-Active task: `CODEGEN-01.06` / `CODEGEN-01.08` — String operations and patterns
-Status: PARTIAL (concat/equality/literal match work; nested patterns remain)
+Active task: `CODEGEN-01.06` / `CODEGEN-01.08` — enum payloads, slices and
+String operations
+Status: PARTIAL (Int/Bool/String payloads and slices work; nested patterns remain)
 
 ## Last verified behavior
 
