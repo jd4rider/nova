@@ -1,0 +1,45 @@
+enum Option {
+    None
+    Some(Int)
+}
+
+enum Shape {
+    Empty
+    Dot(Int)
+    Line(Int, Int)
+}
+
+fn unwrap(value: Option, fallback: Int) -> Int {
+    return match value {
+        Some(x) => x
+        None => fallback
+    }
+}
+
+fn wrap(value: Int) -> Option {
+    return Some(value)
+}
+
+fn score(shape: Shape) -> Int {
+    return match shape {
+        Empty => 0
+        Dot(x) => x
+        Line(a, b) => a + b
+    }
+}
+
+fn is_empty(shape: Shape) -> Int {
+    return match shape {
+        Empty => 1
+        _ => 0
+    }
+}
+
+fn main() -> Int {
+    let a = Some(10)
+    let b = None
+    let line = Line(4, 6)
+    let dot = Dot(3)
+    let empty = Empty
+    return unwrap(a, 0) + unwrap(b, 7) + score(line) + score(dot) + unwrap(wrap(5), 0) + is_empty(empty)
+}

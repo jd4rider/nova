@@ -1,11 +1,12 @@
 // Nova LLVM IR lowering.
 //
-// Scope: Int, Bool, Unit and String functions; let/var; integer, string, list
-// and struct literals; String.len/List.len; list indexing, index assignment
-// and push; struct field reads and assignment; arithmetic;
-// if/else/while/for with break/continue; direct calls; seed-shaped ABI
-// (`ptr %arg_env`, `nova_user_N`, `%nova.string`, `%nova.list`,
-// `%nova.struct.*`). Maps, enums and the full runtime ABI are later tasks.
+// Scope: Int, Bool, Unit and String functions; let/var; integer, string, list,
+// struct and enum literals; String.len/List.len; list indexing, index
+// assignment and push; struct field reads and assignment; arithmetic;
+// if/else/while/for with break/continue; direct calls; Int/Bool/enum match;
+// seed-shaped ABI (`ptr %arg_env`, `nova_user_N`, `%nova.string`,
+// `%nova.list`, `%nova.struct.*`, `%nova.enum.*`). Maps and the full runtime
+// ABI are later tasks.
 //
 // Unsupported syntax returns an error instead of emitting guessed IR.
 
@@ -35,6 +36,15 @@ struct CgStruct {
     index: Int,
 }
 
+struct CgEnum {
+    name: String,
+    variants: List<String>,
+    payload_types: List<String>,
+    payload_counts: List<Int>,
+    payload_offsets: List<Int>,
+    index: Int,
+}
+
 struct CgState {
     lines: List<String>,
     temps: Int,
@@ -42,6 +52,7 @@ struct CgState {
     locals: List<CgLocal>,
     fns: List<CgSig>,
     structs: List<CgStruct>,
+    enums: List<CgEnum>,
     globals: List<String>,
     strings: Int,
     fn_index: Int,
@@ -79,6 +90,7 @@ fn cg_state(
         locals: locals,
         fns: state.fns,
         structs: state.structs,
+        enums: state.enums,
         globals: state.globals,
         strings: state.strings,
         fn_index: state.fn_index,
@@ -98,6 +110,7 @@ fn cg_state_globals(state: CgState, globals: List<String>, strings: Int) -> CgSt
         locals: state.locals,
         fns: state.fns,
         structs: state.structs,
+        enums: state.enums,
         globals: globals,
         strings: strings,
         fn_index: state.fn_index,
@@ -117,6 +130,7 @@ fn cg_loops_state(state: CgState, breaks: List<String>, continues: List<String>)
         locals: state.locals,
         fns: state.fns,
         structs: state.structs,
+        enums: state.enums,
         globals: state.globals,
         strings: state.strings,
         fn_index: state.fn_index,
@@ -209,18 +223,85 @@ fn cg_struct_index(structs: List<CgStruct>, name: String) -> Int {
     return -1
 }
 
-fn cg_llvm_type_in(structs: List<CgStruct>, type_name: String) -> String {
+fn cg_enum_index(enums: List<CgEnum>, name: String) -> Int {
+    var i = 0
+    while i < enums.len() {
+        if enums[i].name == name {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+fn cg_variant_index(item: CgEnum, name: String) -> Int {
+    var i = 0
+    while i < item.variants.len() {
+        if item.variants[i] == name {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+fn cg_variant_payload_count(item: CgEnum, variant: Int) -> Int {
+    if variant < 0 || variant >= item.payload_counts.len() {
+        return 0
+    }
+    return item.payload_counts[variant]
+}
+
+fn cg_variant_payload_type(item: CgEnum, variant: Int, payload: Int) -> String {
+    if variant < 0 || variant >= item.payload_offsets.len() {
+        return ""
+    }
+    let slot = item.payload_offsets[variant] + payload
+    if slot < 0 || slot >= item.payload_types.len() {
+        return ""
+    }
+    return item.payload_types[slot]
+}
+
+fn cg_enum_arity(item: CgEnum) -> Int {
+    var max = 0
+    for count in item.payload_counts {
+        if count > max {
+            max = count
+        }
+    }
+    return max
+}
+
+fn cg_enum_by_llvm(enums: List<CgEnum>, ty: String) -> Int {
+    var i = 0
+    while i < enums.len() {
+        if "%nova.enum." + enums[i].name == ty {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+fn cg_llvm_type_in(structs: List<CgStruct>, enums: List<CgEnum>, type_name: String) -> String {
     if cg_struct_index(structs, type_name) >= 0 {
         return "%nova.struct." + type_name
+    }
+    if cg_enum_index(enums, type_name) >= 0 {
+        return "%nova.enum." + type_name
     }
     return cg_llvm_type(type_name)
 }
 
-fn cg_supported_type(structs: List<CgStruct>, type_name: String) -> Bool {
+fn cg_supported_type(structs: List<CgStruct>, enums: List<CgEnum>, type_name: String) -> Bool {
     if type_name == "Int" || type_name == "Bool" || type_name == "String" || type_name == "Unit" || type_name == "List<Int>" {
         return true
     }
-    return cg_struct_index(structs, type_name) >= 0
+    if cg_struct_index(structs, type_name) >= 0 {
+        return true
+    }
+    return cg_enum_index(enums, type_name) >= 0
 }
 
 fn cg_has_name(names: List<String>, name: String) -> Bool {
@@ -272,6 +353,173 @@ fn cg_field_index(item: CgStruct, name: String) -> Int {
         i = i + 1
     }
     return -1
+}
+
+fn cg_split_types(text: String) -> List<String> {
+    var out: List<String> = []
+    if text.len() == 0 {
+        return out
+    }
+    var current = ""
+    var depth = 0
+    for c in text.chars() {
+        if c == "<" {
+            depth = depth + 1
+            current = current + c
+        } else if c == ">" {
+            depth = depth - 1
+            current = current + c
+        } else if c == "," && depth == 0 {
+            if current.len() > 0 {
+                out.push(current)
+            }
+            current = ""
+        } else {
+            current = current + c
+        }
+    }
+    if current.len() > 0 {
+        out.push(current)
+    }
+    return out
+}
+
+fn cg_find_variant(enums: List<CgEnum>, name: String) -> (Int, Int) {
+    var i = 0
+    while i < enums.len() {
+        let variant = cg_variant_index(enums[i], name)
+        if variant >= 0 {
+            return (i, variant)
+        }
+        i = i + 1
+    }
+    return (0 - 1, 0 - 1)
+}
+
+fn cg_pattern_variant(pattern: String) -> String {
+    var out = ""
+    for c in pattern.chars() {
+        if c == "(" {
+            return out
+        }
+        out = out + c
+    }
+    return out
+}
+
+fn cg_pattern_payload(pattern: String) -> String {
+    var out = ""
+    var started = false
+    for c in pattern.chars() {
+        if c == ")" && started {
+            return out
+        }
+        if started {
+            out = out + c
+        } else if c == "(" {
+            started = true
+        }
+    }
+    return out
+}
+
+fn cg_pattern_args(pattern: String) -> List<String> {
+    var out: List<String> = []
+    let payload = cg_pattern_payload(pattern)
+    if payload.len() == 0 {
+        return out
+    }
+    var current = ""
+    for c in payload.chars() {
+        if c == "," {
+            if current.len() > 0 {
+                out.push(current)
+            }
+            current = ""
+        } else {
+            current = current + c
+        }
+    }
+    if current.len() > 0 {
+        out.push(current)
+    }
+    return out
+}
+
+fn cg_enum_make(state: CgState, enum_index: Int, variant: Int, values: List<CgVal>) -> CgVal {
+    if enum_index < 0 || enum_index >= state.enums.len() {
+        return cg_val(cg_error(state, "unknown enum"), "0")
+    }
+    let def = state.enums[enum_index]
+    if variant < 0 || variant >= def.variants.len() {
+        return cg_val(cg_error(state, "unknown enum variant"), "0")
+    }
+    let count = cg_variant_payload_count(def, variant)
+    if values.len() != count {
+        return cg_val(
+            cg_error(
+                state,
+                def.name + "." + def.variants[variant] + " expects " + count.to_string() + " payload values, got " + values.len().to_string(),
+            ),
+            "0",
+        )
+    }
+    let ty = "%nova.enum." + def.name
+    var work = state
+    var aggregate = "zeroinitializer"
+    let tag_result = cg_temp(work)
+    work = tag_result.0
+    let tag = tag_result.1
+    work = cg_line(work, "  " + tag + " = insertvalue " + ty + " " + aggregate + ", i32 " + variant.to_string() + ", 0")
+    aggregate = tag
+    var k = 0
+    while k < values.len() {
+        if values[k].ty != "i64" {
+            return cg_val(cg_error(work, "enum payloads must be Int"), "0")
+        }
+        let next_result = cg_temp(work)
+        work = next_result.0
+        let next = next_result.1
+        work = cg_line(
+            work,
+            "  " + next + " = insertvalue " + ty + " " + aggregate + ", i64 " + values[k].value + ", " + (k + 1).to_string(),
+        )
+        aggregate = next
+        k = k + 1
+    }
+    return cg_val_typed(work, aggregate, ty)
+}
+
+fn cg_enum_call(ast: Ast, state: CgState, node: Int, name: String) -> CgVal {
+    let found = cg_find_variant(state.enums, name)
+    if found.0 < 0 {
+        return cg_val(cg_error(state, "unknown enum variant " + name), "0")
+    }
+    let def = state.enums[found.0]
+    let count = cg_variant_payload_count(def, found.1)
+    let got = ast.nodes[node].count - 1
+    if got != count {
+        return cg_val(
+            cg_error(
+                state,
+                def.name + "." + name + " expects " + count.to_string() + " payload values, got " + got.to_string(),
+            ),
+            "0",
+        )
+    }
+    var work = state
+    var values: List<CgVal> = []
+    var k = 0
+    while k < got {
+        let value = cg_expr2(ast, work, a_child(ast, node, k + 1))
+        work = value.state
+        if value.ty != "i64" {
+            return cg_val(cg_error(work, "enum payloads must be Int"), "0")
+        }
+        values.push(value)
+        k = k + 1
+    }
+    return cg_enum_make(work, found.0, found.1, values)
 }
 
 fn cg_line(state: CgState, text: String) -> CgState {
@@ -735,12 +983,52 @@ fn cg_compile(source: String) -> CgResult {
         return CgResult { ir: "", error: "parse error: " + ast.error }
     }
     var structs: List<CgStruct> = []
+    var enums: List<CgEnum> = []
     let file = ast.nodes.len() - 1
     var i = 0
     while i < ast.nodes[file].count {
         let node = a_child(ast, file, i)
         let item = ast.nodes[node]
-        if item.kind == ak_struct() {
+        if item.kind == ak_enum() {
+            if cg_enum_index(enums, item.text) >= 0 {
+                return CgResult { ir: "", error: "duplicate enum " + item.text }
+            }
+            var variants: List<String> = []
+            var payload_types: List<String> = []
+            var payload_counts: List<Int> = []
+            var payload_offsets: List<Int> = []
+            var k = 0
+            while k < item.count {
+                let variant = ast.nodes[a_child(ast, node, k)]
+                if cg_has_name(variants, variant.text) {
+                    return CgResult { ir: "", error: "duplicate variant " + variant.text + " on " + item.text }
+                }
+                let types = cg_split_types(variant.aux)
+                variants.push(variant.text)
+                payload_offsets.push(payload_types.len())
+                payload_counts.push(types.len())
+                for payload_type in types {
+                    if payload_type != "Int" {
+                        return CgResult {
+                            ir: "",
+                            error: "unsupported enum payload type " + payload_type + " on " + item.text + "." + variant.text,
+                        }
+                    }
+                    payload_types.push(payload_type)
+                }
+                k = k + 1
+            }
+            enums.push(
+                CgEnum {
+                    name: item.text,
+                    variants: variants,
+                    payload_types: payload_types,
+                    payload_counts: payload_counts,
+                    payload_offsets: payload_offsets,
+                    index: enums.len(),
+                }
+            )
+        } else if item.kind == ak_struct() {
             if cg_struct_index(structs, item.text) >= 0 {
                 return CgResult { ir: "", error: "duplicate struct " + item.text }
             }
@@ -764,7 +1052,7 @@ fn cg_compile(source: String) -> CgResult {
     while s < structs.len() {
         var k = 0
         while k < structs[s].fields.len() {
-            if !cg_supported_type(structs, structs[s].types[k]) {
+            if !cg_supported_type(structs, enums, structs[s].types[k]) {
                 return CgResult { ir: "", error: "unsupported type " + structs[s].types[k] + " on field " + structs[s].fields[k] }
             }
             if cg_struct_cycle(structs, structs[s].name, structs[s].name, [structs[s].name]) {
@@ -784,7 +1072,7 @@ fn cg_compile(source: String) -> CgResult {
             if ret == "" {
                 ret = "Unit"
             }
-            if !cg_supported_type(structs, ret) {
+            if !cg_supported_type(structs, enums, ret) {
                 return CgResult { ir: "", error: "unsupported return type on " + item.text }
             }
             if cg_fn_index(fns, item.text) >= 0 {
@@ -795,7 +1083,7 @@ fn cg_compile(source: String) -> CgResult {
             var k = 0
             while k < item.count - 1 {
                 let param = ast.nodes[a_child(ast, node, k)]
-                if !cg_supported_type(structs, param.aux) || param.aux == "Unit" || param.aux == "" {
+                if !cg_supported_type(structs, enums, param.aux) || param.aux == "Unit" || param.aux == "" {
                     return CgResult { ir: "", error: "unsupported parameter type on " + param.text }
                 }
                 params.push(param.text)
@@ -825,12 +1113,25 @@ fn cg_compile(source: String) -> CgResult {
             if field_index > 0 {
                 line = line + ", "
             }
-            line = line + cg_llvm_type_in(structs, structs[type_index].types[field_index])
+            line = line + cg_llvm_type_in(structs, enums, structs[type_index].types[field_index])
             field_index = field_index + 1
         }
         line = line + " }\n"
         out = out + line
         type_index = type_index + 1
+    }
+    var enum_index = 0
+    while enum_index < enums.len() {
+        var line = "%nova.enum." + enums[enum_index].name + " = type { i32"
+        var payload = 0
+        let arity = cg_enum_arity(enums[enum_index])
+        while payload < arity {
+            line = line + ", i64"
+            payload = payload + 1
+        }
+        line = line + " }\n"
+        out = out + line
+        enum_index = enum_index + 1
     }
     out = out + "declare void @llvm.trap()\n"
     out = out + "declare ptr @malloc(i64)\n"
@@ -838,7 +1139,7 @@ fn cg_compile(source: String) -> CgResult {
     var emitted = 0
     while emitted < fns.len() {
         let sig = fns[emitted]
-        let function = cg_emit_fn(ast, fns, structs, sig)
+        let function = cg_emit_fn(ast, fns, structs, enums, sig)
         if function.error.len() > 0 {
             return CgResult { ir: "", error: function.error }
         }
@@ -850,7 +1151,7 @@ fn cg_compile(source: String) -> CgResult {
         out = out + "  call void @nova_user_" + fns[main_index].index.to_string() + "(ptr null)\n"
         out = out + "  ret i32 0\n"
     } else if fns[main_index].ret != "Int" {
-        let main_ty = cg_llvm_type_in(structs, fns[main_index].ret)
+        let main_ty = cg_llvm_type_in(structs, enums, fns[main_index].ret)
         out = out + "  %nova_result = call " + main_ty + " @nova_user_" + fns[main_index].index.to_string() + "(ptr null)\n"
         out = out + "  ret i32 0\n"
     } else {
@@ -862,7 +1163,7 @@ fn cg_compile(source: String) -> CgResult {
     return CgResult { ir: out, error: "" }
 }
 
-fn cg_emit_fn(ast: Ast, fns: List<CgSig>, structs: List<CgStruct>, sig: CgSig) -> CgResult {
+fn cg_emit_fn(ast: Ast, fns: List<CgSig>, structs: List<CgStruct>, enums: List<CgEnum>, sig: CgSig) -> CgResult {
     var state = CgState {
         lines: [],
         temps: 0,
@@ -870,6 +1171,7 @@ fn cg_emit_fn(ast: Ast, fns: List<CgSig>, structs: List<CgStruct>, sig: CgSig) -
         locals: [],
         fns: fns,
         structs: structs,
+        enums: enums,
         globals: [],
         strings: 0,
         fn_index: sig.index,
@@ -884,7 +1186,7 @@ fn cg_emit_fn(ast: Ast, fns: List<CgSig>, structs: List<CgStruct>, sig: CgSig) -
         // Parameters are immutable Nova values: keep them in SSA instead of
         // spilling to the stack.
         var locals = state.locals
-        locals.push(CgLocal { name: sig.params[i], ty: cg_llvm_type_in(structs, sig.param_types[i]), slot: "", value: "%p" + i.to_string(), mutable: false })
+        locals.push(CgLocal { name: sig.params[i], ty: cg_llvm_type_in(structs, enums, sig.param_types[i]), slot: "", value: "%p" + i.to_string(), mutable: false })
         state = cg_state(state, state.lines, state.temps, state.slots, locals, state.terminated, state.error)
         i = i + 1
     }
@@ -901,7 +1203,7 @@ fn cg_emit_fn(ast: Ast, fns: List<CgSig>, structs: List<CgStruct>, sig: CgSig) -
         }
     }
     let symbol = "nova_user_" + sig.index.to_string()
-    let ret_llvm = cg_llvm_type_in(structs, sig.ret)
+    let ret_llvm = cg_llvm_type_in(structs, enums, sig.ret)
     var text = ""
     for global in state.globals {
         text = text + global + "\n"
@@ -909,7 +1211,7 @@ fn cg_emit_fn(ast: Ast, fns: List<CgSig>, structs: List<CgStruct>, sig: CgSig) -
     text = text + "define " + ret_llvm + " @" + symbol + "(ptr %arg_env"
     var k = 0
     while k < sig.params.len() {
-        text = text + ", " + cg_llvm_type_in(structs, sig.param_types[k]) + " %p" + k.to_string()
+        text = text + ", " + cg_llvm_type_in(structs, enums, sig.param_types[k]) + " %p" + k.to_string()
         k = k + 1
     }
     text = text + ") {\n"
@@ -1255,7 +1557,7 @@ fn cg_stmt(ast: Ast, state: CgState, node: Int) -> CgState {
         if state.ret == "Unit" {
             return cg_error(work, "Unit function cannot return a value")
         }
-        let expected = cg_llvm_type_in(state.structs, state.ret)
+        let expected = cg_llvm_type_in(state.structs, state.enums, state.ret)
         if value.ty != expected {
             return cg_error(work, "return type mismatch")
         }
@@ -1304,8 +1606,9 @@ fn cg_match(ast: Ast, state: CgState, node: Int) -> CgVal {
     if work.error.len() > 0 {
         return cg_val(work, "0")
     }
-    if scrut.ty != "i64" && scrut.ty != "i1" {
-        return cg_val(cg_error(work, "match supports Int or Bool scrutinees"), "0")
+    let enum_index = cg_enum_by_llvm(work.enums, scrut.ty)
+    if scrut.ty != "i64" && scrut.ty != "i1" && enum_index < 0 {
+        return cg_val(cg_error(work, "match supports Int, Bool or enum scrutinees"), "0")
     }
     let slot_result = cg_slot(work)
     work = slot_result.0
@@ -1340,6 +1643,7 @@ fn cg_match(ast: Ast, state: CgState, node: Int) -> CgVal {
         let body_result = cg_label(work)
         work = body_result.0
         let body = body_result.1
+        var bindings: List<String> = []
         var next = fail
         next_test = ""
         if i + 1 < arm_count {
@@ -1351,6 +1655,47 @@ fn cg_match(ast: Ast, state: CgState, node: Int) -> CgVal {
         if pattern == "_" {
             work = cg_line(work, "  br label %" + body)
             irrefutable = true
+        } else if enum_index >= 0 {
+            let def = work.enums[enum_index]
+            let variant_name = cg_pattern_variant(pattern)
+            let variant = cg_variant_index(def, variant_name)
+            if variant < 0 {
+                return cg_val(cg_error(work, "unknown variant " + variant_name + " on " + def.name), "0")
+            }
+            let expected = cg_variant_payload_count(def, variant)
+            let args = cg_pattern_args(pattern)
+            if args.len() != expected {
+                return cg_val(
+                    cg_error(
+                        work,
+                        def.name + "." + variant_name + " expects " + expected.to_string() + " payload bindings, got " + args.len().to_string(),
+                    ),
+                    "0",
+                )
+            }
+            var args_ok = true
+            for arg in args {
+                if arg != "_" && (arg.contains("(") || arg.contains(")")) {
+                    args_ok = false
+                }
+            }
+            if !args_ok {
+                return cg_val(cg_error(work, "nested enum patterns are not supported"), "0")
+            }
+            let loaded_result = cg_temp(work)
+            work = loaded_result.0
+            let loaded = loaded_result.1
+            work = cg_line(work, "  " + loaded + " = load " + scrut.ty + ", ptr " + slot)
+            let tag_result = cg_temp(work)
+            work = tag_result.0
+            let tag = tag_result.1
+            work = cg_line(work, "  " + tag + " = extractvalue " + scrut.ty + " " + loaded + ", 0")
+            let condition_result = cg_temp(work)
+            work = condition_result.0
+            let condition = condition_result.1
+            work = cg_line(work, "  " + condition + " = icmp eq i32 " + tag + ", " + variant.to_string())
+            work = cg_line(work, "  br i1 " + condition + ", label %" + body + ", label %" + next)
+            bindings = args
         } else if pattern == "true" || pattern == "false" {
             if scrut.ty != "i1" {
                 return cg_val(cg_error(work, "Bool pattern requires a Bool scrutinee"), "0")
@@ -1384,6 +1729,25 @@ fn cg_match(ast: Ast, state: CgState, node: Int) -> CgVal {
         }
         work = cg_line(work, body + ":")
         let saved = work.locals.len()
+        if bindings.len() > 0 {
+            let loaded_result = cg_temp(work)
+            work = loaded_result.0
+            let loaded = loaded_result.1
+            work = cg_line(work, "  " + loaded + " = load " + scrut.ty + ", ptr " + slot)
+            var b = 0
+            while b < bindings.len() {
+                if bindings[b] != "_" {
+                    let payload_result = cg_temp(work)
+                    work = payload_result.0
+                    let payload = payload_result.1
+                    work = cg_line(work, "  " + payload + " = extractvalue " + scrut.ty + " " + loaded + ", " + (b + 1).to_string())
+                    var locals = work.locals
+                    locals.push(CgLocal { name: bindings[b], ty: "i64", slot: "", value: payload, mutable: false })
+                    work = cg_state(work, work.lines, work.temps, work.slots, locals, work.terminated, work.error)
+                }
+                b = b + 1
+            }
+        }
         let body_node = a_child(ast, arm, 0)
         var arm_ty = "void"
         var arm_value = ""
@@ -1498,7 +1862,7 @@ fn cg_struct_lit(ast: Ast, state: CgState, node: Int) -> CgVal {
         }
         let value = cg_expr2(ast, work, a_child(ast, found, 0))
         work = value.state
-        let expected = cg_llvm_type_in(work.structs, def.types[k])
+        let expected = cg_llvm_type_in(work.structs, work.enums, def.types[k])
         if value.ty != expected {
             return cg_val(cg_error(work, "field " + def.fields[k] + " type mismatch"), "0")
         }
@@ -1530,7 +1894,7 @@ fn cg_member(ast: Ast, state: CgState, node: Int) -> CgVal {
     var work = temp_result.0
     let temp = temp_result.1
     work = cg_line(work, "  " + temp + " = extractvalue " + object.ty + " " + object.value + ", " + field.to_string())
-    return cg_val_typed(work, temp, cg_llvm_type_in(work.structs, def.types[field]))
+    return cg_val_typed(work, temp, cg_llvm_type_in(work.structs, work.enums, def.types[field]))
 }
 
 fn cg_field_assign(ast: Ast, state: CgState, target: Int, value_node: Int) -> CgVal {
@@ -1557,7 +1921,7 @@ fn cg_field_assign(ast: Ast, state: CgState, target: Int, value_node: Int) -> Cg
     }
     let value = cg_expr2(ast, state, value_node)
     var work = value.state
-    let expected = cg_llvm_type_in(work.structs, def.types[field])
+    let expected = cg_llvm_type_in(work.structs, work.enums, def.types[field])
     if value.ty != expected {
         return cg_val(cg_error(work, "field " + def.fields[field] + " type mismatch"), "0")
     }
@@ -1612,6 +1976,20 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
     if item.kind == ak_ident() {
         let index = cg_local_index(state.locals, item.text)
         if index < 0 {
+            let found = cg_find_variant(state.enums, item.text)
+            if found.0 >= 0 {
+                let count = cg_variant_payload_count(state.enums[found.0], found.1)
+                if count != 0 {
+                    return cg_val(
+                        cg_error(
+                            state,
+                            state.enums[found.0].name + "." + item.text + " expects " + count.to_string() + " payload values, got 0",
+                        ),
+                        "0",
+                    )
+                }
+                return cg_enum_make(state, found.0, found.1, [])
+            }
             return cg_val(cg_error(state, "unknown local " + item.text), "0")
         }
         if state.locals[index].value.len() > 0 {
@@ -1728,6 +2106,10 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
             return cg_val(cg_error(state, "only direct function calls are supported"), "0")
         }
         let name = ast.nodes[callee].text
+        let variant = cg_find_variant(state.enums, name)
+        if variant.0 >= 0 {
+            return cg_enum_call(ast, state, node, name)
+        }
         let index = cg_fn_index(state.fns, name)
         if index < 0 {
             return cg_val(cg_error(state, "unknown function " + name), "0")
@@ -1743,7 +2125,7 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
         while k < got {
             let arg = cg_expr2(ast, work, a_child(ast, node, k + 1))
             work = arg.state
-            let expected = cg_llvm_type_in(work.structs, sig.param_types[k])
+            let expected = cg_llvm_type_in(work.structs, work.enums, sig.param_types[k])
             if arg.ty != expected {
                 return cg_val(cg_error(work, name + " argument " + k.to_string() + " type mismatch"), "0")
             }
@@ -1758,7 +2140,7 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
         if args.len() > 0 {
             call_args = call_args + ", " + args
         }
-        let ret_ty = cg_llvm_type_in(work.structs, sig.ret)
+        let ret_ty = cg_llvm_type_in(work.structs, work.enums, sig.ret)
         if ret_ty == "void" {
             work = cg_line(work, "  call void @" + symbol + "(" + call_args + ")")
             return cg_val_typed(work, "", "void")

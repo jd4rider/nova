@@ -319,6 +319,29 @@ else
     no "struct binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-enum.nova" "$tool")
+echo "$out" | grep -q "%nova.enum.Option = type { i32, i64 }" && ok || no "enum type declaration"
+echo "$out" | grep -q "%nova.enum.Shape = type { i32, i64, i64 }" && ok || no "multi-payload enum type"
+echo "$out" | grep -q "insertvalue %nova.enum.Option" && ok || no "enum variant construction"
+echo "$out" | grep -q "icmp eq i32" && ok || no "enum tag comparison"
+echo "$out" | grep -q "extractvalue %nova.enum.Option" && ok || no "enum payload binding"
+echo "$out" | grep -q "define i64 @nova_user_0(ptr %arg_env, %nova.enum.Option %p0, i64 %p1)" && ok || no "enum parameter signature"
+echo "$out" | grep -q "define %nova.enum.Option @nova_user_1(ptr %arg_env, i64 %p0)" && ok || no "enum return signature"
+printf '%s\n' "$out" > "$tmp/enum.ll"
+if clang -x ir "$tmp/enum.ll" -o "$tmp/enum" > "$tmp/enum-clang.log" 2>&1; then
+    ok
+else
+    no "clang rejects enum IR"
+    cat "$tmp/enum-clang.log"
+fi
+if [ -x "$tmp/enum" ]; then
+    "$tmp/enum"
+    code=$?
+    [ "$code" -eq 36 ] && ok || no "enum result (got $code, expected 36)"
+else
+    no "enum binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-unit-main.nova" "$tool")
 echo "$out" | grep -q "define void @nova_user_0(ptr %arg_env)" && ok || no "Unit main signature"
 echo "$out" | grep -q "call void @nova_user_0(ptr null)" && ok || no "Unit main call"

@@ -19,16 +19,16 @@ The detailed matrix is `PARITY.md`.
 ## Current verified slice
 
 - AST parser 29/29 corpus files.
-- Body sema 17/0, including duplicate struct-field checks, match pattern
-validation and Int/Bool exhaustiveness.
-- Codegen 82/0 across Int/control flow, lists, match and value structs; native
-binaries exit 9, 2, 14 and 17.
+- Body sema 24/0, including duplicate struct/enum checks, enum payload
+bindings, match pattern validation and Int/Bool/enum exhaustiveness.
+- Codegen 91/0 across Int/control flow, lists, match, value structs and enums;
+native binaries exit 9, 2, 14, 17 and 36.
 - No claim of compiler/LSP parity or speed.
 
 ## Critical path
 
-CODEGEN-01.04 ABI → CODEGEN-01.06 enums → CODEGEN-01.09 clang invocation →
-CLI-01.01 driver →
+CODEGEN-01.04 ABI → CODEGEN-01.06 list runtime → CODEGEN-01.09 clang
+invocation → CLI-01.01 driver →
 COMP-01.03 modules → LSP-01.01/02 transport/diagnostics → LSP feature slices →
 DIFF-01 → BOOT-02 → PERF-01.
 

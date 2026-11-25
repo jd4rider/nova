@@ -11,14 +11,14 @@ baseline suite was not rerun in this session. Status: `VERIFIED`, `PARTIAL`,
 | Lexer, tokens, spans, interpolation | `bootstrap/nova-lexer` (894 lines) | PARTIAL — Nova lexer tokenizes the corpus | COMP-01.05 |
 | Parser, AST, recovery | `bootstrap/nova-parser` (2,447 lines) | PARTIAL — AST parses 29/29 corpus files; no recovery/incomplete-source mode | COMP-01.01, COMP-01.02 |
 | Name resolution / declarations | `bootstrap/nova-sema` (6,278 lines) | PARTIAL — functions, structs, enums, scopes | COMP-01.02 |
-| Type checking / inference | `bootstrap/nova-sema` | PARTIAL — Int/String/Bool, calls, struct fields and duplicate-field checks, returns, match arm types and Int/Bool exhaustiveness; no generics/traits | COMP-01.02, COMP-01.04 |
+| Type checking / inference | `bootstrap/nova-sema` | PARTIAL — Int/String/Bool, calls, struct fields and duplicate-field checks, enum variants/payloads and duplicate checks, returns, match arm/payload types and Int/Bool/enum exhaustiveness; no generics/traits | COMP-01.02, COMP-01.04 |
 | Modules / imports / Box resolution | `bootstrap/nova-cli`, `nova-pkg` | TODO | COMP-01.03 |
 | Generics, methods, traits, closures | Rust compiler | TODO | COMP-01.04, CODEGEN-01.10 |
 | Diagnostic codes/spans/recovery | `bootstrap/nova-diag`, sema | PARTIAL — E03xx slice; no full parity | COMP-01.06 |
 | Int arithmetic | Rust codegen | PARTIAL — `+ - * /`, no overflow/div-zero checks | CODEGEN-01.01, CODEGEN-01.07 |
-| Control flow | Rust codegen | PARTIAL — `if`/`else`, `while`, range/list `for`, nested loops, `break`/`continue`, Int/Bool `match` with literals and `_`, comparisons; sema rejects enum/string/binding patterns and duplicate/unreachable arms and checks Int/Bool exhaustiveness; no short-circuit booleans | CODEGEN-01.03, CODEGEN-01.08 |
+| Control flow | Rust codegen | PARTIAL — `if`/`else`, `while`, range/list `for`, nested loops, `break`/`continue`, Int/Bool/enum `match`, enum payload bindings and `_`, comparisons; sema rejects string/nested patterns and duplicate/unreachable arms and checks Int/Bool/enum exhaustiveness; no short-circuit booleans | CODEGEN-01.03, CODEGEN-01.08 |
 | Strings, lists, maps, sets | Rust runtime | PARTIAL — string literals/by-value params/returns/`.len()`; malloc-backed `List<Int>` literals, by-value params/returns, bounds-checked indexing and index assignment, `.len()` and mutable `.push()` via `realloc`; no concat/equality, seed `nova_list_*` runtime, slices, maps, sets or ownership | CODEGEN-01.06 |
-| Structs, enums, tuples, arrays | Rust runtime | PARTIAL — value structs lower to `%nova.struct.*` with nested fields, construction, reads, field assignment and by-value parameters/returns; enums, tuples and arrays TODO | CODEGEN-01.06 |
+| Structs, enums, tuples, arrays | Rust runtime | PARTIAL — value structs lower to `%nova.struct.*`; enums lower to `%nova.enum.*` with an `i32` tag and Int payload slots, construction, payload binding and exhaustive match; tuples and arrays TODO | CODEGEN-01.06 |
 | Option/Result/error propagation | Rust runtime | TODO | CODEGEN-01.06 |
 | FFI and runtime ABI | Rust codegen + `runtime/` | PARTIAL — seed-shaped `ptr %arg_env`, `nova_user_<index>`, Int/Unit/String/List signatures and entry wrapper; runtime-call ABI TODO | CODEGEN-01.04 |
 | Clang linking from the compiler | Rust CLI | VERIFIED for the supported slice — `build-ir` invokes clang with quoted paths and checks status | CODEGEN-01.09 |
@@ -52,19 +52,21 @@ workspace indexing and cancellation are absent even in Rust.
 ## Verified Nova slices
 
 - AST parser: `tests/parser.sh` → 50/0, 29-file corpus.
-- Body sema: `tests/sema-ast.sh` → 17/0; duplicate struct fields and
-  initializers are checked, match patterns are validated, block-arm bodies are
-  checked, mixed arm types are errors, and Int/Bool matches must be exhaustive
-  (`E0311`–`E0313`).
-- Codegen: `tests/codegen.sh` → 82/0; SSA params/`let`; seed-shaped
+- Body sema: `tests/sema-ast.sh` → 24/0; duplicate struct fields/initializers
+  and enum variants are checked, enum constructor/pattern arity and payload
+  binding types are checked, match patterns are validated, block-arm bodies are
+  checked, mixed arm types are errors, and Int/Bool/enum matches must be
+  exhaustive (`E0311`–`E0313`).
+- Codegen: `tests/codegen.sh` → 91/0; SSA params/`let`; seed-shaped
   `ptr %arg_env`/`nova_user_N` ABI; Int, Unit/void, `%nova.string` and
   `%nova.list` declarations; string literals and `.len()`; heap-backed
   `List<Int>` literals/params/returns, indexing, index assignment, `.len()` and
   mutable `.push()`; range/list/nested `for` with `break`/`continue`; Int/Bool
-  `match` expressions and Unit block arms; value structs with nested fields,
-  construction, reads, assignment and by-value parameters/returns; `build-ir`
-  invokes clang. Native results 9, 2, 17, 4, 5, 23, 13, 16, 45, 8, 30, 60, 9,
-  struct 14 and Unit `main` 0; Mach-O confirmed on this host.
+  `match` expressions, enum tags/Int payloads and Unit block arms; value
+  structs with nested fields, construction, reads, assignment and by-value
+  parameters/returns; `build-ir` invokes clang. Native results 9, 2, 17, 4, 5,
+  23, 13, 16, 45, 8, 30, 60, 9, struct 14, enum 36 and Unit `main` 0; Mach-O
+  confirmed on this host.
 
 ## Rule
 

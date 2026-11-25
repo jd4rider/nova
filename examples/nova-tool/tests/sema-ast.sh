@@ -105,5 +105,52 @@ printf 'fn main() {\n    let n = 1\n    match n {\n        _ => {\n            l
 out=$(NOVA_TOOL=sema-ast NOVA_TOOL_PATH="$tmp/match-block.nova" "$tool")
 echo "$out" | grep -q "E0301" && ok || no "match block arm body"
 
+cat > "$tmp/enum-ok.nova" <<'NOVA'
+enum Color {
+    Red
+    Green(Int)
+    Blue
+}
+
+fn value(c: Color) -> Int {
+    return match c {
+        Red => 0
+        Green(n) => n
+        Blue => 1
+    }
+}
+
+fn main() {
+    let c = Green(2)
+    let n = value(c)
+}
+NOVA
+out=$(NOVA_TOOL=sema-ast NOVA_TOOL_PATH="$tmp/enum-ok.nova" "$tool")
+echo "$out" | grep -q "^OK " && ok || no "exhaustive enum match"
+
+printf 'enum Color {\n    Red\n    Red\n}\n\nfn main() {\n}\n' > "$tmp/enum-dup-variant.nova"
+out=$(NOVA_TOOL=sema-ast NOVA_TOOL_PATH="$tmp/enum-dup-variant.nova" "$tool")
+echo "$out" | grep -q "E0307" && ok || no "duplicate enum variant"
+
+printf 'enum Color {\n    Green(Int)\n}\n\nfn main() {\n    let c = Green\n}\n' > "$tmp/enum-arity.nova"
+out=$(NOVA_TOOL=sema-ast NOVA_TOOL_PATH="$tmp/enum-arity.nova" "$tool")
+echo "$out" | grep -q "E0303" && ok || no "enum constructor arity"
+
+printf 'enum Color {\n    Red\n    Green(Int)\n}\n\nfn main() {\n    let c = Green(1)\n    let n = match c {\n        Red => 0\n    }\n}\n' > "$tmp/enum-exhaustive.nova"
+out=$(NOVA_TOOL=sema-ast NOVA_TOOL_PATH="$tmp/enum-exhaustive.nova" "$tool")
+echo "$out" | grep -q "E0313" && ok || no "non-exhaustive enum match"
+
+printf 'enum Color {\n    Red\n}\n\nfn main() {\n    let c = Red\n    let n = match c {\n        Blue => 0\n        _ => 1\n    }\n}\n' > "$tmp/enum-unknown.nova"
+out=$(NOVA_TOOL=sema-ast NOVA_TOOL_PATH="$tmp/enum-unknown.nova" "$tool")
+echo "$out" | grep -q "E0305" && ok || no "unknown enum variant"
+
+printf 'enum Color {\n    Red\n    Green(Int)\n}\n\nfn main() {\n    let c = Green(1)\n    let n = match c {\n        Red => 0\n        Green(s) => s + "bad"\n    }\n}\n' > "$tmp/enum-binding.nova"
+out=$(NOVA_TOOL=sema-ast NOVA_TOOL_PATH="$tmp/enum-binding.nova" "$tool")
+echo "$out" | grep -q "E0309" && ok || no "enum payload binding type"
+
+printf 'enum Color {\n    Red\n    Green(Int)\n}\n\nfn main() {\n    let c = Green(1)\n    let n = match c {\n        Green(x) => x\n        Green(y) => y\n        Red => 0\n    }\n}\n' > "$tmp/enum-duplicate-arm.nova"
+out=$(NOVA_TOOL=sema-ast NOVA_TOOL_PATH="$tmp/enum-duplicate-arm.nova" "$tool")
+echo "$out" | grep -q "E0312" && ok || no "duplicate enum arm"
+
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]

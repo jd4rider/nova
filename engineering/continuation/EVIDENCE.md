@@ -27,10 +27,15 @@ Commits: `93d61dc`, `983fd6a`.
 sh examples/nova-tool/tests/sema-ast.sh
 ```
 
-Result: PASS — passed 17, failed 0.
+Result: PASS — passed 24, failed 0.
 
-- Duplicate struct fields and duplicate field initializers report `E0307`.
-- Exhaustive Int and Bool matches are accepted.
+- Duplicate struct fields/initializers and duplicate enum variants report
+  `E0307`.
+- Enum constructor and match payload arity report `E0303`; unknown variants
+  report `E0305`; duplicate enum arms report `E0312`; incomplete enum matches
+  report `E0313`.
+- Exhaustive Int, Bool and enum matches are accepted; payload bindings carry
+  their declared types into the arm body.
 - Duplicate arms report `E0312`; unsupported binding patterns report `E0311`;
   an incomplete Bool match reports `E0313`.
 - Mixed arm types report `E0301`, and a Unit block-arm body is checked rather
@@ -50,7 +55,7 @@ Result: PASS — passed 4, failed 0.
 sh examples/nova-tool/tests/codegen.sh
 ```
 
-Result: PASS — passed 82, failed 0.
+Result: PASS — passed 91, failed 0.
 
 - Straight-line Int module: no `alloca` for immutable params/`let`.
 - Mutable module compiles and exits 2.
@@ -88,6 +93,10 @@ Result: PASS — passed 82, failed 0.
   declarations, `insertvalue` construction, `extractvalue` field reads, a
   rebuilt-and-stored aggregate for field assignment, and by-value struct
   parameters/returns; native 14. Recursive by-value layouts are rejected.
+- Enum fixture emits `%nova.enum.Option { i32, i64 }` and
+  `%nova.enum.Shape { i32, i64, i64 }`, tag stores/comparisons, payload
+  insertion/extraction, payload bindings, wildcard arms and by-value enum
+  parameters/returns; native 36.
 - `NOVA_TOOL=build-ir` invokes clang, checks status and produces a native binary;
   the test executes that Nova-built binary.
 - Host clang accepted every module; Mach-O confirmed on this host.
@@ -95,16 +104,18 @@ Result: PASS — passed 82, failed 0.
 Limit: ABI parity covers Int, Unit, the string-literal/len subset and the
 `List<Int>` literal/parameter/return/push/assignment subset. `for` supports
 exclusive integer ranges and `List<Int>` only; range values outside `for`
-remain. `match` supports Int/Bool scrutinees, integer/Bool literals, `_`,
-expression arms and Unit block arms; sema rejects enum/string/binding patterns
-and duplicate or unreachable arms, checks arm types and enforces Int/Bool
+remain. `match` supports Int/Bool/enum scrutinees, integer/Bool literals,
+`Variant`, `Variant(_)` and `Variant(binding)` patterns, `_`, expression arms
+and Unit block arms; sema rejects string/nested patterns and duplicate or
+unreachable arms, checks arm/binding types and enforces Int/Bool/enum
 exhaustiveness. Short-circuit booleans remain. An unmatched match reaches
 `unreachable`, not a Nova panic. Assignment only writes an
 existing element of a mutable local list; slices, insertion, removal and the
 `nova_list_*` runtime are not implemented. Push uses libc `realloc` rather than
 the seed allocator. List storage is never freed; the bounds trap is not a Nova
 panic. Structs are value-only: no generics, methods, equality, printing or
-references. Maps, sets, enums, tuples, arrays and Option/Result remain.
+references. Enum payloads are Int-only in codegen. Maps, sets, non-Int enum
+payloads, tuples, arrays and Option/Result remain.
 `emit-ir` is still not the full CLI. This is not a compiler-speed measurement.
 
 ## Parity audit
@@ -117,6 +128,7 @@ and cancellation are absent even in Rust.
 
 ## Commit history
 
+- Enum checkpoint — 91/0 codegen, 24/0 sema.
 - Struct checkpoint — 82/0 codegen, 17/0 sema.
 - `match` sema checkpoint — 73/0 codegen, 15/0 sema.
 - `match` codegen checkpoint — 73/0.

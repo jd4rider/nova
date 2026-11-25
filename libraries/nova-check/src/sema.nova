@@ -26,6 +26,9 @@ struct SaStruct {
 struct SaEnum {
     name: String,
     variants: List<String>,
+    payload_types: List<String>,
+    payload_counts: List<Int>,
+    payload_offsets: List<Int>,
 }
 
 struct SaLocal {
@@ -102,6 +105,139 @@ fn sa_field_index(item: SaStruct, name: String) -> Int {
     return -1
 }
 
+fn sa_variant_index(item: SaEnum, name: String) -> Int {
+    var i = 0
+    while i < item.variants.len() {
+        if item.variants[i] == name {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+fn sa_variant_payload_count(item: SaEnum, variant: Int) -> Int {
+    if variant < 0 || variant >= item.payload_counts.len() {
+        return 0
+    }
+    return item.payload_counts[variant]
+}
+
+fn sa_variant_payload_types(item: SaEnum, variant: Int) -> List<String> {
+    var out: List<String> = []
+    let count = sa_variant_payload_count(item, variant)
+    if variant < 0 || variant >= item.payload_offsets.len() {
+        return out
+    }
+    var i = 0
+    while i < count {
+        let slot = item.payload_offsets[variant] + i
+        if slot >= 0 && slot < item.payload_types.len() {
+            out.push(item.payload_types[slot])
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn sa_split_types(text: String) -> List<String> {
+    var out: List<String> = []
+    if text.len() == 0 {
+        return out
+    }
+    var current = ""
+    var depth = 0
+    for c in text.chars() {
+        if c == "<" {
+            depth = depth + 1
+            current = current + c
+        } else if c == ">" {
+            depth = depth - 1
+            current = current + c
+        } else if c == "," && depth == 0 {
+            if current.len() > 0 {
+                out.push(current)
+            }
+            current = ""
+        } else {
+            current = current + c
+        }
+    }
+    if current.len() > 0 {
+        out.push(current)
+    }
+    return out
+}
+
+fn sa_pattern_variant(pattern: String) -> String {
+    var out = ""
+    for c in pattern.chars() {
+        if c == "(" {
+            return out
+        }
+        out = out + c
+    }
+    return out
+}
+
+fn sa_pattern_payload(pattern: String) -> String {
+    var out = ""
+    var started = false
+    for c in pattern.chars() {
+        if c == ")" && started {
+            return out
+        }
+        if started {
+            out = out + c
+        } else if c == "(" {
+            started = true
+        }
+    }
+    return out
+}
+
+fn sa_pattern_args(pattern: String) -> List<String> {
+    var out: List<String> = []
+    let payload = sa_pattern_payload(pattern)
+    if payload.len() == 0 {
+        return out
+    }
+    var current = ""
+    for c in payload.chars() {
+        if c == "," {
+            if current.len() > 0 {
+                out.push(current)
+            }
+            current = ""
+        } else {
+            current = current + c
+        }
+    }
+    if current.len() > 0 {
+        out.push(current)
+    }
+    return out
+}
+
+fn sa_identifier(text: String) -> Bool {
+    if text.len() == 0 {
+        return false
+    }
+    let chars = text.chars()
+    let first = chars[0]
+    if !"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_".contains(first) {
+        return false
+    }
+    var i = 1
+    while i < chars.len() {
+        if !"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_".contains(chars[i]) {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
 fn sa_lookup(ctx: SaCtx, name: String) -> String {
     var i = ctx.locals.len() - 1
     while i >= 0 {
@@ -166,9 +302,10 @@ fn sa_match_expr(ctx: SaCtx, node: Int, scrutinee: String) -> SaResult {
     var has_true = false
     var has_false = false
     var seen: List<String> = []
-    let supported = scrutinee == "Int" || scrutinee == "Bool" || scrutinee == "?"
+    let enum_index = sa_enum_index(ctx.enums, scrutinee)
+    let supported = scrutinee == "Int" || scrutinee == "Bool" || scrutinee == "?" || enum_index >= 0
     if !supported {
-        work = sa_error(work, node, "E0311", "match supports Int or Bool scrutinees, got " + scrutinee)
+        work = sa_error(work, node, "E0311", "match supports Int, Bool or enum scrutinees, got " + scrutinee)
     }
     var i = 1
     while i < item.count {
@@ -177,12 +314,54 @@ fn sa_match_expr(ctx: SaCtx, node: Int, scrutinee: String) -> SaResult {
             work = sa_error(work, node, "E0311", "invalid match arm")
         } else {
             let pattern = ctx.ast.nodes[arm].text
+            var bindings: List<SaLocal> = []
             if pattern.len() == 0 {
                 work = sa_error(work, arm, "E0311", "empty match pattern")
             } else if wildcard {
                 work = sa_error(work, arm, "E0312", "unreachable match arm after `_`")
             } else if pattern == "_" {
                 wildcard = true
+            } else if enum_index >= 0 {
+                let def = work.enums[enum_index]
+                let variant_name = sa_pattern_variant(pattern)
+                let variant = sa_variant_index(def, variant_name)
+                if variant < 0 {
+                    work = sa_error(work, arm, "E0305", "unknown variant `" + variant_name + "` on " + def.name)
+                } else {
+                    let expected = sa_variant_payload_count(def, variant)
+                    let args = sa_pattern_args(pattern)
+                    if args.len() != expected {
+                        work = sa_error(
+                            work,
+                            arm,
+                            "E0303",
+                            def.name + "." + variant_name + " expects " + expected.to_string() + " payload bindings, got " + args.len().to_string()
+                        )
+                    } else if sa_has(seen, variant_name) {
+                        work = sa_error(work, arm, "E0312", "duplicate match arm `" + variant_name + "`")
+                    } else {
+                        seen.push(variant_name)
+                        var b = 0
+                        while b < args.len() {
+                            let binding = args[b]
+                            if binding.len() == 0 {
+                                work = sa_error(work, arm, "E0311", "empty payload binding")
+                            } else if binding != "_" {
+                                if !sa_identifier(binding) {
+                                    work = sa_error(work, arm, "E0311", "unsupported payload pattern `" + binding + "`")
+                                } else {
+                                    bindings.push(
+                                        SaLocal {
+                                            name: binding,
+                                            type_name: sa_variant_payload_types(def, variant)[b],
+                                        }
+                                    )
+                                }
+                            }
+                            b = b + 1
+                        }
+                    }
+                }
             } else if supported && scrutinee == "Int" {
                 if pattern == "true" || pattern == "false" {
                     work = sa_error(
@@ -222,6 +401,10 @@ fn sa_match_expr(ctx: SaCtx, node: Int, scrutinee: String) -> SaResult {
                 }
             }
             let body = a_child(ctx.ast, arm, 0)
+            let saved = work.locals.len()
+            for binding in bindings {
+                work = sa_push_local(work, binding.name, binding.type_name)
+            }
             var body_ty = "?"
             if body >= 0 && ctx.ast.nodes[body].kind == ak_block() {
                 work = sa_block(work, body)
@@ -231,6 +414,7 @@ fn sa_match_expr(ctx: SaCtx, node: Int, scrutinee: String) -> SaResult {
                 work = value.ctx
                 body_ty = value.type_name
             }
+            work = sa_trim_locals(work, saved)
             if result.len() == 0 {
                 result = body_ty
             } else if body_ty != "?" && result != "?" && !sa_same(result, body_ty) {
@@ -251,6 +435,13 @@ fn sa_match_expr(ctx: SaCtx, node: Int, scrutinee: String) -> SaResult {
         work = sa_error(work, node, "E0313", "non-exhaustive match on Int; add `_`")
     } else if scrutinee == "Bool" && !wildcard && !(has_true && has_false) {
         work = sa_error(work, node, "E0313", "non-exhaustive match on Bool; cover true and false or add `_`")
+    } else if enum_index >= 0 && !wildcard && seen.len() < work.enums[enum_index].variants.len() {
+        work = sa_error(
+            work,
+            node,
+            "E0313",
+            "non-exhaustive match on " + scrutinee + "; cover every variant or add `_`"
+        )
     }
     if result.len() == 0 {
         result = "?"
@@ -403,6 +594,17 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
         }
         let variant = sa_variant_enum(ctx, item.text)
         if variant.len() > 0 {
+            let enum_index = sa_enum_index(ctx.enums, variant)
+            let variant_index = sa_variant_index(ctx.enums[enum_index], item.text)
+            let count = sa_variant_payload_count(ctx.enums[enum_index], variant_index)
+            if count != 0 {
+                return sa_fail(
+                    ctx,
+                    node,
+                    "E0303",
+                    variant + "." + item.text + " expects " + count.to_string() + " payload values, got 0"
+                )
+            }
             return sa_result(ctx, variant)
         }
         return sa_fail(ctx, node, "E0300", "unknown name `" + item.text + "`")
@@ -478,6 +680,24 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
         }
         let callee_node = ctx.ast.nodes[callee]
         if callee_node.kind == ak_ident() {
+            let variant = sa_variant_enum(ctx, callee_node.text)
+            if variant.len() > 0 {
+                let enum_index = sa_enum_index(ctx.enums, variant)
+                let variant_index = sa_variant_index(ctx.enums[enum_index], callee_node.text)
+                let types = sa_variant_payload_types(ctx.enums[enum_index], variant_index)
+                let got = ctx.ast.nodes[node].count - 1
+                var work = ctx
+                if got != types.len() {
+                    work = sa_error(
+                        work,
+                        node,
+                        "E0303",
+                        variant + "." + callee_node.text + " expects " + types.len().to_string() + " payload values, got " + got.to_string()
+                    )
+                }
+                work = sa_args(work, node, 1, types, true)
+                return sa_result(work, variant)
+            }
             if sa_builtin(callee_node.text) {
                 let work = sa_args(ctx, node, 1, [], false)
                 return sa_result(work, "Unit")
@@ -840,13 +1060,40 @@ fn sa_collect(ctx: SaCtx) -> SaCtx {
                 work = sa_error(work, node, "E0307", "duplicate enum `" + item.text + "`")
             } else {
                 var variants: List<String> = []
+                var payload_types: List<String> = []
+                var payload_counts: List<Int> = []
+                var payload_offsets: List<Int> = []
                 var k = 0
                 while k < item.count {
-                    variants.push(ctx.ast.nodes[a_child(ctx.ast, node, k)].text)
+                    let variant_node = a_child(ctx.ast, node, k)
+                    let variant = ctx.ast.nodes[variant_node]
+                    if sa_has(variants, variant.text) {
+                        work = sa_error(
+                            work,
+                            variant_node,
+                            "E0307",
+                            "duplicate variant `" + variant.text + "` on " + item.text
+                        )
+                    }
+                    variants.push(variant.text)
+                    let types = sa_split_types(variant.aux)
+                    payload_offsets.push(payload_types.len())
+                    payload_counts.push(types.len())
+                    for payload_type in types {
+                        payload_types.push(payload_type)
+                    }
                     k = k + 1
                 }
                 var enums = work.enums
-                enums.push(SaEnum { name: item.text, variants: variants })
+                enums.push(
+                    SaEnum {
+                        name: item.text,
+                        variants: variants,
+                        payload_types: payload_types,
+                        payload_counts: payload_counts,
+                        payload_offsets: payload_offsets,
+                    }
+                )
                 work = SaCtx {
                     ast: work.ast,
                     fns: work.fns,
