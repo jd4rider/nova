@@ -35,7 +35,58 @@ fn nt_shell_quote(text: String) -> String {
     return out + "'"
 }
 
+fn nt_build_source(path: String, source: String, target: String) -> Int {
+    let result = cg_compile(source)
+    if result.error.len() > 0 {
+        println("error: " + result.error)
+        return 1
+    }
+    let ir_path = target + ".ll"
+    if !gui.write(ir_path, result.ir) {
+        println("error: cannot write " + ir_path)
+        return 1
+    }
+    var runtime = gui.env("NOVA_TOOL_RUNTIME")
+    if runtime.len() == 0 {
+        runtime = gui.cwd() + "/runtime/runtime.c"
+        if !gui.exists(runtime) {
+            runtime = gui.cwd() + "/../runtime/runtime.c"
+        }
+    }
+    if !gui.exists(runtime) {
+        println("error: cannot find runtime/runtime.c; set NOVA_TOOL_RUNTIME")
+        return 1
+    }
+    let command = "clang -x ir " + nt_shell_quote(ir_path) + " -x none " + nt_shell_quote(runtime) + " -o " + nt_shell_quote(target) + " -lm"
+    let output = gui.run(command, gui.cwd())
+    if gui.exit_status() != 0 {
+        println("error: clang failed for " + path)
+        if output.len() > 0 {
+            println(output)
+        }
+        return 1
+    }
+    println("built " + target)
+    return 0
+}
+
 fn main() {
+    let argc = gui.args_count()
+    if argc >= 2 && gui.arg(1) == "build" {
+        if argc < 3 {
+            println("usage: nova build <source> [output]")
+            return
+        }
+        let source_path = gui.arg(2)
+        let target = if argc >= 4 { gui.arg(3) } else { source_path + ".out" }
+        let source = gui.read(source_path)
+        if source.len() == 0 && !gui.exists(source_path) {
+            println("nova-tool: cannot read " + source_path)
+            return
+        }
+        nt_build_source(source_path, source, target)
+        return
+    }
     let mode = gui.env("NOVA_TOOL")
     let path = gui.env("NOVA_TOOL_PATH")
 
@@ -209,43 +260,12 @@ fn main() {
     }
 
     if mode == "build-ir" {
-        let result = cg_compile(source)
-        if result.error.len() > 0 {
-            println("error: " + result.error)
-            return
-        }
         let target = gui.env("NOVA_TOOL_OUT")
         if target.len() == 0 {
             println("error: set NOVA_TOOL_OUT to the output binary")
             return
         }
-        let ir_path = target + ".ll"
-        if !gui.write(ir_path, result.ir) {
-            println("error: cannot write " + ir_path)
-            return
-        }
-        var runtime = gui.env("NOVA_TOOL_RUNTIME")
-        if runtime.len() == 0 {
-            runtime = gui.cwd() + "/runtime/runtime.c"
-            if !gui.exists(runtime) {
-                runtime = gui.cwd() + "/../runtime/runtime.c"
-            }
-        }
-        if !gui.exists(runtime) {
-            println("error: cannot find runtime/runtime.c; set NOVA_TOOL_RUNTIME")
-            return
-        }
-        let command = "clang -x ir " + nt_shell_quote(ir_path) + " -x none " + nt_shell_quote(runtime) + " -o " + nt_shell_quote(target) + " -lm"
-        let output = gui.run(command, gui.cwd())
-        let status = gui.exit_status()
-        if status != 0 {
-            println("error: clang failed with status " + status.to_string())
-            if output.len() > 0 {
-                println(output)
-            }
-            return
-        }
-        println("built " + target)
+        nt_build_source(path, source, target)
         return
     }
 

@@ -100,6 +100,8 @@ extern "C" fn nova_gui_set_mono_font(family: String) -> Int
 extern "C" fn nova_gui_mono_fonts() -> String
 extern "C" fn nova_fs_cwd() -> String
 extern "C" fn nova_env(name: String) -> String
+extern "C" fn nova_args_count() -> Int
+extern "C" fn nova_args_get(index: Int) -> String
 extern "C" fn nova_sound_tone(frequency: Int, milliseconds: Int, volume: Int) -> Int
 extern "C" fn nova_process_run(command: String, cwd: String) -> String
 extern "C" fn nova_process_status() -> Int
@@ -645,6 +647,15 @@ fn mono_fonts() -> String {
 
 fn env(name: String) -> String {
     return nova_env(name)
+}
+
+// Process arguments. Index 0 is the executable, matching C argv.
+fn args_count() -> Int {
+    return nova_args_count()
+}
+
+fn arg(index: Int) -> String {
+    return nova_args_get(index)
 }
 
 // Plays a synthesized tone: frequency in Hz, length in ms, volume 0..100.

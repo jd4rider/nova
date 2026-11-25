@@ -135,14 +135,17 @@ Status: PARTIAL (Int/Bool/String payloads and slices work; nested patterns remai
 - Maps and sets remain.
 - Strings lack interpolation, ordering, and the wider method/runtime surface.
 - Overflow checks and the full runtime ABI remain.
-- `nova build` still uses the Rust seed; the Nova tool is not yet the CLI.
+- `nova build` still uses the Rust seed. The Nova tool has a single-file
+  `build <source> [output]` path, but no project manifest, import resolution,
+  `run` or seed fallback.
 - Sema lacks modules, generics, traits, methods and full diagnostics.
 - No Nova LSP or differential Rust/Nova harness.
 
 ## Resume here
 
-1. Add nested enum patterns and match guards.
-2. Add enum-typed payloads and match guards.
+1. Add project/module resolution to the Nova CLI, then a seed-free bootstrap
+   path.
+2. Add nested enum patterns and enum-typed payloads.
 3. Run codegen/parser/sema suites; update `STATE.md`, `EVIDENCE.md`,
    `TASKS.md` and `PARITY.md`; commit.
 
@@ -150,6 +153,8 @@ Status: PARTIAL (Int/Bool/String payloads and slices work; nested patterns remai
 
 - Command: `(cd examples/nova-tool && ../../target/debug/nova build)`
 - Result: PASS
+- Command: `sh examples/nova-tool/tests/cli.sh`
+- Result: PASS (4/0)
 - Command: `sh examples/nova-tool/tests/codegen.sh`
 - Result: PASS (184/0)
 - Command: `sh examples/nova-tool/tests/sema-ast.sh`

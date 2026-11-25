@@ -11,6 +11,20 @@ cargo build -p nova-cli
 
 Result: PASS.
 
+## Nova CLI driver
+
+```sh
+sh examples/nova-tool/tests/cli.sh
+```
+
+Result: PASS — passed 4, failed 0.
+
+The Nova tool now reads process arguments, accepts `build <source> [output]`,
+compiles and links one file, prints `built <path>`, and returns the native exit
+status. The fixture exits 7 and the harness observes 7. Argument access is
+implemented for Apple hosts (`_NSGetArgc`/`_NSGetArgv`); other hosts return no
+arguments. Project manifests, imports, `run`, and Rust-seed fallback remain.
+
 ## Parser
 
 ```sh
@@ -160,9 +174,10 @@ implemented. Indexing, assignment and push use `nova_list_at`/`nova_list_push`;
 bounds failure is the runtime's Nova panic. List literals still allocate with
 libc `malloc` and storage is never freed. Structs are value-only: no generics,
 methods, equality, printing or
-references. Enum payloads support Int and Bool in codegen. String/struct
-payloads, maps, sets, tuples, arrays and Option/Result remain.
-`emit-ir` is still not the full CLI. This is not a compiler-speed measurement.
+references. Enum payloads support Int, Bool, String and struct values in codegen;
+enum-typed payloads, maps, sets, tuples, arrays and Option/Result remain.
+The Nova tool has a single-file build command, but `nova build` still uses the
+Rust seed. This is not a compiler-speed measurement.
 
 ## Parity audit
 
@@ -174,6 +189,7 @@ and cancellation are absent even in Rust.
 
 ## Commit history
 
+- Nova CLI single-file build checkpoint — 184/0 codegen, 4/0 CLI.
 - Struct enum payloads checkpoint — 184/0 codegen, 28/0 sema.
 - List index_of checkpoint — 180/0 codegen, 28/0 sema.
 - List min/max checkpoint — 177/0 codegen, 28/0 sema.

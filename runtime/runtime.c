@@ -24,6 +24,9 @@
 #include <io.h>
 #include <windows.h>
 #else
+#if defined(__APPLE__)
+#include <crt_externs.h>
+#endif
 #include <poll.h>
 #include <signal.h>
 #include <sys/ioctl.h>
@@ -76,6 +79,30 @@ static nova_str nova_copy_str(const char *data, int64_t len) {
     s.ptr = p;
     s.len = len;
     return s;
+}
+
+/* Process arguments are read from the host so a Nova program can become a
+ * command-line driver without changing the generated `main` wrapper. */
+int64_t nova_args_count(void) {
+#if defined(__APPLE__)
+    return (int64_t)*_NSGetArgc();
+#else
+    return 0;
+#endif
+}
+
+nova_str nova_args_get(int64_t index) {
+#if defined(__APPLE__)
+    int argc = *_NSGetArgc();
+    char **argv = *_NSGetArgv();
+    if (index < 0 || index >= (int64_t)argc || !argv[index]) {
+        return nova_copy_str("", 0);
+    }
+    return nova_copy_str(argv[index], (int64_t)strlen(argv[index]));
+#else
+    (void)index;
+    return nova_copy_str("", 0);
+#endif
 }
 
 static int nova_utf8_decode(

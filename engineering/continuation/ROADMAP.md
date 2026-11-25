@@ -9,7 +9,7 @@ The detailed matrix is `PARITY.md`.
 | BOOT-01 | Preserve and verify the Rust stage-0 seed | VERIFIED | — |
 | COMP-01 | Nova compiler frontend: lexer, parser, sema, modules | PARTIAL | BOOT-01 |
 | CODEGEN-01 | Nova LLVM IR lowering and native execution | PARTIAL | COMP-01 parser |
-| CLI-01 | Nova build/run driver | TODO | CODEGEN-01.04 |
+| CLI-01 | Nova build/run driver | IN_PROGRESS | CODEGEN-01.04 |
 | DIFF-01 | Rust/Nova differential validation | TODO | CLI-01, COMP-01 |
 | LSP-01 | Nova language server, including current Rust surface | TODO | COMP-01, CODEGEN-01, stdio |
 | PERF-01 | Measured compiler/LSP performance at parity | TODO | CLI-01, LSP-01 |

@@ -71,7 +71,10 @@ and integration gate pass. The full matrix is `PARITY.md`.
 ## CLI-01 — Self-hosted driver
 
 - CLI-01.01 — `nova build` via the Nova frontend/codegen with seed fallback:
-  **TODO**, depends CODEGEN-01.04/01.09.
+  **IN_PROGRESS**. The Nova tool now accepts `build <source> [output]`, reads
+  process arguments from the runtime, compiles and links one file, and returns
+  the native status. Project manifests, imports, `run`, and seed fallback
+  remain. Evidence: `tests/cli.sh` → 4/0.
 
 ## LSP-01 — Nova language server
 
