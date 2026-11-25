@@ -257,6 +257,17 @@ fn cg_variant_payload_count(item: CgEnum, variant: Int) -> Int {
     return item.payload_counts[variant]
 }
 
+fn cg_variant_payload_types(item: CgEnum, variant: Int) -> List<String> {
+    var out: List<String> = []
+    let count = cg_variant_payload_count(item, variant)
+    var i = 0
+    while i < count {
+        out.push(cg_variant_payload_type(item, variant, i))
+        i = i + 1
+    }
+    return out
+}
+
 fn cg_variant_payload_type(item: CgEnum, variant: Int, payload: Int) -> String {
     if variant < 0 || variant >= item.payload_offsets.len() {
         return ""
@@ -479,15 +490,23 @@ fn cg_enum_make(state: CgState, enum_index: Int, variant: Int, values: List<CgVa
     aggregate = tag
     var k = 0
     while k < values.len() {
-        if values[k].ty != "i64" {
-            return cg_val(cg_error(work, "enum payloads must be Int"), "0")
+        let payload_ty = cg_variant_payload_type(def, variant, k)
+        var slot_value = values[k].value
+        if payload_ty == "Bool" && values[k].ty == "i1" {
+            let wide_result = cg_temp(work)
+            work = wide_result.0
+            let wide = wide_result.1
+            work = cg_line(work, "  " + wide + " = zext i1 " + values[k].value + " to i64")
+            slot_value = wide
+        } else if payload_ty != "Int" || values[k].ty != "i64" {
+            return cg_val(cg_error(work, "unsupported enum payload type " + payload_ty), "0")
         }
         let next_result = cg_temp(work)
         work = next_result.0
         let next = next_result.1
         work = cg_line(
             work,
-            "  " + next + " = insertvalue " + ty + " " + aggregate + ", i64 " + values[k].value + ", " + (k + 1).to_string(),
+            "  " + next + " = insertvalue " + ty + " " + aggregate + ", i64 " + slot_value + ", " + (k + 1).to_string(),
         )
         aggregate = next
         k = k + 1
@@ -518,9 +537,6 @@ fn cg_enum_call(ast: Ast, state: CgState, node: Int, name: String) -> CgVal {
     while k < got {
         let value = cg_expr2(ast, work, a_child(ast, node, k + 1))
         work = value.state
-        if value.ty != "i64" {
-            return cg_val(cg_error(work, "enum payloads must be Int"), "0")
-        }
         values.push(value)
         k = k + 1
     }
@@ -895,7 +911,7 @@ fn cg_compile(source: String) -> CgResult {
                 payload_offsets.push(payload_types.len())
                 payload_counts.push(types.len())
                 for payload_type in types {
-                    if payload_type != "Int" {
+                    if payload_type != "Int" && payload_type != "Bool" {
                         return CgResult {
                             ir: "",
                             error: "unsupported enum payload type " + payload_type + " on " + item.text + "." + variant.text,
@@ -1729,6 +1745,7 @@ fn cg_match(ast: Ast, state: CgState, node: Int) -> CgVal {
         work = body_result.0
         let body = body_result.1
         var bindings: List<String> = []
+        var binding_types: List<String> = []
         var next = fail
         next_test = ""
         if i + 1 < arm_count {
@@ -1781,6 +1798,7 @@ fn cg_match(ast: Ast, state: CgState, node: Int) -> CgVal {
             work = cg_line(work, "  " + condition + " = icmp eq i32 " + tag + ", " + variant.to_string())
             work = cg_line(work, "  br i1 " + condition + ", label %" + body + ", label %" + next)
             bindings = args
+            binding_types = cg_variant_payload_types(def, variant)
         } else if scrut.ty == "%nova.string" {
             if pattern.len() < 2 || !pattern.starts_with("\"") || !pattern.ends_with("\"") {
                 return cg_val(cg_error(work, "String patterns must be string literals"), "0")
@@ -1843,10 +1861,20 @@ fn cg_match(ast: Ast, state: CgState, node: Int) -> CgVal {
                 if bindings[b] != "_" {
                     let payload_result = cg_temp(work)
                     work = payload_result.0
-                    let payload = payload_result.1
-                    work = cg_line(work, "  " + payload + " = extractvalue " + scrut.ty + " " + loaded + ", " + (b + 1).to_string())
+                    let raw = payload_result.1
+                    work = cg_line(work, "  " + raw + " = extractvalue " + scrut.ty + " " + loaded + ", " + (b + 1).to_string())
+                    var payload = raw
+                    var payload_ty = "i64"
+                    if b < binding_types.len() && binding_types[b] == "Bool" {
+                        let narrow_result = cg_temp(work)
+                        work = narrow_result.0
+                        let narrow = narrow_result.1
+                        work = cg_line(work, "  " + narrow + " = trunc i64 " + raw + " to i1")
+                        payload = narrow
+                        payload_ty = "i1"
+                    }
                     var locals = work.locals
-                    locals.push(CgLocal { name: bindings[b], ty: "i64", slot: "", value: payload, mutable: false })
+                    locals.push(CgLocal { name: bindings[b], ty: payload_ty, slot: "", value: payload, mutable: false })
                     work = cg_state(work, work.lines, work.temps, work.slots, locals, work.terminated, work.error)
                 }
                 b = b + 1

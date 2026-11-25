@@ -391,6 +391,25 @@ else
     no "enum binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-enum-bool.nova" "$tool")
+echo "$out" | grep -q "%nova.enum.Flag = type { i32, i64, i64 }" && ok || no "Bool enum type"
+echo "$out" | grep -q "zext i1" && ok || no "Bool enum payload construction"
+echo "$out" | grep -q "trunc i64" && ok || no "Bool enum payload binding"
+printf '%s\n' "$out" > "$tmp/enum-bool.ll"
+if clang_ir "$tmp/enum-bool.ll" "$tmp/enum-bool" "$tmp/enum-bool-clang.log"; then
+    ok
+else
+    no "clang rejects Bool enum IR"
+    cat "$tmp/enum-bool-clang.log"
+fi
+if [ -x "$tmp/enum-bool" ]; then
+    "$tmp/enum-bool"
+    code=$?
+    [ "$code" -eq 7 ] && ok || no "Bool enum result (got $code, expected 7)"
+else
+    no "Bool enum binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-string-methods.nova" "$tool")
 echo "$out" | grep -q "call %nova.string @nova_string_trim" && ok || no "String trim call"
 echo "$out" | grep -q "call i32 @nova_string_starts_with" && ok || no "String starts_with call"

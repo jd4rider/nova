@@ -56,7 +56,7 @@ Result: PASS — passed 4, failed 0.
 sh examples/nova-tool/tests/codegen.sh
 ```
 
-Result: PASS — passed 132, failed 0.
+Result: PASS — passed 137, failed 0.
 
 - Straight-line Int module: no `alloca` for immutable params/`let`.
 - Mutable module compiles and exits 2.
@@ -104,6 +104,9 @@ element slot; the runtime grows with `realloc`, copies the element and updates
   `nova_list_at`/`nova_list_push`; native 11.
 - String method fixture calls `nova_string_trim`, `starts_with`, `ends_with`
   and `contains`; the trimmed text length is 5.
+- Bool enum fixture stores and matches `Bool` payloads through zext/trunc in
+  the i64 slots; native 7. A nested-match variant exposed invalid PHIs and was
+  replaced with helper calls, leaving nested match expressions as a gap.
 - Assert fixtures emit `nova_assert_fail`; the passing program exits 5 and the
   failing program exits 1 with `assertion failed` on stderr.
 - Struct fixture emits `%nova.struct.Point` and `%nova.struct.Pair` aggregate
@@ -148,6 +151,7 @@ and cancellation are absent even in Rust.
 
 ## Commit history
 
+- Bool enum payloads checkpoint — 137/0 codegen, 28/0 sema.
 - String methods checkpoint — 132/0 codegen, 28/0 sema.
 - List concat checkpoint — 126/0 codegen, 28/0 sema.
 - List equality checkpoint — 122/0 codegen, 28/0 sema.
