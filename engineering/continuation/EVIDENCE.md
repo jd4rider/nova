@@ -43,7 +43,7 @@ Result: PASS — passed 4, failed 0.
 sh examples/nova-tool/tests/codegen.sh
 ```
 
-Result: PASS — passed 58, failed 0.
+Result: PASS — passed 67, failed 0.
 
 - Straight-line Int module: no `alloca` for immutable params/`let`.
 - Mutable module compiles and exits 2.
@@ -68,18 +68,24 @@ Result: PASS — passed 58, failed 0.
 - List assignment fixture emits a bounds check and element store through a
   mutable local after a growth push; the mutated list is returned and summed by
   the caller. Native result 45.
+- Range-for fixture exercises `continue` before an accumulator and `break`
+  before the final value; native result 8.
+- List-for fixture iterates a `List<Int>` by index and sums it; native 30.
+- Nested-for fixture breaks only the inner loop and still accumulates once per
+  outer iteration; native 30.
 - `NOVA_TOOL=build-ir` invokes clang, checks status and produces a native binary;
   the test executes that Nova-built binary.
 - Host clang accepted every module; Mach-O confirmed on this host.
 
 Limit: ABI parity covers Int, Unit, the string-literal/len subset and the
-`List<Int>` literal/parameter/return/push/assignment subset. Assignment only
-writes an existing element of a mutable local list; slices, insertion, removal
-and the `nova_list_*` runtime are not implemented. Push uses libc `realloc`
-rather than the seed allocator. List storage is never freed; the bounds trap is
-not a Nova panic. Maps, sets, structs, enums, tuples, arrays and Option/Result
-remain. `emit-ir` is still not the full CLI. This is not a compiler-speed
-measurement.
+`List<Int>` literal/parameter/return/push/assignment subset. `for` supports
+exclusive integer ranges and `List<Int>` only; `match`, short-circuit booleans
+and range values outside `for` remain. Assignment only writes an existing
+element of a mutable local list; slices, insertion, removal and the
+`nova_list_*` runtime are not implemented. Push uses libc `realloc` rather than
+the seed allocator. List storage is never freed; the bounds trap is not a Nova
+panic. Maps, sets, structs, enums, tuples, arrays and Option/Result remain.
+`emit-ir` is still not the full CLI. This is not a compiler-speed measurement.
 
 ## Parity audit
 
@@ -91,6 +97,7 @@ and cancellation are absent even in Rust.
 
 ## Commit history
 
+- `for`/loop-control checkpoint — 67/0.
 - `List<Int>` assignment checkpoint — 58/0.
 - `List<Int>` push checkpoint — 54/0.
 - `List<Int>` ABI checkpoint — 48/0.

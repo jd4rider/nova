@@ -211,6 +211,57 @@ else
     no "list assignment binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-for.nova" "$tool")
+echo "$out" | grep -q "icmp slt i64" && ok || no "range loop condition"
+printf '%s\n' "$out" > "$tmp/for.ll"
+if clang -x ir "$tmp/for.ll" -o "$tmp/for" > "$tmp/for-clang.log" 2>&1; then
+    ok
+else
+    no "clang rejects range-for IR"
+    cat "$tmp/for-clang.log"
+fi
+if [ -x "$tmp/for" ]; then
+    "$tmp/for"
+    code=$?
+    [ "$code" -eq 8 ] && ok || no "range-for result (got $code, expected 8)"
+else
+    no "range-for binary missing"
+fi
+
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-for-nested.nova" "$tool")
+echo "$out" | grep -q "icmp slt i64" && ok || no "nested loop condition"
+printf '%s\n' "$out" > "$tmp/for-nested.ll"
+if clang -x ir "$tmp/for-nested.ll" -o "$tmp/for-nested" > "$tmp/for-nested-clang.log" 2>&1; then
+    ok
+else
+    no "clang rejects nested-for IR"
+    cat "$tmp/for-nested-clang.log"
+fi
+if [ -x "$tmp/for-nested" ]; then
+    "$tmp/for-nested"
+    code=$?
+    [ "$code" -eq 30 ] && ok || no "nested-for result (got $code, expected 30)"
+else
+    no "nested-for binary missing"
+fi
+
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-for-list.nova" "$tool")
+echo "$out" | grep -q "getelementptr i64" && ok || no "list loop element access"
+printf '%s\n' "$out" > "$tmp/for-list.ll"
+if clang -x ir "$tmp/for-list.ll" -o "$tmp/for-list" > "$tmp/for-list-clang.log" 2>&1; then
+    ok
+else
+    no "clang rejects list-for IR"
+    cat "$tmp/for-list-clang.log"
+fi
+if [ -x "$tmp/for-list" ]; then
+    "$tmp/for-list"
+    code=$?
+    [ "$code" -eq 30 ] && ok || no "list-for result (got $code, expected 30)"
+else
+    no "list-for binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-unit-main.nova" "$tool")
 echo "$out" | grep -q "define void @nova_user_0(ptr %arg_env)" && ok || no "Unit main signature"
 echo "$out" | grep -q "call void @nova_user_0(ptr null)" && ok || no "Unit main call"

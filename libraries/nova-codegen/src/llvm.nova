@@ -2,9 +2,9 @@
 //
 // Scope: Int, Unit and String functions; let/var; integer, string and list
 // literals; String.len/List.len; list indexing, index assignment and push;
-// arithmetic; if/else/while; direct calls; seed-shaped ABI (`ptr %arg_env`,
-// `nova_user_N`, `%nova.string`, `%nova.list`). Maps, structs and the full
-// runtime ABI are later tasks.
+// arithmetic; if/else/while/for with break/continue; direct calls; seed-shaped
+// ABI (`ptr %arg_env`, `nova_user_N`, `%nova.string`, `%nova.list`). Maps,
+// structs and the full runtime ABI are later tasks.
 //
 // Unsupported syntax returns an error instead of emitting guessed IR.
 
@@ -39,6 +39,8 @@ struct CgState {
     ret: String,
     terminated: Bool,
     error: String,
+    breaks: List<String>,
+    continues: List<String>,
 }
 
 struct CgVal {
@@ -73,6 +75,8 @@ fn cg_state(
         ret: state.ret,
         terminated: terminated,
         error: error,
+        breaks: state.breaks,
+        continues: state.continues,
     }
 }
 
@@ -89,7 +93,81 @@ fn cg_state_globals(state: CgState, globals: List<String>, strings: Int) -> CgSt
         ret: state.ret,
         terminated: state.terminated,
         error: state.error,
+        breaks: state.breaks,
+        continues: state.continues,
     }
+}
+
+fn cg_loops_state(state: CgState, breaks: List<String>, continues: List<String>) -> CgState {
+    return CgState {
+        lines: state.lines,
+        temps: state.temps,
+        slots: state.slots,
+        locals: state.locals,
+        fns: state.fns,
+        globals: state.globals,
+        strings: state.strings,
+        fn_index: state.fn_index,
+        ret: state.ret,
+        terminated: state.terminated,
+        error: state.error,
+        breaks: breaks,
+        continues: continues,
+    }
+}
+
+fn cg_loop_enter(state: CgState, break_label: String, continue_label: String) -> CgState {
+    var breaks = state.breaks
+    breaks.push(break_label)
+    var continues = state.continues
+    continues.push(continue_label)
+    return cg_loops_state(state, breaks, continues)
+}
+
+fn cg_strings_before(items: List<String>, count: Int) -> List<String> {
+    var out: List<String> = []
+    var i = 0
+    while i < count && i < items.len() {
+        out.push(items[i])
+        i = i + 1
+    }
+    return out
+}
+
+fn cg_locals_before(items: List<CgLocal>, count: Int) -> List<CgLocal> {
+    var out: List<CgLocal> = []
+    var i = 0
+    while i < count && i < items.len() {
+        out.push(items[i])
+        i = i + 1
+    }
+    return out
+}
+
+fn cg_loop_exit(state: CgState) -> CgState {
+    if state.breaks.len() == 0 {
+        return state
+    }
+    let keep = state.breaks.len() - 1
+    return cg_loops_state(
+        state,
+        cg_strings_before(state.breaks, keep),
+        cg_strings_before(state.continues, keep)
+    )
+}
+
+fn cg_loop_break(state: CgState) -> String {
+    if state.breaks.len() == 0 {
+        return ""
+    }
+    return state.breaks[state.breaks.len() - 1]
+}
+
+fn cg_loop_continue(state: CgState) -> String {
+    if state.continues.len() == 0 {
+        return ""
+    }
+    return state.continues[state.continues.len() - 1]
 }
 
 fn cg_llvm_type(type_name: String) -> String {
@@ -654,6 +732,8 @@ fn cg_emit_fn(ast: Ast, fns: List<CgSig>, sig: CgSig) -> CgResult {
         ret: sig.ret,
         terminated: false,
         error: "",
+        breaks: [],
+        continues: [],
     }
     var i = 0
     while i < sig.params.len() {
@@ -782,14 +862,200 @@ fn cg_while(ast: Ast, state: CgState, node: Int) -> CgState {
     }
     work = cg_line(cond.state, "  br i1 " + cond.value + ", label %" + body + ", label %" + end_label)
     work = cg_line(work, body + ":")
+    work = cg_loop_enter(work, end_label, header)
     let body_state = cg_block(ast, work, a_child(ast, node, 1))
-    if !body_state.terminated {
-        work = cg_line(body_state, "  br label %" + header)
-    } else {
-        work = body_state
+    let body_ended = body_state.terminated
+    work = cg_loop_exit(body_state)
+    if !body_ended {
+        work = cg_line(work, "  br label %" + header)
     }
     work = cg_line(work, end_label + ":")
     return cg_state(work, work.lines, work.temps, work.slots, work.locals, false, work.error)
+}
+
+fn cg_for_range(ast: Ast, state: CgState, node: Int, iter: Int) -> CgState {
+    let start = cg_expr2(ast, state, a_child(ast, iter, 0))
+    let end = cg_expr2(ast, start.state, a_child(ast, iter, 1))
+    var work = end.state
+    if work.error.len() > 0 {
+        return work
+    }
+    if start.ty != "i64" || end.ty != "i64" {
+        return cg_error(work, "for range bounds must be Int")
+    }
+    let slot_result = cg_slot(work)
+    work = slot_result.0
+    let slot = slot_result.1
+    work = cg_line(work, "  " + slot + " = alloca i64")
+    work = cg_line(work, "  store i64 " + start.value + ", ptr " + slot)
+    let base = work.locals.len()
+    var locals = work.locals
+    locals.push(CgLocal { name: ast.nodes[node].text, ty: "i64", slot: slot, value: "", mutable: false })
+    work = cg_state(work, work.lines, work.temps, work.slots, locals, work.terminated, work.error)
+
+    let header_result = cg_label(work)
+    work = header_result.0
+    let header = header_result.1
+    let body_result = cg_label(work)
+    work = body_result.0
+    let body = body_result.1
+    let step_result = cg_label(work)
+    work = step_result.0
+    let step = step_result.1
+    let end_result = cg_label(work)
+    work = end_result.0
+    let end_label = end_result.1
+
+    work = cg_line(work, "  br label %" + header)
+    work = cg_line(work, header + ":")
+    let current_result = cg_temp(work)
+    work = current_result.0
+    let current = current_result.1
+    work = cg_line(work, "  " + current + " = load i64, ptr " + slot)
+    let cond_result = cg_temp(work)
+    work = cond_result.0
+    let cond = cond_result.1
+    work = cg_line(work, "  " + cond + " = icmp slt i64 " + current + ", " + end.value)
+    work = cg_line(work, "  br i1 " + cond + ", label %" + body + ", label %" + end_label)
+    work = cg_line(work, body + ":")
+    work = cg_loop_enter(work, end_label, step)
+    let body_state = cg_block(ast, work, a_child(ast, node, 1))
+    if body_state.error.len() > 0 {
+        return body_state
+    }
+    let body_ended = body_state.terminated
+    work = cg_loop_exit(body_state)
+    if !body_ended {
+        work = cg_line(work, "  br label %" + step)
+    }
+    work = cg_line(work, step + ":")
+    let step_value_result = cg_temp(work)
+    work = step_value_result.0
+    let step_value = step_value_result.1
+    work = cg_line(work, "  " + step_value + " = load i64, ptr " + slot)
+    let next_result = cg_temp(work)
+    work = next_result.0
+    let next = next_result.1
+    work = cg_line(work, "  " + next + " = add i64 " + step_value + ", 1")
+    work = cg_line(work, "  store i64 " + next + ", ptr " + slot)
+    work = cg_line(work, "  br label %" + header)
+    work = cg_line(work, end_label + ":")
+    return cg_state(work, work.lines, work.temps, work.slots, cg_locals_before(work.locals, base), false, work.error)
+}
+
+fn cg_for_list(ast: Ast, state: CgState, node: Int, iter: Int) -> CgState {
+    let list = cg_expr2(ast, state, iter)
+    var work = list.state
+    if work.error.len() > 0 {
+        return work
+    }
+    if list.ty != "%nova.list" {
+        return cg_error(work, "for expects a range or List<Int>")
+    }
+    let list_slot_result = cg_slot(work)
+    work = list_slot_result.0
+    let list_slot = list_slot_result.1
+    work = cg_line(work, "  " + list_slot + " = alloca %nova.list")
+    work = cg_line(work, "  store %nova.list " + list.value + ", ptr " + list_slot)
+    let index_slot_result = cg_slot(work)
+    work = index_slot_result.0
+    let index_slot = index_slot_result.1
+    work = cg_line(work, "  " + index_slot + " = alloca i64")
+    work = cg_line(work, "  store i64 0, ptr " + index_slot)
+    let var_slot_result = cg_slot(work)
+    work = var_slot_result.0
+    let var_slot = var_slot_result.1
+    work = cg_line(work, "  " + var_slot + " = alloca i64")
+    let base = work.locals.len()
+    var locals = work.locals
+    locals.push(CgLocal { name: ast.nodes[node].text, ty: "i64", slot: var_slot, value: "", mutable: false })
+    work = cg_state(work, work.lines, work.temps, work.slots, locals, work.terminated, work.error)
+
+    let header_result = cg_label(work)
+    work = header_result.0
+    let header = header_result.1
+    let body_result = cg_label(work)
+    work = body_result.0
+    let body = body_result.1
+    let step_result = cg_label(work)
+    work = step_result.0
+    let step = step_result.1
+    let end_result = cg_label(work)
+    work = end_result.0
+    let end_label = end_result.1
+
+    work = cg_line(work, "  br label %" + header)
+    work = cg_line(work, header + ":")
+    let index_result = cg_temp(work)
+    work = index_result.0
+    let index = index_result.1
+    work = cg_line(work, "  " + index + " = load i64, ptr " + index_slot)
+    let header_list_result = cg_temp(work)
+    work = header_list_result.0
+    let header_list = header_list_result.1
+    work = cg_line(work, "  " + header_list + " = load %nova.list, ptr " + list_slot)
+    let len_result = cg_temp(work)
+    work = len_result.0
+    let len = len_result.1
+    work = cg_line(work, "  " + len + " = extractvalue %nova.list " + header_list + ", 1")
+    let cond_result = cg_temp(work)
+    work = cond_result.0
+    let cond = cond_result.1
+    work = cg_line(work, "  " + cond + " = icmp slt i64 " + index + ", " + len)
+    work = cg_line(work, "  br i1 " + cond + ", label %" + body + ", label %" + end_label)
+    work = cg_line(work, body + ":")
+    let at_result = cg_temp(work)
+    work = at_result.0
+    let at = at_result.1
+    work = cg_line(work, "  " + at + " = load i64, ptr " + index_slot)
+    let body_list_result = cg_temp(work)
+    work = body_list_result.0
+    let body_list = body_list_result.1
+    work = cg_line(work, "  " + body_list + " = load %nova.list, ptr " + list_slot)
+    let data_result = cg_temp(work)
+    work = data_result.0
+    let data = data_result.1
+    work = cg_line(work, "  " + data + " = extractvalue %nova.list " + body_list + ", 0")
+    let ptr_result = cg_temp(work)
+    work = ptr_result.0
+    let ptr = ptr_result.1
+    work = cg_line(work, "  " + ptr + " = getelementptr i64, ptr " + data + ", i64 " + at)
+    let element_result = cg_temp(work)
+    work = element_result.0
+    let element = element_result.1
+    work = cg_line(work, "  " + element + " = load i64, ptr " + ptr)
+    work = cg_line(work, "  store i64 " + element + ", ptr " + var_slot)
+    work = cg_loop_enter(work, end_label, step)
+    let body_state = cg_block(ast, work, a_child(ast, node, 1))
+    if body_state.error.len() > 0 {
+        return body_state
+    }
+    let body_ended = body_state.terminated
+    work = cg_loop_exit(body_state)
+    if !body_ended {
+        work = cg_line(work, "  br label %" + step)
+    }
+    work = cg_line(work, step + ":")
+    let step_value_result = cg_temp(work)
+    work = step_value_result.0
+    let step_value = step_value_result.1
+    work = cg_line(work, "  " + step_value + " = load i64, ptr " + index_slot)
+    let next_result = cg_temp(work)
+    work = next_result.0
+    let next = next_result.1
+    work = cg_line(work, "  " + next + " = add i64 " + step_value + ", 1")
+    work = cg_line(work, "  store i64 " + next + ", ptr " + index_slot)
+    work = cg_line(work, "  br label %" + header)
+    work = cg_line(work, end_label + ":")
+    return cg_state(work, work.lines, work.temps, work.slots, cg_locals_before(work.locals, base), false, work.error)
+}
+
+fn cg_for(ast: Ast, state: CgState, node: Int) -> CgState {
+    let iter = a_child(ast, node, 0)
+    if iter >= 0 && ast.nodes[iter].kind == ak_binary() && ast.nodes[iter].text == ".." {
+        return cg_for_range(ast, state, node, iter)
+    }
+    return cg_for_list(ast, state, node, iter)
 }
 
 fn cg_stmt(ast: Ast, state: CgState, node: Int) -> CgState {
@@ -799,6 +1065,17 @@ fn cg_stmt(ast: Ast, state: CgState, node: Int) -> CgState {
     }
     if item.kind == ak_while() {
         return cg_while(ast, state, node)
+    }
+    if item.kind == ak_for() {
+        return cg_for(ast, state, node)
+    }
+    if item.kind == ak_break() || item.kind == ak_continue() {
+        let target = if item.kind == ak_break() { cg_loop_break(state) } else { cg_loop_continue(state) }
+        if target.len() == 0 {
+            return cg_error(state, item.text + " outside a loop")
+        }
+        let work = cg_line(state, "  br label %" + target)
+        return cg_state(work, work.lines, work.temps, work.slots, work.locals, true, work.error)
     }
     if item.kind == ak_let() || item.kind == ak_var() {
         let value = cg_expr2(ast, state, a_child(ast, node, 0))

@@ -16,7 +16,7 @@ baseline suite was not rerun in this session. Status: `VERIFIED`, `PARTIAL`,
 | Generics, methods, traits, closures | Rust compiler | TODO | COMP-01.04, CODEGEN-01.10 |
 | Diagnostic codes/spans/recovery | `bootstrap/nova-diag`, sema | PARTIAL — E03xx slice; no full parity | COMP-01.06 |
 | Int arithmetic | Rust codegen | PARTIAL — `+ - * /`, no overflow/div-zero checks | CODEGEN-01.01, CODEGEN-01.07 |
-| Control flow | Rust codegen | PARTIAL — `if`/`else`, `while`, comparisons; no `for`/`match` | CODEGEN-01.03, CODEGEN-01.08 |
+| Control flow | Rust codegen | PARTIAL — `if`/`else`, `while`, range/list `for`, nested loops, `break`/`continue`, comparisons; no `match` or short-circuit booleans | CODEGEN-01.03, CODEGEN-01.08 |
 | Strings, lists, maps, sets | Rust runtime | PARTIAL — string literals/by-value params/returns/`.len()`; malloc-backed `List<Int>` literals, by-value params/returns, bounds-checked indexing and index assignment, `.len()` and mutable `.push()` via `realloc`; no concat/equality, seed `nova_list_*` runtime, slices, maps, sets or ownership | CODEGEN-01.06 |
 | Structs, enums, tuples, arrays | Rust runtime | TODO | CODEGEN-01.06 |
 | Option/Result/error propagation | Rust runtime | TODO | CODEGEN-01.06 |
@@ -53,12 +53,13 @@ workspace indexing and cancellation are absent even in Rust.
 
 - AST parser: `tests/parser.sh` → 50/0, 29-file corpus.
 - Body sema: `tests/sema-ast.sh` → 9/0.
-- Codegen: `tests/codegen.sh` → 58/0; SSA params/`let`; seed-shaped
+- Codegen: `tests/codegen.sh` → 67/0; SSA params/`let`; seed-shaped
   `ptr %arg_env`/`nova_user_N` ABI; Int, Unit/void, `%nova.string` and
   `%nova.list` declarations; string literals and `.len()`; heap-backed
   `List<Int>` literals/params/returns, indexing, index assignment, `.len()` and
-  mutable `.push()`; `build-ir` invokes clang. Native results 9, 2, 17, 4, 5,
-  23, 13, 16, 45 and Unit `main` 0; Mach-O confirmed on this host.
+  mutable `.push()`; range/list/nested `for` with `break`/`continue`;
+  `build-ir` invokes clang. Native results 9, 2, 17, 4, 5, 23, 13, 16, 45, 8,
+  30 and Unit `main` 0; Mach-O confirmed on this host.
 
 ## Rule
 
