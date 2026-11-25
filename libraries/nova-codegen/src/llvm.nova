@@ -279,12 +279,33 @@ fn cg_variant_payload_type(item: CgEnum, variant: Int, payload: Int) -> String {
     return item.payload_types[slot]
 }
 
-fn cg_enum_arity(item: CgEnum) -> Int {
+fn cg_payload_slot_count(payload_ty: String) -> Int {
+    if payload_ty == "String" {
+        return 2
+    }
+    return 1
+}
+
+fn cg_variant_slot_count(item: CgEnum, variant: Int) -> Int {
+    var slots = 0
+    var i = 0
+    let count = cg_variant_payload_count(item, variant)
+    while i < count {
+        slots = slots + cg_payload_slot_count(cg_variant_payload_type(item, variant, i))
+        i = i + 1
+    }
+    return slots
+}
+
+fn cg_enum_slot_count(item: CgEnum) -> Int {
     var max = 0
-    for count in item.payload_counts {
-        if count > max {
-            max = count
+    var i = 0
+    while i < item.variants.len() {
+        let slots = cg_variant_slot_count(item, i)
+        if slots > max {
+            max = slots
         }
+        i = i + 1
     }
     return max
 }
@@ -489,6 +510,7 @@ fn cg_enum_make(state: CgState, enum_index: Int, variant: Int, values: List<CgVa
     work = cg_line(work, "  " + tag + " = insertvalue " + ty + " " + aggregate + ", i32 " + variant.to_string() + ", 0")
     aggregate = tag
     var k = 0
+    var slot = 1
     while k < values.len() {
         let payload_ty = cg_variant_payload_type(def, variant, k)
         var slot_value = values[k].value
@@ -498,17 +520,42 @@ fn cg_enum_make(state: CgState, enum_index: Int, variant: Int, values: List<CgVa
             let wide = wide_result.1
             work = cg_line(work, "  " + wide + " = zext i1 " + values[k].value + " to i64")
             slot_value = wide
+        } else if payload_ty == "String" && values[k].ty == "%nova.string" {
+            let ptr_result = cg_temp(work)
+            work = ptr_result.0
+            let ptr = ptr_result.1
+            work = cg_line(work, "  " + ptr + " = extractvalue %nova.string " + values[k].value + ", 0")
+            let ptr_int_result = cg_temp(work)
+            work = ptr_int_result.0
+            let ptr_int = ptr_int_result.1
+            work = cg_line(work, "  " + ptr_int + " = ptrtoint ptr " + ptr + " to i64")
+            let len_result = cg_temp(work)
+            work = len_result.0
+            let len = len_result.1
+            work = cg_line(work, "  " + len + " = extractvalue %nova.string " + values[k].value + ", 1")
+            let ptr_insert_result = cg_temp(work)
+            work = ptr_insert_result.0
+            let ptr_insert = ptr_insert_result.1
+            work = cg_line(work, "  " + ptr_insert + " = insertvalue " + ty + " " + aggregate + ", i64 " + ptr_int + ", " + slot.to_string())
+            aggregate = ptr_insert
+            slot = slot + 1
+            let len_insert_result = cg_temp(work)
+            work = len_insert_result.0
+            let len_insert = len_insert_result.1
+            work = cg_line(work, "  " + len_insert + " = insertvalue " + ty + " " + aggregate + ", i64 " + len + ", " + slot.to_string())
+            aggregate = len_insert
+            slot = slot + 1
+            k = k + 1
+            continue
         } else if payload_ty != "Int" || values[k].ty != "i64" {
             return cg_val(cg_error(work, "unsupported enum payload type " + payload_ty), "0")
         }
         let next_result = cg_temp(work)
         work = next_result.0
         let next = next_result.1
-        work = cg_line(
-            work,
-            "  " + next + " = insertvalue " + ty + " " + aggregate + ", i64 " + slot_value + ", " + (k + 1).to_string(),
-        )
+        work = cg_line(work, "  " + next + " = insertvalue " + ty + " " + aggregate + ", i64 " + slot_value + ", " + slot.to_string())
         aggregate = next
+        slot = slot + 1
         k = k + 1
     }
     return cg_val_typed(work, aggregate, ty)
@@ -911,7 +958,7 @@ fn cg_compile(source: String) -> CgResult {
                 payload_offsets.push(payload_types.len())
                 payload_counts.push(types.len())
                 for payload_type in types {
-                    if payload_type != "Int" && payload_type != "Bool" {
+                    if payload_type != "Int" && payload_type != "Bool" && payload_type != "String" {
                         return CgResult {
                             ir: "",
                             error: "unsupported enum payload type " + payload_type + " on " + item.text + "." + variant.text,
@@ -1027,7 +1074,7 @@ fn cg_compile(source: String) -> CgResult {
     while enum_index < enums.len() {
         var line = "%nova.enum." + enums[enum_index].name + " = type { i32"
         var payload = 0
-        let arity = cg_enum_arity(enums[enum_index])
+        let arity = cg_enum_slot_count(enums[enum_index])
         while payload < arity {
             line = line + ", i64"
             payload = payload + 1
@@ -1860,26 +1907,58 @@ fn cg_match(ast: Ast, state: CgState, node: Int) -> CgVal {
             let loaded = loaded_result.1
             work = cg_line(work, "  " + loaded + " = load " + scrut.ty + ", ptr " + slot)
             var b = 0
+            var slot = 1
             while b < bindings.len() {
+                var payload_type = "Int"
+                if b < binding_types.len() {
+                    payload_type = binding_types[b]
+                }
                 if bindings[b] != "_" {
-                    let payload_result = cg_temp(work)
-                    work = payload_result.0
-                    let raw = payload_result.1
-                    work = cg_line(work, "  " + raw + " = extractvalue " + scrut.ty + " " + loaded + ", " + (b + 1).to_string())
-                    var payload = raw
+                    var payload = ""
                     var payload_ty = "i64"
-                    if b < binding_types.len() && binding_types[b] == "Bool" {
-                        let narrow_result = cg_temp(work)
-                        work = narrow_result.0
-                        let narrow = narrow_result.1
-                        work = cg_line(work, "  " + narrow + " = trunc i64 " + raw + " to i1")
-                        payload = narrow
-                        payload_ty = "i1"
+                    if payload_type == "String" {
+                        let ptr_result = cg_temp(work)
+                        work = ptr_result.0
+                        let ptr_bits = ptr_result.1
+                        work = cg_line(work, "  " + ptr_bits + " = extractvalue " + scrut.ty + " " + loaded + ", " + slot.to_string())
+                        let ptr_result2 = cg_temp(work)
+                        work = ptr_result2.0
+                        let ptr = ptr_result2.1
+                        work = cg_line(work, "  " + ptr + " = inttoptr i64 " + ptr_bits + " to ptr")
+                        let len_result = cg_temp(work)
+                        work = len_result.0
+                        let len = len_result.1
+                        work = cg_line(work, "  " + len + " = extractvalue " + scrut.ty + " " + loaded + ", " + (slot + 1).to_string())
+                        let empty_result = cg_temp(work)
+                        work = empty_result.0
+                        let empty = empty_result.1
+                        work = cg_line(work, "  " + empty + " = insertvalue %nova.string undef, ptr " + ptr + ", 0")
+                        let full_result = cg_temp(work)
+                        work = full_result.0
+                        let full = full_result.1
+                        work = cg_line(work, "  " + full + " = insertvalue %nova.string " + empty + ", i64 " + len + ", 1")
+                        payload = full
+                        payload_ty = "%nova.string"
+                    } else {
+                        let raw_result = cg_temp(work)
+                        work = raw_result.0
+                        let raw = raw_result.1
+                        work = cg_line(work, "  " + raw + " = extractvalue " + scrut.ty + " " + loaded + ", " + slot.to_string())
+                        payload = raw
+                        if payload_type == "Bool" {
+                            let narrow_result = cg_temp(work)
+                            work = narrow_result.0
+                            let narrow = narrow_result.1
+                            work = cg_line(work, "  " + narrow + " = trunc i64 " + raw + " to i1")
+                            payload = narrow
+                            payload_ty = "i1"
+                        }
                     }
                     var locals = work.locals
                     locals.push(CgLocal { name: bindings[b], ty: payload_ty, slot: "", value: payload, mutable: false })
                     work = cg_state(work, work.lines, work.temps, work.slots, locals, work.terminated, work.error)
                 }
+                slot = slot + cg_payload_slot_count(payload_type)
                 b = b + 1
             }
         }

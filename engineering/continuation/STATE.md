@@ -4,7 +4,7 @@ Updated: 2026-11-24
 Master directive: owner-supplied; parity matrix in `engineering/continuation/`.
 Repository / branch: `nova` / `selfhost/pure-nova`
 HEAD: this checkpoint is committed by the accompanying code/doc commits; prior
-`be55809`.
+`28de2ac`.
 Working tree: unrelated `editor/` and playground changes remain untouched.
 
 Active milestone: `COMP-01` / `CODEGEN-01` — frontend and LLVM lowering
@@ -13,7 +13,7 @@ Status: PARTIAL (concat/equality/literal match work; nested patterns remain)
 
 ## Last verified behavior
 
-- `sh examples/nova-tool/tests/codegen.sh` → passed 137, failed 0.
+- `sh examples/nova-tool/tests/codegen.sh` → passed 141, failed 0.
   - `List<Int>` literals allocate with libc `malloc`; empty lists supported.
   - List parameters and returns use by-value `%nova.list`; a literal survives
     return, identity and indexing (native 13).
@@ -50,10 +50,10 @@ Status: PARTIAL (concat/equality/literal match work; nested patterns remain)
     `nova_assert_fail`; passing and failing exits are verified.
   - String `trim`/`trim_start`/`trim_end` and `contains`/`starts_with`/
     `ends_with` call the runtime; a trimmed search program returns 5.
-  - Enum payloads support Bool as well as Int; construction zero-extends into
-    the i64 slot and binding truncates back to i1 (native 7). Nested match
-    expressions now route each arm through a completion block before merging,
-    and are covered by the same native fixture.
+  - Enum payloads support Int, Bool and String. Bool is zero-extended/truncated
+    in one slot; String occupies pointer/length slots with ptrtoint/inttoptr and
+    extractvalue/insertvalue packing. A Text/Label fixture returns 10. Nested
+    match expressions merge through per-arm completion blocks.
   - `List<Int> ==`/`!=` compare lengths and elements through `nova_list_at`;
     empty, equal and unequal lists are verified natively (12). `List + List`
     concatenates through `nova_list_at`/`nova_list_push` (11).
@@ -118,8 +118,8 @@ Status: PARTIAL (concat/equality/literal match work; nested patterns remain)
   overflow, division-by-zero and alignment checks remain.
 - Structs and enums are value-only: no generics, methods, references, tuples
   or arrays. Struct/enum equality and printing remain.
-- Enum payloads support `Int` and `Bool` in codegen; String/struct payloads
-  and payloads nested in other value types are rejected with an error.
+- Enum payloads support `Int`, `Bool` and `String` in codegen; struct/enum
+  payloads and payloads nested in other value types are rejected with an error.
 - Maps and sets remain.
 - Strings lack interpolation, ordering, and the wider method/runtime surface.
 - Overflow checks and the full runtime ABI remain.
@@ -130,7 +130,7 @@ Status: PARTIAL (concat/equality/literal match work; nested patterns remain)
 ## Resume here
 
 1. Add nested enum patterns and match guards.
-2. Add enum payloads beyond Bool (String/struct) and list slices.
+2. Add struct/enum payloads and list slices.
 3. Run codegen/parser/sema suites; update `STATE.md`, `EVIDENCE.md`,
    `TASKS.md` and `PARITY.md`; commit.
 

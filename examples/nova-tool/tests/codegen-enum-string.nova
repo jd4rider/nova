@@ -1,0 +1,17 @@
+enum Message {
+    Empty
+    Text(String)
+    Label(String, String)
+}
+
+fn score(message: Message) -> Int {
+    return match message {
+        Empty => 0
+        Text(text) => text.len()
+        Label(left, right) => left.len() + right.len()
+    }
+}
+
+fn main() -> Int {
+    return score(Text("hello")) + score(Label("ab", "cde")) + score(Empty)
+}

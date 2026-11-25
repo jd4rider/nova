@@ -391,6 +391,24 @@ else
     no "enum binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-enum-string.nova" "$tool")
+echo "$out" | grep -q "%nova.enum.Message = type { i32, i64, i64, i64, i64 }" && ok || no "String enum slot layout"
+echo "$out" | grep -q "extractvalue %nova.string" && ok || no "String enum payload packing"
+printf '%s\n' "$out" > "$tmp/enum-string.ll"
+if clang_ir "$tmp/enum-string.ll" "$tmp/enum-string" "$tmp/enum-string-clang.log"; then
+    ok
+else
+    no "clang rejects String enum IR"
+    cat "$tmp/enum-string-clang.log"
+fi
+if [ -x "$tmp/enum-string" ]; then
+    "$tmp/enum-string"
+    code=$?
+    [ "$code" -eq 10 ] && ok || no "String enum result (got $code, expected 10)"
+else
+    no "String enum binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-enum-bool.nova" "$tool")
 echo "$out" | grep -q "%nova.enum.Flag = type { i32, i64, i64 }" && ok || no "Bool enum type"
 echo "$out" | grep -q "zext i1" && ok || no "Bool enum payload construction"
