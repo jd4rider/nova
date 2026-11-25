@@ -391,6 +391,23 @@ else
     no "enum binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-list-contains.nova" "$tool")
+echo "$out" | grep -q "call ptr @nova_list_at" && ok || no "list contains uses nova_list_at"
+printf '%s\n' "$out" > "$tmp/list-contains.ll"
+if clang_ir "$tmp/list-contains.ll" "$tmp/list-contains" "$tmp/list-contains-clang.log"; then
+    ok
+else
+    no "clang rejects list contains IR"
+    cat "$tmp/list-contains-clang.log"
+fi
+if [ -x "$tmp/list-contains" ]; then
+    "$tmp/list-contains"
+    code=$?
+    [ "$code" -eq 16 ] && ok || no "list contains result (got $code, expected 16)"
+else
+    no "list contains binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-list-ends.nova" "$tool")
 echo "$out" | grep -q "call ptr @nova_list_at" && ok || no "list first/last use nova_list_at"
 printf '%s\n' "$out" > "$tmp/list-ends.ll"

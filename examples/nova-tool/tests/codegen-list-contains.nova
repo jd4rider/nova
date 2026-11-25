@@ -1,0 +1,10 @@
+fn main() -> Int {
+    let values = [3, 8, 13]
+    if values.contains(8) {
+        if values.contains(4) {
+            return 0
+        }
+        return values.first() + values.last()
+    }
+    return 0
+}
