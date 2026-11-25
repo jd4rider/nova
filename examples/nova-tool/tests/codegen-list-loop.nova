@@ -1,0 +1,7 @@
+fn main() -> Int {
+    var values: List<Int> = []
+    for i in 0..5000 {
+        values.push(i)
+    }
+    return values[4999] - 4989
+}

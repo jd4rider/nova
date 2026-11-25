@@ -9,6 +9,9 @@ pass=0
 fail=0
 ok() { pass=$((pass + 1)); }
 no() { fail=$((fail + 1)); echo "FAIL $1"; }
+clang_ir() {
+    clang -x ir "$1" -x none "$root/runtime/runtime.c" -o "$2" -lm > "$3" 2>&1
+}
 [ -x "$tool" ] || { echo "build examples/nova-tool first"; exit 1; }
 
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-sample.nova" "$tool")
@@ -23,7 +26,7 @@ else
 fi
 
 printf '%s\n' "$out" > "$tmp/out.ll"
-if clang -x ir "$tmp/out.ll" -o "$tmp/out" > "$tmp/clang.log" 2>&1; then
+if clang_ir "$tmp/out.ll" "$tmp/out" "$tmp/clang.log"; then
     ok
 else
     no "clang rejects emitted IR"
@@ -48,7 +51,7 @@ fi
 
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-var.nova" "$tool")
 printf '%s\n' "$out" > "$tmp/var.ll"
-if clang -x ir "$tmp/var.ll" -o "$tmp/var" > "$tmp/var-clang.log" 2>&1; then
+if clang_ir "$tmp/var.ll" "$tmp/var" "$tmp/var-clang.log"; then
     ok
 else
     no "clang rejects mutable IR"
@@ -66,7 +69,7 @@ out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-f
 echo "$out" | grep -q "icmp slt i64" && ok || no "comparison lowering"
 echo "$out" | grep -q "br i1" && ok || no "conditional branch"
 printf '%s\n' "$out" > "$tmp/flow.ll"
-if clang -x ir "$tmp/flow.ll" -o "$tmp/flow" > "$tmp/flow-clang.log" 2>&1; then
+if clang_ir "$tmp/flow.ll" "$tmp/flow" "$tmp/flow-clang.log"; then
     ok
 else
     no "clang rejects control-flow IR"
@@ -90,11 +93,21 @@ else
     no "Nova-built binary missing"
 fi
 
+out=$(NOVA_TOOL=build-ir NOVA_TOOL_OUT="$tmp/built-list" NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-list.nova" "$tool")
+echo "$out" | grep -q "^built " && ok || no "Nova tool links the runtime"
+if [ -x "$tmp/built-list" ]; then
+    "$tmp/built-list"
+    code=$?
+    [ "$code" -eq 23 ] && ok || no "Nova-built list result (got $code, expected 23)"
+else
+    no "Nova-built list binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-unit.nova" "$tool")
 echo "$out" | grep -q "define void @nova_user_0(ptr %arg_env)" && ok || no "Unit signature"
 echo "$out" | grep -q "call void @nova_user_0(ptr null)" && ok || no "Unit call"
 printf '%s\n' "$out" > "$tmp/unit.ll"
-if clang -x ir "$tmp/unit.ll" -o "$tmp/unit" > "$tmp/unit-clang.log" 2>&1; then
+if clang_ir "$tmp/unit.ll" "$tmp/unit" "$tmp/unit-clang.log"; then
     ok
 else
     no "clang rejects Unit IR"
@@ -115,7 +128,7 @@ echo "$out" | grep -q "define i64 @nova_user_1(ptr %arg_env, %nova.string %p0)" 
 echo "$out" | grep -q 'c"hello"' && ok || no "string literal global"
 echo "$out" | grep -q "extractvalue %nova.string" && ok || no "String.len lowering"
 printf '%s\n' "$out" > "$tmp/string.ll"
-if clang -x ir "$tmp/string.ll" -o "$tmp/string" > "$tmp/string-clang.log" 2>&1; then
+if clang_ir "$tmp/string.ll" "$tmp/string" "$tmp/string-clang.log"; then
     ok
 else
     no "clang rejects string IR"
@@ -137,9 +150,9 @@ echo "$out" | grep -q "insertvalue %nova.list" && ok || no "list aggregate const
 echo "$out" | grep -q "insertvalue %nova.list zeroinitializer, i64 0, 1" && ok || no "empty list construction"
 echo "$out" | grep -q "extractvalue %nova.list" && ok || no "List.len lowering"
 echo "$out" | grep -q "getelementptr i64" && ok || no "list index lowering"
-echo "$out" | grep -q "call void @llvm.trap()" && ok || no "list bounds trap"
+echo "$out" | grep -q "call ptr @nova_list_at" && ok || no "list bounds runtime call"
 printf '%s\n' "$out" > "$tmp/list.ll"
-if clang -x ir "$tmp/list.ll" -o "$tmp/list" > "$tmp/list-clang.log" 2>&1; then
+if clang_ir "$tmp/list.ll" "$tmp/list" "$tmp/list-clang.log"; then
     ok
 else
     no "clang rejects list IR"
@@ -159,7 +172,7 @@ echo "$out" | grep -q "define %nova.list @nova_user_1(ptr %arg_env)" && ok || no
 echo "$out" | grep -q "define %nova.list @nova_user_2(ptr %arg_env, %nova.list %p0)" && ok || no "list identity signature"
 echo "$out" | grep -q "call %nova.list @nova_user_2" && ok || no "list argument/return call"
 printf '%s\n' "$out" > "$tmp/list-abi.ll"
-if clang -x ir "$tmp/list-abi.ll" -o "$tmp/list-abi" > "$tmp/list-abi-clang.log" 2>&1; then
+if clang_ir "$tmp/list-abi.ll" "$tmp/list-abi" "$tmp/list-abi-clang.log"; then
     ok
 else
     no "clang rejects list ABI IR"
@@ -173,13 +186,31 @@ else
     no "list ABI binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-list-loop.nova" "$tool")
+echo "$out" | grep -q "call void @nova_list_push" && ok || no "looped list push call"
+echo "$out" | grep -q "call ptr @nova_list_at" && ok || no "looped list index call"
+printf '%s\n' "$out" > "$tmp/list-loop.ll"
+if clang_ir "$tmp/list-loop.ll" "$tmp/list-loop" "$tmp/list-loop-clang.log"; then
+    ok
+else
+    no "clang rejects looped list IR"
+    cat "$tmp/list-loop-clang.log"
+fi
+if [ -x "$tmp/list-loop" ]; then
+    "$tmp/list-loop"
+    code=$?
+    [ "$code" -eq 10 ] && ok || no "looped list result (got $code, expected 10)"
+else
+    no "looped list binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-list-push.nova" "$tool")
-echo "$out" | grep -q "declare ptr @realloc(ptr, i64)" && ok || no "list growth declaration"
-echo "$out" | grep -q "call ptr @realloc" && ok || no "list growth call"
-echo "$out" | grep -q "getelementptr %nova.list" && ok || no "list field addressing"
+echo "$out" | grep -q "declare void @nova_list_push(ptr, ptr, i64)" && ok || no "list push declaration"
+echo "$out" | grep -q "call void @nova_list_push" && ok || no "list push call"
+echo "$out" | grep -q "alloca i64" && ok || no "pushed element slot"
 echo "$out" | grep -q "store i64 12, ptr" && ok || no "pushed element store"
 printf '%s\n' "$out" > "$tmp/list-push.ll"
-if clang -x ir "$tmp/list-push.ll" -o "$tmp/list-push" > "$tmp/list-push-clang.log" 2>&1; then
+if clang_ir "$tmp/list-push.ll" "$tmp/list-push" "$tmp/list-push-clang.log"; then
     ok
 else
     no "clang rejects list push IR"
@@ -195,9 +226,9 @@ fi
 
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-list-set.nova" "$tool")
 echo "$out" | grep -q "store i64 40, ptr" && ok || no "list element assignment store"
-echo "$out" | grep -q "icmp sge i64" && ok || no "list assignment bounds check"
+echo "$out" | grep -q "call ptr @nova_list_at" && ok || no "list assignment bounds runtime call"
 printf '%s\n' "$out" > "$tmp/list-set.ll"
-if clang -x ir "$tmp/list-set.ll" -o "$tmp/list-set" > "$tmp/list-set-clang.log" 2>&1; then
+if clang_ir "$tmp/list-set.ll" "$tmp/list-set" "$tmp/list-set-clang.log"; then
     ok
 else
     no "clang rejects list assignment IR"
@@ -214,7 +245,7 @@ fi
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-match.nova" "$tool")
 echo "$out" | grep -q "phi i64" && ok || no "match expression phi"
 printf '%s\n' "$out" > "$tmp/match.ll"
-if clang -x ir "$tmp/match.ll" -o "$tmp/match" > "$tmp/match-clang.log" 2>&1; then
+if clang_ir "$tmp/match.ll" "$tmp/match" "$tmp/match-clang.log"; then
     ok
 else
     no "clang rejects match IR"
@@ -231,7 +262,7 @@ fi
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-match-unit.nova" "$tool")
 echo "$out" | grep -q "icmp eq i1" && ok || no "Bool match pattern"
 printf '%s\n' "$out" > "$tmp/match-unit.ll"
-if clang -x ir "$tmp/match-unit.ll" -o "$tmp/match-unit" > "$tmp/match-unit-clang.log" 2>&1; then
+if clang_ir "$tmp/match-unit.ll" "$tmp/match-unit" "$tmp/match-unit-clang.log"; then
     ok
 else
     no "clang rejects Unit match IR"
@@ -248,7 +279,7 @@ fi
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-for.nova" "$tool")
 echo "$out" | grep -q "icmp slt i64" && ok || no "range loop condition"
 printf '%s\n' "$out" > "$tmp/for.ll"
-if clang -x ir "$tmp/for.ll" -o "$tmp/for" > "$tmp/for-clang.log" 2>&1; then
+if clang_ir "$tmp/for.ll" "$tmp/for" "$tmp/for-clang.log"; then
     ok
 else
     no "clang rejects range-for IR"
@@ -265,7 +296,7 @@ fi
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-for-nested.nova" "$tool")
 echo "$out" | grep -q "icmp slt i64" && ok || no "nested loop condition"
 printf '%s\n' "$out" > "$tmp/for-nested.ll"
-if clang -x ir "$tmp/for-nested.ll" -o "$tmp/for-nested" > "$tmp/for-nested-clang.log" 2>&1; then
+if clang_ir "$tmp/for-nested.ll" "$tmp/for-nested" "$tmp/for-nested-clang.log"; then
     ok
 else
     no "clang rejects nested-for IR"
@@ -280,9 +311,9 @@ else
 fi
 
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-for-list.nova" "$tool")
-echo "$out" | grep -q "getelementptr i64" && ok || no "list loop element access"
+echo "$out" | grep -q "call ptr @nova_list_at" && ok || no "list loop element access"
 printf '%s\n' "$out" > "$tmp/for-list.ll"
-if clang -x ir "$tmp/for-list.ll" -o "$tmp/for-list" > "$tmp/for-list-clang.log" 2>&1; then
+if clang_ir "$tmp/for-list.ll" "$tmp/for-list" "$tmp/for-list-clang.log"; then
     ok
 else
     no "clang rejects list-for IR"
@@ -305,7 +336,7 @@ echo "$out" | grep -q "store %nova.struct.Point" && ok || no "struct field assig
 echo "$out" | grep -q "define %nova.struct.Point @nova_user_0(ptr %arg_env, %nova.struct.Point %p0, i64 %p1)" && ok || no "struct parameter and return signature"
 echo "$out" | grep -q "define i64 @nova_user_1(ptr %arg_env, %nova.struct.Pair %p0)" && ok || no "nested struct parameter signature"
 printf '%s\n' "$out" > "$tmp/struct.ll"
-if clang -x ir "$tmp/struct.ll" -o "$tmp/struct" > "$tmp/struct-clang.log" 2>&1; then
+if clang_ir "$tmp/struct.ll" "$tmp/struct" "$tmp/struct-clang.log"; then
     ok
 else
     no "clang rejects struct IR"
@@ -328,7 +359,7 @@ echo "$out" | grep -q "extractvalue %nova.enum.Option" && ok || no "enum payload
 echo "$out" | grep -q "define i64 @nova_user_0(ptr %arg_env, %nova.enum.Option %p0, i64 %p1)" && ok || no "enum parameter signature"
 echo "$out" | grep -q "define %nova.enum.Option @nova_user_1(ptr %arg_env, i64 %p0)" && ok || no "enum return signature"
 printf '%s\n' "$out" > "$tmp/enum.ll"
-if clang -x ir "$tmp/enum.ll" -o "$tmp/enum" > "$tmp/enum-clang.log" 2>&1; then
+if clang_ir "$tmp/enum.ll" "$tmp/enum" "$tmp/enum-clang.log"; then
     ok
 else
     no "clang rejects enum IR"
@@ -346,7 +377,7 @@ out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-u
 echo "$out" | grep -q "define void @nova_user_0(ptr %arg_env)" && ok || no "Unit main signature"
 echo "$out" | grep -q "call void @nova_user_0(ptr null)" && ok || no "Unit main call"
 printf '%s\n' "$out" > "$tmp/unit-main.ll"
-if clang -x ir "$tmp/unit-main.ll" -o "$tmp/unit-main" > "$tmp/unit-main-clang.log" 2>&1; then
+if clang_ir "$tmp/unit-main.ll" "$tmp/unit-main" "$tmp/unit-main-clang.log"; then
     ok
 else
     no "clang rejects Unit main IR"

@@ -224,7 +224,18 @@ fn main() {
             println("error: cannot write " + ir_path)
             return
         }
-        let command = "clang -x ir " + nt_shell_quote(ir_path) + " -o " + nt_shell_quote(target)
+        var runtime = gui.env("NOVA_TOOL_RUNTIME")
+        if runtime.len() == 0 {
+            runtime = gui.cwd() + "/runtime/runtime.c"
+            if !gui.exists(runtime) {
+                runtime = gui.cwd() + "/../runtime/runtime.c"
+            }
+        }
+        if !gui.exists(runtime) {
+            println("error: cannot find runtime/runtime.c; set NOVA_TOOL_RUNTIME")
+            return
+        }
+        let command = "clang -x ir " + nt_shell_quote(ir_path) + " -x none " + nt_shell_quote(runtime) + " -o " + nt_shell_quote(target) + " -lm"
         let output = gui.run(command, gui.cwd())
         let status = gui.exit_status()
         if status != 0 {

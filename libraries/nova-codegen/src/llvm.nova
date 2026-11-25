@@ -1,8 +1,8 @@
 // Nova LLVM IR lowering.
 //
 // Scope: Int, Bool, Unit and String functions; let/var; integer, string, list,
-// struct and enum literals; String.len/List.len; list indexing, index
-// assignment and push; struct field reads and assignment; arithmetic;
+// struct and enum literals; String.len/List.len; runtime-linked list indexing,
+// index assignment and push; struct field reads and assignment; arithmetic;
 // if/else/while/for with break/continue; direct calls; Int/Bool/enum match;
 // seed-shaped ABI (`ptr %arg_env`, `nova_user_N`, `%nova.string`,
 // `%nova.list`, `%nova.struct.*`, `%nova.enum.*`). Maps and the full runtime
@@ -47,6 +47,7 @@ struct CgEnum {
 
 struct CgState {
     lines: List<String>,
+    entry: List<String>,
     temps: Int,
     slots: Int,
     locals: List<CgLocal>,
@@ -85,6 +86,7 @@ fn cg_state(
 ) -> CgState {
     return CgState {
         lines: lines,
+        entry: state.entry,
         temps: temps,
         slots: slots,
         locals: locals,
@@ -105,6 +107,7 @@ fn cg_state(
 fn cg_state_globals(state: CgState, globals: List<String>, strings: Int) -> CgState {
     return CgState {
         lines: state.lines,
+        entry: state.entry,
         temps: state.temps,
         slots: state.slots,
         locals: state.locals,
@@ -125,6 +128,7 @@ fn cg_state_globals(state: CgState, globals: List<String>, strings: Int) -> CgSt
 fn cg_loops_state(state: CgState, breaks: List<String>, continues: List<String>) -> CgState {
     return CgState {
         lines: state.lines,
+        entry: state.entry,
         temps: state.temps,
         slots: state.slots,
         locals: state.locals,
@@ -547,6 +551,32 @@ fn cg_slot(state: CgState) -> (CgState, String) {
     return (cg_state(state, state.lines, state.temps, next, state.locals, state.terminated, state.error), name)
 }
 
+fn cg_entry_slot(state: CgState, ty: String) -> (CgState, String) {
+    let next = state.slots + 1
+    let name = "%s" + state.slots.to_string()
+    var entry = state.entry
+    entry.push("  " + name + " = alloca " + ty)
+    let work = CgState {
+        lines: state.lines,
+        entry: entry,
+        temps: state.temps,
+        slots: next,
+        locals: state.locals,
+        fns: state.fns,
+        structs: state.structs,
+        enums: state.enums,
+        globals: state.globals,
+        strings: state.strings,
+        fn_index: state.fn_index,
+        ret: state.ret,
+        terminated: state.terminated,
+        error: state.error,
+        breaks: state.breaks,
+        continues: state.continues,
+    }
+    return (work, name)
+}
+
 fn cg_local_index(locals: List<CgLocal>, name: String) -> Int {
     var i = locals.len() - 1
     while i >= 0 {
@@ -745,41 +775,17 @@ fn cg_index(ast: Ast, state: CgState, node: Int) -> CgVal {
     if index.ty != "i64" {
         return cg_val(cg_error(index.state, "list index must be Int"), "0")
     }
-    let ok_result = cg_label(index.state)
-    var work = ok_result.0
-    let ok = ok_result.1
-    let bad_result = cg_label(work)
-    work = bad_result.0
-    let bad = bad_result.1
-    let len_result = cg_temp(work)
-    work = len_result.0
-    let len = len_result.1
-    work = cg_line(work, "  " + len + " = extractvalue %nova.list " + base.value + ", 1")
-    let neg_result = cg_temp(work)
-    work = neg_result.0
-    let neg = neg_result.1
-    work = cg_line(work, "  " + neg + " = icmp slt i64 " + index.value + ", 0")
-    let big_result = cg_temp(work)
-    work = big_result.0
-    let big = big_result.1
-    work = cg_line(work, "  " + big + " = icmp sge i64 " + index.value + ", " + len)
-    let oob_result = cg_temp(work)
-    work = oob_result.0
-    let oob = oob_result.1
-    work = cg_line(work, "  " + oob + " = or i1 " + neg + ", " + big)
-    work = cg_line(work, "  br i1 " + oob + ", label %" + bad + ", label %" + ok)
-    work = cg_line(work, bad + ":")
-    work = cg_line(work, "  call void @llvm.trap()")
-    work = cg_line(work, "  unreachable")
-    work = cg_line(work, ok + ":")
-    let data_result = cg_temp(work)
-    work = data_result.0
-    let data = data_result.1
-    work = cg_line(work, "  " + data + " = extractvalue %nova.list " + base.value + ", 0")
+    let list_slot_result = cg_entry_slot(index.state, "%nova.list")
+    var work = list_slot_result.0
+    let list_slot = list_slot_result.1
+    work = cg_line(work, "  store %nova.list " + base.value + ", ptr " + list_slot)
     let ptr_result = cg_temp(work)
     work = ptr_result.0
     let ptr = ptr_result.1
-    work = cg_line(work, "  " + ptr + " = getelementptr i64, ptr " + data + ", i64 " + index.value)
+    work = cg_line(
+        work,
+        "  " + ptr + " = call ptr @nova_list_at(ptr " + list_slot + ", i64 " + index.value + ", i64 8, i64 " + ast.nodes[node].line.to_string() + ")",
+    )
     let val_result = cg_temp(work)
     work = val_result.0
     let val = val_result.1
@@ -812,45 +818,13 @@ fn cg_index_assign(ast: Ast, state: CgState, target: Int, value_node: Int) -> Cg
     if value.ty != "i64" {
         return cg_val(cg_error(work, "only List<Int> element assignment is supported"), "0")
     }
-    let loaded_result = cg_temp(work)
-    work = loaded_result.0
-    let loaded = loaded_result.1
-    work = cg_line(work, "  " + loaded + " = load %nova.list, ptr " + local.slot)
-    let len_result = cg_temp(work)
-    work = len_result.0
-    let len = len_result.1
-    work = cg_line(work, "  " + len + " = extractvalue %nova.list " + loaded + ", 1")
-    let neg_result = cg_temp(work)
-    work = neg_result.0
-    let neg = neg_result.1
-    work = cg_line(work, "  " + neg + " = icmp slt i64 " + at.value + ", 0")
-    let big_result = cg_temp(work)
-    work = big_result.0
-    let big = big_result.1
-    work = cg_line(work, "  " + big + " = icmp sge i64 " + at.value + ", " + len)
-    let oob_result = cg_temp(work)
-    work = oob_result.0
-    let oob = oob_result.1
-    work = cg_line(work, "  " + oob + " = or i1 " + neg + ", " + big)
-    let bad_result = cg_label(work)
-    work = bad_result.0
-    let bad = bad_result.1
-    let ok_result = cg_label(work)
-    work = ok_result.0
-    let ok = ok_result.1
-    work = cg_line(work, "  br i1 " + oob + ", label %" + bad + ", label %" + ok)
-    work = cg_line(work, bad + ":")
-    work = cg_line(work, "  call void @llvm.trap()")
-    work = cg_line(work, "  unreachable")
-    work = cg_line(work, ok + ":")
-    let data_result = cg_temp(work)
-    work = data_result.0
-    let data = data_result.1
-    work = cg_line(work, "  " + data + " = extractvalue %nova.list " + loaded + ", 0")
     let ptr_result = cg_temp(work)
     work = ptr_result.0
     let ptr = ptr_result.1
-    work = cg_line(work, "  " + ptr + " = getelementptr i64, ptr " + data + ", i64 " + at.value)
+    work = cg_line(
+        work,
+        "  " + ptr + " = call ptr @nova_list_at(ptr " + local.slot + ", i64 " + at.value + ", i64 8, i64 " + ast.nodes[target].line.to_string() + ")",
+    )
     work = cg_line(work, "  store i64 " + value.value + ", ptr " + ptr)
     return cg_val(work, value.value)
 }
@@ -881,99 +855,11 @@ fn cg_list_push(ast: Ast, state: CgState, node: Int) -> CgVal {
     if value.ty != "i64" {
         return cg_val(cg_error(work, "only List<Int>.push is supported"), "0")
     }
-    let len_ptr_result = cg_temp(work)
-    work = len_ptr_result.0
-    let len_ptr = len_ptr_result.1
-    work = cg_line(work, "  " + len_ptr + " = getelementptr %nova.list, ptr " + local.slot + ", i64 0, i32 1")
-    let len_result = cg_temp(work)
-    work = len_result.0
-    let len = len_result.1
-    work = cg_line(work, "  " + len + " = load i64, ptr " + len_ptr)
-    let cap_ptr_result = cg_temp(work)
-    work = cap_ptr_result.0
-    let cap_ptr = cap_ptr_result.1
-    work = cg_line(work, "  " + cap_ptr + " = getelementptr %nova.list, ptr " + local.slot + ", i64 0, i32 2")
-    let cap_result = cg_temp(work)
-    work = cap_result.0
-    let cap = cap_result.1
-    work = cg_line(work, "  " + cap + " = load i64, ptr " + cap_ptr)
-    let data_ptr_result = cg_temp(work)
-    work = data_ptr_result.0
-    let data_ptr = data_ptr_result.1
-    work = cg_line(work, "  " + data_ptr + " = getelementptr %nova.list, ptr " + local.slot + ", i64 0, i32 0")
-    let full_result = cg_temp(work)
-    work = full_result.0
-    let full = full_result.1
-    work = cg_line(work, "  " + full + " = icmp sge i64 " + len + ", " + cap)
-    let grow_result = cg_label(work)
-    work = grow_result.0
-    let grow = grow_result.1
-    let store_result = cg_label(work)
-    work = store_result.0
-    let store = store_result.1
-    work = cg_line(work, "  br i1 " + full + ", label %" + grow + ", label %" + store)
-    work = cg_line(work, grow + ":")
-    let double_result = cg_temp(work)
-    work = double_result.0
-    let doubled = double_result.1
-    work = cg_line(work, "  " + doubled + " = mul i64 " + cap + ", 2")
-    let empty_result = cg_temp(work)
-    work = empty_result.0
-    let empty = empty_result.1
-    work = cg_line(work, "  " + empty + " = icmp eq i64 " + cap + ", 0")
-    let newcap_result = cg_temp(work)
-    work = newcap_result.0
-    let newcap = newcap_result.1
-    work = cg_line(work, "  " + newcap + " = select i1 " + empty + ", i64 4, i64 " + doubled)
-    let bytes_result = cg_temp(work)
-    work = bytes_result.0
-    let bytes = bytes_result.1
-    work = cg_line(work, "  " + bytes + " = mul i64 " + newcap + ", 8")
-    let old_data_result = cg_temp(work)
-    work = old_data_result.0
-    let old_data = old_data_result.1
-    work = cg_line(work, "  " + old_data + " = load ptr, ptr " + data_ptr)
-    let grown_result = cg_temp(work)
-    work = grown_result.0
-    let grown = grown_result.1
-    work = cg_line(work, "  " + grown + " = call ptr @realloc(ptr " + old_data + ", i64 " + bytes + ")")
-    let null_result = cg_temp(work)
-    work = null_result.0
-    let is_null = null_result.1
-    work = cg_line(work, "  " + is_null + " = icmp eq ptr " + grown + ", null")
-    let bad_result = cg_label(work)
-    work = bad_result.0
-    let bad = bad_result.1
-    let grown_ok_result = cg_label(work)
-    work = grown_ok_result.0
-    let grown_ok = grown_ok_result.1
-    work = cg_line(work, "  br i1 " + is_null + ", label %" + bad + ", label %" + grown_ok)
-    work = cg_line(work, bad + ":")
-    work = cg_line(work, "  call void @llvm.trap()")
-    work = cg_line(work, "  unreachable")
-    work = cg_line(work, grown_ok + ":")
-    work = cg_line(work, "  store ptr " + grown + ", ptr " + data_ptr)
-    work = cg_line(work, "  store i64 " + newcap + ", ptr " + cap_ptr)
-    work = cg_line(work, "  br label %" + store)
-    work = cg_line(work, store + ":")
-    let final_len_result = cg_temp(work)
-    work = final_len_result.0
-    let final_len = final_len_result.1
-    work = cg_line(work, "  " + final_len + " = load i64, ptr " + len_ptr)
-    let final_data_result = cg_temp(work)
-    work = final_data_result.0
-    let final_data = final_data_result.1
-    work = cg_line(work, "  " + final_data + " = load ptr, ptr " + data_ptr)
-    let at_result = cg_temp(work)
-    work = at_result.0
-    let at = at_result.1
-    work = cg_line(work, "  " + at + " = getelementptr i64, ptr " + final_data + ", i64 " + final_len)
-    work = cg_line(work, "  store i64 " + value.value + ", ptr " + at)
-    let next_result = cg_temp(work)
-    work = next_result.0
-    let next = next_result.1
-    work = cg_line(work, "  " + next + " = add i64 " + final_len + ", 1")
-    work = cg_line(work, "  store i64 " + next + ", ptr " + len_ptr)
+    let elem_result = cg_entry_slot(work, "i64")
+    work = elem_result.0
+    let elem = elem_result.1
+    work = cg_line(work, "  store i64 " + value.value + ", ptr " + elem)
+    work = cg_line(work, "  call void @nova_list_push(ptr " + local.slot + ", ptr " + elem + ", i64 8)")
     return cg_val_typed(work, "", "void")
 }
 
@@ -1135,7 +1021,8 @@ fn cg_compile(source: String) -> CgResult {
     }
     out = out + "declare void @llvm.trap()\n"
     out = out + "declare ptr @malloc(i64)\n"
-    out = out + "declare ptr @realloc(ptr, i64)\n"
+    out = out + "declare ptr @nova_list_at(ptr, i64, i64, i64)\n"
+    out = out + "declare void @nova_list_push(ptr, ptr, i64)\n"
     var emitted = 0
     while emitted < fns.len() {
         let sig = fns[emitted]
@@ -1166,6 +1053,7 @@ fn cg_compile(source: String) -> CgResult {
 fn cg_emit_fn(ast: Ast, fns: List<CgSig>, structs: List<CgStruct>, enums: List<CgEnum>, sig: CgSig) -> CgResult {
     var state = CgState {
         lines: [],
+        entry: [],
         temps: 0,
         slots: 0,
         locals: [],
@@ -1215,6 +1103,9 @@ fn cg_emit_fn(ast: Ast, fns: List<CgSig>, structs: List<CgStruct>, enums: List<C
         k = k + 1
     }
     text = text + ") {\n"
+    for entry_line in state.entry {
+        text = text + entry_line + "\n"
+    }
     for line in state.lines {
         text = text + line + "\n"
     }
@@ -1454,18 +1345,13 @@ fn cg_for_list(ast: Ast, state: CgState, node: Int, iter: Int) -> CgState {
     work = at_result.0
     let at = at_result.1
     work = cg_line(work, "  " + at + " = load i64, ptr " + index_slot)
-    let body_list_result = cg_temp(work)
-    work = body_list_result.0
-    let body_list = body_list_result.1
-    work = cg_line(work, "  " + body_list + " = load %nova.list, ptr " + list_slot)
-    let data_result = cg_temp(work)
-    work = data_result.0
-    let data = data_result.1
-    work = cg_line(work, "  " + data + " = extractvalue %nova.list " + body_list + ", 0")
     let ptr_result = cg_temp(work)
     work = ptr_result.0
     let ptr = ptr_result.1
-    work = cg_line(work, "  " + ptr + " = getelementptr i64, ptr " + data + ", i64 " + at)
+    work = cg_line(
+        work,
+        "  " + ptr + " = call ptr @nova_list_at(ptr " + list_slot + ", i64 " + at + ", i64 8, i64 " + ast.nodes[node].line.to_string() + ")",
+    )
     let element_result = cg_temp(work)
     work = element_result.0
     let element = element_result.1

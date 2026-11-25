@@ -55,7 +55,7 @@ Result: PASS — passed 4, failed 0.
 sh examples/nova-tool/tests/codegen.sh
 ```
 
-Result: PASS — passed 91, failed 0.
+Result: PASS — passed 97, failed 0.
 
 - Straight-line Int module: no `alloca` for immutable params/`let`.
 - Mutable module compiles and exits 2.
@@ -69,14 +69,16 @@ Result: PASS — passed 91, failed 0.
   parameter/return signatures, and `extractvalue` for `.len()`; native result 5.
 - List fixture emits `%nova.list { ptr, i64, i64 }`, a malloc-backed element
   array, aggregate `insertvalue` construction (including empty list),
-  `extractvalue` for `.len()`, bounds-checked `getelementptr` indexing and
-  `llvm.trap`; native result 23.
+  `extractvalue` for `.len()`, and `call ptr @nova_list_at` for bounds-checked
+  indexing; native result 23.
 - List ABI fixture emits by-value `%nova.list` parameter/return signatures and
   calls: a literal returned by one function passes through an identity function
   and is indexed by another; native result 13.
-- List push fixture emits `realloc` growth, struct-field addressing, an element
-  store and an updated length; a grown list is returned and indexed by the
-  caller. Native result 16.
+- List push fixture emits `call void @nova_list_push` with a prologue-hoisted
+element slot; the runtime grows with `realloc`, copies the element and updates
+  the length. A grown list is returned and indexed by the caller. Native 16.
+- List push-loop fixture pushes 5,000 elements in a `for` loop and indexes the
+  final element through `nova_list_at`; native result 10.
 - List assignment fixture emits a bounds check and element store through a
   mutable local after a growth push; the mutated list is returned and summed by
   the caller. Native result 45.
@@ -98,7 +100,8 @@ Result: PASS — passed 91, failed 0.
   insertion/extraction, payload bindings, wildcard arms and by-value enum
   parameters/returns; native 36.
 - `NOVA_TOOL=build-ir` invokes clang, checks status and produces a native binary;
-  the test executes that Nova-built binary.
+  the test executes that Nova-built binary. A separate list program built through
+  `build-ir` links `runtime/runtime.c` and exits 23.
 - Host clang accepted every module; Mach-O confirmed on this host.
 
 Limit: ABI parity covers Int, Unit, the string-literal/len subset and the
@@ -110,10 +113,11 @@ and Unit block arms; sema rejects string/nested patterns and duplicate or
 unreachable arms, checks arm/binding types and enforces Int/Bool/enum
 exhaustiveness. Short-circuit booleans remain. An unmatched match reaches
 `unreachable`, not a Nova panic. Assignment only writes an
-existing element of a mutable local list; slices, insertion, removal and the
-`nova_list_*` runtime are not implemented. Push uses libc `realloc` rather than
-the seed allocator. List storage is never freed; the bounds trap is not a Nova
-panic. Structs are value-only: no generics, methods, equality, printing or
+existing element of a mutable local list; slices, insertion and removal are not
+implemented. Indexing, assignment and push use `nova_list_at`/`nova_list_push`;
+bounds failure is the runtime's Nova panic. List literals still allocate with
+libc `malloc` and storage is never freed. Structs are value-only: no generics,
+methods, equality, printing or
 references. Enum payloads are Int-only in codegen. Maps, sets, non-Int enum
 payloads, tuples, arrays and Option/Result remain.
 `emit-ir` is still not the full CLI. This is not a compiler-speed measurement.
@@ -128,6 +132,7 @@ and cancellation are absent even in Rust.
 
 ## Commit history
 
+- List runtime checkpoint — 97/0 codegen, 24/0 sema.
 - Enum checkpoint — 91/0 codegen, 24/0 sema.
 - Struct checkpoint — 82/0 codegen, 17/0 sema.
 - `match` sema checkpoint — 73/0 codegen, 15/0 sema.
