@@ -8,11 +8,11 @@ HEAD: this checkpoint is committed by the accompanying code/doc commits; prior
 Working tree: unrelated `editor/` and playground changes remain untouched.
 
 Active milestone: `BOOT-02` / `CODEGEN-01` — self-compilation and LLVM lowering
-Active task: `BOOT-02.03`–`BOOT-02.04` — bootstrap generations and the Nova LSP diagnostics slice
+Active task: `LSP-01.03` / `BOOT-02.04` — LSP completion and bootstrap
 Status: PARTIAL — the Nova tool builds itself through three generations and
-compiles a native sample; the Nova LSP transport/diagnostics slice is built by
-the self-hosted tool. Full compiler/LSP parity, module/Box semantics and Rust
-seed removal remain.
+compiles a native sample; the Nova LSP now covers transport, full-document
+sync, diagnostics and completion. Full compiler/LSP parity, module/Box
+semantics and Rust seed removal remain.
 
 ## Last verified behavior
 
@@ -99,16 +99,20 @@ seed removal remain.
     symbols, compiles `runtime/gui.m` with `-fobjc-arc` on Darwin and links
     Cocoa/CoreText/CoreGraphics/ImageIO/QuartzCore. This is what lets the
     self-built tool link on macOS.
-- `sh examples/nova-tool/tests/parser.sh` → passed 50, failed 0.
+- `sh examples/nova-tool/tests/parser.sh` → passed 51, failed 0.
 - `sh examples/nova-tool/tests/sema-ast.sh` → passed 28, failed 0.
 - `sh examples/nova-tool/tests/sema.sh` → passed 4, failed 0.
 - `sh examples/nova-tool/tests/cli.sh` → passed 11, failed 0.
 - `sh examples/nova-tool/tests/lsp.sh` → PASS.
   - `nova-tool lsp` speaks Content-Length-framed JSON-RPC over stdio.
-  - `initialize` advertises full-document sync; `didOpen`/`didChange`/`didSave`
-    publish `textDocument/publishDiagnostics`, and `didClose` clears it.
+  - `initialize` advertises full-document sync and completion with `.`/`$`
+    triggers; `didOpen`/`didChange`/`didSave` publish diagnostics, and
+    `didClose` clears them.
   - Diagnostics come from the Nova parser/sema slice; the invalid-buffer
     fixture reports `E0301` and the fixed buffer reports none.
+  - Completion returns keywords, builtins, and declared functions, structs and
+    enums from the current buffer; the protocol test checks `helper`, `main`,
+    `fn` and `println` after an edit.
 - `sh examples/nova-tool/tests/toolchain.sh` → passed 125, failed 0.
 - Self-build, generation 1:
   `./target/nova/nova-tool build` with `NOVA_TOOL_OUT=/tmp/nova-self`
@@ -119,7 +123,9 @@ seed removal remain.
 - Self-build, generation 3: `/tmp/nova-self-2 build` produced
   `/tmp/nova-self-3`; it built the sample and the program exited 9.
 - The LSP protocol test also passes against `/tmp/nova-self`,
-  `/tmp/nova-self-2` and `/tmp/nova-self-3`.
+  `/tmp/nova-self-2` and `/tmp/nova-self-3`, including completion.
+- The stage-1 self-build was measured at 1.60s and 1.67 GB peak RSS after the
+  IR sink change (previously 2.48s and 5.84 GB for the same seed-built build).
 - The three binary SHA-256 values differ, so this is behavioral bootstrap
   evidence, not a byte-identical fixed-point claim.
 - Mach-O confirmed on this Apple Silicon host.
@@ -147,15 +153,20 @@ seed removal remain.
   `cargo build -p nova-cli` must run after runtime changes.
 - The LSP protocol test passes against the seed-built tool, `/tmp/nova-self`
   (generation 1), `/tmp/nova-self-2` (generation 2) and `/tmp/nova-self-3`
-  (generation 3).
+  (generation 3), including completion.
+- Added document storage and completion: keywords, builtins, declared
+  functions/structs/enums, and `.` member items.
+- Replaced `cg_line`'s per-line `List<String>` clone with a runtime IR sink
+  (`nova_ir_reset`/`nova_ir_line`/`nova_ir_take`) and joined function bodies
+  once. Stage-1 peak RSS fell from 5.84 GB to 1.67 GB (measured).
 
 ## Incomplete work / known failures
 
 - `nova build` still runs the Rust CLI for stage 0; no Rust crate has been
   deleted. Do not claim “pure Nova” before `BOOT-02.04` and LSP parity.
-- `BOOT-02.04` is PARTIAL: the self-hosted tool contains a working LSP
-  transport/diagnostics slice, but completion, hover, definition, formatting
-  and Studio wiring remain. `BOOT-02.05` remains TODO.
+- `BOOT-02.04` is PARTIAL: the self-hosted tool contains working LSP
+  transport, sync, diagnostics and completion, but hover, definition,
+  formatting and Studio wiring remain. `BOOT-02.05` remains TODO.
 - `nova lsp` still launches the Rust LSP; the Nova server is currently
   `nova-tool lsp`.
 - Mutable list initialization and reassignment clone the backing array, but
@@ -166,7 +177,7 @@ seed removal remain.
 - Box dependencies, standard-library module semantics and full module/import
   resolution remain.
 - Sema lacks generics, traits, methods and full diagnostics; the Nova LSP
-  covers transport, full-document sync and diagnostics only.
+  covers transport, full-document sync, diagnostics and completion.
 - Overflow, division-by-zero and alignment checks remain.
 - Match lacks nested enum/struct patterns and enum-typed payloads; maps, sets
   and arrays remain.
@@ -174,8 +185,8 @@ seed removal remain.
 
 ## Resume here
 
-1. Continue `LSP-01` feature slices (completion, hover, definition,
-   formatting), then wire the Nova server into `nova lsp`/Studio (`BOOT-02.05`).
+1. Continue `LSP-01` feature slices (hover, definition, formatting), then wire
+   the Nova server into `nova lsp`/Studio (`BOOT-02.05`).
 2. Add Box dependency and std-module resolution to the Nova CLI.
 3. Replace the remaining Rust stage-0 path only after full sema/codegen parity
    and a reproducible bootstrap comparison.
@@ -190,18 +201,20 @@ seed removal remain.
 - Command: `sh examples/nova-tool/tests/cli.sh`
 - Result: PASS (11/0)
 - Command: `sh examples/nova-tool/tests/lsp.sh`
-- Result: PASS (seed-built, `/tmp/nova-self`, `/tmp/nova-self-2`,
-  `/tmp/nova-self-3`)
+- Result: PASS (completion + diagnostics; seed-built, `/tmp/nova-self`,
+  `/tmp/nova-self-2`, `/tmp/nova-self-3`)
 - Command: `sh examples/nova-tool/tests/toolchain.sh`
 - Result: PASS (125/0)
 - Command: `sh examples/nova-tool/tests/parser.sh`
-- Result: PASS (50/0)
+- Result: PASS (51/0)
 - Command: `sh examples/nova-tool/tests/sema-ast.sh`
 - Result: PASS (28/0)
 - Command: `sh examples/nova-tool/tests/sema.sh`
 - Result: PASS (4/0)
 - Command: stage 1/2/3 self-build + sample execution
 - Result: PASS (all three binaries exited 9; hashes differ)
+- Command: stage-1 self-build under `/usr/bin/time -l`
+- Result: PASS (1.60s, 1.67 GB peak RSS)
 
 ## Blockers and approvals
 
@@ -209,5 +222,5 @@ seed removal remain.
 - Push, publish, deployment and branch deletion require owner authorization.
 - List ownership/copy semantics are a known correctness limit; do not claim full
   runtime parity.
-- The Nova LSP has stdio and diagnostics; completion, hover, definition,
+- The Nova LSP has stdio, diagnostics and completion; hover, definition,
   formatting and Studio wiring remain.

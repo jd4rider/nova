@@ -123,20 +123,21 @@ absent from the corpus are not covered yet, and the AST is not wired into
 full sema parity remains the gate.
 
 The Nova LSP now exists in `libraries/nova-lsp/src/lsp.nova`: Content-Length
-framing over stdio, `initialize`, full-document sync and diagnostics, built into
-`nova-tool` and exercised by `tests/lsp.sh`. It passes against the seed-built
-tool and three Nova-built generations. Completion, hover, definition, formatting
-and the `nova lsp` entry point still use the Rust server or remain TODO.
+framing over stdio, `initialize`, full-document sync, diagnostics and completion
+(keywords, builtins, declarations and `.` members), built into `nova-tool` and
+exercised by `tests/lsp.sh`. It passes against the seed-built tool and three
+Nova-built generations. Hover, definition, formatting and the `nova lsp` entry
+point still use the Rust server or remain TODO.
 
 Test state: `sh examples/nova-tool/tests/toolchain.sh` → **passed 125, failed 0**
 (including formatting the studio source), `sh examples/nova-tool/tests/parser.sh`
-→ **passed 50, failed 0** (including the 29-file AST corpus), and
+→ **passed 51, failed 0** (including the 29-file AST corpus), and
 `sh examples/nova-tool/tests/boxes.sh`
 → **passed 64, failed 0**, and `sh examples/nova-tool/tests/codegen.sh`
 → **passed 221, failed 0** (Nova tool invokes clang and links the C runtime; native execution on this host), and `sh examples/nova-tool/tests/cli.sh`
 → **passed 11, failed 0**, and `sh examples/nova-tool/tests/lsp.sh`
-→ **PASS** (transport, sync and diagnostics against the seed-built tool and
-Nova-built generations 1/2). The Nova tool now self-builds through three
+→ **PASS** (transport, sync, diagnostics and completion against the seed-built
+tool and Nova-built generations 1/2/3). The Nova tool now self-builds through three
 generations and each generation compiles the native sample (exit 9); the hashes
 differ, so this is behavioral bootstrap evidence, not a byte-identical fixed
 point. `nova build` still runs the Rust CLI and no Rust crate has been deleted. The Nova tool now accepts `build` for a project

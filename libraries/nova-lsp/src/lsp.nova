@@ -1,8 +1,8 @@
 // A small, real Nova language server over stdio.
 //
 // This is the first LSP slice: length-framed JSON-RPC transport, initialize,
-// shutdown, full-document sync and published semantic diagnostics. Formatting,
-// completion, hover and navigation are intentionally not advertised yet.
+// shutdown, full-document sync, published semantic diagnostics and completion.
+// Formatting, hover and navigation are intentionally not advertised yet.
 
 import "../../nova-boxes/src/json.nova"
 import "../../nova-check/src/sema.nova"
@@ -20,6 +20,12 @@ struct LspDiag {
     message: String,
     line: Int,
     column: Int,
+}
+
+struct LspDocument {
+    uri: String,
+    text: String,
+    version: Int,
 }
 
 fn lsp_digit(c: String) -> Int {
@@ -160,7 +166,152 @@ fn lsp_json_string(doc: JsonDoc, node: Int, key: String) -> String {
     return js_str(doc, js_get(doc, node, key))
 }
 
+fn lsp_slice(chars: List<String>, start: Int, stop: Int) -> String {
+    var out = ""
+    var i = start
+    while i < stop && i < chars.len() {
+        out = out + chars[i]
+        i = i + 1
+    }
+    return out
+}
+
+fn lsp_offset_at(text: String, line: Int, character: Int) -> Int {
+    let chars = text.chars()
+    var current_line = 0
+    var current_char = 0
+    var i = 0
+    while i < chars.len() {
+        if current_line == line && current_char >= character {
+            return i
+        }
+        if chars[i] == "\n" {
+            current_line = current_line + 1
+            current_char = 0
+        } else {
+            current_char = current_char + 1
+        }
+        i = i + 1
+    }
+    return chars.len()
+}
+
+fn lsp_line_start(chars: List<String>, offset: Int) -> Int {
+    var start = 0
+    var i = 0
+    while i < offset && i < chars.len() {
+        if chars[i] == "\n" {
+            start = i + 1
+        }
+        i = i + 1
+    }
+    return start
+}
+
+fn lsp_doc_index(documents: List<LspDocument>, uri: String) -> Int {
+    var i = 0
+    while i < documents.len() {
+        if documents[i].uri == uri {
+            return i
+        }
+        i = i + 1
+    }
+    return 0 - 1
+}
+
+fn lsp_doc_set(documents: List<LspDocument>, uri: String, text: String, version: Int) -> List<LspDocument> {
+    var out: List<LspDocument> = []
+    let index = lsp_doc_index(documents, uri)
+    var i = 0
+    while i < documents.len() {
+        if i == index {
+            out.push(LspDocument { uri: uri, text: text, version: version })
+        } else {
+            out.push(documents[i])
+        }
+        i = i + 1
+    }
+    if index < 0 {
+        out.push(LspDocument { uri: uri, text: text, version: version })
+    }
+    return out
+}
+
+fn lsp_doc_text(documents: List<LspDocument>, uri: String) -> String {
+    let index = lsp_doc_index(documents, uri)
+    if index < 0 {
+        return ""
+    }
+    return documents[index].text
+}
+
+fn lsp_doc_remove(documents: List<LspDocument>, uri: String) -> List<LspDocument> {
+    var out: List<LspDocument> = []
+    let index = lsp_doc_index(documents, uri)
+    var i = 0
+    while i < documents.len() {
+        if i != index {
+            out.push(documents[i])
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn lsp_completion_item(label: String, kind: Int, detail: String) -> String {
+    return "{\"label\":" + js_quote(label) + ",\"kind\":" + kind.to_string() + ",\"detail\":" + js_quote(detail) + "}"
+}
+
+fn lsp_completion_items(text: String, offset: Int) -> String {
+    let chars = text.chars()
+    let start = lsp_line_start(chars, offset)
+    let prefix = lsp_slice(chars, start, offset).trim_end()
+    var items: List<String> = []
+    if prefix.ends_with(".") {
+        items.push(lsp_completion_item("len", 2, "number of elements or UTF-8 bytes"))
+        items.push(lsp_completion_item("is_empty", 2, "true when empty"))
+        items.push(lsp_completion_item("push", 2, "append to a mutable List"))
+        items.push(lsp_completion_item("get", 2, "checked element access"))
+        items.push(lsp_completion_item("to_string", 2, "convert to a String"))
+        items.push(lsp_completion_item("unwrap_or", 2, "Option/Result fallback"))
+        items.push(lsp_completion_item("is_some", 2, "Option check"))
+        items.push(lsp_completion_item("is_none", 2, "Option check"))
+        items.push(lsp_completion_item("is_ok", 2, "Result check"))
+        items.push(lsp_completion_item("is_err", 2, "Result check"))
+    } else {
+        var keywords: List<String> = ["fn", "let", "var", "return", "if", "else", "while", "for", "in", "match", "struct", "enum", "import", "true", "false", "break", "continue"]
+        for keyword in keywords {
+            items.push(lsp_completion_item(keyword, 14, "keyword"))
+        }
+        var builtins: List<String> = ["println", "print", "eprintln", "assert", "assert_eq", "panic"]
+        for name in builtins {
+            items.push(lsp_completion_item(name, 3, "builtin"))
+        }
+        let ast = a_parse(text)
+        if ast.error.len() == 0 && ast.nodes.len() > 0 {
+            let file = ast.nodes.len() - 1
+            var i = 0
+            while i < ast.nodes[file].count {
+                let node = a_child(ast, file, i)
+                let item = ast.nodes[node]
+                if item.kind == ak_fn() {
+                    items.push(lsp_completion_item(item.text, 3, "function"))
+                } else if item.kind == ak_struct() {
+                    items.push(lsp_completion_item(item.text, 22, "struct"))
+                } else if item.kind == ak_enum() {
+                    items.push(lsp_completion_item(item.text, 10, "enum"))
+                } else if item.kind == ak_extern() {
+                    items.push(lsp_completion_item(item.text, 3, "extern function"))
+                }
+                i = i + 1
+            }
+        }
+    }
+    return "[" + items.join(",") + "]"
+}
+
 fn lsp_run_stdio() -> Int {
+    var documents: List<LspDocument> = []
     var running = true
     while running {
         let message = lsp_read_message()
@@ -180,7 +331,7 @@ fn lsp_run_stdio() -> Int {
                     if has_id {
                         id = js_render(doc, id_node)
                     }
-                    let result = "{\"capabilities\":{\"textDocumentSync\":1},\"serverInfo\":{\"name\":\"nova-lsp\",\"version\":\"0.1.0\"}}"
+                    let result = "{\"capabilities\":{\"textDocumentSync\":1,\"completionProvider\":{\"triggerCharacters\":[\".\",\"$\"],\"resolveProvider\":false}},\"serverInfo\":{\"name\":\"nova-lsp\",\"version\":\"0.1.0\"}}"
                     lsp_send(lsp_response(id, result))
                 } else if method == "shutdown" {
                     var id = "null"
@@ -193,6 +344,8 @@ fn lsp_run_stdio() -> Int {
                     let document = js_get(doc, params, "textDocument")
                     let uri = lsp_json_string(doc, document, "uri")
                     let text = lsp_json_string(doc, document, "text")
+                    let version = lsp_int(lsp_json_string(doc, document, "version"))
+                    documents = lsp_doc_set(documents, uri, text, version)
                     lsp_publish(uri, text)
                 } else if method == "textDocument/didChange" {
                     let params = js_get(doc, root, "params")
@@ -204,11 +357,14 @@ fn lsp_run_stdio() -> Int {
                     if count > 0 {
                         text = lsp_json_string(doc, js_at(doc, changes, count - 1), "text")
                     }
+                    let version = lsp_int(lsp_json_string(doc, document, "version"))
+                    documents = lsp_doc_set(documents, uri, text, version)
                     lsp_publish(uri, text)
                 } else if method == "textDocument/didClose" {
                     let params = js_get(doc, root, "params")
                     let document = js_get(doc, params, "textDocument")
                     let uri = lsp_json_string(doc, document, "uri")
+                    documents = lsp_doc_remove(documents, uri)
                     lsp_publish(uri, "")
                 } else if method == "textDocument/didSave" {
                     let params = js_get(doc, root, "params")
@@ -216,8 +372,25 @@ fn lsp_run_stdio() -> Int {
                     let uri = lsp_json_string(doc, document, "uri")
                     let text = lsp_json_string(doc, params, "text")
                     if text.len() > 0 {
+                        let version = lsp_int(lsp_json_string(doc, document, "version"))
+                        documents = lsp_doc_set(documents, uri, text, version)
                         lsp_publish(uri, text)
                     }
+                } else if method == "textDocument/completion" {
+                    let params = js_get(doc, root, "params")
+                    let document = js_get(doc, params, "textDocument")
+                    let uri = lsp_json_string(doc, document, "uri")
+                    let position = js_get(doc, params, "position")
+                    let line = lsp_int(js_str(doc, js_get(doc, position, "line")))
+                    let character = lsp_int(js_str(doc, js_get(doc, position, "character")))
+                    let text = lsp_doc_text(documents, uri)
+                    let offset = lsp_offset_at(text, line, character)
+                    var id = "null"
+                    if has_id {
+                        id = js_render(doc, id_node)
+                    }
+                    let result = "{\"isIncomplete\":false,\"items\":" + lsp_completion_items(text, offset) + "}"
+                    lsp_send(lsp_response(id, result))
                 } else if has_id {
                     let id = js_render(doc, id_node)
                     lsp_send(lsp_error(id, 0 - 32601, "method not implemented"))

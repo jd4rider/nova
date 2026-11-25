@@ -5,7 +5,7 @@ and integration gate pass. The full matrix is `PARITY.md`.
 
 ## COMP-01 — Nova compiler frontend
 
-- COMP-01.01 — AST parser corpus: **VERIFIED**. 50/0, 29-file corpus.
+- COMP-01.01 — AST parser corpus: **VERIFIED**. 51/0, 29-file corpus.
 - COMP-01.02 — Body semantic slice: **PARTIAL**. 28/0; declarations, scopes,
   expression/return types, calls, fields (including duplicate declarations and
   initializers), enums (duplicate/unknown variants and payload arity),
@@ -92,7 +92,9 @@ and integration gate pass. The full matrix is `PARITY.md`.
   `didOpen`/`didChange`/`didSave` publish diagnostics and `didClose` clears
   them. Evidence: `tests/lsp.sh` against the seed-built tool and two Nova-built
   generations.
-- LSP-01.03 — Completion: **TODO**.
+- LSP-01.03 — Completion: **VERIFIED** for the current buffer. Keywords,
+  builtins, declared functions/structs/enums and `.` member items; evidence:
+  `tests/lsp.sh` (seed-built and generations 1/2/3).
 - LSP-01.04 — Hover, definition, document symbols: **TODO**.
 - LSP-01.05 — Whole-document formatting: **TODO**.
 - LSP-01.06 — Incremental sync, stale documents, incomplete source, error
@@ -120,10 +122,10 @@ and integration gate pass. The full matrix is `PARITY.md`.
   built `/tmp/nova-self-2`; its sample exited 9.
 - BOOT-02.03 — Generation 3 and comparison: **PARTIAL**. `/tmp/nova-self-2`
   built `/tmp/nova-self-3` and its sample exited 9; the three SHA-256 hashes
-  differ, so no byte-identical fixed point is claimed.
-- BOOT-02.04 — Build the Nova LSP with the self-hosted compiler: **PARTIAL**.
-  `nova-tool lsp` contains the transport/sync/diagnostics slice, and
+  differ, so no byte-identical fixed point is claimed. The IR sink removed
+  quadratic line-list cloning; stage-1 peak RSS is 1.67 GB (measured).- BOOT-02.04 — Build the Nova LSP with the self-hosted compiler: **PARTIAL**.
+  `nova-tool lsp` contains transport, sync, diagnostics and completion, and
   `/tmp/nova-self`, `/tmp/nova-self-2` and `/tmp/nova-self-3` all pass
-  `tests/lsp.sh`. Completion,
-  hover, definition, formatting and the `nova lsp` entry point remain.
+  `tests/lsp.sh`. Hover, definition, formatting and the `nova lsp` entry point
+  remain.
 - BOOT-02.05 — Studio uses the Nova-built LSP: **TODO**.

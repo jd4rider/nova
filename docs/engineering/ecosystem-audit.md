@@ -41,13 +41,13 @@ The audited compiler/LSP matrix and stable slice IDs are in
    imported modules, builtin method tables and diagnostics parity.
 3. Make the Nova compiler driver build a nontrivial example end to end.
 4. Port the remaining LSP feature slices over the same semantic API; the Nova
-   stdio transport and diagnostics slice now exist in `nova-tool lsp`.
+   stdio transport, diagnostics and completion slice now exist in `nova-tool lsp`.
 5. Only then delete `bootstrap/`, after stage-2/stage-3 conformance and a
    documented seed-recovery route.
 
 ## Known blockers
 
-- The Nova LSP now has framed stdin/stdout and diagnostics; completion, hover,
+- The Nova LSP now has framed stdin/stdout, diagnostics and completion; hover,
   definition, formatting and Studio wiring remain.
 - Sema needs module/import resolution; `ast.nova` records imports but does not
   load them.

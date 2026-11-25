@@ -155,6 +155,40 @@ nova_str nova_stdin_read_bytes(int64_t count) {
     return result;
 }
 
+/* Codegen IR sink. Building IR by cloning a growing List<String> is
+ * quadratic under Nova's mutable-list semantics; the compiler appends lines
+ * here and takes one String at the end of each function. */
+static char *nova_ir_buffer = NULL;
+static int64_t nova_ir_len = 0;
+static int64_t nova_ir_cap = 0;
+
+void nova_ir_reset(void) {
+    nova_ir_len = 0;
+}
+
+void nova_ir_line(nova_str text) {
+    int64_t need = nova_ir_len + text.len + 1;
+    if (need > nova_ir_cap) {
+        int64_t cap = nova_ir_cap > 0 ? nova_ir_cap : 4096;
+        while (cap < need) cap *= 2;
+        char *grown = (char *)realloc(nova_ir_buffer, (size_t)cap);
+        if (!grown) nova_die_oom();
+        nova_ir_buffer = grown;
+        nova_ir_cap = cap;
+    }
+    if (text.len > 0 && text.ptr) {
+        memcpy(nova_ir_buffer + nova_ir_len, text.ptr, (size_t)text.len);
+        nova_ir_len += text.len;
+    }
+    nova_ir_buffer[nova_ir_len++] = '\n';
+}
+
+nova_str nova_ir_take(void) {
+    nova_str result = nova_copy_str(nova_ir_buffer ? nova_ir_buffer : "", nova_ir_len);
+    nova_ir_len = 0;
+    return result;
+}
+
 static int nova_utf8_decode(
     const unsigned char *text, int64_t len, int64_t index, uint32_t *cp, int64_t *next
 );

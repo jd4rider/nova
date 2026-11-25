@@ -28,10 +28,12 @@ lists, tuples, externs and logical operators; native binaries exit
 fixtures listed in `EVIDENCE.md`.
 - Nova CLI project build/run/check: `nova.toml`, `[bin] path`, relative
   imports, `target/nova/<name>` and native status propagation (11/0).
-- Nova LSP diagnostics slice: framed stdio transport, initialize, full-document
-  sync and `publishDiagnostics`; `tests/lsp.sh` passes against the seed-built
-  tool and Nova-built generations 1, 2 and 3. Completion, hover, definition,
+- Nova LSP slice: framed stdio transport, initialize, full-document sync,
+  `publishDiagnostics` and completion; `tests/lsp.sh` passes against the
+  seed-built tool and Nova-built generations 1, 2 and 3. Hover, definition,
   formatting and Studio wiring remain.
+- Codegen now appends IR through a runtime sink instead of cloning the growing
+  line list; stage-1 self-build measured 1.60s and 1.67 GB peak RSS.
 - Self-build passes through three generations: the Rust-built tool builds
   `/tmp/nova-self`, that tool builds `/tmp/nova-self-2`, and the second builds
   `/tmp/nova-self-3`. Each generation compiles the native sample, which exits 9.
@@ -44,6 +46,7 @@ fixtures listed in `EVIDENCE.md`.
 CODEGEN-01.04 ABI → CODEGEN-01.09 runtime-linked clang invocation →
 CLI-01.01 driver →
 COMP-01.03 modules → LSP-01.01/02 transport/diagnostics (done) →
-LSP feature slices → DIFF-01 → BOOT-02 → PERF-01.
+LSP-01.03 completion (done) → hover/definition/formatting → DIFF-01 →
+BOOT-02 → PERF-01.
 
 Do not delete `bootstrap/` before BOOT-02 passes.

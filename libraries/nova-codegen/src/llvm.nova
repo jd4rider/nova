@@ -13,6 +13,10 @@
 
 import "../../nova-parser/src/ast.nova"
 
+extern "C" fn nova_ir_reset()
+extern "C" fn nova_ir_line(text: String)
+extern "C" fn nova_ir_take() -> String
+
 struct CgSig {
     name: String,
     params: List<String>,
@@ -847,9 +851,8 @@ fn cg_enum_call(ast: Ast, state: CgState, node: Int, name: String) -> CgVal {
 }
 
 fn cg_line(state: CgState, text: String) -> CgState {
-    var lines = state.lines
-    lines.push(text)
-    return cg_state(state, lines, state.temps, state.slots, state.locals, state.terminated, state.error)
+    nova_ir_line(text)
+    return state
 }
 
 fn cg_error(state: CgState, message: String) -> CgState {
@@ -1793,6 +1796,7 @@ fn cg_compile(source: String) -> CgResult {
         }
         extern_index = extern_index + 1
     }
+    var bodies: List<String> = []
     var emitted = 0
     while emitted < fns.len() {
         let sig = fns[emitted]
@@ -1801,10 +1805,11 @@ fn cg_compile(source: String) -> CgResult {
             if function.error.len() > 0 {
                 return CgResult { ir: "", error: function.error }
             }
-            out = out + function.ir + "\n"
+            bodies.push(function.ir)
         }
         emitted = emitted + 1
     }
+    out = out + bodies.join("\n") + "\n"
     out = out + "define i32 @main() {\n"
     if fns[main_index].ret == "Unit" {
         out = out + "  call void @nova_user_" + fns[main_index].index.to_string() + "(ptr null)\n"
@@ -1823,6 +1828,7 @@ fn cg_compile(source: String) -> CgResult {
 }
 
 fn cg_emit_fn(ast: Ast, fns: List<CgSig>, structs: List<CgStruct>, enums: List<CgEnum>, sig: CgSig) -> CgResult {
+    nova_ir_reset()
     var state = CgState {
         lines: [],
         entry: [],
@@ -1864,6 +1870,7 @@ fn cg_emit_fn(ast: Ast, fns: List<CgSig>, structs: List<CgStruct>, enums: List<C
     }
     let symbol = "nova_user_" + sig.index.to_string()
     let ret_llvm = cg_llvm_type_in(structs, enums, sig.ret)
+    let body = nova_ir_take()
     var text = ""
     for global in state.globals {
         text = text + global + "\n"
@@ -1878,9 +1885,7 @@ fn cg_emit_fn(ast: Ast, fns: List<CgSig>, structs: List<CgStruct>, enums: List<C
     for entry_line in state.entry {
         text = text + entry_line + "\n"
     }
-    for line in state.lines {
-        text = text + line + "\n"
-    }
+    text = text + body
     text = text + "}"
     return CgResult { ir: text, error: "" }
 }

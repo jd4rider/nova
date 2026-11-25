@@ -29,11 +29,14 @@ sh examples/nova-tool/tests/lsp.sh /tmp/nova-self-2
 
 Result: PASS. `nova-tool lsp` reads Content-Length-framed JSON-RPC from stdin
 and writes framed responses/notifications to stdout. It implements `initialize`
-(full-document sync capability), `shutdown`, `exit`, `didOpen`, `didChange`,
-`didSave` and `didClose`. Diagnostics come from the Nova parser/sema slice; an
-invalid `Int` binding reports `E0301` at the source position, the fixed buffer
-reports none, and closing the document clears diagnostics. Completion, hover,
-definition, formatting and `nova lsp`/Studio wiring are not implemented.
+(full-document sync and completion capabilities), `shutdown`, `exit`, `didOpen`,
+`didChange`, `didSave`, `didClose` and `textDocument/completion`. Diagnostics
+come from the Nova parser/sema slice; an invalid `Int` binding reports `E0301`
+at the source position, the fixed buffer reports none, and closing the document
+clears diagnostics. Completion returns keywords, builtins and declarations
+from the current buffer; the transcript checks `helper`, `main`, `fn` and
+`println`. Hover, definition, formatting and `nova lsp`/Studio wiring are not
+implemented.
 
 The Nova tool now reads process arguments, accepts `build` with no arguments
 for a project or `build <source> [output]` for one file, prints `built <path>`,
@@ -52,7 +55,7 @@ standard-library module semantics and Rust-seed fallback remain.
 sh examples/nova-tool/tests/parser.sh
 ```
 
-Result: PASS — passed 50, failed 0; 29-file AST corpus.
+Result: PASS — passed 51, failed 0; 29-file AST corpus.
 
 Commits: `93d61dc`, `983fd6a`.
 
@@ -186,7 +189,9 @@ element slot; the runtime grows with `realloc`, copies the element and updates
   parameters/returns; native 36.
 - `NOVA_TOOL=build-ir` invokes clang, checks status and produces a native binary;
   the test executes that Nova-built binary. A separate list program built through
-  `build-ir` links `runtime/runtime.c` and exits 23.
+  `build-ir` links `runtime/runtime.c` and exits 23. IR lines now go through
+  `nova_ir_reset`/`nova_ir_line`/`nova_ir_take`; the stage-1 self-build measured
+  1.60s and 1.67 GB peak RSS instead of 2.48s / 5.84 GB before the sink.
 - Host clang accepted every module; Mach-O confirmed on this host.
 
 Limit: ABI parity covers Int, Unit, the string-literal/len subset and the
@@ -239,7 +244,8 @@ sh examples/nova-tool/tests/lsp.sh /tmp/nova-self-2
 sh examples/nova-tool/tests/lsp.sh /tmp/nova-self-3
 ```
 
-Result: PASS — all three Nova-built binaries returned `nova-lsp diagnostics ok`.
+Result: PASS — all three Nova-built binaries returned
+`nova-lsp diagnostics and completion ok`.
 
 ## Parity audit
 
@@ -251,6 +257,8 @@ and cancellation are absent even in Rust.
 
 ## Commit history
 
+- Nova LSP completion + IR sink checkpoint — 221/0 codegen, 11/0 CLI, 51/0
+  parser, 125/0 toolchain, LSP protocol PASS; stage-1 build 1.60s / 1.67 GB.
 - Nova LSP diagnostics checkpoint — 221/0 codegen, 11/0 CLI, 125/0 toolchain,
   LSP protocol PASS.
 - Stage 1/2/3 Nova-tool bootstrap checkpoint — 221/0 codegen, 11/0 CLI.
