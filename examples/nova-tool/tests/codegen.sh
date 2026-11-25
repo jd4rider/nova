@@ -391,6 +391,23 @@ else
     no "enum binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-list-eq.nova" "$tool")
+echo "$out" | grep -q "phi i1" && ok || no "list equality phi"
+printf '%s\n' "$out" > "$tmp/list-eq.ll"
+if clang_ir "$tmp/list-eq.ll" "$tmp/list-eq" "$tmp/list-eq-clang.log"; then
+    ok
+else
+    no "clang rejects list equality IR"
+    cat "$tmp/list-eq-clang.log"
+fi
+if [ -x "$tmp/list-eq" ]; then
+    "$tmp/list-eq"
+    code=$?
+    [ "$code" -eq 12 ] && ok || no "list equality result (got $code, expected 12)"
+else
+    no "list equality binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-assert.nova" "$tool")
 echo "$out" | grep -q "call void @nova_assert_fail" && ok || no "assert failure call"
 printf '%s\n' "$out" > "$tmp/assert.ll"

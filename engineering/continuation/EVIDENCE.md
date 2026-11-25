@@ -56,7 +56,7 @@ Result: PASS — passed 4, failed 0.
 sh examples/nova-tool/tests/codegen.sh
 ```
 
-Result: PASS — passed 119, failed 0.
+Result: PASS — passed 122, failed 0.
 
 - Straight-line Int module: no `alloca` for immutable params/`let`.
 - Mutable module compiles and exits 2.
@@ -98,6 +98,8 @@ element slot; the runtime grows with `realloc`, copies the element and updates
   concatenated String against literal patterns and returns 13.
 - Print fixture emits `nova_print_str`, `nova_print_i64` and `nova_print_bool`;
   stdout is exactly `hello\n12true\n` and the process exits 7.
+- List equality fixture compares equal, unequal and empty `List<Int>` values via
+  a length check and an element loop using `nova_list_at`; native 12.
 - Assert fixtures emit `nova_assert_fail`; the passing program exits 5 and the
   failing program exits 1 with `assertion failed` on stderr.
 - Struct fixture emits `%nova.struct.Point` and `%nova.struct.Pair` aggregate
@@ -142,6 +144,7 @@ and cancellation are absent even in Rust.
 
 ## Commit history
 
+- List equality checkpoint — 122/0 codegen, 28/0 sema.
 - Assert builtin checkpoint — 119/0 codegen, 28/0 sema.
 - Output builtins checkpoint — 113/0 codegen, 28/0 sema.
 - String operations/pattern checkpoint — 107/0 codegen, 28/0 sema.

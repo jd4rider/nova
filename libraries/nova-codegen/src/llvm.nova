@@ -1490,6 +1490,116 @@ fn cg_int_pattern(text: String) -> String {
     return cg_number(text)
 }
 
+fn cg_list_eq(state: CgState, left: CgVal, right: CgVal, negate: Bool) -> CgVal {
+    let left_slot_result = cg_entry_slot(state, "%nova.list")
+    var work = left_slot_result.0
+    let left_slot = left_slot_result.1
+    work = cg_line(work, "  store %nova.list " + left.value + ", ptr " + left_slot)
+    let right_slot_result = cg_entry_slot(work, "%nova.list")
+    work = right_slot_result.0
+    let right_slot = right_slot_result.1
+    work = cg_line(work, "  store %nova.list " + right.value + ", ptr " + right_slot)
+    let left_load_result = cg_temp(work)
+    work = left_load_result.0
+    let left_load = left_load_result.1
+    work = cg_line(work, "  " + left_load + " = load %nova.list, ptr " + left_slot)
+    let right_load_result = cg_temp(work)
+    work = right_load_result.0
+    let right_load = right_load_result.1
+    work = cg_line(work, "  " + right_load + " = load %nova.list, ptr " + right_slot)
+    let left_len_result = cg_temp(work)
+    work = left_len_result.0
+    let left_len = left_len_result.1
+    work = cg_line(work, "  " + left_len + " = extractvalue %nova.list " + left_load + ", 1")
+    let right_len_result = cg_temp(work)
+    work = right_len_result.0
+    let right_len = right_len_result.1
+    work = cg_line(work, "  " + right_len + " = extractvalue %nova.list " + right_load + ", 1")
+    let same_len_result = cg_temp(work)
+    work = same_len_result.0
+    let same_len = same_len_result.1
+    work = cg_line(work, "  " + same_len + " = icmp eq i64 " + left_len + ", " + right_len)
+    let index_result = cg_entry_slot(work, "i64")
+    work = index_result.0
+    let index_slot = index_result.1
+    work = cg_line(work, "  store i64 0, ptr " + index_slot)
+    let false_result = cg_label(work)
+    work = false_result.0
+    let false_label = false_result.1
+    let header_result = cg_label(work)
+    work = header_result.0
+    let header = header_result.1
+    let body_result = cg_label(work)
+    work = body_result.0
+    let body = body_result.1
+    let next_result = cg_label(work)
+    work = next_result.0
+    let next = next_result.1
+    let true_result = cg_label(work)
+    work = true_result.0
+    let true_label = true_result.1
+    let merge_result = cg_label(work)
+    work = merge_result.0
+    let merge = merge_result.1
+    work = cg_line(work, "  br i1 " + same_len + ", label %" + header + ", label %" + false_label)
+    work = cg_line(work, false_label + ":")
+    work = cg_line(work, "  br label %" + merge)
+    work = cg_line(work, header + ":")
+    let index_load_result = cg_temp(work)
+    work = index_load_result.0
+    let index_load = index_load_result.1
+    work = cg_line(work, "  " + index_load + " = load i64, ptr " + index_slot)
+    let cond_result = cg_temp(work)
+    work = cond_result.0
+    let cond = cond_result.1
+    work = cg_line(work, "  " + cond + " = icmp slt i64 " + index_load + ", " + left_len)
+    work = cg_line(work, "  br i1 " + cond + ", label %" + body + ", label %" + true_label)
+    work = cg_line(work, body + ":")
+    let at_left_result = cg_temp(work)
+    work = at_left_result.0
+    let at_left = at_left_result.1
+    work = cg_line(work, "  " + at_left + " = call ptr @nova_list_at(ptr " + left_slot + ", i64 " + index_load + ", i64 8, i64 0)")
+    let at_right_result = cg_temp(work)
+    work = at_right_result.0
+    let at_right = at_right_result.1
+    work = cg_line(work, "  " + at_right + " = call ptr @nova_list_at(ptr " + right_slot + ", i64 " + index_load + ", i64 8, i64 0)")
+    let value_left_result = cg_temp(work)
+    work = value_left_result.0
+    let value_left = value_left_result.1
+    work = cg_line(work, "  " + value_left + " = load i64, ptr " + at_left)
+    let value_right_result = cg_temp(work)
+    work = value_right_result.0
+    let value_right = value_right_result.1
+    work = cg_line(work, "  " + value_right + " = load i64, ptr " + at_right)
+    let same_result = cg_temp(work)
+    work = same_result.0
+    let same = same_result.1
+    work = cg_line(work, "  " + same + " = icmp eq i64 " + value_left + ", " + value_right)
+    work = cg_line(work, "  br i1 " + same + ", label %" + next + ", label %" + false_label)
+    work = cg_line(work, next + ":")
+    let next_index_result = cg_temp(work)
+    work = next_index_result.0
+    let next_index = next_index_result.1
+    work = cg_line(work, "  " + next_index + " = add i64 " + index_load + ", 1")
+    work = cg_line(work, "  store i64 " + next_index + ", ptr " + index_slot)
+    work = cg_line(work, "  br label %" + header)
+    work = cg_line(work, true_label + ":")
+    work = cg_line(work, "  br label %" + merge)
+    work = cg_line(work, merge + ":")
+    let phi_result = cg_temp(work)
+    work = phi_result.0
+    let phi = phi_result.1
+    work = cg_line(work, "  " + phi + " = phi i1 [ false, %" + false_label + " ], [ true, %" + true_label + " ]")
+    if negate {
+        let not_result = cg_temp(work)
+        work = not_result.0
+        let not_value = not_result.1
+        work = cg_line(work, "  " + not_value + " = xor i1 " + phi + ", true")
+        return cg_val_typed(work, not_value, "i1")
+    }
+    return cg_val_typed(work, phi, "i1")
+}
+
 fn cg_match(ast: Ast, state: CgState, node: Int) -> CgVal {
     let item = ast.nodes[node]
     if item.count < 1 {
@@ -1961,6 +2071,9 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
         if op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=" {
             let left = cg_expr2(ast, state, a_child(ast, node, 0))
             let right = cg_expr2(ast, left.state, a_child(ast, node, 1))
+            if (op == "==" || op == "!=") && left.ty == "%nova.list" && right.ty == "%nova.list" {
+                return cg_list_eq(right.state, left, right, op == "!=")
+            }
             if left.ty == "%nova.string" && right.ty == "%nova.string" {
                 if op != "==" && op != "!=" {
                     return cg_val(cg_error(right.state, "String supports == and != only"), "0")

@@ -1,0 +1,14 @@
+fn main() -> Int {
+    let a = [1, 2, 3]
+    let b = [1, 2, 3]
+    let c = [1, 2, 4]
+    let d: List<Int> = []
+    if a == b {
+        if a != c {
+            if d == [] {
+                return 12
+            }
+        }
+    }
+    return 0
+}

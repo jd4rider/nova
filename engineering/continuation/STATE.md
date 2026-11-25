@@ -4,7 +4,7 @@ Updated: 2026-11-24
 Master directive: owner-supplied; parity matrix in `engineering/continuation/`.
 Repository / branch: `nova` / `selfhost/pure-nova`
 HEAD: this checkpoint is committed by the accompanying code/doc commits; prior
-`dbd18fa`.
+`fae3368`.
 Working tree: unrelated `editor/` and playground changes remain untouched.
 
 Active milestone: `COMP-01` / `CODEGEN-01` — frontend and LLVM lowering
@@ -13,7 +13,7 @@ Status: PARTIAL (concat/equality/literal match work; nested patterns remain)
 
 ## Last verified behavior
 
-- `sh examples/nova-tool/tests/codegen.sh` → passed 119, failed 0.
+- `sh examples/nova-tool/tests/codegen.sh` → passed 122, failed 0.
   - `List<Int>` literals allocate with libc `malloc`; empty lists supported.
   - List parameters and returns use by-value `%nova.list`; a literal survives
     return, identity and indexing (native 13).
@@ -48,6 +48,8 @@ Status: PARTIAL (concat/equality/literal match work; nested patterns remain)
     `nova_print_str`; exact stdout and exit code are verified. `panic(String)`
     calls `nova_panic_str` and terminates. `assert(Bool)` branches to
     `nova_assert_fail`; passing and failing exits are verified.
+  - `List<Int> ==`/`!=` compare lengths and elements through `nova_list_at`;
+    empty, equal and unequal lists are verified natively (12).
   - `ptr %arg_env`, `nova_user_<index>` and the `@main` wrapper are emitted.
 - `sh examples/nova-tool/tests/parser.sh` → passed 50, failed 0.
 - `sh examples/nova-tool/tests/sema-ast.sh` → passed 28, failed 0.
@@ -131,7 +133,7 @@ Status: PARTIAL (concat/equality/literal match work; nested patterns remain)
 - Command: `(cd examples/nova-tool && ../../target/debug/nova build)`
 - Result: PASS
 - Command: `sh examples/nova-tool/tests/codegen.sh`
-- Result: PASS (119/0)
+- Result: PASS (122/0)
 - Command: `sh examples/nova-tool/tests/sema-ast.sh`
 - Result: PASS (28/0)
 
