@@ -4,7 +4,7 @@ Updated: 2026-11-24
 Master directive: owner-supplied; parity matrix in `engineering/continuation/`.
 Repository / branch: `nova` / `selfhost/pure-nova`
 HEAD: this checkpoint is committed by the accompanying code/doc commits; prior
-`6d8d187`.
+`3c8f2da`.
 Working tree: unrelated `editor/` and playground changes remain untouched.
 
 Active milestone: `COMP-01` / `CODEGEN-01` — frontend and LLVM lowering
@@ -14,7 +14,7 @@ Status: PARTIAL (Int/Bool/String payloads and slices work; nested patterns remai
 
 ## Last verified behavior
 
-- `sh examples/nova-tool/tests/codegen.sh` → passed 153, failed 0.
+- `sh examples/nova-tool/tests/codegen.sh` → passed 157, failed 0.
   - `List<Int>` literals allocate with libc `malloc`; empty lists supported.
   - List parameters and returns use by-value `%nova.list`; a literal survives
     return, identity and indexing (native 13).
@@ -53,6 +53,7 @@ Status: PARTIAL (Int/Bool/String payloads and slices work; nested patterns remai
     `ends_with` call the runtime; a trimmed search program returns 5.
     `replace(from, to)` and `lower()` also call the runtime (native 16).
     `is_empty()` compares the length and `bytes()` fills a `List<Int>` (native 95).
+    `upper()` is backed by `nova_string_upper` (native 72).
   - Enum payloads support Int, Bool and String. Bool is zero-extended/truncated
     in one slot; String occupies pointer/length slots with ptrtoint/inttoptr and
     extractvalue/insertvalue packing. A Text/Label fixture returns 10. Nested

@@ -391,6 +391,24 @@ else
     no "enum binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-string-upper.nova" "$tool")
+echo "$out" | grep -q "call %nova.string @nova_string_upper" && ok || no "String upper call"
+echo "$out" | grep -q "call void @nova_string_bytes" && ok || no "String upper bytes call"
+printf '%s\n' "$out" > "$tmp/string-upper.ll"
+if clang_ir "$tmp/string-upper.ll" "$tmp/string-upper" "$tmp/string-upper-clang.log"; then
+    ok
+else
+    no "clang rejects String upper IR"
+    cat "$tmp/string-upper-clang.log"
+fi
+if [ -x "$tmp/string-upper" ]; then
+    "$tmp/string-upper"
+    code=$?
+    [ "$code" -eq 72 ] && ok || no "String upper result (got $code, expected 72)"
+else
+    no "String upper binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-string-bytes.nova" "$tool")
 echo "$out" | grep -q "call void @nova_string_bytes" && ok || no "String bytes call"
 echo "$out" | grep -q "icmp eq i64" && ok || no "String is_empty check"

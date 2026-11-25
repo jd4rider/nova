@@ -776,9 +776,9 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
                 work = sa_args(work, node, 1, ["String", "String"], true)
                 return sa_result(work, "String")
             }
-            if callee_node.text == "lower" {
+            if callee_node.text == "lower" || callee_node.text == "upper" {
                 if object.type_name != "?" && object.type_name != "String" {
-                    work = sa_error(work, node, "E0309", "lower requires a String receiver")
+                    work = sa_error(work, node, "E0309", callee_node.text + " requires a String receiver")
                 }
                 work = sa_args(work, node, 1, [], false)
                 return sa_result(work, "String")

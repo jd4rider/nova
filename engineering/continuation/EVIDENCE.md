@@ -56,7 +56,7 @@ Result: PASS — passed 4, failed 0.
 sh examples/nova-tool/tests/codegen.sh
 ```
 
-Result: PASS — passed 153, failed 0.
+Result: PASS — passed 157, failed 0.
 
 - Straight-line Int module: no `alloca` for immutable params/`let`.
 - Mutable module compiles and exits 2.
@@ -115,6 +115,8 @@ element slot; the runtime grows with `realloc`, copies the element and updates
   the transformed lengths sum to 16.
 - String bytes fixture verifies `is_empty()` and fills a `List<Int>` with
   `nova_string_bytes`; the first byte and length produce 95.
+- String upper fixture uppercases `Hello` and returns its first byte, 72, proving
+  the runtime changes bytes rather than only preserving length.
 - Assert fixtures emit `nova_assert_fail`; the passing program exits 5 and the
   failing program exits 1 with `assertion failed` on stderr.
 - Struct fixture emits `%nova.struct.Point` and `%nova.struct.Pair` aggregate
@@ -159,6 +161,7 @@ and cancellation are absent even in Rust.
 
 ## Commit history
 
+- String upper checkpoint — 157/0 codegen, 28/0 sema.
 - String is_empty/bytes checkpoint — 153/0 codegen, 28/0 sema.
 - String replace/lower checkpoint — 149/0 codegen, 28/0 sema.
 - List slices checkpoint — 145/0 codegen, 28/0 sema.

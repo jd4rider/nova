@@ -1607,6 +1607,16 @@ nova_str nova_string_lower(nova_str value) {
     return result;
 }
 
+nova_str nova_string_upper(nova_str value) {
+    nova_str result = nova_copy_str(value.ptr ? value.ptr : "", value.len);
+    char *out = (char *)result.ptr;
+    for (int64_t i = 0; i < result.len; i++) {
+        unsigned char c = (unsigned char)out[i];
+        if (c >= 'a' && c <= 'z') out[i] = (char)(c - 32);
+    }
+    return result;
+}
+
 nova_str nova_codepoint_to_string(int64_t code) {
     char buf[4];
     int n = 0;
