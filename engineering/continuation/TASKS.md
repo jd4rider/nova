@@ -31,7 +31,7 @@ and integration gate pass. The full matrix is `PARITY.md`.
 - CODEGEN-01.04 — Runtime ABI alignment: **PARTIAL**. Int/Unit/String/List
   signatures and calls use `ptr %arg_env`, `nova_user_<index>`, `void` returns,
   `%nova.string` and `%nova.list` by value, and the `@main` wrapper; runtime-call
-  ABI remains. Evidence: 67/0.
+  ABI remains. Evidence: 73/0.
 - CODEGEN-01.06 — Strings, lists, maps, sets, structs, enums, tuples, arrays,
   Option/Result: **PARTIAL**. String literals, parameters/returns and `.len()`  are verified; `List<Int>` literals (including empty), indexing with a bounds
   trap, `.len()`, by-value parameters and returns are verified. Mutable-list
@@ -42,11 +42,13 @@ and integration gate pass. The full matrix is `PARITY.md`.
 - CODEGEN-01.07 — Overflow, division-by-zero, bounds and alignment checks:
   **TODO**.
 - CODEGEN-01.08 — `for`, `match`, `break`/`continue`, short-circuit booleans:
-  **PARTIAL**. Range and list `for` loops, nested loops, `break` and `continue`
-  are verified natively; `match` and short-circuit boolean evaluation remain.
+  **PARTIAL**. Range/list/nested `for`, `break`/`continue`, Int/Bool `match`
+  expressions and Unit block arms are verified natively. Enum/string/binding
+  patterns, exhaustiveness diagnostics, an explicit no-match panic and
+  short-circuit boolean evaluation remain.
 - CODEGEN-01.09 — Clang invocation and linking from the Nova tool: **VERIFIED**.
   `build-ir` writes IR, invokes clang with quoted paths, checks exit status and
-  produces a native binary. Evidence: `tests/codegen.sh` → 67/0.
+  produces a native binary. Evidence: `tests/codegen.sh` → 73/0.
 - CODEGEN-01.10 — Optimization pipeline parity: **TODO**.
 
 ## CLI-01 — Self-hosted driver

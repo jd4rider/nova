@@ -1,0 +1,17 @@
+fn main() -> Int {
+    var total = 0
+    let n = 2
+    match n > 1 {
+        true => {
+            total = total + 5
+        }
+        false => {
+            total = total + 1
+        }
+    }
+    total = total + match n {
+        1 => 3
+        _ => 4
+    }
+    return total
+}

@@ -1128,6 +1128,186 @@ fn cg_stmt(ast: Ast, state: CgState, node: Int) -> CgState {
     return cg_error(state, "unsupported statement")
 }
 
+fn cg_int_pattern(text: String) -> String {
+    let chars = text.chars()
+    if chars.len() == 0 {
+        return ""
+    }
+    var start = 0
+    if chars[0] == "-" {
+        start = 1
+    }
+    if start >= chars.len() {
+        return ""
+    }
+    var i = start
+    while i < chars.len() {
+        if !"0123456789_".contains(chars[i]) {
+            return ""
+        }
+        i = i + 1
+    }
+    return cg_number(text)
+}
+
+fn cg_match(ast: Ast, state: CgState, node: Int) -> CgVal {
+    let item = ast.nodes[node]
+    if item.count < 1 {
+        return cg_val(cg_error(state, "match needs a scrutinee"), "0")
+    }
+    let scrut = cg_expr2(ast, state, a_child(ast, node, 0))
+    var work = scrut.state
+    if work.error.len() > 0 {
+        return cg_val(work, "0")
+    }
+    if scrut.ty != "i64" && scrut.ty != "i1" {
+        return cg_val(cg_error(work, "match supports Int or Bool scrutinees"), "0")
+    }
+    let slot_result = cg_slot(work)
+    work = slot_result.0
+    let slot = slot_result.1
+    work = cg_line(work, "  " + slot + " = alloca " + scrut.ty)
+    work = cg_line(work, "  store " + scrut.ty + " " + scrut.value + ", ptr " + slot)
+    let arm_count = item.count - 1
+    if arm_count == 0 {
+        work = cg_line(work, "  unreachable")
+        work = cg_state(work, work.lines, work.temps, work.slots, work.locals, true, work.error)
+        return cg_val_typed(work, "", "void")
+    }
+    let merge_result = cg_label(work)
+    work = merge_result.0
+    let merge = merge_result.1
+    let fail_result = cg_label(work)
+    work = fail_result.0
+    let fail = fail_result.1
+    var values: List<String> = []
+    var value_labels: List<String> = []
+    var result_ty = ""
+    var irrefutable = false
+    var next_test = ""
+    var i = 0
+    while i < arm_count && !irrefutable && work.error.len() == 0 {
+        if i > 0 {
+            work = cg_state(work, work.lines, work.temps, work.slots, work.locals, false, work.error)
+            work = cg_line(work, next_test + ":")
+        }
+        let arm = a_child(ast, node, i + 1)
+        let pattern = ast.nodes[arm].text
+        let body_result = cg_label(work)
+        work = body_result.0
+        let body = body_result.1
+        var next = fail
+        next_test = ""
+        if i + 1 < arm_count {
+            let next_result = cg_label(work)
+            work = next_result.0
+            next = next_result.1
+            next_test = next_result.1
+        }
+        if pattern == "_" {
+            work = cg_line(work, "  br label %" + body)
+            irrefutable = true
+        } else if pattern == "true" || pattern == "false" {
+            if scrut.ty != "i1" {
+                return cg_val(cg_error(work, "Bool pattern requires a Bool scrutinee"), "0")
+            }
+            let value_result = cg_temp(work)
+            work = value_result.0
+            let value = value_result.1
+            work = cg_line(work, "  " + value + " = load i1, ptr " + slot)
+            let condition_result = cg_temp(work)
+            work = condition_result.0
+            let condition = condition_result.1
+            work = cg_line(work, "  " + condition + " = icmp eq i1 " + value + ", " + pattern)
+            work = cg_line(work, "  br i1 " + condition + ", label %" + body + ", label %" + next)
+        } else {
+            if scrut.ty != "i64" {
+                return cg_val(cg_error(work, "integer pattern requires an Int scrutinee"), "0")
+            }
+            let literal = cg_int_pattern(pattern)
+            if literal.len() == 0 {
+                return cg_val(cg_error(work, "unsupported match pattern " + pattern), "0")
+            }
+            let value_result = cg_temp(work)
+            work = value_result.0
+            let value = value_result.1
+            work = cg_line(work, "  " + value + " = load i64, ptr " + slot)
+            let condition_result = cg_temp(work)
+            work = condition_result.0
+            let condition = condition_result.1
+            work = cg_line(work, "  " + condition + " = icmp eq i64 " + value + ", " + literal)
+            work = cg_line(work, "  br i1 " + condition + ", label %" + body + ", label %" + next)
+        }
+        work = cg_line(work, body + ":")
+        let saved = work.locals.len()
+        let body_node = a_child(ast, arm, 0)
+        var arm_ty = "void"
+        var arm_value = ""
+        if body_node >= 0 && ast.nodes[body_node].kind == ak_block() {
+            work = cg_block(ast, work, body_node)
+        } else {
+            let value = cg_expr2(ast, work, body_node)
+            work = value.state
+            arm_ty = value.ty
+            arm_value = value.value
+        }
+        if work.error.len() > 0 {
+            return cg_val(work, "0")
+        }
+        let ended = work.terminated
+        work = cg_state(work, work.lines, work.temps, work.slots, cg_locals_before(work.locals, saved), ended, work.error)
+        if !ended {
+            if arm_ty == "void" {
+                if result_ty.len() > 0 && result_ty != "void" {
+                    return cg_val(cg_error(work, "match arms have incompatible types"), "0")
+                }
+                result_ty = "void"
+            } else {
+                if result_ty.len() == 0 {
+                    result_ty = arm_ty
+                } else if result_ty != arm_ty {
+                    return cg_val(cg_error(work, "match arms have incompatible types"), "0")
+                }
+                values.push(arm_value)
+                value_labels.push(body)
+            }
+            work = cg_line(work, "  br label %" + merge)
+        }
+        i = i + 1
+    }
+    if work.error.len() > 0 {
+        return cg_val(work, "0")
+    }
+    if !irrefutable {
+        work = cg_state(work, work.lines, work.temps, work.slots, work.locals, false, work.error)
+        work = cg_line(work, fail + ":")
+        work = cg_line(work, "  unreachable")
+    }
+    if result_ty.len() == 0 {
+        work = cg_state(work, work.lines, work.temps, work.slots, work.locals, true, work.error)
+        return cg_val_typed(work, "", "void")
+    }
+    work = cg_state(work, work.lines, work.temps, work.slots, work.locals, false, work.error)
+    work = cg_line(work, merge + ":")
+    if result_ty == "void" {
+        return cg_val_typed(work, "", "void")
+    }
+    let phi_result = cg_temp(work)
+    work = phi_result.0
+    let phi = phi_result.1
+    var line = "  " + phi + " = phi " + result_ty + " "
+    var k = 0
+    while k < values.len() {
+        if k > 0 {
+            line = line + ", "
+        }
+        line = line + "[ " + values[k] + ", %" + value_labels[k] + " ]"
+        k = k + 1
+    }
+    work = cg_line(work, line)
+    return cg_val_typed(work, phi, result_ty)
+}
+
 fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
     if state.error.len() > 0 {
         return cg_val(state, "0")
@@ -1151,6 +1331,9 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
     }
     if item.kind == ak_index() {
         return cg_index(ast, state, node)
+    }
+    if item.kind == ak_match() {
+        return cg_match(ast, state, node)
     }
     if item.kind == ak_ident() {
         let index = cg_local_index(state.locals, item.text)

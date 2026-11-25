@@ -211,6 +211,40 @@ else
     no "list assignment binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-match.nova" "$tool")
+echo "$out" | grep -q "phi i64" && ok || no "match expression phi"
+printf '%s\n' "$out" > "$tmp/match.ll"
+if clang -x ir "$tmp/match.ll" -o "$tmp/match" > "$tmp/match-clang.log" 2>&1; then
+    ok
+else
+    no "clang rejects match IR"
+    cat "$tmp/match-clang.log"
+fi
+if [ -x "$tmp/match" ]; then
+    "$tmp/match"
+    code=$?
+    [ "$code" -eq 60 ] && ok || no "match result (got $code, expected 60)"
+else
+    no "match binary missing"
+fi
+
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-match-unit.nova" "$tool")
+echo "$out" | grep -q "icmp eq i1" && ok || no "Bool match pattern"
+printf '%s\n' "$out" > "$tmp/match-unit.ll"
+if clang -x ir "$tmp/match-unit.ll" -o "$tmp/match-unit" > "$tmp/match-unit-clang.log" 2>&1; then
+    ok
+else
+    no "clang rejects Unit match IR"
+    cat "$tmp/match-unit-clang.log"
+fi
+if [ -x "$tmp/match-unit" ]; then
+    "$tmp/match-unit"
+    code=$?
+    [ "$code" -eq 9 ] && ok || no "Unit match result (got $code, expected 9)"
+else
+    no "Unit match binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-for.nova" "$tool")
 echo "$out" | grep -q "icmp slt i64" && ok || no "range loop condition"
 printf '%s\n' "$out" > "$tmp/for.ll"
