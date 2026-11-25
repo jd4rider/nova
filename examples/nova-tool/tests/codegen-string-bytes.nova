@@ -1,0 +1,9 @@
+fn main() -> Int {
+    let text = "ABC"
+    let empty = ""
+    let bytes = text.bytes()
+    if empty.is_empty() {
+        return bytes.len() * 10 + bytes[0]
+    }
+    return 0
+}

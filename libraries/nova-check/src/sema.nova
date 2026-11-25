@@ -755,6 +755,20 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
                 work = sa_args(work, node, 1, [], false)
                 return sa_result(work, "String")
             }
+            if callee_node.text == "is_empty" {
+                if object.type_name != "?" && object.type_name != "String" {
+                    work = sa_error(work, node, "E0309", "is_empty requires a String receiver")
+                }
+                work = sa_args(work, node, 1, [], false)
+                return sa_result(work, "Bool")
+            }
+            if callee_node.text == "bytes" {
+                if object.type_name != "?" && object.type_name != "String" {
+                    work = sa_error(work, node, "E0309", "bytes requires a String receiver")
+                }
+                work = sa_args(work, node, 1, [], false)
+                return sa_result(work, "List<Int>")
+            }
             if callee_node.text == "replace" {
                 if object.type_name != "?" && object.type_name != "String" {
                     work = sa_error(work, node, "E0309", "replace requires a String receiver")

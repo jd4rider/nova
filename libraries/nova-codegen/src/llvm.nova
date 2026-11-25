@@ -1175,6 +1175,7 @@ fn cg_compile(source: String) -> CgResult {
     out = out + "declare %nova.string @nova_string_trim_end(%nova.string)\n"
     out = out + "declare %nova.string @nova_string_replace(%nova.string, %nova.string, %nova.string)\n"
     out = out + "declare %nova.string @nova_string_lower(%nova.string)\n"
+    out = out + "declare void @nova_string_bytes(%nova.string, ptr)\n"
     out = out + "declare void @nova_print_str(%nova.string, i32, i32)\n"
     out = out + "declare void @nova_print_i64(i64, i32, i32)\n"
     out = out + "declare void @nova_print_bool(i32, i32, i32)\n"
@@ -2435,6 +2436,43 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
                 let cond = cond_result.1
                 work = cg_line(work, "  " + cond + " = icmp ne i32 " + result + ", 0")
                 return cg_val_typed(work, cond, "i1")
+            }
+            if ast.nodes[callee].text == "is_empty" {
+                if ast.nodes[node].count - 1 != 0 {
+                    return cg_val(cg_error(state, "is_empty takes no arguments"), "0")
+                }
+                let recv = cg_expr2(ast, state, a_child(ast, callee, 0))
+                if recv.ty != "%nova.string" {
+                    return cg_val(cg_error(recv.state, "is_empty requires a String"), "0")
+                }
+                let len_result = cg_temp(recv.state)
+                var work = len_result.0
+                let len = len_result.1
+                work = cg_line(work, "  " + len + " = extractvalue %nova.string " + recv.value + ", 1")
+                let empty_result = cg_temp(work)
+                work = empty_result.0
+                let empty = empty_result.1
+                work = cg_line(work, "  " + empty + " = icmp eq i64 " + len + ", 0")
+                return cg_val_typed(work, empty, "i1")
+            }
+            if ast.nodes[callee].text == "bytes" {
+                if ast.nodes[node].count - 1 != 0 {
+                    return cg_val(cg_error(state, "bytes takes no arguments"), "0")
+                }
+                let recv = cg_expr2(ast, state, a_child(ast, callee, 0))
+                if recv.ty != "%nova.string" {
+                    return cg_val(cg_error(recv.state, "bytes requires a String"), "0")
+                }
+                let result_slot_result = cg_entry_slot(recv.state, "%nova.list")
+                var work = result_slot_result.0
+                let result_slot = result_slot_result.1
+                work = cg_line(work, "  store %nova.list zeroinitializer, ptr " + result_slot)
+                work = cg_line(work, "  call void @nova_string_bytes(%nova.string " + recv.value + ", ptr " + result_slot + ")")
+                let result_result = cg_temp(work)
+                work = result_result.0
+                let result = result_result.1
+                work = cg_line(work, "  " + result + " = load %nova.list, ptr " + result_slot)
+                return cg_val_typed(work, result, "%nova.list")
             }
             if ast.nodes[callee].text == "replace" {
                 let got = ast.nodes[node].count - 1

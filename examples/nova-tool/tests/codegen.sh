@@ -391,6 +391,24 @@ else
     no "enum binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-string-bytes.nova" "$tool")
+echo "$out" | grep -q "call void @nova_string_bytes" && ok || no "String bytes call"
+echo "$out" | grep -q "icmp eq i64" && ok || no "String is_empty check"
+printf '%s\n' "$out" > "$tmp/string-bytes.ll"
+if clang_ir "$tmp/string-bytes.ll" "$tmp/string-bytes" "$tmp/string-bytes-clang.log"; then
+    ok
+else
+    no "clang rejects String bytes IR"
+    cat "$tmp/string-bytes-clang.log"
+fi
+if [ -x "$tmp/string-bytes" ]; then
+    "$tmp/string-bytes"
+    code=$?
+    [ "$code" -eq 95 ] && ok || no "String bytes result (got $code, expected 95)"
+else
+    no "String bytes binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-string-transform.nova" "$tool")
 echo "$out" | grep -q "call %nova.string @nova_string_replace" && ok || no "String replace call"
 echo "$out" | grep -q "call %nova.string @nova_string_lower" && ok || no "String lower call"
