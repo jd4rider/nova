@@ -1,0 +1,7 @@
+fn main() -> Int {
+    let chars = "abc".chars()
+    if chars[1] == "b" {
+        return chars.len()
+    }
+    return 0
+}

@@ -78,7 +78,7 @@ and integration gate pass. The full matrix is `PARITY.md`.
   status. `run` executes the built binary and propagates its exit status;
   `check` runs body sema over the flattened project. Box dependencies,
   standard-library module semantics, and seed fallback remain. Evidence:
-  `tests/cli.sh` → 9/0.
+  `tests/cli.sh` → 11/0.
 
 ## LSP-01 — Nova language server
 

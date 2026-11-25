@@ -127,8 +127,10 @@ Test state: `sh examples/nova-tool/tests/toolchain.sh` → **passed 117, failed 
 → **passed 50, failed 0** (including the 29-file AST corpus), and
 `sh examples/nova-tool/tests/boxes.sh`
 → **passed 64, failed 0**, and `sh examples/nova-tool/tests/codegen.sh`
-→ **passed 184, failed 0** (Nova tool invokes clang and links the C runtime; native execution on this host), and `sh examples/nova-tool/tests/cli.sh`
-→ **passed 9, failed 0**. The Nova tool now accepts `build` for a project
+→ **passed 209, failed 0** (Nova tool invokes clang and links the C runtime; native execution on this host), and `sh examples/nova-tool/tests/cli.sh`
+→ **passed 11, failed 0**. A self-build attempt resolves the Nova project and
+imports but stops at `a_stmt: unsupported expression`; it is not a bootstrap
+pass. The Nova tool now accepts `build` for a project
 (discovering `nova.toml`, reading `[bin] path`, inlining relative imports and
 writing `target/nova/<name>`), `run` with native status propagation, `check`,
 or `build <source> [output]` for one file, but `nova build` still runs the Rust

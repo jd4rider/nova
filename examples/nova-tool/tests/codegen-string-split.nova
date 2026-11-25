@@ -1,0 +1,5 @@
+fn main() -> Int {
+    let parts = "a,b,c".split(",")
+    let joined = parts.join("-")
+    return parts.len() + joined.len()
+}

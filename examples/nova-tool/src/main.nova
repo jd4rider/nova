@@ -98,7 +98,7 @@ fn nt_expand(path: String, source: String, loaded: List<String>) -> NtExpanded {
         if trimmed.starts_with("import ") {
             let relative = nt_between_quotes(trimmed)
             if relative.ends_with(".nova") {
-                let child = rs_dirname(path) + "/" + relative
+                let child = rs_normalize(rs_dirname(path) + "/" + relative)
                 if !nt_has_path(seen, child) {
                     var next_seen = seen
                     next_seen.push(child)
@@ -177,14 +177,17 @@ fn nt_build_project() -> Int {
         println("error: " + expanded.error)
         return 1
     }
-    let target_dir = root + "/target/nova"
-    if !gui.exists(target_dir) {
-        if !gui.exists(root + "/target") {
-            gui.mkdir(root + "/target")
+    var target = gui.env("NOVA_TOOL_OUT")
+    if target.len() == 0 {
+        let target_dir = root + "/target/nova"
+        if !gui.exists(target_dir) {
+            if !gui.exists(root + "/target") {
+                gui.mkdir(root + "/target")
+            }
+            gui.mkdir(target_dir)
         }
-        gui.mkdir(target_dir)
+        target = nt_project_target()
     }
-    let target = nt_project_target()
     return nt_build_source(entry, expanded.text, target)
 }
 

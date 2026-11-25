@@ -55,6 +55,14 @@ else
     no "project build produced no executable"
 fi
 
+if (cd "$tmp/project" && NOVA_TOOL_OUT="$tmp/override" NOVA_TOOL_RUNTIME="$root/runtime/runtime.c" "$tool" build >"$tmp/override.out" 2>"$tmp/override.err"); then
+    ok
+else
+    no "project output override failed"
+    cat "$tmp/override.out" "$tmp/override.err"
+fi
+[ -x "$tmp/override" ] && ok || no "output override produced no executable"
+
 if (cd "$tmp/project" && NOVA_TOOL_RUNTIME="$root/runtime/runtime.c" "$tool" check >"$tmp/check.out" 2>"$tmp/check.err"); then
     ok
 else

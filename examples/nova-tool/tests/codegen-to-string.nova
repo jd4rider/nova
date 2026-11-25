@@ -1,0 +1,5 @@
+fn main() -> Int {
+    let n = 42
+    let text = n.to_string() + true.to_string() + "x".to_string()
+    return text.len()
+}

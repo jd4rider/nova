@@ -787,6 +787,129 @@ else
     no "Unit main binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-tuple.nova" "$tool")
+echo "$out" | grep -q "insertvalue { i64, i64 }" && ok || no "tuple literal construction"
+echo "$out" | grep -q "extractvalue { i64, i64 }" && ok || no "tuple field extraction"
+printf '%s\n' "$out" > "$tmp/tuple.ll"
+if clang_ir "$tmp/tuple.ll" "$tmp/tuple" "$tmp/tuple-clang.log"; then
+    ok
+else
+    no "clang rejects tuple IR"
+    cat "$tmp/tuple-clang.log"
+fi
+if [ -x "$tmp/tuple" ]; then
+    "$tmp/tuple"
+    code=$?
+    [ "$code" -eq 5 ] && ok || no "tuple result (got $code, expected 5)"
+else
+    no "tuple binary missing"
+fi
+
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-logical.nova" "$tool")
+echo "$out" | grep -q "xor i1" && ok || no "logical not lowering"
+printf '%s\n' "$out" > "$tmp/logical.ll"
+if clang_ir "$tmp/logical.ll" "$tmp/logical" "$tmp/logical-clang.log"; then
+    ok
+else
+    no "clang rejects logical IR"
+    cat "$tmp/logical-clang.log"
+fi
+if [ -x "$tmp/logical" ]; then
+    "$tmp/logical"
+    code=$?
+    [ "$code" -eq 3 ] && ok || no "logical result (got $code, expected 3)"
+else
+    no "logical binary missing"
+fi
+
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-extern.nova" "$tool")
+echo "$out" | grep -q "declare void @nova_exit(i64)" && ok || no "extern declaration"
+echo "$out" | grep -q "call void @nova_exit(i64 7)" && ok || no "extern call"
+printf '%s\n' "$out" > "$tmp/extern.ll"
+if clang_ir "$tmp/extern.ll" "$tmp/extern" "$tmp/extern-clang.log"; then
+    ok
+else
+    no "clang rejects extern IR"
+    cat "$tmp/extern-clang.log"
+fi
+if [ -x "$tmp/extern" ]; then
+    "$tmp/extern"
+    code=$?
+    [ "$code" -eq 7 ] && ok || no "extern exit (got $code, expected 7)"
+else
+    no "extern binary missing"
+fi
+
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-to-string.nova" "$tool")
+echo "$out" | grep -q "call %nova.string @nova_i64_to_string" && ok || no "Int to_string call"
+echo "$out" | grep -q "call %nova.string @nova_bool_to_string" && ok || no "Bool to_string call"
+printf '%s\n' "$out" > "$tmp/to-string.ll"
+if clang_ir "$tmp/to-string.ll" "$tmp/to-string" "$tmp/to-string-clang.log"; then
+    ok
+else
+    no "clang rejects to_string IR"
+    cat "$tmp/to-string-clang.log"
+fi
+if [ -x "$tmp/to-string" ]; then
+    "$tmp/to-string"
+    code=$?
+    [ "$code" -eq 7 ] && ok || no "to_string result (got $code, expected 7)"
+else
+    no "to_string binary missing"
+fi
+
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-string-chars.nova" "$tool")
+echo "$out" | grep -q "call void @nova_string_chars" && ok || no "String chars call"
+printf '%s\n' "$out" > "$tmp/string-chars.ll"
+if clang_ir "$tmp/string-chars.ll" "$tmp/string-chars" "$tmp/string-chars-clang.log"; then
+    ok
+else
+    no "clang rejects String chars IR"
+    cat "$tmp/string-chars-clang.log"
+fi
+if [ -x "$tmp/string-chars" ]; then
+    "$tmp/string-chars"
+    code=$?
+    [ "$code" -eq 3 ] && ok || no "String chars result (got $code, expected 3)"
+else
+    no "String chars binary missing"
+fi
+
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-list-string.nova" "$tool")
+echo "$out" | grep -q "call ptr @nova_list_at" && ok || no "List<String> indexing uses nova_list_at"
+printf '%s\n' "$out" > "$tmp/list-string.ll"
+if clang_ir "$tmp/list-string.ll" "$tmp/list-string" "$tmp/list-string-clang.log"; then
+    ok
+else
+    no "clang rejects List<String> IR"
+    cat "$tmp/list-string-clang.log"
+fi
+if [ -x "$tmp/list-string" ]; then
+    "$tmp/list-string"
+    code=$?
+    [ "$code" -eq 3 ] && ok || no "List<String> result (got $code, expected 3)"
+else
+    no "List<String> binary missing"
+fi
+
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-string-split.nova" "$tool")
+echo "$out" | grep -q "call void @nova_string_split" && ok || no "String split call"
+echo "$out" | grep -q "call %nova.string @nova_string_join" && ok || no "String join call"
+printf '%s\n' "$out" > "$tmp/string-split.ll"
+if clang_ir "$tmp/string-split.ll" "$tmp/string-split" "$tmp/string-split-clang.log"; then
+    ok
+else
+    no "clang rejects split/join IR"
+    cat "$tmp/string-split-clang.log"
+fi
+if [ -x "$tmp/string-split" ]; then
+    "$tmp/string-split"
+    code=$?
+    [ "$code" -eq 8 ] && ok || no "split/join result (got $code, expected 8)"
+else
+    no "split/join binary missing"
+fi
+
 printf 'fn main() -> Int {\n    return "x"\n}\n' > "$tmp/bad.nova"
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$tmp/bad.nova" "$tool")
 echo "$out" | grep -q "^error:" && ok || no "unsupported expression is reported"

@@ -17,7 +17,7 @@ Result: PASS.
 sh examples/nova-tool/tests/cli.sh
 ```
 
-Result: PASS — passed 9, failed 0.
+Result: PASS — passed 11, failed 0.
 
 The Nova tool now reads process arguments, accepts `build` with no arguments
 for a project or `build <source> [output]` for one file, prints `built <path>`,
@@ -75,7 +75,7 @@ Result: PASS — passed 4, failed 0.
 sh examples/nova-tool/tests/codegen.sh
 ```
 
-Result: PASS — passed 184, failed 0.
+Result: PASS — passed 209, failed 0.
 
 - Straight-line Int module: no `alloca` for immutable params/`let`.
 - Mutable module compiles and exits 2.
@@ -184,6 +184,20 @@ enum-typed payloads, maps, sets, tuples, arrays and Option/Result remain.
 The Nova tool has a project build command, but `nova build` still uses the
 Rust seed. This is not a compiler-speed measurement.
 
+## Self-build attempt
+
+```sh
+cd examples/nova-tool
+NOVA_TOOL_OUT=/tmp/nova-self NOVA_TOOL_RUNTIME=../../runtime/runtime.c \
+  ./target/nova/nova-tool build
+```
+
+Result: FAIL — `error: in a_stmt: unsupported expression`.
+
+The attempt resolves the project and imports, registers generic lists, tuples,
+externs, logical operators and string methods, then stops in codegen. No
+stage-1/2/3 bootstrap claim is made.
+
 ## Parity audit
 
 `PARITY.md` maps every audited compiler and LSP capability to a stable task ID.
@@ -194,6 +208,7 @@ and cancellation are absent even in Rust.
 
 ## Commit history
 
+- Self-build prerequisites checkpoint — 209/0 codegen, 11/0 CLI.
 - Nova CLI build/run/check checkpoint — 184/0 codegen, 9/0 CLI.
 - Nova CLI project build checkpoint — 184/0 codegen, 7/0 CLI.
 - Nova CLI single-file build checkpoint — 184/0 codegen, 4/0 CLI.

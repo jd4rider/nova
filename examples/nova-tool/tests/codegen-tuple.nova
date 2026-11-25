@@ -1,0 +1,8 @@
+fn pair() -> (Int, Int) {
+    return (2, 3)
+}
+
+fn main() -> Int {
+    let p = pair()
+    return p.0 + p.1
+}

@@ -4,17 +4,17 @@ Updated: 2026-11-24
 Master directive: owner-supplied; parity matrix in `engineering/continuation/`.
 Repository / branch: `nova` / `selfhost/pure-nova`
 HEAD: this checkpoint is committed by the accompanying code/doc commits; prior
-`3d8ea3d`.
+`bbfa381`.
 Working tree: unrelated `editor/` and playground changes remain untouched.
 
 Active milestone: `COMP-01` / `CODEGEN-01` — frontend and LLVM lowering
-Active task: `CODEGEN-01.06` / `CODEGEN-01.08` — enum payloads, slices and
-String operations
-Status: PARTIAL (Int/Bool/String payloads and slices work; nested patterns remain)
+Active task: `CODEGEN-01.10` — self-build prerequisites
+Status: PARTIAL (generic lists, tuples, externs and string methods work; the
+self-build still stops in codegen)
 
 ## Last verified behavior
 
-- `sh examples/nova-tool/tests/codegen.sh` → passed 184, failed 0.
+- `sh examples/nova-tool/tests/codegen.sh` → passed 209, failed 0.
   - `List<Int>` literals allocate with libc `malloc`; empty lists supported.
   - List parameters and returns use by-value `%nova.list`; a literal survives
     return, identity and indexing (native 13).
@@ -70,6 +70,20 @@ Status: PARTIAL (Int/Bool/String payloads and slices work; nested patterns remai
     returns the first index or -1 (native 11). Enum payloads may now be structs;
     recursive slot packing/unpacking handles nested struct fields (native 9).
   - `ptr %arg_env`, `nova_user_<index>` and the `@main` wrapper are emitted.
+  - Generic lists carry element metadata; `List<String>` and `List<Struct>`
+    literals, indexing, assignment, `push`, `for` and `.len()` use the actual
+    element size. Native `List<String>` slice returns 3.
+  - Tuple types lower to LLVM literal structs; tuple returns and `.0`/`.1`
+    extraction work (native 5).
+  - `extern "C"` declarations emit `declare` lines and calls go directly to
+    the host symbol; `nova_exit` exits 7 natively.
+  - `&&`/`||` short-circuit through branch blocks and `!` lowers to `xor i1`;
+    native logical result 3.
+  - `String.chars`, `split`, `List<String>.join` and
+    `Int`/`Bool`/`String.to_string` lower to runtime calls; native results 3,
+    8 and 7.
+  - Self-build reaches codegen and stops at `in a_stmt: unsupported expression`;
+    this is not a bootstrap pass.
 - `sh examples/nova-tool/tests/parser.sh` → passed 50, failed 0.
 - `sh examples/nova-tool/tests/sema-ast.sh` → passed 28, failed 0.
   - Duplicate struct fields/initializers and duplicate enum variants report
@@ -145,9 +159,10 @@ Status: PARTIAL (Int/Bool/String payloads and slices work; nested patterns remai
 
 ## Resume here
 
-1. Add Box dependency and std-module resolution to the Nova CLI, then a
+1. Fix the self-build's `a_stmt: unsupported expression` blocker.
+2. Add Box dependency and std-module resolution to the Nova CLI, then a
    seed-free bootstrap path.
-2. Add nested enum patterns and enum-typed payloads.
+3. Add nested enum patterns and enum-typed payloads.
 3. Run codegen/parser/sema suites; update `STATE.md`, `EVIDENCE.md`,
    `TASKS.md` and `PARITY.md`; commit.
 
@@ -156,7 +171,7 @@ Status: PARTIAL (Int/Bool/String payloads and slices work; nested patterns remai
 - Command: `(cd examples/nova-tool && ../../target/debug/nova build)`
 - Result: PASS
 - Command: `sh examples/nova-tool/tests/cli.sh`
-- Result: PASS (9/0)
+- Result: PASS (11/0)
 - Command: `sh examples/nova-tool/tests/codegen.sh`
 - Result: PASS (184/0)
 - Command: `sh examples/nova-tool/tests/sema-ast.sh`

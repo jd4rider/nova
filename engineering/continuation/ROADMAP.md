@@ -21,11 +21,15 @@ The detailed matrix is `PARITY.md`.
 - AST parser 29/29 corpus files.
 - Body sema 28/0, including duplicate struct/enum checks, enum payload
 bindings, String literal patterns and Int/Bool/String/enum exhaustiveness.
-- Codegen 184/0 across Int/control flow, runtime-linked lists, String
-operations/match, print/println, assert, value structs and enums; native binaries exit
-9, 2, 5, 7, 10, 11, 12, 13, 14, 17 and 36, String-method 5, Bool-enum 7, String-enum 10, list-slice 10, String-transform 16, String-bytes 95, String-upper 72, list-ends 49, list-contains 16, list-reverse 31, list-sort 13, list-sum 10, list-min/max 29, list-index_of 11 and struct-enum 9, and an unmatched match panics with exit 1.
+- Codegen 209/0 across Int/control flow, runtime-linked lists, String
+operations/match, print/println, assert, value structs and enums, generic
+lists, tuples, externs and logical operators; native binaries exit
+9, 2, 5, 7, 10, 11, 12, 13, 14, 17, 36, and the focused method/list/tuple
+fixtures listed in `EVIDENCE.md`.
 - Nova CLI project build/run/check: `nova.toml`, `[bin] path`, relative
-  imports, `target/nova/<name>` and native status propagation (9/0).
+  imports, `target/nova/<name>` and native status propagation (11/0).
+- Self-build reaches codegen but fails at `a_stmt: unsupported expression`; this
+  is not a bootstrap pass.
 - No claim of compiler/LSP parity or speed.
 
 ## Critical path

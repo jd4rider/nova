@@ -1,0 +1,13 @@
+fn slice(chars: List<String>, start: Int, stop: Int) -> String {
+    var out = ""
+    var i = start
+    while i < stop && i < chars.len() {
+        out = out + chars[i]
+        i = i + 1
+    }
+    return out
+}
+
+fn main() -> Int {
+    return slice(["a", "bc", "d"], 0, 2).len()
+}

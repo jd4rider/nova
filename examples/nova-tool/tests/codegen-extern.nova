@@ -1,0 +1,6 @@
+extern "C" fn nova_exit(code: Int)
+
+fn main() -> Int {
+    nova_exit(7)
+    return 0
+}
