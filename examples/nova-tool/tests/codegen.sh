@@ -391,6 +391,24 @@ else
     no "enum binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-list-sort.nova" "$tool")
+echo "$out" | grep -q "call void @nova_list_sort" && ok || no "list sort call"
+echo "$out" | grep -q "call ptr @nova_list_at" && ok || no "list sort result access"
+printf '%s\n' "$out" > "$tmp/list-sort.ll"
+if clang_ir "$tmp/list-sort.ll" "$tmp/list-sort" "$tmp/list-sort-clang.log"; then
+    ok
+else
+    no "clang rejects list sort IR"
+    cat "$tmp/list-sort-clang.log"
+fi
+if [ -x "$tmp/list-sort" ]; then
+    "$tmp/list-sort"
+    code=$?
+    [ "$code" -eq 13 ] && ok || no "list sort result (got $code, expected 13)"
+else
+    no "list sort binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-list-reverse.nova" "$tool")
 echo "$out" | grep -q "call ptr @nova_list_at" && ok || no "list reverse uses nova_list_at"
 echo "$out" | grep -q "call void @nova_list_push" && ok || no "list reverse uses nova_list_push"

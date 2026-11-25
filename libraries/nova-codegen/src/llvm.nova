@@ -1177,6 +1177,7 @@ fn cg_compile(source: String) -> CgResult {
     out = out + "declare %nova.string @nova_string_lower(%nova.string)\n"
     out = out + "declare %nova.string @nova_string_upper(%nova.string)\n"
     out = out + "declare void @nova_string_bytes(%nova.string, ptr)\n"
+    out = out + "declare void @nova_list_sort(ptr, ptr)\n"
     out = out + "declare void @nova_print_str(%nova.string, i32, i32)\n"
     out = out + "declare void @nova_print_i64(i64, i32, i32)\n"
     out = out + "declare void @nova_print_bool(i32, i32, i32)\n"
@@ -2597,6 +2598,29 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
                 let cond = cond_result.1
                 work = cg_line(work, "  " + cond + " = icmp ne i32 " + result + ", 0")
                 return cg_val_typed(work, cond, "i1")
+            }
+            if ast.nodes[callee].text == "sort" {
+                if ast.nodes[node].count - 1 != 0 {
+                    return cg_val(cg_error(state, "sort takes no arguments"), "0")
+                }
+                let recv = cg_expr2(ast, state, a_child(ast, callee, 0))
+                if recv.ty != "%nova.list" {
+                    return cg_val(cg_error(recv.state, "sort requires a List<Int>"), "0")
+                }
+                let source_slot_result = cg_entry_slot(recv.state, "%nova.list")
+                var work = source_slot_result.0
+                let source_slot = source_slot_result.1
+                work = cg_line(work, "  store %nova.list " + recv.value + ", ptr " + source_slot)
+                let result_slot_result = cg_entry_slot(work, "%nova.list")
+                work = result_slot_result.0
+                let result_slot = result_slot_result.1
+                work = cg_line(work, "  store %nova.list zeroinitializer, ptr " + result_slot)
+                work = cg_line(work, "  call void @nova_list_sort(ptr " + source_slot + ", ptr " + result_slot + ")")
+                let result_result = cg_temp(work)
+                work = result_result.0
+                let result = result_result.1
+                work = cg_line(work, "  " + result + " = load %nova.list, ptr " + result_slot)
+                return cg_val_typed(work, result, "%nova.list")
             }
             if ast.nodes[callee].text == "reverse" {
                 if ast.nodes[node].count - 1 != 0 {

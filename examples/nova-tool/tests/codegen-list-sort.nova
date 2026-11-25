@@ -1,0 +1,5 @@
+fn main() -> Int {
+    let values = [3, 1, 2]
+    let sorted = values.sort()
+    return sorted.first() * 10 + sorted.last()
+}

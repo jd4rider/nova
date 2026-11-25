@@ -1690,6 +1690,25 @@ void nova_list_push(nova_list *list, void *elem, int64_t elem_size) {
     list->len += 1;
 }
 
+static int nova_i64_compare(const void *left, const void *right) {
+    int64_t a = *(const int64_t *)left;
+    int64_t b = *(const int64_t *)right;
+    return (a > b) - (a < b);
+}
+
+void nova_list_sort(nova_list *source, nova_list *result) {
+    if (!result) return;
+    result->len = 0;
+    if (!source) return;
+    for (int64_t i = 0; i < source->len; i++) {
+        int64_t value = ((int64_t *)source->data)[i];
+        nova_list_push(result, &value, (int64_t)sizeof(value));
+    }
+    if (result->len > 1) {
+        qsort(result->data, (size_t)result->len, sizeof(int64_t), nova_i64_compare);
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* Hashed maps and sets                                                */
 /* ------------------------------------------------------------------ */
