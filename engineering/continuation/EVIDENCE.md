@@ -27,15 +27,16 @@ Commits: `93d61dc`, `983fd6a`.
 sh examples/nova-tool/tests/sema-ast.sh
 ```
 
-Result: PASS — passed 24, failed 0.
+Result: PASS — passed 28, failed 0.
 
 - Duplicate struct fields/initializers and duplicate enum variants report
   `E0307`.
 - Enum constructor and match payload arity report `E0303`; unknown variants
   report `E0305`; duplicate enum arms report `E0312`; incomplete enum matches
   report `E0313`.
-- Exhaustive Int, Bool and enum matches are accepted; payload bindings carry
-  their declared types into the arm body.
+- Exhaustive Int, Bool, String and enum matches are accepted; payload bindings
+  carry their declared types into the arm body. String matches reject
+  non-literal patterns, duplicate arms and missing `_`.
 - Duplicate arms report `E0312`; unsupported binding patterns report `E0311`;
   an incomplete Bool match reports `E0313`.
 - Mixed arm types report `E0301`, and a Unit block-arm body is checked rather
@@ -55,7 +56,7 @@ Result: PASS — passed 4, failed 0.
 sh examples/nova-tool/tests/codegen.sh
 ```
 
-Result: PASS — passed 101, failed 0.
+Result: PASS — passed 107, failed 0.
 
 - Straight-line Int module: no `alloca` for immutable params/`let`.
 - Mutable module compiles and exits 2.
@@ -93,6 +94,8 @@ element slot; the runtime grows with `realloc`, copies the element and updates
   native 9.
 - Unmatched-match fixture emits `call void @nova_panic_str` with the message
   `non-exhaustive match`; the binary exits 1 and prints the panic.
+- String fixture emits `nova_string_concat`/`nova_string_eq`, matches a
+  concatenated String against literal patterns and returns 13.
 - Struct fixture emits `%nova.struct.Point` and `%nova.struct.Pair` aggregate
   declarations, `insertvalue` construction, `extractvalue` field reads, a
   rebuilt-and-stored aggregate for field assignment, and by-value struct
@@ -110,8 +113,8 @@ Limit: ABI parity covers Int, Unit, the string-literal/len subset and the
 `List<Int>` literal/parameter/return/push/assignment subset. `for` supports
 exclusive integer ranges and `List<Int>` only; range values outside `for`
 remain. `match` supports Int/Bool/enum scrutinees, integer/Bool literals,
-`Variant`, `Variant(_)` and `Variant(binding)` patterns, `_`, expression arms
-and Unit block arms; sema rejects string/nested patterns and duplicate or
+`Variant`, `Variant(_)` and `Variant(binding)` patterns, String literal patterns,
+`_`, expression arms and Unit block arms; sema rejects nested patterns and duplicate or
 unreachable arms, checks arm/binding types and enforces Int/Bool/enum
 exhaustiveness. Short-circuit booleans remain. An unmatched or empty match calls
 `nova_panic_str` and exits 1 instead of reaching `unreachable`. Assignment only
@@ -135,6 +138,7 @@ and cancellation are absent even in Rust.
 
 ## Commit history
 
+- String operations/pattern checkpoint — 107/0 codegen, 28/0 sema.
 - Match failure panic checkpoint — 101/0 codegen, 24/0 sema.
 - List runtime checkpoint — 97/0 codegen, 24/0 sema.
 - Enum checkpoint — 91/0 codegen, 24/0 sema.

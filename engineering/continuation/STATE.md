@@ -4,16 +4,16 @@ Updated: 2026-11-24
 Master directive: owner-supplied; parity matrix in `engineering/continuation/`.
 Repository / branch: `nova` / `selfhost/pure-nova`
 HEAD: this checkpoint is committed by the accompanying code/doc commits; prior
-`4476a35`.
+`3f445c3`.
 Working tree: unrelated `editor/` and playground changes remain untouched.
 
 Active milestone: `COMP-01` / `CODEGEN-01` — frontend and LLVM lowering
-Active task: `CODEGEN-01.08` — explicit unmatched-match panic
-Status: PARTIAL (failure path panics; string/nested patterns and guards remain)
+Active task: `CODEGEN-01.06` / `CODEGEN-01.08` — String operations and patterns
+Status: PARTIAL (concat/equality/literal match work; nested patterns remain)
 
 ## Last verified behavior
 
-- `sh examples/nova-tool/tests/codegen.sh` → passed 101, failed 0.
+- `sh examples/nova-tool/tests/codegen.sh` → passed 107, failed 0.
   - `List<Int>` literals allocate with libc `malloc`; empty lists supported.
   - List parameters and returns use by-value `%nova.list`; a literal survives
     return, identity and indexing (native 13).
@@ -32,7 +32,8 @@ Status: PARTIAL (failure path panics; string/nested patterns and guards remain)
     literal patterns, `Variant`, `Variant(_)` and `Variant(binding)` patterns,
     `_`, expression arms and Unit block arms. Expression arms merge through a
     `phi`; an unmatched or empty match calls `nova_panic_str` and exits 1.
-    Native results: Int match 60, Bool/Unit match 9, enum 36, panic exit 1.
+    Native results: Int match 60, Bool/Unit match 9, enum 36, String match 13,
+    panic exit 1.
   - User structs are emitted as `%nova.struct.<Name>` aggregates with nested
     value fields. Literals use `insertvalue`, field reads use `extractvalue`,
     mutable local field assignment rebuilds and stores the aggregate, and
@@ -45,14 +46,15 @@ Status: PARTIAL (failure path panics; string/nested patterns and guards remain)
     23; list ABI 13; Int 9/2/17; Unit caller 4; Unit `main` 0; string 5.
   - `ptr %arg_env`, `nova_user_<index>` and the `@main` wrapper are emitted.
 - `sh examples/nova-tool/tests/parser.sh` → passed 50, failed 0.
-- `sh examples/nova-tool/tests/sema-ast.sh` → passed 24, failed 0.
+- `sh examples/nova-tool/tests/sema-ast.sh` → passed 28, failed 0.
   - Duplicate struct fields/initializers and duplicate enum variants report
     `E0307`.
   - Enum constructor arity and match payload arity report `E0303`; unknown
     variants report `E0305`; duplicate enum arms report `E0312`; missing
     variants report `E0313`.
-  - Int/Bool/enum patterns are validated against the scrutinee, and payload
-    bindings carry their declared types into the arm body.
+  - Int/Bool/String/enum patterns are validated against the scrutinee, and
+    payload bindings carry their declared types into the arm body. String
+    matches require literal patterns and `_` for exhaustiveness.
   - Unsupported and empty patterns report `E0311`; duplicate or unreachable arms
     report `E0312`; empty/non-exhaustive matches report `E0313`.
   - Int matches require `_`; Bool matches require both literals or `_`.
@@ -81,6 +83,9 @@ Status: PARTIAL (failure path panics; string/nested patterns and guards remain)
   not grow the stack per iteration.
 - Unmatched and empty matches call `nova_panic_str("non-exhaustive match")`
   instead of emitting LLVM `unreachable`.
+- String concat, equality and literal match patterns use
+  `nova_string_concat`/`nova_string_eq`; duplicate and non-exhaustive String
+  matches are diagnosed.
 - Focused native and diagnostic fixtures.
 
 ## Incomplete work / known failures
@@ -101,7 +106,7 @@ Status: PARTIAL (failure path panics; string/nested patterns and guards remain)
 - Enum payloads are `Int`-only in codegen; String/struct payloads and payloads
   nested in other value types are rejected with an error.
 - Maps and sets remain.
-- Strings lack concat, equality, interpolation and runtime calls.
+- Strings lack interpolation, ordering, and the wider method/runtime surface.
 - Overflow checks and the full runtime ABI remain.
 - `nova build` still uses the Rust seed; the Nova tool is not yet the CLI.
 - Sema lacks modules, generics, traits, methods and full diagnostics.
@@ -109,7 +114,7 @@ Status: PARTIAL (failure path panics; string/nested patterns and guards remain)
 
 ## Resume here
 
-1. Add string and nested enum patterns.
+1. Add nested enum patterns and match guards.
 2. Broaden enum payloads beyond Int and add list concat/equality through the
    runtime.
 3. Run codegen/parser/sema suites; update `STATE.md`, `EVIDENCE.md`,
@@ -120,9 +125,9 @@ Status: PARTIAL (failure path panics; string/nested patterns and guards remain)
 - Command: `(cd examples/nova-tool && ../../target/debug/nova build)`
 - Result: PASS
 - Command: `sh examples/nova-tool/tests/codegen.sh`
-- Result: PASS (101/0)
+- Result: PASS (107/0)
 - Command: `sh examples/nova-tool/tests/sema-ast.sh`
-- Result: PASS (24/0)
+- Result: PASS (28/0)
 
 ## Blockers and approvals
 

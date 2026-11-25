@@ -1,0 +1,17 @@
+fn classify(text: String) -> Int {
+    return match text {
+        "zero" => 3
+        "other" => 4
+        _ => 9
+    }
+}
+
+fn main() -> Int {
+    let text = "ze" + "ro"
+    if text == "zero" {
+        if text != "other" {
+            return 10 + classify(text)
+        }
+    }
+    return 0
+}

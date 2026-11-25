@@ -152,5 +152,33 @@ printf 'enum Color {\n    Red\n    Green(Int)\n}\n\nfn main() {\n    let c = Gre
 out=$(NOVA_TOOL=sema-ast NOVA_TOOL_PATH="$tmp/enum-duplicate-arm.nova" "$tool")
 echo "$out" | grep -q "E0312" && ok || no "duplicate enum arm"
 
+cat > "$tmp/string-match-ok.nova" <<'NOVA'
+fn classify(text: String) -> Int {
+    return match text {
+        "zero" => 0
+        "one" => 1
+        _ => 2
+    }
+}
+
+fn main() {
+    let n = classify("zero")
+}
+NOVA
+out=$(NOVA_TOOL=sema-ast NOVA_TOOL_PATH="$tmp/string-match-ok.nova" "$tool")
+echo "$out" | grep -q "^OK " && ok || no "string match"
+
+printf 'fn classify(text: String) -> Int {\n    return match text {\n        "zero" => 0\n    }\n}\n' > "$tmp/string-match-exhaustive.nova"
+out=$(NOVA_TOOL=sema-ast NOVA_TOOL_PATH="$tmp/string-match-exhaustive.nova" "$tool")
+echo "$out" | grep -q "E0313" && ok || no "non-exhaustive String match"
+
+printf 'fn classify(text: String) -> Int {\n    return match text {\n        "zero" => 0\n        "zero" => 1\n        _ => 2\n    }\n}\n' > "$tmp/string-match-dup.nova"
+out=$(NOVA_TOOL=sema-ast NOVA_TOOL_PATH="$tmp/string-match-dup.nova" "$tool")
+echo "$out" | grep -q "E0312" && ok || no "duplicate String match arm"
+
+printf 'fn classify(text: String) -> Int {\n    return match text {\n        zero => 0\n        _ => 1\n    }\n}\n' > "$tmp/string-match-bad.nova"
+out=$(NOVA_TOOL=sema-ast NOVA_TOOL_PATH="$tmp/string-match-bad.nova" "$tool")
+echo "$out" | grep -q "E0311" && ok || no "non-literal String pattern"
+
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]

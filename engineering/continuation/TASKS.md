@@ -6,7 +6,7 @@ and integration gate pass. The full matrix is `PARITY.md`.
 ## COMP-01 — Nova compiler frontend
 
 - COMP-01.01 — AST parser corpus: **VERIFIED**. 50/0, 29-file corpus.
-- COMP-01.02 — Body semantic slice: **PARTIAL**. 24/0; declarations, scopes,
+- COMP-01.02 — Body semantic slice: **PARTIAL**. 28/0; declarations, scopes,
   expression/return types, calls, fields (including duplicate declarations and
   initializers), enums (duplicate/unknown variants and payload arity),
   control-flow conditions, match pattern validation, payload bindings,
@@ -35,7 +35,7 @@ and integration gate pass. The full matrix is `PARITY.md`.
   signatures and calls use `ptr %arg_env`, `nova_user_<index>`, `void` returns,
   `%nova.string` and `%nova.list` by value, and the `@main` wrapper; list
   `nova_list_at`/`nova_list_push` calls and the linked C runtime are verified.
-  Evidence: 101/0.
+  Evidence: 107/0.
 - CODEGEN-01.06 — Strings, lists, maps, sets, structs, enums, tuples, arrays,
   Option/Result: **PARTIAL**. String literals, parameters/returns and `.len()`  are verified; `List<Int>` literals (including empty), `.len()`, by-value
   parameters/returns and runtime-linked indexing/assignment/push are verified.
@@ -47,7 +47,8 @@ and integration gate pass. The full matrix is `PARITY.md`.
   arms, exhaustive matching and by-value parameters/returns. Lists index, assign
   and push through `nova_list_at`/`nova_list_push`; literals use malloc-backed
   storage. Concat/equality, slices, maps, sets, non-Int enum payloads, tuples,
-  arrays and Option/Result remain.
+  arrays and Option/Result remain. String concatenation, equality and literal
+  match patterns are verified through the runtime.
 - CODEGEN-01.07 — Overflow, division-by-zero, bounds and alignment checks:
   **PARTIAL**. List indexing/assignment bounds checks route through
   `nova_list_at`/`nova_panic_bounds`; overflow, division-by-zero and alignment
@@ -57,12 +58,13 @@ and integration gate pass. The full matrix is `PARITY.md`.
   expressions, enum variants with Int payload bindings, and Unit block arms are
   verified natively. Sema rejects string/nested patterns and duplicate or
   unreachable arms, checks arm/binding types and enforces Int/Bool/enum
-  exhaustiveness. An unmatched or empty match calls `nova_panic_str`; only
-  short-circuit boolean evaluation and string/nested patterns remain.
+  exhaustiveness. An unmatched or empty match calls `nova_panic_str`; String
+  match uses literal patterns. Only short-circuit boolean evaluation and nested
+  patterns remain.
 - CODEGEN-01.09 — Clang invocation and linking from the Nova tool: **VERIFIED**.
   `build-ir` writes IR, invokes clang with quoted paths, checks exit status and
   produces a native binary and compiles/links `runtime/runtime.c` for list
-  runtime calls. Evidence: `tests/codegen.sh` → 101/0.
+  runtime calls. Evidence: `tests/codegen.sh` → 107/0.
 - CODEGEN-01.10 — Optimization pipeline parity: **TODO**.
 
 ## CLI-01 — Self-hosted driver

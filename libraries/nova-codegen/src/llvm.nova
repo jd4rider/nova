@@ -1,8 +1,9 @@
 // Nova LLVM IR lowering.
 //
 // Scope: Int, Bool, Unit and String functions; let/var; integer, string, list,
-// struct and enum literals; String.len/List.len; runtime-linked list indexing,
-// index assignment and push; struct field reads and assignment; arithmetic;
+// struct and enum literals; String.len/concat/equality and String match;
+// runtime-linked list indexing, index assignment and push; struct field reads
+// and assignment; arithmetic;
 // if/else/while/for with break/continue; direct calls; Int/Bool/enum match;
 // seed-shaped ABI (`ptr %arg_env`, `nova_user_N`, `%nova.string`,
 // `%nova.list`, `%nova.struct.*`, `%nova.enum.*`). Maps and the full runtime
@@ -1024,6 +1025,8 @@ fn cg_compile(source: String) -> CgResult {
     out = out + "declare ptr @nova_list_at(ptr, i64, i64, i64)\n"
     out = out + "declare void @nova_list_push(ptr, ptr, i64)\n"
     out = out + "declare void @nova_panic_str(%nova.string, i64)\n"
+    out = out + "declare %nova.string @nova_string_concat(%nova.string, %nova.string)\n"
+    out = out + "declare i32 @nova_string_eq(%nova.string, %nova.string)\n"
     var emitted = 0
     while emitted < fns.len() {
         let sig = fns[emitted]
@@ -1494,8 +1497,8 @@ fn cg_match(ast: Ast, state: CgState, node: Int) -> CgVal {
         return cg_val(work, "0")
     }
     let enum_index = cg_enum_by_llvm(work.enums, scrut.ty)
-    if scrut.ty != "i64" && scrut.ty != "i1" && enum_index < 0 {
-        return cg_val(cg_error(work, "match supports Int, Bool or enum scrutinees"), "0")
+    if scrut.ty != "i64" && scrut.ty != "i1" && scrut.ty != "%nova.string" && enum_index < 0 {
+        return cg_val(cg_error(work, "match supports Int, Bool, String or enum scrutinees"), "0")
     }
     let slot_result = cg_slot(work)
     work = slot_result.0
@@ -1586,6 +1589,25 @@ fn cg_match(ast: Ast, state: CgState, node: Int) -> CgVal {
             work = cg_line(work, "  " + condition + " = icmp eq i32 " + tag + ", " + variant.to_string())
             work = cg_line(work, "  br i1 " + condition + ", label %" + body + ", label %" + next)
             bindings = args
+        } else if scrut.ty == "%nova.string" {
+            if pattern.len() < 2 || !pattern.starts_with("\"") || !pattern.ends_with("\"") {
+                return cg_val(cg_error(work, "String patterns must be string literals"), "0")
+            }
+            let literal = cg_string_lit(work, pattern)
+            work = literal.state
+            let value_result = cg_temp(work)
+            work = value_result.0
+            let value = value_result.1
+            work = cg_line(work, "  " + value + " = load %nova.string, ptr " + slot)
+            let equal_result = cg_temp(work)
+            work = equal_result.0
+            let equal = equal_result.1
+            work = cg_line(work, "  " + equal + " = call i32 @nova_string_eq(%nova.string " + value + ", %nova.string " + literal.value + ")")
+            let condition_result = cg_temp(work)
+            work = condition_result.0
+            let condition = condition_result.1
+            work = cg_line(work, "  " + condition + " = icmp ne i32 " + equal + ", 0")
+            work = cg_line(work, "  br i1 " + condition + ", label %" + body + ", label %" + next)
         } else if pattern == "true" || pattern == "false" {
             if scrut.ty != "i1" {
                 return cg_val(cg_error(work, "Bool pattern requires a Bool scrutinee"), "0")
@@ -1935,8 +1957,23 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
         if op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=" {
             let left = cg_expr2(ast, state, a_child(ast, node, 0))
             let right = cg_expr2(ast, left.state, a_child(ast, node, 1))
+            if left.ty == "%nova.string" && right.ty == "%nova.string" {
+                if op != "==" && op != "!=" {
+                    return cg_val(cg_error(right.state, "String supports == and != only"), "0")
+                }
+                let equal_result = cg_temp(right.state)
+                var work = equal_result.0
+                let equal = equal_result.1
+                work = cg_line(work, "  " + equal + " = call i32 @nova_string_eq(%nova.string " + left.value + ", %nova.string " + right.value + ")")
+                let temp_result = cg_temp(work)
+                work = temp_result.0
+                let temp = temp_result.1
+                let pred = if op == "==" { "ne" } else { "eq" }
+                work = cg_line(work, "  " + temp + " = icmp " + pred + " i32 " + equal + ", 0")
+                return cg_val_typed(work, temp, "i1")
+            }
             if left.ty != "i64" || right.ty != "i64" {
-                return cg_val(cg_error(right.state, "comparison operands must be Int"), "0")
+                return cg_val(cg_error(right.state, "comparison operands must be Int or String"), "0")
             }
             var pred = "eq"
             if op == "!=" {
@@ -1958,6 +1995,13 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
         }
         let left = cg_expr2(ast, state, a_child(ast, node, 0))
         let right = cg_expr2(ast, left.state, a_child(ast, node, 1))
+        if op == "+" && left.ty == "%nova.string" && right.ty == "%nova.string" {
+            let temp_result = cg_temp(right.state)
+            var work = temp_result.0
+            let temp = temp_result.1
+            work = cg_line(work, "  " + temp + " = call %nova.string @nova_string_concat(%nova.string " + left.value + ", %nova.string " + right.value + ")")
+            return cg_val_typed(work, temp, "%nova.string")
+        }
         var opcode = ""
         if op == "+" {
             opcode = "add"

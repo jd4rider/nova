@@ -391,6 +391,26 @@ else
     no "enum binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-string-match.nova" "$tool")
+echo "$out" | grep -q "call %nova.string @nova_string_concat" && ok || no "string concatenation call"
+echo "$out" | grep -q "call i32 @nova_string_eq" && ok || no "string equality call"
+echo "$out" | grep -q "icmp ne i32" && ok || no "string equality comparison"
+echo "$out" | grep -q "define i64 @nova_user_0(ptr %arg_env, %nova.string %p0)" && ok || no "String match parameter signature"
+printf '%s\n' "$out" > "$tmp/string-match.ll"
+if clang_ir "$tmp/string-match.ll" "$tmp/string-match" "$tmp/string-match-clang.log"; then
+    ok
+else
+    no "clang rejects String match IR"
+    cat "$tmp/string-match-clang.log"
+fi
+if [ -x "$tmp/string-match" ]; then
+    "$tmp/string-match"
+    code=$?
+    [ "$code" -eq 13 ] && ok || no "String match result (got $code, expected 13)"
+else
+    no "String match binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-unit-main.nova" "$tool")
 echo "$out" | grep -q "define void @nova_user_0(ptr %arg_env)" && ok || no "Unit main signature"
 echo "$out" | grep -q "call void @nova_user_0(ptr null)" && ok || no "Unit main call"
