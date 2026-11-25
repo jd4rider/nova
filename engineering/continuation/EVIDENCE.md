@@ -17,17 +17,18 @@ Result: PASS.
 sh examples/nova-tool/tests/cli.sh
 ```
 
-Result: PASS — passed 7, failed 0.
+Result: PASS — passed 9, failed 0.
 
 The Nova tool now reads process arguments, accepts `build` with no arguments
 for a project or `build <source> [output]` for one file, prints `built <path>`,
 and returns the native exit status. The single-file fixture exits 7 and the
 two-file project imports `math.nova`, builds `target/nova/cli-project`, and
-exits 10; the harness observes both. Project discovery reads `nova.toml` or
+exits 10; `run` rebuilds and propagates that 10, while `check` succeeds over
+the flattened project. Project discovery reads `nova.toml` or
 `Box.toml`, `[package] name`, and `[bin] path`, and recursively inlines
 relative `.nova` imports. Argument access is implemented for Apple hosts
 (`_NSGetArgc`/`_NSGetArgv`); other hosts return no arguments. Box dependencies,
-standard-library module semantics, `run`, and Rust-seed fallback remain.
+standard-library module semantics and Rust-seed fallback remain.
 
 ## Parser
 
@@ -193,6 +194,7 @@ and cancellation are absent even in Rust.
 
 ## Commit history
 
+- Nova CLI build/run/check checkpoint — 184/0 codegen, 9/0 CLI.
 - Nova CLI project build checkpoint — 184/0 codegen, 7/0 CLI.
 - Nova CLI single-file build checkpoint — 184/0 codegen, 4/0 CLI.
 - Struct enum payloads checkpoint — 184/0 codegen, 28/0 sema.

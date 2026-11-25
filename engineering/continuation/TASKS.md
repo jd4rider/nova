@@ -75,8 +75,10 @@ and integration gate pass. The full matrix is `PARITY.md`.
   project or `build <source> [output]` for one file. It discovers
   `nova.toml`/`Box.toml`, reads `[bin] path`, recursively inlines relative
   `.nova` imports, builds to `target/nova/<name>`, and returns the native
-  status. Box dependencies, standard-library module semantics, `run`, and seed
-  fallback remain. Evidence: `tests/cli.sh` → 7/0.
+  status. `run` executes the built binary and propagates its exit status;
+  `check` runs body sema over the flattened project. Box dependencies,
+  standard-library module semantics, and seed fallback remain. Evidence:
+  `tests/cli.sh` → 9/0.
 
 ## LSP-01 — Nova language server
 

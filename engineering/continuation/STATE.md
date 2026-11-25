@@ -137,8 +137,9 @@ Status: PARTIAL (Int/Bool/String payloads and slices work; nested patterns remai
 - Overflow checks and the full runtime ABI remain.
 - `nova build` still uses the Rust seed. The Nova tool now discovers
   `nova.toml`/`Box.toml`, reads `[bin] path`, inlines relative `.nova` imports,
-  and builds to `target/nova/<name>`; Box dependencies, std module semantics,
-  `run` and seed fallback remain.
+  and builds to `target/nova/<name>`; `run` executes the built binary and
+  propagates its status, and `check` runs body sema. Box dependencies,
+  std-module semantics and seed fallback remain.
 - Sema lacks modules, generics, traits, methods and full diagnostics.
 - No Nova LSP or differential Rust/Nova harness.
 
@@ -155,7 +156,7 @@ Status: PARTIAL (Int/Bool/String payloads and slices work; nested patterns remai
 - Command: `(cd examples/nova-tool && ../../target/debug/nova build)`
 - Result: PASS
 - Command: `sh examples/nova-tool/tests/cli.sh`
-- Result: PASS (7/0)
+- Result: PASS (9/0)
 - Command: `sh examples/nova-tool/tests/codegen.sh`
 - Result: PASS (184/0)
 - Command: `sh examples/nova-tool/tests/sema-ast.sh`

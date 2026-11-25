@@ -102,6 +102,7 @@ extern "C" fn nova_fs_cwd() -> String
 extern "C" fn nova_env(name: String) -> String
 extern "C" fn nova_args_count() -> Int
 extern "C" fn nova_args_get(index: Int) -> String
+extern "C" fn nova_exit(code: Int)
 extern "C" fn nova_sound_tone(frequency: Int, milliseconds: Int, volume: Int) -> Int
 extern "C" fn nova_process_run(command: String, cwd: String) -> String
 extern "C" fn nova_process_status() -> Int
@@ -656,6 +657,10 @@ fn args_count() -> Int {
 
 fn arg(index: Int) -> String {
     return nova_args_get(index)
+}
+
+fn exit(code: Int) {
+    nova_exit(code)
 }
 
 // Plays a synthesized tone: frequency in Hz, length in ms, volume 0..100.

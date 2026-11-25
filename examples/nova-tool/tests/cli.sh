@@ -55,5 +55,19 @@ else
     no "project build produced no executable"
 fi
 
+if (cd "$tmp/project" && NOVA_TOOL_RUNTIME="$root/runtime/runtime.c" "$tool" check >"$tmp/check.out" 2>"$tmp/check.err"); then
+    ok
+else
+    no "project check failed"
+    cat "$tmp/check.out" "$tmp/check.err"
+fi
+
+if (cd "$tmp/project" && NOVA_TOOL_RUNTIME="$root/runtime/runtime.c" "$tool" run >"$tmp/run.out" 2>"$tmp/run.err"); then
+    code=0
+else
+    code=$?
+fi
+[ "$code" -eq 10 ] && ok || no "project run exit (got $code, expected 10)"
+
 echo "passed $passed, failed $failed"
 [ "$failed" -eq 0 ]

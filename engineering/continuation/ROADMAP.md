@@ -24,8 +24,8 @@ bindings, String literal patterns and Int/Bool/String/enum exhaustiveness.
 - Codegen 184/0 across Int/control flow, runtime-linked lists, String
 operations/match, print/println, assert, value structs and enums; native binaries exit
 9, 2, 5, 7, 10, 11, 12, 13, 14, 17 and 36, String-method 5, Bool-enum 7, String-enum 10, list-slice 10, String-transform 16, String-bytes 95, String-upper 72, list-ends 49, list-contains 16, list-reverse 31, list-sort 13, list-sum 10, list-min/max 29, list-index_of 11 and struct-enum 9, and an unmatched match panics with exit 1.
-- Nova CLI project build: `nova.toml`, `[bin] path`, relative imports and
-  `target/nova/<name>` (7/0).
+- Nova CLI project build/run/check: `nova.toml`, `[bin] path`, relative
+  imports, `target/nova/<name>` and native status propagation (9/0).
 - No claim of compiler/LSP parity or speed.
 
 ## Critical path

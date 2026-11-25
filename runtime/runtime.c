@@ -91,6 +91,12 @@ int64_t nova_args_count(void) {
 #endif
 }
 
+void nova_exit(int64_t code) {
+    fflush(stdout);
+    fflush(stderr);
+    exit((int)code);
+}
+
 nova_str nova_args_get(int64_t index) {
 #if defined(__APPLE__)
     int argc = *_NSGetArgc();

@@ -184,7 +184,79 @@ fn nt_build_project() -> Int {
         }
         gui.mkdir(target_dir)
     }
-    return nt_build_source(entry, expanded.text, target_dir + "/" + name)
+    let target = nt_project_target()
+    return nt_build_source(entry, expanded.text, target)
+}
+
+fn nt_project_target() -> String {
+    let root = nt_find_root()
+    if root.len() == 0 {
+        return ""
+    }
+    var manifest_path = root + "/Box.toml"
+    if !gui.exists(manifest_path) {
+        manifest_path = root + "/nova.toml"
+    }
+    let manifest = gui.read(manifest_path)
+    var name = nt_manifest_value(manifest, "[package]", "name")
+    if name.len() == 0 {
+        name = "app"
+    }
+    return root + "/target/nova/" + name
+}
+
+fn nt_run_project() -> Int {
+    let status = nt_build_project()
+    if status != 0 {
+        return status
+    }
+    let target = nt_project_target()
+    let root = nt_find_root()
+    if target.len() == 0 || !gui.exists(target) {
+        println("error: built executable not found")
+        return 1
+    }
+    let output = gui.run(nt_shell_quote(target), root)
+    if output.len() > 0 {
+        println(output)
+    }
+    return gui.exit_status()
+}
+
+fn nt_check_project() -> Int {
+    let root = nt_find_root()
+    if root.len() == 0 {
+        println("error: no nova.toml or Box.toml found in this directory or its parents")
+        return 1
+    }
+    var manifest_path = root + "/Box.toml"
+    if !gui.exists(manifest_path) {
+        manifest_path = root + "/nova.toml"
+    }
+    let manifest = gui.read(manifest_path)
+    var bin = nt_manifest_value(manifest, "[bin]", "path")
+    if bin.len() == 0 {
+        bin = "src/main.nova"
+    }
+    let entry = root + "/" + bin
+    if !gui.exists(entry) {
+        println("error: binary source does not exist: " + entry)
+        return 1
+    }
+    let expanded = nt_expand(entry, gui.read(entry), [entry])
+    if expanded.error.len() > 0 {
+        println("error: " + expanded.error)
+        return 1
+    }
+    let diags = sa_check(expanded.text)
+    if diags.len() == 0 {
+        println("Checked " + entry + ": no errors")
+        return 0
+    }
+    for message in diags {
+        println(message)
+    }
+    return 1
 }
 
 fn nt_shell_quote(text: String) -> String {
@@ -232,18 +304,22 @@ fn main() {
     let argc = gui.args_count()
     if argc >= 2 && gui.arg(1) == "build" {
         if argc < 3 {
-            nt_build_project()
-            return
+            gui.exit(nt_build_project())
         }
         let source_path = gui.arg(2)
         let target = if argc >= 4 { gui.arg(3) } else { source_path + ".out" }
         let source = gui.read(source_path)
         if source.len() == 0 && !gui.exists(source_path) {
             println("nova-tool: cannot read " + source_path)
-            return
+            gui.exit(1)
         }
-        nt_build_source(source_path, source, target)
-        return
+        gui.exit(nt_build_source(source_path, source, target))
+    }
+    if argc >= 2 && gui.arg(1) == "run" {
+        gui.exit(nt_run_project())
+    }
+    if argc >= 2 && gui.arg(1) == "check" {
+        gui.exit(nt_check_project())
     }
     let mode = gui.env("NOVA_TOOL")
     let path = gui.env("NOVA_TOOL_PATH")
