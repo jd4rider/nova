@@ -787,6 +787,23 @@ else
     no "Unit main binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-if-expr.nova" "$tool")
+echo "$out" | grep -q "load i64" && ok || no "if expression result load"
+printf '%s\n' "$out" > "$tmp/if-expr.ll"
+if clang_ir "$tmp/if-expr.ll" "$tmp/if-expr" "$tmp/if-expr-clang.log"; then
+    ok
+else
+    no "clang rejects if-expression IR"
+    cat "$tmp/if-expr-clang.log"
+fi
+if [ -x "$tmp/if-expr" ]; then
+    "$tmp/if-expr"
+    code=$?
+    [ "$code" -eq 13 ] && ok || no "if-expression result (got $code, expected 13)"
+else
+    no "if-expression binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-tuple.nova" "$tool")
 echo "$out" | grep -q "insertvalue { i64, i64 }" && ok || no "tuple literal construction"
 echo "$out" | grep -q "extractvalue { i64, i64 }" && ok || no "tuple field extraction"
@@ -908,6 +925,34 @@ if [ -x "$tmp/string-split" ]; then
     [ "$code" -eq 8 ] && ok || no "split/join result (got $code, expected 8)"
 else
     no "split/join binary missing"
+fi
+
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-builtins.nova" "$tool")
+echo "$out" | grep -q "call %nova.string @nova_char_to_string(i32" && ok || no "char_string call"
+echo "$out" | grep -q "call %nova.string @nova_json_string" && ok || no "json_string call"
+printf '%s\n' "$out" > "$tmp/builtins.ll"
+if clang_ir "$tmp/builtins.ll" "$tmp/builtins" "$tmp/builtins-clang.log"; then
+    ok
+else
+    no "clang rejects builtin IR"
+    cat "$tmp/builtins-clang.log"
+fi
+if [ -x "$tmp/builtins" ]; then
+    "$tmp/builtins"
+    code=$?
+    [ "$code" -eq 5 ] && ok || no "builtin result (got $code, expected 5)"
+else
+    no "builtin binary missing"
+fi
+
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-http-get.nova" "$tool")
+echo "$out" | grep -q "call %nova.string @nova_http_get" && ok || no "http_get call"
+printf '%s\n' "$out" > "$tmp/http-get.ll"
+if clang_ir "$tmp/http-get.ll" "$tmp/http-get" "$tmp/http-get-clang.log"; then
+    ok
+else
+    no "clang rejects http_get IR"
+    cat "$tmp/http-get-clang.log"
 fi
 
 printf 'fn main() -> Int {\n    return "x"\n}\n' > "$tmp/bad.nova"

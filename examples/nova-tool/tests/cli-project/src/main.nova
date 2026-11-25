@@ -1,5 +1,5 @@
-import "math.nova"
+import "math.nova" as math
 
 fn main() -> Int {
-    return double(5)
+    return math.double(5)
 }

@@ -1,0 +1,12 @@
+fn choose(flag: Bool) -> Int {
+    let value = if flag {
+        4
+    } else {
+        9
+    }
+    return value
+}
+
+fn main() -> Int {
+    return choose(true) + choose(false)
+}

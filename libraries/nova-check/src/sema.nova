@@ -715,6 +715,33 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
                 work = sa_args(work, node, 1, types, true)
                 return sa_result(work, variant)
             }
+            if callee_node.text == "char_string" {
+                let got = ctx.ast.nodes[node].count - 1
+                var work = ctx
+                if got != 1 {
+                    work = sa_error(work, node, "E0303", "char_string expects 1 argument, got " + got.to_string())
+                }
+                work = sa_args(work, node, 1, ["Int"], true)
+                return sa_result(work, "String")
+            }
+            if callee_node.text == "http_get" {
+                let got = ctx.ast.nodes[node].count - 1
+                var work = ctx
+                if got != 1 {
+                    work = sa_error(work, node, "E0303", "http_get expects 1 argument, got " + got.to_string())
+                }
+                work = sa_args(work, node, 1, ["String"], true)
+                return sa_result(work, "String")
+            }
+            if callee_node.text == "json_string" {
+                let got = ctx.ast.nodes[node].count - 1
+                var work = ctx
+                if got != 2 {
+                    work = sa_error(work, node, "E0303", "json_string expects 2 arguments, got " + got.to_string())
+                }
+                work = sa_args(work, node, 1, ["String", "String"], true)
+                return sa_result(work, "String")
+            }
             if sa_builtin(callee_node.text) {
                 let work = sa_args(ctx, node, 1, [], false)
                 return sa_result(work, "Unit")
@@ -739,6 +766,25 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
             return sa_result(work, sig.ret)
         }
         if callee_node.kind == ak_member() {
+            let recv_node = a_child(ctx.ast, callee, 0)
+            if recv_node >= 0 && ctx.ast.nodes[recv_node].kind == ak_ident() && sa_lookup(ctx, ctx.ast.nodes[recv_node].text) == "" {
+                let index = sa_fn_index(ctx.fns, callee_node.text)
+                if index >= 0 {
+                    let sig = ctx.fns[index]
+                    let got = ctx.ast.nodes[node].count - 1
+                    var work = ctx
+                    if got != sig.params.len() {
+                        work = sa_error(
+                            work,
+                            node,
+                            "E0303",
+                            callee_node.text + " expects " + sig.params.len().to_string() + " arguments, got " + got.to_string()
+                        )
+                    }
+                    work = sa_args(work, node, 1, sig.types, true)
+                    return sa_result(work, sig.ret)
+                }
+            }
             let object = sa_expr(ctx, a_child(ctx.ast, callee, 0))
             var work = sa_args(object.ctx, node, 1, [], false)
             if callee_node.text == "index_of" && object.type_name == "List<Int>" {

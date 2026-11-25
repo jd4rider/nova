@@ -1,6 +1,6 @@
 # Evidence
 
-All results below were run on `selfhost/pure-nova` on 2026-11-24.
+All results below were run on `selfhost/pure-nova` on 2026-11-25.
 
 ## Build
 
@@ -22,8 +22,8 @@ Result: PASS — passed 11, failed 0.
 The Nova tool now reads process arguments, accepts `build` with no arguments
 for a project or `build <source> [output]` for one file, prints `built <path>`,
 and returns the native exit status. The single-file fixture exits 7 and the
-two-file project imports `math.nova`, builds `target/nova/cli-project`, and
-exits 10; `run` rebuilds and propagates that 10, while `check` succeeds over
+two-file project imports `math.nova` as `math`, calls `math.double(5)`, builds
+`target/nova/cli-project`, and exits 10; `run` rebuilds and propagates that 10, while `check` succeeds over
 the flattened project. Project discovery reads `nova.toml` or
 `Box.toml`, `[package] name`, and `[bin] path`, and recursively inlines
 relative `.nova` imports. Argument access is implemented for Apple hosts
@@ -75,7 +75,7 @@ Result: PASS — passed 4, failed 0.
 sh examples/nova-tool/tests/codegen.sh
 ```
 
-Result: PASS — passed 209, failed 0.
+Result: PASS — passed 218, failed 0.
 
 - Straight-line Int module: no `alloca` for immutable params/`let`.
 - Mutable module compiles and exits 2.
@@ -149,6 +149,13 @@ element slot; the runtime grows with `realloc`, copies the element and updates
   results into 11.
 - Struct enum fixture packs a flat `Point` and a nested `Labeled(String, Point)`
   into enum slots, reconstructs both bindings, and returns 9.
+- Expression-`if` fixture lowers both arms to a merge value and exits 13.
+- Qualified-call project fixture imports `math.nova` as `math` and calls
+  `math.double(5)`; the project builds and exits 10.
+- Builtin fixture combines `char_string(65)` with `json_string`; the resulting
+  text length is 5.
+- `http_get` fixture emits `call %nova.string @nova_http_get` and clang accepts
+  the linked IR without making a network request.
 - Assert fixtures emit `nova_assert_fail`; the passing program exits 5 and the
   failing program exits 1 with `assertion failed` on stderr.
 - Struct fixture emits `%nova.struct.Point` and `%nova.struct.Pair` aggregate
@@ -177,26 +184,34 @@ writes an
 existing element of a mutable local list; slices, insertion and removal are not
 implemented. Indexing, assignment and push use `nova_list_at`/`nova_list_push`;
 bounds failure is the runtime's Nova panic. List literals still allocate with
-libc `malloc` and storage is never freed. Structs are value-only: no generics,
+libc `malloc` and storage is never freed. List headers are shallow-copied by
+value; `var next = seen` followed by `push` can leave the source list with a
+stale backing pointer after `realloc`. `cg_struct_cycle` now builds a fresh
+list before recursion, but a general copy/ownership model remains missing. Structs are value-only: no generics,
 methods, equality, printing or
 references. Enum payloads support Int, Bool, String and struct values in codegen;
 enum-typed payloads, maps, sets, tuples, arrays and Option/Result remain.
 The Nova tool has a project build command, but `nova build` still uses the
 Rust seed. This is not a compiler-speed measurement.
 
-## Self-build attempt
+## Self-build bootstrap
 
 ```sh
 cd examples/nova-tool
 NOVA_TOOL_OUT=/tmp/nova-self NOVA_TOOL_RUNTIME=../../runtime/runtime.c \
   ./target/nova/nova-tool build
+NOVA_TOOL_OUT=/tmp/nova-self-2 NOVA_TOOL_RUNTIME=../../runtime/runtime.c \
+  /tmp/nova-self build
+NOVA_TOOL_OUT=/tmp/nova-self-3 NOVA_TOOL_RUNTIME=../../runtime/runtime.c \
+  /tmp/nova-self-2 build
 ```
 
-Result: FAIL — `error: in a_stmt: unsupported expression`.
-
-The attempt resolves the project and imports, registers generic lists, tuples,
-externs, logical operators and string methods, then stops in codegen. No
-stage-1/2/3 bootstrap claim is made.
+Result: PASS — generation 1 (`/tmp/nova-self`), generation 2
+(`/tmp/nova-self-2`) and generation 3 (`/tmp/nova-self-3`) all built. Each
+generation compiled `tests/codegen-sample.nova`, and the native program exited
+9. The three SHA-256 hashes differ, so this is behavioral bootstrap evidence,
+not a byte-identical fixed-point claim. `nova build` still runs the Rust seed
+and no Rust crate has been deleted.
 
 ## Parity audit
 
@@ -208,6 +223,7 @@ and cancellation are absent even in Rust.
 
 ## Commit history
 
+- Stage 1/2/3 Nova-tool bootstrap checkpoint — 218/0 codegen, 11/0 CLI.
 - Self-build prerequisites checkpoint — 209/0 codegen, 11/0 CLI.
 - Nova CLI build/run/check checkpoint — 184/0 codegen, 9/0 CLI.
 - Nova CLI project build checkpoint — 184/0 codegen, 7/0 CLI.

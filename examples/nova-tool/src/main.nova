@@ -147,6 +147,27 @@ fn nt_find_runtime() -> String {
     return ""
 }
 
+fn nt_find_gui(runtime: String) -> String {
+    let candidate = rs_dirname(runtime) + "/gui.m"
+    if gui.exists(candidate) {
+        return candidate
+    }
+    return ""
+}
+
+fn nt_wants_gui(ir: String) -> Bool {
+    if ir.contains("@nova_gui_") {
+        return true
+    }
+    if ir.contains("@nova_fs_") {
+        return true
+    }
+    if ir.contains("@nova_process_") {
+        return true
+    }
+    return ir.contains("@nova_env")
+}
+
 fn nt_build_project() -> Int {
     let root = nt_find_root()
     if root.len() == 0 {
@@ -290,7 +311,27 @@ fn nt_build_source(path: String, source: String, target: String) -> Int {
         println("error: cannot find runtime/runtime.c; set NOVA_TOOL_RUNTIME")
         return 1
     }
-    let command = "clang -x ir " + nt_shell_quote(ir_path) + " -x none " + nt_shell_quote(runtime) + " -o " + nt_shell_quote(target) + " -lm"
+    let gui_source = nt_find_gui(runtime)
+    let host = gui.run("uname -s", gui.cwd()).trim()
+    var wants_gui = false
+    var gui_object = ""
+    if host == "Darwin" && gui_source.len() > 0 && nt_wants_gui(result.ir) {
+        wants_gui = true
+        gui_object = target + ".gui.o"
+        let gui_command = "clang -fobjc-arc -O2 -c " + nt_shell_quote(gui_source) + " -o " + nt_shell_quote(gui_object)
+        let gui_output = gui.run(gui_command, gui.cwd())
+        if gui.exit_status() != 0 {
+            println("error: clang failed to compile nova-gui for " + path)
+            if gui_output.len() > 0 {
+                println(gui_output)
+            }
+            return 1
+        }
+    }
+    var command = "clang -x ir " + nt_shell_quote(ir_path) + " -x none " + nt_shell_quote(runtime) + " -o " + nt_shell_quote(target) + " -lm"
+    if wants_gui {
+        command = command + " " + nt_shell_quote(gui_object) + " -framework Cocoa -framework CoreText -framework CoreGraphics -framework ImageIO -framework QuartzCore"
+    }
     let output = gui.run(command, gui.cwd())
     if gui.exit_status() != 0 {
         println("error: clang failed for " + path)
@@ -298,6 +339,9 @@ fn nt_build_source(path: String, source: String, target: String) -> Int {
             println(output)
         }
         return 1
+    }
+    if wants_gui {
+        gui.run("rm -f " + nt_shell_quote(gui_object), gui.cwd())
     }
     println("built " + target)
     return 0

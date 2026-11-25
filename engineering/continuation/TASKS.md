@@ -35,7 +35,7 @@ and integration gate pass. The full matrix is `PARITY.md`.
   signatures and calls use `ptr %arg_env`, `nova_user_<index>`, `void` returns,
   `%nova.string` and `%nova.list` by value, and the `@main` wrapper; list
   `nova_list_at`/`nova_list_push` calls and the linked C runtime are verified.
-  Evidence: 184/0.
+  Evidence: 218/0.
 - CODEGEN-01.06 — Strings, lists, maps, sets, structs, enums, tuples, arrays,
   Option/Result: **PARTIAL**. String literals, parameters/returns and `.len()`  are verified; `List<Int>` literals (including empty), `.len()`, by-value
   parameters/returns and runtime-linked indexing/assignment/push are verified.
@@ -47,8 +47,10 @@ and integration gate pass. The full matrix is `PARITY.md`.
   arms, exhaustive matching and by-value parameters/returns. Lists index, assign
   and push through `nova_list_at`/`nova_list_push`; literals use malloc-backed
   storage, `==`/`!=` compare lengths/elements, `+` concatenates, and slicing copies a
-  start..end range. Maps, sets, enum-typed payloads, tuples,
-  arrays and Option/Result remain. String concatenation, equality and literal
+  start..end range. Native expression-valued `if`/`else`, qualified module
+  calls, `%`, `char_string`, `json_string` and `http_get` are also lowered.
+  Maps, sets, enum-typed payloads, tuples, arrays and Option/Result remain.
+  String concatenation, equality and literal
   match patterns are verified through the runtime.
 - CODEGEN-01.07 — Overflow, division-by-zero, bounds and alignment checks:
   **PARTIAL**. List indexing/assignment bounds checks route through
@@ -65,7 +67,7 @@ and integration gate pass. The full matrix is `PARITY.md`.
 - CODEGEN-01.09 — Clang invocation and linking from the Nova tool: **VERIFIED**.
   `build-ir` writes IR, invokes clang with quoted paths, checks exit status and
   produces a native binary and compiles/links `runtime/runtime.c` for list
-  runtime calls. Evidence: `tests/codegen.sh` → 184/0.
+  runtime calls. Evidence: `tests/codegen.sh` → 218/0.
 - CODEGEN-01.10 — Optimization pipeline parity: **TODO**.
 
 ## CLI-01 — Self-hosted driver
@@ -105,8 +107,13 @@ and integration gate pass. The full matrix is `PARITY.md`.
 
 ## BOOT-02 — Self-compilation
 
-- BOOT-02.01 — Generation 1 from the seed: **TODO**.
-- BOOT-02.02 — Generation 2 from generation 1: **TODO**.
-- BOOT-02.03 — Generation 3 and comparison: **TODO**.
+- BOOT-02.01 — Generation 1 from the seed: **VERIFIED**. The Rust-built
+  `nova-tool` built `/tmp/nova-self`; it compiled the sample and the native
+  program exited 9.
+- BOOT-02.02 — Generation 2 from generation 1: **VERIFIED**. `/tmp/nova-self`
+  built `/tmp/nova-self-2`; its sample exited 9.
+- BOOT-02.03 — Generation 3 and comparison: **PARTIAL**. `/tmp/nova-self-2`
+  built `/tmp/nova-self-3` and its sample exited 9; the three SHA-256 hashes
+  differ, so no byte-identical fixed point is claimed.
 - BOOT-02.04 — Build the Nova LSP with the self-hosted compiler: **TODO**.
 - BOOT-02.05 — Studio uses the Nova-built LSP: **TODO**.

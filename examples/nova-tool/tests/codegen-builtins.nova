@@ -1,0 +1,5 @@
+fn main() -> Int {
+    let json = "{\"name\":\"nova\"}"
+    let text = char_string(65) + json_string(json, "name")
+    return text.len()
+}

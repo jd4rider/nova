@@ -569,7 +569,10 @@ fn cg_struct_cycle(structs: List<CgStruct>, target: String, current: String, see
             return true
         }
         if cg_struct_index(structs, field_type) >= 0 && !cg_has_name(seen, field_type) {
-            var next = seen
+            var next: List<String> = []
+            for name in seen {
+                next.push(name)
+            }
             next.push(field_type)
             if cg_struct_cycle(structs, target, field_type, next) {
                 return true
@@ -1396,6 +1399,110 @@ fn cg_list_push(ast: Ast, state: CgState, node: Int) -> CgVal {
     return cg_val_typed(work, "", "void")
 }
 
+fn cg_branch_expr(ast: Ast, state: CgState, node: Int) -> CgVal {
+    if node < 0 || node >= ast.nodes.len() {
+        return cg_val(cg_error(state, "invalid if expression branch"), "0")
+    }
+    let item = ast.nodes[node]
+    if item.kind == ak_block() {
+        if item.count == 0 {
+            return cg_val_typed(state, "", "void")
+        }
+        var work = state
+        var i = 0
+        while i < item.count - 1 {
+            work = cg_stmt(ast, work, a_child(ast, node, i))
+            if work.error.len() > 0 || work.terminated {
+                return cg_val_typed(work, "", "void")
+            }
+            i = i + 1
+        }
+        let last = a_child(ast, node, item.count - 1)
+        if last >= 0 && ast.nodes[last].kind == ak_expr_stmt() {
+            return cg_expr2(ast, work, a_child(ast, last, 0))
+        }
+        if last >= 0 && ast.nodes[last].kind == ak_if() {
+            return cg_if_expr(ast, work, last)
+        }
+        return cg_val_typed(work, "", "void")
+    }
+    if item.kind == ak_if() {
+        return cg_if_expr(ast, state, node)
+    }
+    return cg_expr2(ast, state, node)
+}
+
+fn cg_if_expr(ast: Ast, state: CgState, node: Int) -> CgVal {
+    let item = ast.nodes[node]
+    if item.count < 2 {
+        return cg_val(cg_error(state, "if expression needs a condition and body"), "0")
+    }
+    let cond = cg_expr2(ast, state, a_child(ast, node, 0))
+    var work = cond.state
+    if work.error.len() > 0 {
+        return cg_val(work, "0")
+    }
+    if cond.ty != "i1" {
+        return cg_val(cg_error(work, "if condition must be Bool"), "0")
+    }
+    let then_result = cg_label(work)
+    work = then_result.0
+    let then_label = then_result.1
+    let else_result = cg_label(work)
+    work = else_result.0
+    let else_label = else_result.1
+    let merge_result = cg_label(work)
+    work = merge_result.0
+    let merge_label = merge_result.1
+    work = cg_line(work, "  br i1 " + cond.value + ", label %" + then_label + ", label %" + else_label)
+    work = cg_line(work, then_label + ":")
+    let then_value = cg_branch_expr(ast, work, a_child(ast, node, 1))
+    work = then_value.state
+    if work.error.len() > 0 {
+        return cg_val(work, "0")
+    }
+    if work.terminated {
+        return cg_val(cg_error(work, "if expression branch terminates"), "0")
+    }
+    var slot = ""
+    if then_value.ty != "void" {
+        let slot_result = cg_entry_slot(work, then_value.ty)
+        work = slot_result.0
+        slot = slot_result.1
+        work = cg_line(work, "  store " + then_value.ty + " " + then_value.value + ", ptr " + slot)
+    }
+    work = cg_line(work, "  br label %" + merge_label)
+    work = cg_line(work, else_label + ":")
+    if item.count > 2 {
+        let else_value = cg_branch_expr(ast, work, a_child(ast, node, 2))
+        work = else_value.state
+        if work.error.len() > 0 {
+            return cg_val(work, "0")
+        }
+        if work.terminated {
+            return cg_val(cg_error(work, "if expression branch terminates"), "0")
+        }
+        if else_value.ty != then_value.ty {
+            return cg_val(cg_error(work, "if expression branches have incompatible types"), "0")
+        }
+        if else_value.ty != "void" {
+            work = cg_line(work, "  store " + else_value.ty + " " + else_value.value + ", ptr " + slot)
+        }
+    } else if then_value.ty != "void" {
+        return cg_val(cg_error(work, "if expression without else must be Unit"), "0")
+    }
+    work = cg_line(work, "  br label %" + merge_label)
+    work = cg_line(work, merge_label + ":")
+    if then_value.ty == "void" {
+        return cg_val_typed(work, "", "void")
+    }
+    let result_result = cg_temp(work)
+    work = result_result.0
+    let result = result_result.1
+    work = cg_line(work, "  " + result + " = load " + then_value.ty + ", ptr " + slot)
+    return cg_val_typed(work, result, then_value.ty)
+}
+
 fn cg_logical(ast: Ast, state: CgState, node: Int, is_and: Bool) -> CgVal {
     let left = cg_expr2(ast, state, a_child(ast, node, 0))
     var work = left.state
@@ -1637,6 +1744,9 @@ fn cg_compile(source: String) -> CgResult {
     out = out + "declare void @nova_string_from_bytes(ptr, ptr)\n"
     out = out + "declare %nova.string @nova_i64_to_string(i64)\n"
     out = out + "declare %nova.string @nova_bool_to_string(i32)\n"
+    out = out + "declare %nova.string @nova_char_to_string(i32)\n"
+    out = out + "declare %nova.string @nova_json_string(%nova.string, %nova.string)\n"
+    out = out + "declare %nova.string @nova_http_get(%nova.string)\n"
     out = out + "declare void @nova_string_chars(%nova.string, ptr)\n"
     out = out + "declare void @nova_string_split(%nova.string, %nova.string, ptr)\n"
     out = out + "declare %nova.string @nova_string_join(ptr, %nova.string)\n"
@@ -3107,6 +3217,59 @@ fn cg_field_assign(ast: Ast, state: CgState, target: Int, value_node: Int) -> Cg
     return cg_val_typed(work, value.value, expected)
 }
 
+fn cg_call_function(ast: Ast, state: CgState, node: Int, name: String) -> CgVal {
+    let got = ast.nodes[node].count - 1
+    let index = cg_fn_index(state.fns, name)
+    if index < 0 {
+        return cg_val(cg_error(state, "unknown function " + name), "0")
+    }
+    let sig = state.fns[index]
+    if got != sig.params.len() {
+        return cg_val(cg_error(state, name + " arity mismatch"), "0")
+    }
+    var work = state
+    var args = ""
+    var k = 0
+    while k < got {
+        let arg = cg_expr2(ast, work, a_child(ast, node, k + 1))
+        work = arg.state
+        let expected = cg_llvm_type_in(work.structs, work.enums, sig.param_types[k])
+        if arg.ty != expected {
+            return cg_val(cg_error(work, name + " argument " + k.to_string() + " type mismatch"), "0")
+        }
+        if k > 0 {
+            args = args + ", "
+        }
+        args = args + expected + " " + arg.value
+        k = k + 1
+    }
+    var symbol = "nova_user_" + sig.index.to_string()
+    if sig.external {
+        symbol = sig.name
+    }
+    var call_args = "ptr null"
+    if sig.external {
+        call_args = ""
+    }
+    if args.len() > 0 {
+        if sig.external {
+            call_args = args
+        } else {
+            call_args = call_args + ", " + args
+        }
+    }
+    let ret_ty = cg_llvm_type_in(work.structs, work.enums, sig.ret)
+    if ret_ty == "void" {
+        work = cg_line(work, "  call void @" + symbol + "(" + call_args + ")")
+        return cg_val_typed(work, "", "void")
+    }
+    let temp_result = cg_temp(work)
+    work = temp_result.0
+    let temp = temp_result.1
+    work = cg_line(work, "  " + temp + " = call " + ret_ty + " @" + symbol + "(" + call_args + ")")
+    return cg_val_from_source(work, temp, sig.ret)
+}
+
 fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
     if state.error.len() > 0 {
         return cg_val(state, "0")
@@ -3145,6 +3308,9 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
     }
     if item.kind == ak_match() {
         return cg_match(ast, state, node)
+    }
+    if item.kind == ak_if() {
+        return cg_if_expr(ast, state, node)
     }
     if item.kind == ak_ident() {
         let index = cg_local_index(state.locals, item.text)
@@ -3295,6 +3461,8 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
             opcode = "mul"
         } else if op == "/" {
             opcode = "sdiv"
+        } else if op == "%" {
+            opcode = "srem"
         } else {
             return cg_val(cg_error(right.state, "unsupported operator " + op), "0")
         }
@@ -3627,6 +3795,13 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
                 return cg_val_typed(work, result, "%nova.string")
             }
             if ast.nodes[callee].text != "len" {
+                let recv_node = a_child(ast, callee, 0)
+                if recv_node >= 0 && ast.nodes[recv_node].kind == ak_ident() {
+                    let receiver = ast.nodes[recv_node].text
+                    if cg_local_index(state.locals, receiver) < 0 && cg_fn_index(state.fns, ast.nodes[callee].text) >= 0 {
+                        return cg_call_function(ast, state, node, ast.nodes[callee].text)
+                    }
+                }
                 return cg_val(cg_error(state, "unsupported method " + ast.nodes[callee].text), "0")
             }
             let recv = cg_expr2(ast, state, a_child(ast, callee, 0))
@@ -3702,59 +3877,65 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
             work = cg_line(work, ok + ":")
             return cg_val_typed(work, "", "void")
         }
+        if name == "char_string" {
+            if got != 1 {
+                return cg_val(cg_error(state, "char_string expects one argument"), "0")
+            }
+            let value = cg_expr2(ast, state, a_child(ast, node, 1))
+            var work = value.state
+            if value.ty != "i64" {
+                return cg_val(cg_error(work, "char_string expects Int"), "0")
+            }
+            let narrow_result = cg_temp(work)
+            work = narrow_result.0
+            let narrow = narrow_result.1
+            work = cg_line(work, "  " + narrow + " = trunc i64 " + value.value + " to i32")
+            let temp_result = cg_temp(work)
+            work = temp_result.0
+            let temp = temp_result.1
+            work = cg_line(work, "  " + temp + " = call %nova.string @nova_char_to_string(i32 " + narrow + ")")
+            return cg_val_typed(work, temp, "%nova.string")
+        }
+        if name == "http_get" {
+            if got != 1 {
+                return cg_val(cg_error(state, "http_get expects one argument"), "0")
+            }
+            let value = cg_expr2(ast, state, a_child(ast, node, 1))
+            var work = value.state
+            if value.ty != "%nova.string" {
+                return cg_val(cg_error(work, "http_get expects a String"), "0")
+            }
+            let temp_result = cg_temp(work)
+            work = temp_result.0
+            let temp = temp_result.1
+            work = cg_line(work, "  " + temp + " = call %nova.string @nova_http_get(%nova.string " + value.value + ")")
+            return cg_val_typed(work, temp, "%nova.string")
+        }
+        if name == "json_string" {
+            if got != 2 {
+                return cg_val(cg_error(state, "json_string expects two arguments"), "0")
+            }
+            let json = cg_expr2(ast, state, a_child(ast, node, 1))
+            var work = json.state
+            if json.ty != "%nova.string" {
+                return cg_val(cg_error(work, "json_string expects String arguments"), "0")
+            }
+            let key = cg_expr2(ast, work, a_child(ast, node, 2))
+            work = key.state
+            if key.ty != "%nova.string" {
+                return cg_val(cg_error(work, "json_string expects String arguments"), "0")
+            }
+            let temp_result = cg_temp(work)
+            work = temp_result.0
+            let temp = temp_result.1
+            work = cg_line(work, "  " + temp + " = call %nova.string @nova_json_string(%nova.string " + json.value + ", %nova.string " + key.value + ")")
+            return cg_val_typed(work, temp, "%nova.string")
+        }
         let variant = cg_find_variant(state.enums, name)
         if variant.0 >= 0 {
             return cg_enum_call(ast, state, node, name)
         }
-        let index = cg_fn_index(state.fns, name)
-        if index < 0 {
-            return cg_val(cg_error(state, "unknown function " + name), "0")
-        }
-        let sig = state.fns[index]
-        if got != sig.params.len() {
-            return cg_val(cg_error(state, name + " arity mismatch"), "0")
-        }
-        var work = state
-        var args = ""
-        var k = 0
-        while k < got {
-            let arg = cg_expr2(ast, work, a_child(ast, node, k + 1))
-            work = arg.state
-            let expected = cg_llvm_type_in(work.structs, work.enums, sig.param_types[k])
-            if arg.ty != expected {
-                return cg_val(cg_error(work, name + " argument " + k.to_string() + " type mismatch"), "0")
-            }
-            if k > 0 {
-                args = args + ", "
-            }
-            args = args + expected + " " + arg.value
-            k = k + 1
-        }
-        var symbol = "nova_user_" + sig.index.to_string()
-        if sig.external {
-            symbol = sig.name
-        }
-        var call_args = "ptr null"
-        if sig.external {
-            call_args = ""
-        }
-        if args.len() > 0 {
-            if sig.external {
-                call_args = args
-            } else {
-                call_args = call_args + ", " + args
-            }
-        }
-        let ret_ty = cg_llvm_type_in(work.structs, work.enums, sig.ret)
-        if ret_ty == "void" {
-            work = cg_line(work, "  call void @" + symbol + "(" + call_args + ")")
-            return cg_val_typed(work, "", "void")
-        }
-        let temp_result = cg_temp(work)
-        work = temp_result.0
-        let temp = temp_result.1
-        work = cg_line(work, "  " + temp + " = call " + ret_ty + " @" + symbol + "(" + call_args + ")")
-        return cg_val_from_source(work, temp, sig.ret)
+        return cg_call_function(ast, state, node, name)
     }
-    return cg_val(cg_error(state, "unsupported expression"), "0")
+    return cg_val(cg_error(state, "unsupported expression at line " + item.line.to_string() + " kind " + item.kind.to_string()), "0")
 }
