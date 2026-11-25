@@ -266,10 +266,29 @@ fn cg_list_lit(ast: Ast, state: CgState, node: Int) -> CgVal {
         work = cg_line(work, "  " + second + " = insertvalue %nova.list " + first + ", i64 0, 2")
         return cg_val_typed(work, second, "%nova.list")
     }
-    let slot_result = cg_slot(state)
-    var work = slot_result.0
-    let array = slot_result.1
-    work = cg_line(work, "  " + array + " = alloca [" + count.to_string() + " x i64]")
+    let bytes_result = cg_temp(state)
+    var work = bytes_result.0
+    let bytes = bytes_result.1
+    work = cg_line(work, "  " + bytes + " = mul i64 " + count.to_string() + ", 8")
+    let data_result = cg_temp(work)
+    work = data_result.0
+    let array = data_result.1
+    work = cg_line(work, "  " + array + " = call ptr @malloc(i64 " + bytes + ")")
+    let null_result = cg_temp(work)
+    work = null_result.0
+    let is_null = null_result.1
+    work = cg_line(work, "  " + is_null + " = icmp eq ptr " + array + ", null")
+    let ok_result = cg_label(work)
+    work = ok_result.0
+    let ok = ok_result.1
+    let bad_result = cg_label(work)
+    work = bad_result.0
+    let bad = bad_result.1
+    work = cg_line(work, "  br i1 " + is_null + ", label %" + bad + ", label %" + ok)
+    work = cg_line(work, bad + ":")
+    work = cg_line(work, "  call void @llvm.trap()")
+    work = cg_line(work, "  unreachable")
+    work = cg_line(work, ok + ":")
     var i = 0
     while i < count {
         let value = cg_expr2(ast, work, a_child(ast, node, i))
@@ -366,7 +385,7 @@ fn cg_compile(source: String) -> CgResult {
             if ret == "" {
                 ret = "Unit"
             }
-            if ret != "Int" && ret != "String" && ret != "Unit" {
+            if ret != "Int" && ret != "String" && ret != "Unit" && ret != "List<Int>" {
                 return CgResult { ir: "", error: "unsupported return type on " + item.text }
             }
             if cg_fn_index(fns, item.text) >= 0 {
@@ -377,7 +396,7 @@ fn cg_compile(source: String) -> CgResult {
             var k = 0
             while k < item.count - 1 {
                 let param = ast.nodes[a_child(ast, node, k)]
-                if param.aux != "Int" && param.aux != "String" {
+                if param.aux != "Int" && param.aux != "String" && param.aux != "List<Int>" {
                     return CgResult { ir: "", error: "unsupported parameter type on " + param.text }
                 }
                 params.push(param.text)
@@ -400,6 +419,7 @@ fn cg_compile(source: String) -> CgResult {
     out = out + "%nova.string = type { ptr, i64 }\n"
     out = out + "%nova.list = type { ptr, i64, i64 }\n"
     out = out + "declare void @llvm.trap()\n"
+    out = out + "declare ptr @malloc(i64)\n"
     var emitted = 0
     while emitted < fns.len() {
         let sig = fns[emitted]
@@ -416,6 +436,9 @@ fn cg_compile(source: String) -> CgResult {
         out = out + "  ret i32 0\n"
     } else if fns[main_index].ret == "String" {
         out = out + "  %nova_result = call %nova.string @nova_user_" + fns[main_index].index.to_string() + "(ptr null)\n"
+        out = out + "  ret i32 0\n"
+    } else if fns[main_index].ret == "List<Int>" {
+        out = out + "  %nova_result = call %nova.list @nova_user_" + fns[main_index].index.to_string() + "(ptr null)\n"
         out = out + "  ret i32 0\n"
     } else {
         out = out + "  %nova_result = call i64 @nova_user_" + fns[main_index].index.to_string() + "(ptr null)\n"

@@ -1,0 +1,16 @@
+fn score(points: List<Int>) -> Int {
+    return points[0] + points.len()
+}
+
+fn make() -> List<Int> {
+    return [10, 20, 15]
+}
+
+fn identity(points: List<Int>) -> List<Int> {
+    return points
+}
+
+fn main() -> Int {
+    let points = make()
+    return score(identity(points))
+}

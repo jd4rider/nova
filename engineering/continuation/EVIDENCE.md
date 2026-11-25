@@ -43,7 +43,7 @@ Result: PASS — passed 4, failed 0.
 sh examples/nova-tool/tests/codegen.sh
 ```
 
-Result: PASS — passed 41, failed 0.
+Result: PASS — passed 48, failed 0.
 
 - Straight-line Int module: no `alloca` for immutable params/`let`.
 - Mutable module compiles and exits 2.
@@ -55,19 +55,23 @@ Result: PASS — passed 41, failed 0.
   implicit return; caller exits 4. Unit `main` calls the entry and exits 0.
 - String function emits `%nova.string`, a literal global, by-value String
   parameter/return signatures, and `extractvalue` for `.len()`; native result 5.
-- List fixture emits `%nova.list { ptr, i64, i64 }`, a stack element array,
-  aggregate `insertvalue` construction (including empty list), `extractvalue`
-  for `.len()`, bounds-checked `getelementptr` indexing and `llvm.trap`; native
-  result 23.
+- List fixture emits `%nova.list { ptr, i64, i64 }`, a malloc-backed element
+  array, aggregate `insertvalue` construction (including empty list),
+  `extractvalue` for `.len()`, bounds-checked `getelementptr` indexing and
+  `llvm.trap`; native result 23.
+- List ABI fixture emits by-value `%nova.list` parameter/return signatures and
+  calls: a literal returned by one function passes through an identity function
+  and is indexed by another; native result 13.
 - `NOVA_TOOL=build-ir` invokes clang, checks status and produces a native binary;
   the test executes that Nova-built binary.
 - Host clang accepted every module; Mach-O confirmed on this host.
 
-Limit: ABI parity covers Int, Unit, the string-literal/len subset and internal
-`List<Int>` literals only. List parameters/returns, push, mutation, maps, sets,
-structs and runtime calls are not implemented; list literals allocate on the
-stack and the bounds trap is not a Nova panic. `emit-ir` remains IR-only. This
-is not a compiler-speed measurement.
+Limit: ABI parity covers Int, Unit, the string-literal/len subset and the
+`List<Int>` literal/parameter/return subset. List push, mutation, slices and the
+`nova_list_*` runtime are not implemented. Literals use libc `malloc` and are
+never freed; the bounds trap is not a Nova panic. Maps, sets, structs, enums,
+tuples, arrays and Option/Result remain. `emit-ir` is still not the full CLI.
+This is not a compiler-speed measurement.
 
 ## Parity audit
 
@@ -79,6 +83,7 @@ and cancellation are absent even in Rust.
 
 ## Commit history
 
+- `List<Int>` ABI checkpoint — 48/0.
 - `List<Int>` literals/indexing checkpoint — 41/0.
 - Unit/String ABI checkpoint — 32/0.
 - `332555b` — Nova tool invokes clang and builds a native binary.

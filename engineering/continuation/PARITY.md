@@ -17,10 +17,10 @@ baseline suite was not rerun in this session. Status: `VERIFIED`, `PARTIAL`,
 | Diagnostic codes/spans/recovery | `bootstrap/nova-diag`, sema | PARTIAL — E03xx slice; no full parity | COMP-01.06 |
 | Int arithmetic | Rust codegen | PARTIAL — `+ - * /`, no overflow/div-zero checks | CODEGEN-01.01, CODEGEN-01.07 |
 | Control flow | Rust codegen | PARTIAL — `if`/`else`, `while`, comparisons; no `for`/`match` | CODEGEN-01.03, CODEGEN-01.08 |
-| Strings, lists, maps, sets | Rust runtime | PARTIAL — string literals/by-value params/returns/`.len()`; `List<Int>` literals, indexing with a bounds trap and `.len()`; no concat/equality, push, maps, sets or list ABI | CODEGEN-01.06 |
+| Strings, lists, maps, sets | Rust runtime | PARTIAL — string literals/by-value params/returns/`.len()`; malloc-backed `List<Int>` literals, by-value params/returns, indexing with a bounds trap and `.len()`; no concat/equality, push, maps, sets or ownership | CODEGEN-01.06 |
 | Structs, enums, tuples, arrays | Rust runtime | TODO | CODEGEN-01.06 |
 | Option/Result/error propagation | Rust runtime | TODO | CODEGEN-01.06 |
-| FFI and runtime ABI | Rust codegen + `runtime/` | PARTIAL — seed-shaped `ptr %arg_env`, `nova_user_<index>`, Int/Unit/String signatures and entry wrapper; lists/runtime-call ABI TODO | CODEGEN-01.04 |
+| FFI and runtime ABI | Rust codegen + `runtime/` | PARTIAL — seed-shaped `ptr %arg_env`, `nova_user_<index>`, Int/Unit/String/List signatures and entry wrapper; runtime-call ABI TODO | CODEGEN-01.04 |
 | Clang linking from the compiler | Rust CLI | VERIFIED for the supported slice — `build-ir` invokes clang with quoted paths and checks status | CODEGEN-01.09 |
 | Optimization parity | Rust LLVM pipeline | TODO | CODEGEN-01.10 |
 | Differential Rust/Nova tests | — | TODO | DIFF-01.01, DIFF-01.02 |
@@ -53,11 +53,12 @@ workspace indexing and cancellation are absent even in Rust.
 
 - AST parser: `tests/parser.sh` → 50/0, 29-file corpus.
 - Body sema: `tests/sema-ast.sh` → 9/0.
-- Codegen: `tests/codegen.sh` → 41/0; SSA params/`let`; seed-shaped
+- Codegen: `tests/codegen.sh` → 48/0; SSA params/`let`; seed-shaped
   `ptr %arg_env`/`nova_user_N` ABI; Int, Unit/void, `%nova.string` and
-  `%nova.list` declarations; string literals and `.len()`; `List<Int>` literals,
-  indexing and `.len()`; `build-ir` invokes clang. Native results 9, 2, 17, 4,
-  5, 23 and Unit `main` 0; Mach-O confirmed on this host.
+  `%nova.list` declarations; string literals and `.len()`; heap-backed
+  `List<Int>` literals/params/returns, indexing and `.len()`; `build-ir` invokes
+  clang. Native results 9, 2, 17, 4, 5, 23, 13 and Unit `main` 0; Mach-O
+  confirmed on this host.
 
 ## Rule
 

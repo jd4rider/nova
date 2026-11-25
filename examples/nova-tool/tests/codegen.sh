@@ -131,7 +131,8 @@ fi
 
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-list.nova" "$tool")
 echo "$out" | grep -q "%nova.list = type { ptr, i64, i64 }" && ok || no "list type declaration"
-echo "$out" | grep -q "alloca \[3 x i64\]" && ok || no "list element storage"
+echo "$out" | grep -q "declare ptr @malloc(i64)" && ok || no "list allocator declaration"
+echo "$out" | grep -q "call ptr @malloc(i64" && ok || no "list element storage"
 echo "$out" | grep -q "insertvalue %nova.list" && ok || no "list aggregate construction"
 echo "$out" | grep -q "insertvalue %nova.list zeroinitializer, i64 0, 1" && ok || no "empty list construction"
 echo "$out" | grep -q "extractvalue %nova.list" && ok || no "List.len lowering"
@@ -150,6 +151,26 @@ if [ -x "$tmp/list" ]; then
     [ "$code" -eq 23 ] && ok || no "list result (got $code, expected 23)"
 else
     no "list binary missing"
+fi
+
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-list-abi.nova" "$tool")
+echo "$out" | grep -q "define i64 @nova_user_0(ptr %arg_env, %nova.list %p0)" && ok || no "list parameter signature"
+echo "$out" | grep -q "define %nova.list @nova_user_1(ptr %arg_env)" && ok || no "list return signature"
+echo "$out" | grep -q "define %nova.list @nova_user_2(ptr %arg_env, %nova.list %p0)" && ok || no "list identity signature"
+echo "$out" | grep -q "call %nova.list @nova_user_2" && ok || no "list argument/return call"
+printf '%s\n' "$out" > "$tmp/list-abi.ll"
+if clang -x ir "$tmp/list-abi.ll" -o "$tmp/list-abi" > "$tmp/list-abi-clang.log" 2>&1; then
+    ok
+else
+    no "clang rejects list ABI IR"
+    cat "$tmp/list-abi-clang.log"
+fi
+if [ -x "$tmp/list-abi" ]; then
+    "$tmp/list-abi"
+    code=$?
+    [ "$code" -eq 13 ] && ok || no "list ABI result (got $code, expected 13)"
+else
+    no "list ABI binary missing"
 fi
 
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-unit-main.nova" "$tool")
