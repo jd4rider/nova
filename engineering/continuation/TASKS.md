@@ -6,9 +6,10 @@ and integration gate pass. The full matrix is `PARITY.md`.
 ## COMP-01 — Nova compiler frontend
 
 - COMP-01.01 — AST parser corpus: **VERIFIED**. 50/0, 29-file corpus.
-- COMP-01.02 — Body semantic slice: **PARTIAL**. 15/0; declarations, scopes,
-  expression/return types, calls, fields, control-flow conditions, match pattern
-  validation, block-arm checking and Int/Bool exhaustiveness.
+- COMP-01.02 — Body semantic slice: **PARTIAL**. 17/0; declarations, scopes,
+  expression/return types, calls, fields (including duplicate declarations and
+  initializers), control-flow conditions, match pattern validation, block-arm
+  checking and Int/Bool exhaustiveness.
 - COMP-01.03 — Module/import resolution: **READY**. Load relative imports,
   collect declarations, diagnose unknown imports, test a two-file program.
 - COMP-01.04 — Generics, methods, traits, closures: **TODO**.
@@ -32,14 +33,16 @@ and integration gate pass. The full matrix is `PARITY.md`.
 - CODEGEN-01.04 — Runtime ABI alignment: **PARTIAL**. Int/Unit/String/List
   signatures and calls use `ptr %arg_env`, `nova_user_<index>`, `void` returns,
   `%nova.string` and `%nova.list` by value, and the `@main` wrapper; runtime-call
-  ABI remains. Evidence: 73/0.
+  ABI remains. Evidence: 82/0.
 - CODEGEN-01.06 — Strings, lists, maps, sets, structs, enums, tuples, arrays,
   Option/Result: **PARTIAL**. String literals, parameters/returns and `.len()`  are verified; `List<Int>` literals (including empty), indexing with a bounds
   trap, `.len()`, by-value parameters and returns are verified. Mutable-list
   `.push()` grows with libc `realloc`, and bounds-checked index assignment
-  stores through a mutable local; both are verified across a return. List
-  values use malloc-backed storage; concat/equality/seed runtime, slices, maps,
-  sets, structs, enums, tuples, arrays and Option/Result remain.
+  stores through a mutable local; both are verified across a return. Value
+  structs are verified with nested fields, literals, reads, field assignment,
+  by-value parameters/returns and recursive-layout rejection. List values use
+  malloc-backed storage; concat/equality/seed runtime, slices, maps, sets,
+  enums, tuples, arrays and Option/Result remain.
 - CODEGEN-01.07 — Overflow, division-by-zero, bounds and alignment checks:
   **TODO**.
 - CODEGEN-01.08 — `for`, `match`, `break`/`continue`, short-circuit booleans:
@@ -50,7 +53,7 @@ and integration gate pass. The full matrix is `PARITY.md`.
   short-circuit boolean evaluation remain.
 - CODEGEN-01.09 — Clang invocation and linking from the Nova tool: **VERIFIED**.
   `build-ir` writes IR, invokes clang with quoted paths, checks exit status and
-  produces a native binary. Evidence: `tests/codegen.sh` → 73/0.
+  produces a native binary. Evidence: `tests/codegen.sh` → 82/0.
 - CODEGEN-01.10 — Optimization pipeline parity: **TODO**.
 
 ## CLI-01 — Self-hosted driver

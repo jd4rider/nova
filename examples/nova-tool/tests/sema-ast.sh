@@ -47,6 +47,14 @@ out=$(NOVA_TOOL=sema-ast NOVA_TOOL_PATH="$tmp/fields.nova" "$tool")
 echo "$out" | grep -q "E0305" && ok || no "unknown field"
 echo "$out" | grep -q "E0306" && ok || no "missing field"
 
+printf 'struct P {\n    x: Int\n    x: Int\n}\n\nfn main() {\n}\n' > "$tmp/dup-field.nova"
+out=$(NOVA_TOOL=sema-ast NOVA_TOOL_PATH="$tmp/dup-field.nova" "$tool")
+echo "$out" | grep -q "E0307" && ok || no "duplicate struct field"
+
+printf 'struct P {\n    x: Int\n}\n\nfn main() {\n    let p = P { x: 1, x: 2 }\n}\n' > "$tmp/dup-init.nova"
+out=$(NOVA_TOOL=sema-ast NOVA_TOOL_PATH="$tmp/dup-init.nova" "$tool")
+echo "$out" | grep -q "E0307" && ok || no "duplicate field initializer"
+
 printf 'fn f() -> Int {\n    return "x"\n}\n' > "$tmp/ret.nova"
 out=$(NOVA_TOOL=sema-ast NOVA_TOOL_PATH="$tmp/ret.nova" "$tool")
 echo "$out" | grep -q "E0308" && ok || no "return type"

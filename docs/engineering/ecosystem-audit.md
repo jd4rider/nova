@@ -12,9 +12,9 @@ verified working, partial, missing, broken, blocked, not applicable.
 | Lexer | `libraries/nova-lexer` | Nova | `NOVA_TOOL=lex`; corpus suite | partial | Tokenizes the corpus; Rust lexer remains stage-0 |
 | AST / parser | `libraries/nova-parser/src/ast.nova` | Nova | `tests/parser.sh` | partial | Parses 29/29 library and tool sources; corpus coverage is not full grammar parity |
 | Declaration checks | `libraries/nova-check/src/check.nova` | Nova | `tests/sema.sh` | partial | Duplicate items/parameters, unknown declared types |
-| Body sema slice | `libraries/nova-check/src/sema.nova` | Nova | `tests/sema-ast.sh` | partial | 15/15 focused diagnostics, including match patterns, duplicate/unreachable arms, block-arm bodies, arm types and Int/Bool exhaustiveness; not full type inference or generics |
+| Body sema slice | `libraries/nova-check/src/sema.nova` | Nova | `tests/sema-ast.sh` | partial | 17/17 focused diagnostics, including duplicate struct fields/initializers, match patterns, duplicate/unreachable arms, block-arm bodies, arm types and Int/Bool exhaustiveness; not full type inference or generics |
 | LLVM codegen | `bootstrap/nova-codegen-llvm` | Rust | `cargo build` | verified working | Full seed backend; no Nova replacement in `nova build` |
-| Codegen slice | `libraries/nova-codegen/src/llvm.nova` | Nova | `tests/codegen.sh` | partial | Int/Unit/String/`List<Int>` IR with `if`/`else`, `while`, range/list/nested `for`, `break`/`continue`, Int/Bool `match` with literals and `_`, comparisons, SSA bindings, seed-shaped `ptr %arg_env`, `%nova.string`, malloc-backed lists, by-value `%nova.list` params/returns, `.push()` growth and bounds-checked index assignment; `build-ir` invokes clang; native results include 9/2/17, Unit 4/0, string 5, list 23, list ABI 13, push 16, assignment 45, range-for 8, list/nested-for 30, Int match 60 and Unit match 9 |
+| Codegen slice | `libraries/nova-codegen/src/llvm.nova` | Nova | `tests/codegen.sh` | partial | Int/Unit/String/`List<Int>` IR with `if`/`else`, `while`, range/list/nested `for`, `break`/`continue`, Int/Bool `match` with literals and `_`, comparisons, SSA bindings, seed-shaped `ptr %arg_env`, `%nova.string`, malloc-backed lists, by-value `%nova.list` params/returns, `.push()` growth, bounds-checked index assignment and value structs with nested fields, construction, reads, field assignment and by-value params/returns; `build-ir` invokes clang; native results include 9/2/17, Unit 4/0, string 5, list 23, list ABI 13, push 16, assignment 45, range-for 8, list/nested-for 30, Int match 60, Unit match 9 and struct 14 |
 | CLI | `bootstrap/nova-cli` | Rust | `cargo build -p nova-cli` | verified working | Nova tool covers fmt/lex/parse/boxes, not `build/run/test` |
 | LSP | `bootstrap/nova-lsp` | Rust | Rust build | missing in Nova | Blocked on full sema and a Nova stdio streaming primitive |
 | Nova tool | `examples/nova-tool` | Nova | built by `nova build` | partial | `ast-dump`, `sema`, `sema-ast`, formatter and Boxes modes |
@@ -35,7 +35,7 @@ The audited compiler/LSP matrix and stable slice IDs are in
 
 ## Next critical path
 
-1. Complete list runtime linkage, structs and checks (`CODEGEN-01.06`/`01.07`),
+1. Complete list runtime linkage, enums and checks (`CODEGEN-01.06`/`01.07`),
    then wire the driver (`CLI-01.01`).
 2. Finish sema coverage over the AST: generics, methods/impl resolution,
    imported modules, builtin method tables and diagnostics parity.

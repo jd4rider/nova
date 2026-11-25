@@ -296,6 +296,29 @@ else
     no "list-for binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-struct.nova" "$tool")
+echo "$out" | grep -q "%nova.struct.Point = type { i64, i64 }" && ok || no "struct type declaration"
+echo "$out" | grep -q "%nova.struct.Pair = type { %nova.struct.Point, %nova.struct.Point }" && ok || no "nested struct type"
+echo "$out" | grep -q "insertvalue %nova.struct.Point" && ok || no "struct literal construction"
+echo "$out" | grep -q "extractvalue %nova.struct.Point" && ok || no "struct field read"
+echo "$out" | grep -q "store %nova.struct.Point" && ok || no "struct field assignment"
+echo "$out" | grep -q "define %nova.struct.Point @nova_user_0(ptr %arg_env, %nova.struct.Point %p0, i64 %p1)" && ok || no "struct parameter and return signature"
+echo "$out" | grep -q "define i64 @nova_user_1(ptr %arg_env, %nova.struct.Pair %p0)" && ok || no "nested struct parameter signature"
+printf '%s\n' "$out" > "$tmp/struct.ll"
+if clang -x ir "$tmp/struct.ll" -o "$tmp/struct" > "$tmp/struct-clang.log" 2>&1; then
+    ok
+else
+    no "clang rejects struct IR"
+    cat "$tmp/struct-clang.log"
+fi
+if [ -x "$tmp/struct" ]; then
+    "$tmp/struct"
+    code=$?
+    [ "$code" -eq 14 ] && ok || no "struct result (got $code, expected 14)"
+else
+    no "struct binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-unit-main.nova" "$tool")
 echo "$out" | grep -q "define void @nova_user_0(ptr %arg_env)" && ok || no "Unit main signature"
 echo "$out" | grep -q "call void @nova_user_0(ptr null)" && ok || no "Unit main call"

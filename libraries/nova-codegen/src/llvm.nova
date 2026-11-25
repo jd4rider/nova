@@ -1,10 +1,11 @@
 // Nova LLVM IR lowering.
 //
-// Scope: Int, Unit and String functions; let/var; integer, string and list
-// literals; String.len/List.len; list indexing, index assignment and push;
-// arithmetic; if/else/while/for with break/continue; direct calls; seed-shaped
-// ABI (`ptr %arg_env`, `nova_user_N`, `%nova.string`, `%nova.list`). Maps,
-// structs and the full runtime ABI are later tasks.
+// Scope: Int, Bool, Unit and String functions; let/var; integer, string, list
+// and struct literals; String.len/List.len; list indexing, index assignment
+// and push; struct field reads and assignment; arithmetic;
+// if/else/while/for with break/continue; direct calls; seed-shaped ABI
+// (`ptr %arg_env`, `nova_user_N`, `%nova.string`, `%nova.list`,
+// `%nova.struct.*`). Maps, enums and the full runtime ABI are later tasks.
 //
 // Unsupported syntax returns an error instead of emitting guessed IR.
 
@@ -27,12 +28,20 @@ struct CgLocal {
     mutable: Bool,
 }
 
+struct CgStruct {
+    name: String,
+    fields: List<String>,
+    types: List<String>,
+    index: Int,
+}
+
 struct CgState {
     lines: List<String>,
     temps: Int,
     slots: Int,
     locals: List<CgLocal>,
     fns: List<CgSig>,
+    structs: List<CgStruct>,
     globals: List<String>,
     strings: Int,
     fn_index: Int,
@@ -69,6 +78,7 @@ fn cg_state(
         slots: slots,
         locals: locals,
         fns: state.fns,
+        structs: state.structs,
         globals: state.globals,
         strings: state.strings,
         fn_index: state.fn_index,
@@ -87,6 +97,7 @@ fn cg_state_globals(state: CgState, globals: List<String>, strings: Int) -> CgSt
         slots: state.slots,
         locals: state.locals,
         fns: state.fns,
+        structs: state.structs,
         globals: globals,
         strings: strings,
         fn_index: state.fn_index,
@@ -105,6 +116,7 @@ fn cg_loops_state(state: CgState, breaks: List<String>, continues: List<String>)
         slots: state.slots,
         locals: state.locals,
         fns: state.fns,
+        structs: state.structs,
         globals: state.globals,
         strings: state.strings,
         fn_index: state.fn_index,
@@ -177,10 +189,89 @@ fn cg_llvm_type(type_name: String) -> String {
     if type_name == "List<Int>" {
         return "%nova.list"
     }
+    if type_name == "Bool" {
+        return "i1"
+    }
     if type_name == "Unit" || type_name == "" {
         return "void"
     }
     return "i64"
+}
+
+fn cg_struct_index(structs: List<CgStruct>, name: String) -> Int {
+    var i = 0
+    while i < structs.len() {
+        if structs[i].name == name {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+fn cg_llvm_type_in(structs: List<CgStruct>, type_name: String) -> String {
+    if cg_struct_index(structs, type_name) >= 0 {
+        return "%nova.struct." + type_name
+    }
+    return cg_llvm_type(type_name)
+}
+
+fn cg_supported_type(structs: List<CgStruct>, type_name: String) -> Bool {
+    if type_name == "Int" || type_name == "Bool" || type_name == "String" || type_name == "Unit" || type_name == "List<Int>" {
+        return true
+    }
+    return cg_struct_index(structs, type_name) >= 0
+}
+
+fn cg_has_name(names: List<String>, name: String) -> Bool {
+    for existing in names {
+        if existing == name {
+            return true
+        }
+    }
+    return false
+}
+
+fn cg_struct_cycle(structs: List<CgStruct>, target: String, current: String, seen: List<String>) -> Bool {
+    let index = cg_struct_index(structs, current)
+    if index < 0 {
+        return false
+    }
+    for field_type in structs[index].types {
+        if field_type == target {
+            return true
+        }
+        if cg_struct_index(structs, field_type) >= 0 && !cg_has_name(seen, field_type) {
+            var next = seen
+            next.push(field_type)
+            if cg_struct_cycle(structs, target, field_type, next) {
+                return true
+            }
+        }
+    }
+    return false
+}
+
+fn cg_struct_by_llvm(structs: List<CgStruct>, ty: String) -> Int {
+    var i = 0
+    while i < structs.len() {
+        if "%nova.struct." + structs[i].name == ty {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+fn cg_field_index(item: CgStruct, name: String) -> Int {
+    var i = 0
+    while i < item.fields.len() {
+        if item.fields[i] == name {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
 }
 
 fn cg_line(state: CgState, text: String) -> CgState {
@@ -643,9 +734,48 @@ fn cg_compile(source: String) -> CgResult {
     if ast.error.len() > 0 {
         return CgResult { ir: "", error: "parse error: " + ast.error }
     }
-    var fns: List<CgSig> = []
+    var structs: List<CgStruct> = []
     let file = ast.nodes.len() - 1
     var i = 0
+    while i < ast.nodes[file].count {
+        let node = a_child(ast, file, i)
+        let item = ast.nodes[node]
+        if item.kind == ak_struct() {
+            if cg_struct_index(structs, item.text) >= 0 {
+                return CgResult { ir: "", error: "duplicate struct " + item.text }
+            }
+            var fields: List<String> = []
+            var types: List<String> = []
+            var k = 0
+            while k < item.count {
+                let field = ast.nodes[a_child(ast, node, k)]
+                if cg_has_name(fields, field.text) {
+                    return CgResult { ir: "", error: "duplicate field " + field.text + " on " + item.text }
+                }
+                fields.push(field.text)
+                types.push(field.aux)
+                k = k + 1
+            }
+            structs.push(CgStruct { name: item.text, fields: fields, types: types, index: structs.len() })
+        }
+        i = i + 1
+    }
+    var s = 0
+    while s < structs.len() {
+        var k = 0
+        while k < structs[s].fields.len() {
+            if !cg_supported_type(structs, structs[s].types[k]) {
+                return CgResult { ir: "", error: "unsupported type " + structs[s].types[k] + " on field " + structs[s].fields[k] }
+            }
+            if cg_struct_cycle(structs, structs[s].name, structs[s].name, [structs[s].name]) {
+                return CgResult { ir: "", error: "recursive struct " + structs[s].name + " has no finite layout" }
+            }
+            k = k + 1
+        }
+        s = s + 1
+    }
+    var fns: List<CgSig> = []
+    i = 0
     while i < ast.nodes[file].count {
         let node = a_child(ast, file, i)
         let item = ast.nodes[node]
@@ -654,7 +784,7 @@ fn cg_compile(source: String) -> CgResult {
             if ret == "" {
                 ret = "Unit"
             }
-            if ret != "Int" && ret != "String" && ret != "Unit" && ret != "List<Int>" {
+            if !cg_supported_type(structs, ret) {
                 return CgResult { ir: "", error: "unsupported return type on " + item.text }
             }
             if cg_fn_index(fns, item.text) >= 0 {
@@ -665,7 +795,7 @@ fn cg_compile(source: String) -> CgResult {
             var k = 0
             while k < item.count - 1 {
                 let param = ast.nodes[a_child(ast, node, k)]
-                if param.aux != "Int" && param.aux != "String" && param.aux != "List<Int>" {
+                if !cg_supported_type(structs, param.aux) || param.aux == "Unit" || param.aux == "" {
                     return CgResult { ir: "", error: "unsupported parameter type on " + param.text }
                 }
                 params.push(param.text)
@@ -687,13 +817,28 @@ fn cg_compile(source: String) -> CgResult {
     var out = "; generated by Nova codegen (CODEGEN-01.01)\n"
     out = out + "%nova.string = type { ptr, i64 }\n"
     out = out + "%nova.list = type { ptr, i64, i64 }\n"
+    var type_index = 0
+    while type_index < structs.len() {
+        var line = "%nova.struct." + structs[type_index].name + " = type { "
+        var field_index = 0
+        while field_index < structs[type_index].fields.len() {
+            if field_index > 0 {
+                line = line + ", "
+            }
+            line = line + cg_llvm_type_in(structs, structs[type_index].types[field_index])
+            field_index = field_index + 1
+        }
+        line = line + " }\n"
+        out = out + line
+        type_index = type_index + 1
+    }
     out = out + "declare void @llvm.trap()\n"
     out = out + "declare ptr @malloc(i64)\n"
     out = out + "declare ptr @realloc(ptr, i64)\n"
     var emitted = 0
     while emitted < fns.len() {
         let sig = fns[emitted]
-        let function = cg_emit_fn(ast, fns, sig)
+        let function = cg_emit_fn(ast, fns, structs, sig)
         if function.error.len() > 0 {
             return CgResult { ir: "", error: function.error }
         }
@@ -704,11 +849,9 @@ fn cg_compile(source: String) -> CgResult {
     if fns[main_index].ret == "Unit" {
         out = out + "  call void @nova_user_" + fns[main_index].index.to_string() + "(ptr null)\n"
         out = out + "  ret i32 0\n"
-    } else if fns[main_index].ret == "String" {
-        out = out + "  %nova_result = call %nova.string @nova_user_" + fns[main_index].index.to_string() + "(ptr null)\n"
-        out = out + "  ret i32 0\n"
-    } else if fns[main_index].ret == "List<Int>" {
-        out = out + "  %nova_result = call %nova.list @nova_user_" + fns[main_index].index.to_string() + "(ptr null)\n"
+    } else if fns[main_index].ret != "Int" {
+        let main_ty = cg_llvm_type_in(structs, fns[main_index].ret)
+        out = out + "  %nova_result = call " + main_ty + " @nova_user_" + fns[main_index].index.to_string() + "(ptr null)\n"
         out = out + "  ret i32 0\n"
     } else {
         out = out + "  %nova_result = call i64 @nova_user_" + fns[main_index].index.to_string() + "(ptr null)\n"
@@ -719,13 +862,14 @@ fn cg_compile(source: String) -> CgResult {
     return CgResult { ir: out, error: "" }
 }
 
-fn cg_emit_fn(ast: Ast, fns: List<CgSig>, sig: CgSig) -> CgResult {
+fn cg_emit_fn(ast: Ast, fns: List<CgSig>, structs: List<CgStruct>, sig: CgSig) -> CgResult {
     var state = CgState {
         lines: [],
         temps: 0,
         slots: 0,
         locals: [],
         fns: fns,
+        structs: structs,
         globals: [],
         strings: 0,
         fn_index: sig.index,
@@ -740,7 +884,7 @@ fn cg_emit_fn(ast: Ast, fns: List<CgSig>, sig: CgSig) -> CgResult {
         // Parameters are immutable Nova values: keep them in SSA instead of
         // spilling to the stack.
         var locals = state.locals
-        locals.push(CgLocal { name: sig.params[i], ty: cg_llvm_type(sig.param_types[i]), slot: "", value: "%p" + i.to_string(), mutable: false })
+        locals.push(CgLocal { name: sig.params[i], ty: cg_llvm_type_in(structs, sig.param_types[i]), slot: "", value: "%p" + i.to_string(), mutable: false })
         state = cg_state(state, state.lines, state.temps, state.slots, locals, state.terminated, state.error)
         i = i + 1
     }
@@ -757,7 +901,7 @@ fn cg_emit_fn(ast: Ast, fns: List<CgSig>, sig: CgSig) -> CgResult {
         }
     }
     let symbol = "nova_user_" + sig.index.to_string()
-    let ret_llvm = cg_llvm_type(sig.ret)
+    let ret_llvm = cg_llvm_type_in(structs, sig.ret)
     var text = ""
     for global in state.globals {
         text = text + global + "\n"
@@ -765,7 +909,7 @@ fn cg_emit_fn(ast: Ast, fns: List<CgSig>, sig: CgSig) -> CgResult {
     text = text + "define " + ret_llvm + " @" + symbol + "(ptr %arg_env"
     var k = 0
     while k < sig.params.len() {
-        text = text + ", " + cg_llvm_type(sig.param_types[k]) + " %p" + k.to_string()
+        text = text + ", " + cg_llvm_type_in(structs, sig.param_types[k]) + " %p" + k.to_string()
         k = k + 1
     }
     text = text + ") {\n"
@@ -1111,7 +1255,7 @@ fn cg_stmt(ast: Ast, state: CgState, node: Int) -> CgState {
         if state.ret == "Unit" {
             return cg_error(work, "Unit function cannot return a value")
         }
-        let expected = cg_llvm_type(state.ret)
+        let expected = cg_llvm_type_in(state.structs, state.ret)
         if value.ty != expected {
             return cg_error(work, "return type mismatch")
         }
@@ -1308,6 +1452,127 @@ fn cg_match(ast: Ast, state: CgState, node: Int) -> CgVal {
     return cg_val_typed(work, phi, result_ty)
 }
 
+fn cg_struct_lit(ast: Ast, state: CgState, node: Int) -> CgVal {
+    let item = ast.nodes[node]
+    let index = cg_struct_index(state.structs, item.text)
+    if index < 0 {
+        return cg_val(cg_error(state, "unknown struct " + item.text), "0")
+    }
+    let def = state.structs[index]
+    var i = 0
+    while i < item.count {
+        let field = a_child(ast, node, i)
+        if field < 0 || ast.nodes[field].kind != ak_field_init() {
+            return cg_val(cg_error(state, "invalid struct field initializer"), "0")
+        }
+        let name = ast.nodes[field].text
+        if cg_field_index(def, name) < 0 {
+            return cg_val(cg_error(state, "unknown field " + name + " on " + item.text), "0")
+        }
+        var j = 0
+        while j < i {
+            let earlier = a_child(ast, node, j)
+            if earlier >= 0 && ast.nodes[earlier].text == name {
+                return cg_val(cg_error(state, "duplicate field " + name + " on " + item.text), "0")
+            }
+            j = j + 1
+        }
+        i = i + 1
+    }
+    let ty = "%nova.struct." + def.name
+    var work = state
+    var aggregate = "zeroinitializer"
+    var k = 0
+    while k < def.fields.len() {
+        var found = -1
+        var j = 0
+        while j < item.count {
+            let field = a_child(ast, node, j)
+            if field >= 0 && ast.nodes[field].text == def.fields[k] {
+                found = field
+            }
+            j = j + 1
+        }
+        if found < 0 {
+            return cg_val(cg_error(work, "missing field " + def.fields[k] + " on " + item.text), "0")
+        }
+        let value = cg_expr2(ast, work, a_child(ast, found, 0))
+        work = value.state
+        let expected = cg_llvm_type_in(work.structs, def.types[k])
+        if value.ty != expected {
+            return cg_val(cg_error(work, "field " + def.fields[k] + " type mismatch"), "0")
+        }
+        let temp_result = cg_temp(work)
+        work = temp_result.0
+        let temp = temp_result.1
+        work = cg_line(work, "  " + temp + " = insertvalue " + ty + " " + aggregate + ", " + expected + " " + value.value + ", " + k.to_string())
+        aggregate = temp
+        k = k + 1
+    }
+    return cg_val_typed(work, aggregate, ty)
+}
+
+fn cg_member(ast: Ast, state: CgState, node: Int) -> CgVal {
+    let object = cg_expr2(ast, state, a_child(ast, node, 0))
+    if object.state.error.len() > 0 {
+        return object
+    }
+    let index = cg_struct_by_llvm(object.state.structs, object.ty)
+    if index < 0 {
+        return cg_val(cg_error(object.state, "field access requires a struct"), "0")
+    }
+    let def = object.state.structs[index]
+    let field = cg_field_index(def, ast.nodes[node].text)
+    if field < 0 {
+        return cg_val(cg_error(object.state, "unknown field " + ast.nodes[node].text + " on " + def.name), "0")
+    }
+    let temp_result = cg_temp(object.state)
+    var work = temp_result.0
+    let temp = temp_result.1
+    work = cg_line(work, "  " + temp + " = extractvalue " + object.ty + " " + object.value + ", " + field.to_string())
+    return cg_val_typed(work, temp, cg_llvm_type_in(work.structs, def.types[field]))
+}
+
+fn cg_field_assign(ast: Ast, state: CgState, target: Int, value_node: Int) -> CgVal {
+    let base = a_child(ast, target, 0)
+    if base < 0 || ast.nodes[base].kind != ak_ident() {
+        return cg_val(cg_error(state, "field assignment requires a mutable struct variable"), "0")
+    }
+    let index = cg_local_index(state.locals, ast.nodes[base].text)
+    if index < 0 {
+        return cg_val(cg_error(state, "unknown local " + ast.nodes[base].text), "0")
+    }
+    let local = state.locals[index]
+    let struct_index = cg_struct_by_llvm(state.structs, local.ty)
+    if struct_index < 0 {
+        return cg_val(cg_error(state, "field assignment requires a struct"), "0")
+    }
+    if !local.mutable || local.slot.len() == 0 {
+        return cg_val(cg_error(state, "field assignment requires a mutable struct variable"), "0")
+    }
+    let def = state.structs[struct_index]
+    let field = cg_field_index(def, ast.nodes[target].text)
+    if field < 0 {
+        return cg_val(cg_error(state, "unknown field " + ast.nodes[target].text + " on " + def.name), "0")
+    }
+    let value = cg_expr2(ast, state, value_node)
+    var work = value.state
+    let expected = cg_llvm_type_in(work.structs, def.types[field])
+    if value.ty != expected {
+        return cg_val(cg_error(work, "field " + def.fields[field] + " type mismatch"), "0")
+    }
+    let loaded_result = cg_temp(work)
+    work = loaded_result.0
+    let loaded = loaded_result.1
+    work = cg_line(work, "  " + loaded + " = load " + local.ty + ", ptr " + local.slot)
+    let updated_result = cg_temp(work)
+    work = updated_result.0
+    let updated = updated_result.1
+    work = cg_line(work, "  " + updated + " = insertvalue " + local.ty + " " + loaded + ", " + expected + " " + value.value + ", " + field.to_string())
+    work = cg_line(work, "  store " + local.ty + " " + updated + ", ptr " + local.slot)
+    return cg_val_typed(work, value.value, expected)
+}
+
 fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
     if state.error.len() > 0 {
         return cg_val(state, "0")
@@ -1326,8 +1591,17 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
     if item.kind == ak_string() {
         return cg_string_lit(state, item.text)
     }
+    if item.kind == ak_bool() {
+        return cg_val_typed(state, item.text, "i1")
+    }
     if item.kind == ak_list() {
         return cg_list_lit(ast, state, node)
+    }
+    if item.kind == ak_struct_lit() {
+        return cg_struct_lit(ast, state, node)
+    }
+    if item.kind == ak_member() {
+        return cg_member(ast, state, node)
     }
     if item.kind == ak_index() {
         return cg_index(ast, state, node)
@@ -1366,6 +1640,9 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
             let left = a_child(ast, node, 0)
             if left >= 0 && ast.nodes[left].kind == ak_index() {
                 return cg_index_assign(ast, state, left, a_child(ast, node, 1))
+            }
+            if left >= 0 && ast.nodes[left].kind == ak_member() {
+                return cg_field_assign(ast, state, left, a_child(ast, node, 1))
             }
             if left < 0 || ast.nodes[left].kind != ak_ident() {
                 return cg_val(cg_error(state, "assignment target is not a local"), "0")
@@ -1466,7 +1743,7 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
         while k < got {
             let arg = cg_expr2(ast, work, a_child(ast, node, k + 1))
             work = arg.state
-            let expected = cg_llvm_type(sig.param_types[k])
+            let expected = cg_llvm_type_in(work.structs, sig.param_types[k])
             if arg.ty != expected {
                 return cg_val(cg_error(work, name + " argument " + k.to_string() + " type mismatch"), "0")
             }
@@ -1481,7 +1758,7 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
         if args.len() > 0 {
             call_args = call_args + ", " + args
         }
-        let ret_ty = cg_llvm_type(sig.ret)
+        let ret_ty = cg_llvm_type_in(work.structs, sig.ret)
         if ret_ty == "void" {
             work = cg_line(work, "  call void @" + symbol + "(" + call_args + ")")
             return cg_val_typed(work, "", "void")

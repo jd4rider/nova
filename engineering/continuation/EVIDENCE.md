@@ -27,8 +27,9 @@ Commits: `93d61dc`, `983fd6a`.
 sh examples/nova-tool/tests/sema-ast.sh
 ```
 
-Result: PASS — passed 15, failed 0.
+Result: PASS — passed 17, failed 0.
 
+- Duplicate struct fields and duplicate field initializers report `E0307`.
 - Exhaustive Int and Bool matches are accepted.
 - Duplicate arms report `E0312`; unsupported binding patterns report `E0311`;
   an incomplete Bool match reports `E0313`.
@@ -49,7 +50,7 @@ Result: PASS — passed 4, failed 0.
 sh examples/nova-tool/tests/codegen.sh
 ```
 
-Result: PASS — passed 73, failed 0.
+Result: PASS — passed 82, failed 0.
 
 - Straight-line Int module: no `alloca` for immutable params/`let`.
 - Mutable module compiles and exits 2.
@@ -83,6 +84,10 @@ Result: PASS — passed 73, failed 0.
   native 60.
 - Bool-match fixture uses Unit block arms and a nested Int-match expression;
   native 9.
+- Struct fixture emits `%nova.struct.Point` and `%nova.struct.Pair` aggregate
+  declarations, `insertvalue` construction, `extractvalue` field reads, a
+  rebuilt-and-stored aggregate for field assignment, and by-value struct
+  parameters/returns; native 14. Recursive by-value layouts are rejected.
 - `NOVA_TOOL=build-ir` invokes clang, checks status and produces a native binary;
   the test executes that Nova-built binary.
 - Host clang accepted every module; Mach-O confirmed on this host.
@@ -98,7 +103,8 @@ exhaustiveness. Short-circuit booleans remain. An unmatched match reaches
 existing element of a mutable local list; slices, insertion, removal and the
 `nova_list_*` runtime are not implemented. Push uses libc `realloc` rather than
 the seed allocator. List storage is never freed; the bounds trap is not a Nova
-panic. Maps, sets, structs, enums, tuples, arrays and Option/Result remain.
+panic. Structs are value-only: no generics, methods, equality, printing or
+references. Maps, sets, enums, tuples, arrays and Option/Result remain.
 `emit-ir` is still not the full CLI. This is not a compiler-speed measurement.
 
 ## Parity audit
@@ -111,6 +117,7 @@ and cancellation are absent even in Rust.
 
 ## Commit history
 
+- Struct checkpoint — 82/0 codegen, 17/0 sema.
 - `match` sema checkpoint — 73/0 codegen, 15/0 sema.
 - `match` codegen checkpoint — 73/0.
 - `for`/loop-control checkpoint — 67/0.

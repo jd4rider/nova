@@ -4,16 +4,16 @@ Updated: 2026-11-24
 Master directive: owner-supplied; parity matrix in `engineering/continuation/`.
 Repository / branch: `nova` / `selfhost/pure-nova`
 HEAD: this checkpoint is committed by the accompanying code/doc commits; prior
-`c7d273f`.
+`625b53a`.
 Working tree: unrelated `editor/` and playground changes remain untouched.
 
 Active milestone: `COMP-01` / `CODEGEN-01` — frontend and LLVM lowering
-Active task: `COMP-01.02` / `CODEGEN-01.08` — match semantics and control flow
-Status: PARTIAL (Int/Bool match and sema validation; enum patterns pending)
+Active task: `COMP-01.02` / `CODEGEN-01.06` — value structs and field checks
+Status: PARTIAL (structs lower natively; enums and enum patterns pending)
 
 ## Last verified behavior
 
-- `sh examples/nova-tool/tests/codegen.sh` → passed 73, failed 0.
+- `sh examples/nova-tool/tests/codegen.sh` → passed 82, failed 0.
   - `List<Int>` literals allocate with libc `malloc`; empty lists supported.
   - List parameters and returns use by-value `%nova.list`; a literal survives
     return, identity and indexing (native 13).
@@ -31,11 +31,16 @@ Status: PARTIAL (Int/Bool match and sema validation; enum patterns pending)
     patterns, `_`, expression arms and Unit block arms. Expression arms merge
     through a `phi`; unmatched matches reach `unreachable`. Native results:
     Int match 60, Bool/Unit match 9.
+  - User structs are emitted as `%nova.struct.<Name>` aggregates with nested
+    value fields. Literals use `insertvalue`, field reads use `extractvalue`,
+    mutable local field assignment rebuilds and stores the aggregate, and
+    struct parameters/returns pass by value. Native struct result: 14.
   - Native results: assignment 45; push 16; list index+length 23; list ABI 13;
     Int 9/2/17; Unit caller 4; Unit `main` 0; string 5.
   - `ptr %arg_env`, `nova_user_<index>` and the `@main` wrapper are emitted.
 - `sh examples/nova-tool/tests/parser.sh` → passed 50, failed 0.
-- `sh examples/nova-tool/tests/sema-ast.sh` → passed 15, failed 0.
+- `sh examples/nova-tool/tests/sema-ast.sh` → passed 17, failed 0.
+  - Duplicate struct fields and duplicate field initializers report `E0307`.
   - Int/Bool patterns are validated against the scrutinee.
   - Unsupported and empty patterns report `E0311`; duplicate or unreachable arms
     report `E0312`; empty/non-exhaustive matches report `E0313`.
@@ -51,6 +56,10 @@ Status: PARTIAL (Int/Bool match and sema validation; enum patterns pending)
 - Unit block match arms, nested match expressions and phi-based result merging.
 - Match semantic validation, block-arm body checking, arm type consistency and
   Int/Bool exhaustiveness.
+- Native value structs: aggregate type declarations, construction, field reads,
+  field assignment, nested value fields, by-value parameters/returns and
+  recursive-layout rejection. Duplicate field declarations/initializers are
+  diagnosed in sema.
 - Focused native and diagnostic fixtures.
 
 ## Incomplete work / known failures
@@ -65,7 +74,9 @@ Status: PARTIAL (Int/Bool match and sema validation; enum patterns pending)
 - Push uses libc `realloc`, not `nova_list_push` or the seed allocator. List
   storage is never freed; ownership/GC is unresolved.
 - Bounds failure is `llvm.trap`, not the seed's Nova panic.
-- Maps, sets, structs, enums, tuples, arrays and Option/Result remain.
+- Structs are value-only: no generic structs, methods, references, enums,
+  tuples, arrays or Option/Result. Struct equality and printing remain.
+- Maps and sets remain.
 - Strings lack concat, equality, interpolation and runtime calls.
 - Overflow checks and the full runtime ABI remain.
 - `nova build` still uses the Rust seed; the Nova tool is not yet the CLI.
@@ -74,7 +85,8 @@ Status: PARTIAL (Int/Bool match and sema validation; enum patterns pending)
 
 ## Resume here
 
-1. Implement structs or enums, then extend match to enum variants and payloads.
+1. Implement enums and payload-carrying variants, then extend match to enum
+   variants and payloads.
 2. Design seed runtime linkage for `nova_list_push`/`nova_list_at`; do not stub
    it.
 3. Run codegen/parser/sema suites; update `STATE.md`, `EVIDENCE.md`,
@@ -85,13 +97,13 @@ Status: PARTIAL (Int/Bool match and sema validation; enum patterns pending)
 - Command: `(cd examples/nova-tool && ../../target/debug/nova build)`
 - Result: PASS
 - Command: `sh examples/nova-tool/tests/codegen.sh`
-- Result: PASS (73/0)
+- Result: PASS (82/0)
 - Command: `sh examples/nova-tool/tests/sema-ast.sh`
-- Result: PASS (15/0)
+- Result: PASS (17/0)
 
 ## Blockers and approvals
 
-- No external blocker for structs/enums or seed runtime linkage.
+- No external blocker for enums or seed runtime linkage.
 - Seed runtime linkage remains an explicit design decision; do not claim
   `nova_list_*` parity while push uses libc.
 - Push, publish, deployment and branch deletion require owner authorization.

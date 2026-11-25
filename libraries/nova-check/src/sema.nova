@@ -587,7 +587,11 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
             let field_node = ctx.ast.nodes[field]
             let value = sa_expr(work, a_child(ctx.ast, field, 0))
             work = value.ctx
-            seen.push(field_node.text)
+            if sa_has(seen, field_node.text) {
+                work = sa_error(work, field, "E0307", "duplicate field `" + field_node.text + "` on " + item.text)
+            } else {
+                seen.push(field_node.text)
+            }
             if index >= 0 {
                 let slot = sa_field_index(ctx.structs[index], field_node.text)
                 if slot < 0 {
@@ -811,6 +815,9 @@ fn sa_collect(ctx: SaCtx) -> SaCtx {
                 var k = 0
                 while k < item.count {
                     let field = ctx.ast.nodes[a_child(ctx.ast, node, k)]
+                    if sa_has(fields, field.text) {
+                        work = sa_error(work, a_child(ctx.ast, node, k), "E0307", "duplicate field `" + field.text + "` on " + item.text)
+                    }
                     fields.push(field.text)
                     types.push(field.aux)
                     k = k + 1

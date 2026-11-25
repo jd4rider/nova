@@ -1,0 +1,25 @@
+struct Point {
+    x: Int,
+    y: Int,
+}
+
+struct Pair {
+    left: Point,
+    right: Point,
+}
+
+fn shift(p: Point, dx: Int) -> Point {
+    return Point { x: p.x + dx, y: p.y }
+}
+
+fn sum(pair: Pair) -> Int {
+    return pair.left.x + pair.right.y
+}
+
+fn main() -> Int {
+    var p = Point { y: 4, x: 3 }
+    p.x = p.x + 7
+    let q = shift(p, 5)
+    let pair = Pair { right: q, left: p }
+    return sum(pair)
+}
