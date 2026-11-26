@@ -17,9 +17,12 @@ This page is normative for the subset the compiler currently accepts. The [langu
 ## Declarations
 
 ```text
-program   = { import | function | struct }
-function  = "fn" ident "(" params ")" [ "->" type ] block
+program   = { import | function | struct | trait | impl }
+function  = "fn" ident [ "<" ident ">" ] "(" params ")" [ "->" type ] block
 struct    = "struct" ident "{" { ident ":" type } "}"
+trait     = "trait" ident "{" { signature } "}"
+signature = "fn" ident "(" "self" [ "," params ] ")" [ "->" type ]
+impl      = "impl" [ ident "for" ] ident "{" { function } "}"
 import    = "import" ident { "." ident } [ "{" ident { "," ident } "}" ]
 ```
 
