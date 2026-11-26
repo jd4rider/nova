@@ -8,10 +8,10 @@ export interface Feature {
 }
 
 export const features: Feature[] = [
-  { area: 'Lexer, parser, spans and recovery', status: 'tested', note: 'UTF-8 identifiers, interpolation, error recovery', evidence: 'parser.sh 51/51' },
+  { area: 'Lexer, parser, spans and recovery', status: 'tested', note: 'UTF-8 identifiers, interpolation, error recovery', evidence: 'parser.sh 54/54' },
   { area: 'Type checker and native codegen', status: 'tested', note: 'Scalars, strings, lists, structs, Option/Result and match for the supported subset', evidence: 'codegen.sh 248/248; diff.sh 18/18' },
   { area: 'Checked arithmetic and bounds', status: 'tested', note: 'Overflow and index failures abort with source locations', evidence: 'codegen.sh overflow, bounds and native cases' },
-  { area: 'CLI, formatter, project manifest', status: 'tested', note: 'new/init/run/build/check/fmt/doctor/lsp/tree and nova box', evidence: 'cli.sh 22/22; toolchain.sh 126/126' },
+  { area: 'CLI, formatter, project manifest', status: 'tested', note: 'new/init/run/build/check/fmt/doctor/lsp/tree, nova test/repl and nova box', evidence: 'cli.sh 33/33; toolchain.sh 126/126' },
   { area: 'Language server', status: 'implemented', note: 'Diagnostics, completion, hover, definition, symbols, formatting', evidence: 'lsp.sh diagnostics, completion, hover, definition, symbols and formatting' },
   { area: 'VS Code extension', status: 'implemented', note: 'Nova grammar and language client for diagnostics, completion, hover, definitions, symbols and formatting', evidence: 'Typecheck, VSIX package, code --install-extension and live nova lsp transcript; no Extension Host automation' },
   { area: 'Browser playground', status: 'implemented', note: 'Real lexer, parser, type checker and formatter in WebAssembly; check/format only', evidence: 'checked-in wasm artifacts; static route and examples pass; Nova wasm backend missing' },
@@ -21,7 +21,7 @@ export const features: Feature[] = [
   { area: 'Terminal input and events', status: 'tested', note: 'TTY/raw mode, key polling, terminal size, UTF-8 input, common CSI keys, SGR/X10 mouse, bracketed paste and polled resize events', evidence: 'Native terminal-size test and a PTY transcript sending resize, wheel, click, paste and quit' },
   { area: 'User enums with payloads', status: 'tested', note: 'Unit variants or one payload, exhaustive match and nominal types', evidence: 'Native codegen test constructs and matches three variants' },
   { area: 'Visual effects and synthesized sound', status: 'experimental', note: 'Current-line lens, typing/scroll sparkles, Web Audio SFX, reduced-motion aware', evidence: 'Settings, menu and palette toggles; no automated GUI test yet' },
-  { area: 'Generics, traits, closures', status: 'experimental', note: 'Explicit generic functions with one type parameter are monomorphized; generic structs, generic methods, traits and closures are not implemented', evidence: 'cli.sh generic identity build/run' },
+  { area: 'Generics, traits, closures', status: 'experimental', note: 'Explicit one-parameter generic functions, static trait conformance with concrete method dispatch, value-capturing closures and function values; generic structs/methods and dyn Trait are not implemented', evidence: 'cli.sh generic, closure and trait build/run; missing trait method E0201' },
   { area: 'Nova TUI library', status: 'experimental', note: 'Panels, tables, grapheme-aware wrapping, raw keys, mouse, paste and live resize plus a Bubble Tea-style model/update/view runtime; POSIX verified, Windows untested', evidence: 'examples/tui and examples/bible PTY runs; libraries/nova-tui' },
   { area: 'HTTP and JSON builtins', status: 'experimental', note: 'http_get shells out to curl without a shell; json_string decodes one string field and is not a parser; char_string converts key codes; POSIX only', evidence: 'examples/bible fetched John 3:16 from bible-api.com in a PTY' },
   { area: 'Web server framework', status: 'experimental', note: 'nova-web: blocking HTTP/1.1 on 127.0.0.1, typed Request/Response, state threaded through the loop, exact-path router; no TLS, custom headers, static files or concurrency', evidence: 'examples/haiku served 200/201/404 responses and persisted state under curl' },

@@ -239,9 +239,9 @@ async function freebuffStatus(): Promise<FreeBuffStatus> {
 function systemPrompt(context: AiContext | null): string {
   const lines = [
     'You are the coding assistant inside Nova Studio, a desktop IDE for the Nova programming language.',
-    'Nova is statically typed with a Rust front end, an LLVM backend and a clang link step.',
-    'Supported today: functions, structs, enums with unit variants or multi-field payloads, exhaustive match, let/var, if, while, `for i in 0..n`, Option/Result, lists, string interpolation, generic functions/types/methods, static traits, `dyn Trait` objects, `impl` methods, tuples/arrays/slices, capturing closures, expression/statement macros, `extern "C"`, synchronous async/await, map/set types, path imports and std imports such as `import std.io { println }`.',
-    'Variant constructors are global (`Circle(2)`, `Empty`) and match patterns are `Circle(radius)`, `Empty` or `_`. Not supported: trait impls on generic types, real async scheduling/channels, namespaced modules, packages and named/default arguments. Say so instead of inventing syntax.',
+    'Nova is statically typed with a self-hosted Nova front end, an LLVM backend and a clang link step.',
+    'Supported today: functions, structs, enums with unit variants or multi-field payloads, exhaustive match, let/var, if, while, `for i in 0..n`, Option/Result, lists, string interpolation, explicit one-parameter generic functions, static traits and trait conformance, non-generic `impl` methods, tuples/arrays/slices, value-capturing closures and function values, `extern "C"`, map/set types, path imports and std imports such as `import std.io { println }`.',
+    'Variant constructors are global (`Circle(2)`, `Empty`) and match patterns are `Circle(radius)`, `Empty` or `_`. Not supported: generic structs/enums/methods, `dyn Trait`, generic trait impls, mutable captures, async, macros, namespaced modules, packages and named/default arguments. Say so instead of inventing syntax.',
     'Prefer complete, compilable Nova and keep explanations short. Tag code blocks as nova.'
   ]
   if (!context) {

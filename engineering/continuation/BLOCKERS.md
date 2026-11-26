@@ -14,8 +14,9 @@ not require credentials, paid services or owner decisions.
 
 ## Internal dependencies (not external blockers)
 
-- `COMP-01.04` needs generics, traits, methods and closures in the Nova checker
-  and codegen.
+- `COMP-01.04` has static traits, non-generic methods and value-capturing
+  closures. It still needs generic structs/enums/methods, `dyn Trait` dispatch,
+  generic trait impls and mutable captures.
 - `LSP-01` needs the fuller semantic API for rename, references and code
   actions; the current Nova server covers diagnostics, completion, hover,
   definition, symbols and formatting.

@@ -138,7 +138,7 @@ Ada (36)
 | Public documentation and website | **Tested** | Astro check, build, link/base checks, grammar and snippet verification |
 | Unsigned desktop installers | **Published** | macOS DMG, Windows NSIS EXE, macOS CLI archive, checksums |
 | Signed/notarized releases | **Planned** | No Developer ID, notarization or Authenticode |
-| Generics, traits, closures, async, DAP | **Partial** | Generic functions and types, static traits, `dyn Trait` dispatch, capturing closures and synchronous async; a scheduler and DAP are absent |
+| Generics, traits, closures, async, DAP | **Partial** | Explicit one-parameter generic functions, static trait conformance with concrete method dispatch, and value-capturing closures/function values; generic structs/methods, `dyn Trait`, real async scheduling and DAP remain absent |
 
 The full matrix is in [ROADMAP.md](ROADMAP.md).
 
@@ -246,7 +246,7 @@ The website checks include real compiler invocations for documentation snippets.
 
 ## Limitations
 
-- `String` supports `len`, `is_empty`, `to_string`, `contains`, `starts_with`, `ends_with` and `trim`. Explicit generic functions with one type parameter are monomorphized at build time (`fn id<T>(x: T) -> T` called as `id<Int>(7)`); generic structs, generic methods, traits and closures are not implemented yet. Expression/statement macros expand by AST substitution. Also missing: real async scheduling or channels and registry publishing.
+- `String` supports `len`, `is_empty`, `to_string`, `contains`, `starts_with`, `ends_with` and `trim`. Explicit generic functions with one type parameter are monomorphized at build time (`fn id<T>(x: T) -> T` called as `id<Int>(7)`). Static `trait` declarations and `impl Trait for Type` conformance work with concrete method dispatch; non-generic `impl Type` methods, value-capturing closures and named function values work too. Generic structs/enums/methods, `dyn Trait`, mutable captures, real async scheduling, macros and registry publishing remain missing.
 - User modules are loaded with `import "file.nova"`, optionally aliased with `as` for qualified calls and type names. The merged namespace is flat, cycle-checked, and has no package registry.
 - Unsigned macOS/Windows installers and a macOS CLI archive are published; there are no signed/notarized builds, Intel/Linux installers, Windows CLI bundle or package registry.
 - The VS Code extension is a local, unsigned VSIX; it is not published to the VS Code Marketplace or Open VSX and has no automated Extension Host test.

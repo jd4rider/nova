@@ -90,6 +90,7 @@ fn lx_keywords() -> List<String> {
     words.push("return")
     words.push("struct")
     words.push("enum")
+    words.push("trait")
     words.push("impl")
     words.push("import")
     words.push("match")
@@ -111,7 +112,10 @@ fn lx_is_keyword(word: String) -> Bool {
     if word == "else" || word == "while" || word == "for" || word == "in" {
         return true
     }
-    if word == "return" || word == "struct" || word == "enum" || word == "impl" {
+    if word == "return" || word == "struct" || word == "enum" || word == "trait" {
+        return true
+    }
+    if word == "impl" {
         return true
     }
     if word == "import" || word == "match" || word == "break" || word == "continue" {

@@ -68,7 +68,7 @@ runtime/              C runtime and native GUI host</code></pre>
         <h2>What “working” does not mean</h2>
         <p>Nova is a functioning native language toolchain today, but it is not a complete mainstream language. The honest gaps:</p>
         <ul>
-          <li>Explicit generic functions work; generic structs, methods, traits and closures do not.</li>
+          <li>Explicit generic functions, static traits with concrete method dispatch, and value-capturing closures work; generic structs/methods and `dyn Trait` do not.</li>
           <li>Map/set literals and iteration are incomplete; sema covers less than a full type system.</li>
           <li><code>nova test</code> has no test explorer or machine-readable report, and the REPL does not support declarations.</li>
           <li>The browser playground uses checked-in WebAssembly until a Nova wasm backend exists.</li>

@@ -76,9 +76,10 @@ sanitizer runs are planned.
 
 ## Honest gaps
 
-The compiler is self-hosted but not feature-complete. Generic structs and
-methods, traits and closures are not implemented by the Nova compiler, sema
-coverage is a subset, and there is no Nova wasm backend, debug info, DAP,
+The compiler is self-hosted but not feature-complete. Generic structs/methods,
+`dyn Trait` dispatch and generic trait impls are not implemented; static
+traits, inherent methods, value-capturing closures and function values are.
+Sema coverage is a subset, and there is no Nova wasm backend, debug info, DAP,
 incremental compilation or reproducible-build guarantee. `nova test` has no
 machine-readable report, and the REPL rejects declarations. See
 [Status](../../status/) and the repository

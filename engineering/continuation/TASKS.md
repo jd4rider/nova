@@ -25,14 +25,21 @@ and integration gate pass. The full matrix is `PARITY.md`.
   (`std.io`, `std.core` only) and diagnoses missing, malformed and cyclic
   imports in terms of the importing file. `NOVA_TOOL=modules` prints the
   module graph with per-module declaration counts. Evidence: `tests/cli.sh`
-  22/0 (extensionless + transitive three-file program exits 8; path dep exits
+  33/0 (extensionless + transitive three-file program exits 8; path dep exits
   42; four diagnostics). Registry-only Box imports resolve through
   `nt_registry_module` from the fetch cache and `Box.lock`.
 - COMP-01.04 — Generics, methods, traits, closures: **PARTIAL**. Explicit
   single-parameter generic functions (`fn id<T>(x: T) -> T` called as
-  `id<Int>(7)`) are monomorphized before sema/codegen and covered by
-  `tests/cli.sh`. Generic structs, generic methods, inference without an
-  explicit type argument, traits and closures remain TODO.
+  `id<Int>(7)`) are monomorphized before sema/codegen. Non-generic `impl Type`
+  and `impl Trait for Type` methods take `self`, check trait conformance and
+  dispatch concretely at compile time. Capturing closures and named function
+  values lower to `%nova.fn { fn, env }`; captures are copied by value, and
+  higher-order, returned and nested closures work. Evidence: `tests/cli.sh`
+  33/0 (generic identity, closure captures/higher-order/returned/nested,
+  trait dispatch and missing-method `E0201`), `tests/parser.sh` (trait,
+  signature, trait impl and closure AST), `tests/codegen.sh` 248/0. Generic
+  structs/enums/methods, inference without explicit `<Type>`, `dyn Trait`,
+  generic trait impls and mutable captures remain TODO.
 - COMP-01.05 — Lexer parity, comments/interpolation/recovery: **PARTIAL**.
   String interpolation is lowered end-to-end: the parser splits literal and
   `${expr}` parts (nested braces, quoted strings and escapes handled), sema
@@ -87,7 +94,9 @@ and integration gate pass. The full matrix is `PARITY.md`.
   signatures and calls use `ptr %arg_env`, `nova_user_<index>`, `void` returns,
   `%nova.string` and `%nova.list` by value, and the `@main` wrapper; list
   `nova_list_at`/`nova_list_push` calls and the linked C runtime are verified.
-  Evidence: 248/0.
+  Non-generic methods pass `self` by value as the first parameter; closures use
+  `%nova.fn` plus a `ptr %arg_env` capture environment and indirect calls.
+  Evidence: 248/0, `tests/cli.sh` 33/0.
 - CODEGEN-01.06 — Strings, lists, maps, sets, structs, enums, tuples, arrays,
   slices, Option/Result: **PARTIAL**. String literals, parameters/returns and `.len()`  are verified; `List<Int>` literals (including empty), `.len()`, by-value
   parameters/returns and runtime-linked indexing/assignment/push are verified.
@@ -108,8 +117,9 @@ and integration gate pass. The full matrix is `PARITY.md`.
   indexing/assignment, `len`, `for`, parameters and returns. Map/Set basics
   lower to `%nova.map` with annotated empty constructors, `len`, lookups and
   inserts through `nova_map_insert`/`nova_map_get`/`nova_map_add`/
-  `nova_map_len`. Enum-typed payloads, nested/tuple-typed payloads, map/set
-  literals, iteration and Char keys remain.
+  `nova_map_len`. Non-generic `impl`/trait methods and value-capturing
+  closures/function values lower through the same call ABI. Enum-typed payloads,
+  nested/tuple-typed payloads, map/set literals, iteration and Char keys remain.
   String concatenation, equality and literal
   match patterns are verified through the runtime. String interpolation is
   verified: literal, Int, Bool and String parts concat through
@@ -143,7 +153,7 @@ and integration gate pass. The full matrix is `PARITY.md`.
   status. `run` executes the built binary and propagates its exit status;
   `check` runs body sema over the flattened project. Box dependencies,
   standard-library module semantics, and seed fallback remain. Evidence:
-  `tests/cli.sh` → 22/0.
+  `tests/cli.sh` → 33/0.
 
 ## LSP-01 — Nova language server
 

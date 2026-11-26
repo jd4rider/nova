@@ -107,6 +107,107 @@ if [ -x "$tmp/generic" ]; then
 else
     no "generic build produced no executable"
 fi
+
+cat > "$tmp/closures.nova" <<'NOVA'
+fn apply(f: fn(Int) -> Int, value: Int) -> Int {
+    return f(value)
+}
+
+fn make_adder(delta: Int) -> fn(Int) -> Int {
+    return |x: Int| x + delta
+}
+
+fn main() {
+    let base = 10
+    let add_base = |x: Int| x + base
+    println(add_base(7))
+    println(apply(add_base, 3))
+    let add_five = make_adder(5)
+    println(add_five(3))
+    let outer = |a: Int| {
+        let inner = |b: Int| a + b
+        return inner(2)
+    }
+    println(outer(5))
+}
+NOVA
+if "$tool" build "$tmp/closures.nova" "$tmp/closures" >"$tmp/closures.out" 2>&1; then
+    ok
+else
+    no "closure build"
+    cat "$tmp/closures.out"
+fi
+if [ -x "$tmp/closures" ]; then
+    code=0
+    closure_out=$("$tmp/closures") || code=$?
+    expected=$(printf '17\n13\n8\n7')
+    [ "$code" -eq 0 ] && [ "$closure_out" = "$expected" ] && ok || no "closure output (got $code: $closure_out)"
+else
+    no "closure build produced no executable"
+fi
+
+cat > "$tmp/traits.nova" <<'NOVA'
+trait Shape {
+    fn area(self) -> Int
+    fn label(self) -> String
+}
+
+struct Rect {
+    w: Int,
+    h: Int,
+}
+
+impl Shape for Rect {
+    fn area(self) -> Int {
+        return self.w * self.h
+    }
+    fn label(self) -> String {
+        return "rect"
+    }
+}
+
+impl Rect {
+    fn scale(self, n: Int) -> Int {
+        return self.area() * n
+    }
+}
+
+fn main() {
+    let r = Rect { w: 3, h: 4 }
+    println(r.area())
+    println(r.label())
+    println(r.scale(2))
+}
+NOVA
+if "$tool" build "$tmp/traits.nova" "$tmp/traits" >"$tmp/traits.out" 2>&1; then
+    ok
+else
+    no "trait build"
+    cat "$tmp/traits.out"
+fi
+if [ -x "$tmp/traits" ]; then
+    code=0
+    trait_out=$("$tmp/traits") || code=$?
+    expected=$(printf '12\nrect\n24')
+    [ "$code" -eq 0 ] && [ "$trait_out" = "$expected" ] && ok || no "trait output (got $code: $trait_out)"
+else
+    no "trait build produced no executable"
+fi
+
+cat > "$tmp/trait-missing.nova" <<'NOVA'
+trait Named {
+    fn name(self) -> String
+}
+
+struct Empty {}
+
+impl Named for Empty {}
+
+fn main() {}
+NOVA
+trait_missing=$(NOVA_TOOL=sema-ast NOVA_TOOL_PATH="$tmp/trait-missing.nova" "$tool")
+echo "$trait_missing" | grep -q "E0201" && ok || no "missing trait method reported ($trait_missing)"
+
 repl_out=$(printf '1 + 2\n:quit\n' | (cd "$tmp/project" && NOVA_TOOL_RUNTIME="$root/runtime/runtime.c" "$tool" repl 2>&1))
 echo "$repl_out" | grep -q "3" && ok || no "REPL expression output ($repl_out)"
 

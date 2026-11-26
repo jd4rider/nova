@@ -118,7 +118,7 @@ fn main() {
 }
 ```
 
-Variants may carry zero or more positional payload fields. Constructors are global (`Rect(2, 3)`, `Empty`), so variant names must be unique across enums; `Some`, `None`, `Ok` and `Err` are reserved. `impl Type { fn name(self) ... }` adds methods to a struct or enum; the first parameter must be `self`. Trait impls and `dyn Trait` dynamic dispatch are supported for non-generic types; generic methods, static methods and trait impls on generic types are not implemented. Match must cover every variant or end with `_`.
+Variants may carry positional payload fields. Constructors are global (`Rect(2, 3)`, `Empty`), so variant names must be unique across enums; `Some`, `None`, `Ok` and `Err` are reserved. `impl Type { fn name(self) ... }` adds methods to a struct or enum; the first parameter must be `self`. Static `impl Trait for Type` conformance and concrete method dispatch work for non-generic types. `dyn Trait`, generic methods, static methods and trait impls on generic types are not implemented. Match must cover every variant or end with `_`.
 
 ## Tuples, arrays and slices
 
@@ -151,15 +151,15 @@ Tuples are inline values: construction, `.0`-style access, tuple-typed returns, 
 
 - Capturing closures (`|x: Int| x + base`) capture outer locals by value, including nested captures and closures returned from functions; named function values use the type `fn(Int) -> Int`.
 - Hashed `Map<K, V>` and `Set<T>` created with `map()` / `set()` plus a type annotation; `insert`, `get`, `contains`, `contains_key` and `len` are supported. Keys are limited to `Int`, `Bool`, `Char` and `String`.
-- Generic functions, structs, enums and inherent methods are monomorphised at concrete call sites. Struct literals and variant constructors infer type arguments from an annotation; explicit type arguments at those expression sites and trait impls on generic types are not implemented.
-- `trait` declarations and `impl Trait for Type` provide conformance checking and ordinary method dispatch. `dyn Trait` boxes a copy of the value with a vtable and dispatches dynamically; trait impls on generic types are not implemented.
-- `async fn` and prefix `await` parse and run with synchronous semantics; there is no scheduler, task or channel runtime.
+- Explicit one-parameter generic functions are monomorphised at concrete call sites. Generic structs, enums and methods are not implemented.
+- `trait` declarations and `impl Trait for Type` provide conformance checking and concrete method dispatch. `dyn Trait`, trait objects and trait impls on generic types are not implemented.
+- Async syntax, tasks, channels and a scheduler are not implemented.
 - `extern "C" fn` declarations bind directly to linked platform symbols. The boundary is copied values only: Bool, Int, Float, Char, Unit, and `String`, which is the same `{ const char *ptr; int64_t len; }` view on both sides (C must not free it). Lists, maps and user structs have no C representation, and declarations are emitted `nounwind`; pointer ownership transfer and unwinding across the boundary are not supported.
 - Expression and statement macros (`macro square(value) { value * value }`) expand by AST substitution at each call site; a macro used as a statement splices its body's statements into the caller.
 - `import "util.nova"` loads another source file into the same flat module namespace; `import "util.nova" as util` additionally allows qualified calls (`util.add(2, 3)`) and qualified type names (`util.User`). Imports are cycle-checked. The merged namespace is still flat, so duplicate unqualified names are errors, and a package registry is not implemented.
 
 ## Not implemented
 
-Implemented on `String`: `len`, `is_empty`, `to_string`, `contains`, `starts_with`, `ends_with` and `trim`. Still planned: real async scheduling and channels, package resolution, mutable captures, named/default arguments and trait impls on generic types.
+Implemented on `String`: `len`, `is_empty`, `to_string`, `contains`, `starts_with`, `ends_with` and `trim`. Still planned: mutable captures, `dyn Trait`, generic structs/methods, trait impls on generic types, real async scheduling and named/default arguments.
 
 These features are rejected with a diagnostic rather than silently compiled to something else. See [Status](../../status/) and the [reference](../reference/).

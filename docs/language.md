@@ -37,7 +37,7 @@ A variant takes zero or one payload. Variant constructors are global in this bui
 
 Implemented `String` methods: `len`, `is_empty`, `to_string`, `contains`, `starts_with`, `ends_with` and `trim`. `List` has `len`, `is_empty`, `get`, `push` and `as_slice`. Fixed arrays support `len`, indexing, index assignment, `for` and `as_slice`. `Slice<T>` supports `len`, indexing, assignment through a mutable view, `for`, parameters and returns. `Map<K,V>` and `Set<T>` support annotated `map()`/`set()` constructors, `len`, `get`/`contains_key`/`contains` and `insert` for `Int`, `Bool` and `String` keys. `Option` and `Result` have `is_some`/`is_none` and `is_ok`/`is_err`, plus `unwrap_or(value)`.
 
-Planned but rejected by the checker today: fixed-width integers, `USize`, `f32`, tuples, generics, traits, methods on user types, closures, variants with multiple payload fields. Arrays, `Slice<T>` views, basic `Map`/`Set` and `Option`/`Result` are accepted and lowered; map/set literals, map/set iteration and Char keys remain. Range slicing `list[start..end]` is accepted by Nova but rejected by the seed.
+Implemented today: explicit one-parameter generic functions, static `trait` declarations with `impl Trait for Type` conformance, non-generic inherent and trait methods with `self`, and value-capturing closures/function values. Still rejected: fixed-width integers, `USize`, `f32`, generic structs/methods, `dyn Trait`, and variants with multiple payload fields. Arrays, `Slice<T>` views, basic `Map`/`Set` and `Option`/`Result` are accepted and lowered; map/set literals, map/set iteration and Char keys remain. Range slicing `list[start..end]` is accepted by Nova but rejected by the seed.
 
 ## Expressions and control flow
 
@@ -89,9 +89,9 @@ Patterns include `_`, identifiers, literals, `None`, `Some(...)`, `Ok(...)`, `Er
 
 ## Limitations and semantics
 
-- No user modules or path imports; `import std.io` is recognized for the builtins.
-- No generics, despite `<T>` parsing experiments; such code is rejected rather than miscompiled.
-- No FFI, unsafe, async, threads, closures, or debug information.
+- Path imports are supported with cycle checks; standard-library module semantics and package resolution remain limited.
+- Explicit generic functions work; generic structs, generic methods and `dyn Trait` do not.
+- No FFI, unsafe, async, threads or debug information. Closures capture outer values by copy at creation.
 - Memory allocation currently lasts for the process lifetime; see [memory.md](memory.md).
 - Panics abort. There is no unwind-based recovery.
 - `main` does not yet receive command-line arguments.

@@ -25,6 +25,9 @@ struct CgSig {
     body: Int,
     index: Int,
     external: Bool,
+    captures: List<String>,
+    capture_types: List<String>,
+    closure: Bool,
 }
 
 struct CgLocal {
@@ -210,7 +213,54 @@ fn cg_loop_continue(state: CgState) -> String {
     return state.continues[state.continues.len() - 1]
 }
 
+fn cg_is_fn_type(type_name: String) -> Bool {
+    if !type_name.starts_with("fn(") || !type_name.contains(")->") {
+        return false
+    }
+    return true
+}
+
+fn cg_fn_params(type_name: String) -> List<String> {
+    if !cg_is_fn_type(type_name) {
+        return []
+    }
+    let chars = type_name.chars()
+    var start = 3
+    var stop = -1
+    var i = 0
+    while i + 2 < chars.len() {
+        if chars[i] == ")" && chars[i + 1] == "-" && chars[i + 2] == ">" {
+            stop = i
+            i = chars.len()
+        } else {
+            i = i + 1
+        }
+    }
+    if stop < start {
+        return []
+    }
+    return cg_split_types(lx_slice(chars, start, stop))
+}
+
+fn cg_fn_ret(type_name: String) -> String {
+    if !cg_is_fn_type(type_name) {
+        return ""
+    }
+    let chars = type_name.chars()
+    var i = 0
+    while i + 2 < chars.len() {
+        if chars[i] == ")" && chars[i + 1] == "-" && chars[i + 2] == ">" {
+            return lx_slice(chars, i + 3, chars.len())
+        }
+        i = i + 1
+    }
+    return ""
+}
+
 fn cg_llvm_type(type_name: String) -> String {
+    if cg_is_fn_type(type_name) {
+        return "%nova.fn"
+    }
     if type_name == "String" {
         return "%nova.string"
     }
@@ -511,6 +561,9 @@ fn cg_enum_by_llvm(enums: List<CgEnum>, ty: String) -> Int {
 }
 
 fn cg_llvm_type_in(structs: List<CgStruct>, enums: List<CgEnum>, type_name: String) -> String {
+    if cg_is_fn_type(type_name) {
+        return "%nova.fn"
+    }
     if cg_is_map(type_name) || cg_is_set(type_name) {
         return "%nova.map"
     }
@@ -555,6 +608,19 @@ fn cg_llvm_type_in(structs: List<CgStruct>, enums: List<CgEnum>, type_name: Stri
 fn cg_supported_type(structs: List<CgStruct>, enums: List<CgEnum>, type_name: String) -> Bool {
     if type_name == "Int" || type_name == "Bool" || type_name == "String" || type_name == "Unit" {
         return true
+    }
+    if cg_is_fn_type(type_name) {
+        let params = cg_fn_params(type_name)
+        let ret = cg_fn_ret(type_name)
+        if ret.len() == 0 {
+            return false
+        }
+        for param in params {
+            if !cg_supported_type(structs, enums, param) {
+                return false
+            }
+        }
+        return cg_supported_type(structs, enums, ret)
     }
     if cg_is_list(type_name) {
         let element = cg_list_elem(type_name)
@@ -602,6 +668,283 @@ fn cg_supported_type(structs: List<CgStruct>, enums: List<CgEnum>, type_name: St
         return true
     }
     return cg_enum_index(enums, type_name) >= 0
+}
+
+fn cg_sig_symbol(sig: CgSig) -> String {
+    if sig.closure || sig.name.starts_with("__fnref_") {
+        return sig.name
+    }
+    return "nova_user_" + sig.index.to_string()
+}
+
+fn cg_align_up(value: Int, align: Int) -> Int {
+    if align <= 1 {
+        return value
+    }
+    let rem = value % align
+    if rem == 0 {
+        return value
+    }
+    return value + align - rem
+}
+
+fn cg_type_size_align(structs: List<CgStruct>, enums: List<CgEnum>, type_name: String) -> (Int, Int) {
+    if type_name == "Bool" {
+        return (1, 1)
+    }
+    if type_name == "String" {
+        return (16, 8)
+    }
+    if cg_is_list(type_name) {
+        return (24, 8)
+    }
+    if cg_is_slice(type_name) {
+        return (16, 8)
+    }
+    if cg_is_map(type_name) || cg_is_set(type_name) {
+        return (40, 8)
+    }
+    if cg_is_fn_type(type_name) {
+        return (16, 8)
+    }
+    let option_inner = cg_option_inner(type_name)
+    if option_inner.len() > 0 {
+        let inner = cg_type_size_align(structs, enums, option_inner)
+        return (cg_align_up(8, inner.1) + inner.0, inner.1)
+    }
+    let result_ok = cg_result_ok(type_name)
+    let result_err = cg_result_err(type_name)
+    if result_ok.len() > 0 && result_err.len() > 0 {
+        let ok = cg_type_size_align(structs, enums, result_ok)
+        let err = cg_type_size_align(structs, enums, result_err)
+        let size = cg_align_up(8, ok.1) + ok.0 + cg_align_up(err.0, err.1)
+        return (size, 8)
+    }
+    let array = cg_array_layout(type_name)
+    if array.1 >= 0 {
+        let elem = cg_type_size_align(structs, enums, array.0)
+        return (elem.0 * array.1, elem.1)
+    }
+    if cg_is_tuple(type_name) {
+        let parts = cg_split_types(cg_tuple_inner(type_name))
+        var offset = 0
+        var align = 1
+        for part in parts {
+            let field = cg_type_size_align(structs, enums, part.trim())
+            offset = cg_align_up(offset, field.1) + field.0
+            align = if field.1 > align { field.1 } else { align }
+        }
+        return (cg_align_up(offset, align), align)
+    }
+    let struct_index = cg_struct_index(structs, type_name)
+    if struct_index >= 0 {
+        var offset = 0
+        var align = 1
+        var i = 0
+        while i < structs[struct_index].types.len() {
+            let field = cg_type_size_align(structs, enums, structs[struct_index].types[i])
+            offset = cg_align_up(offset, field.1) + field.0
+            align = if field.1 > align { field.1 } else { align }
+            i = i + 1
+        }
+        return (cg_align_up(offset, align), align)
+    }
+    let enum_index = cg_enum_index(enums, type_name)
+    if enum_index >= 0 {
+        return (8 + 8 * cg_enum_slot_count(structs, enums[enum_index]), 8)
+    }
+    return (8, 8)
+}
+
+fn cg_capture_layout(structs: List<CgStruct>, enums: List<CgEnum>, types: List<String>) -> (List<Int>, Int) {
+    var offsets: List<Int> = []
+    var offset = 0
+    var align = 1
+    for type_name in types {
+        let info = cg_type_size_align(structs, enums, type_name)
+        offset = cg_align_up(offset, info.1)
+        offsets.push(offset)
+        offset = offset + info.0
+        if info.1 > align {
+            align = info.1
+        }
+    }
+    return (offsets, cg_align_up(offset, align))
+}
+
+fn cg_find_return(ast: Ast, node: Int) -> Int {
+    if node < 0 || node >= ast.nodes.len() {
+        return -1
+    }
+    let item = ast.nodes[node]
+    if item.kind == ak_closure() {
+        return -1
+    }
+    if item.kind == ak_return() && item.count > 0 {
+        return a_child(ast, node, 0)
+    }
+    var i = 0
+    while i < item.count {
+        let found = cg_find_return(ast, a_child(ast, node, i))
+        if found >= 0 {
+            return found
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+fn cg_guess_type(ast: Ast, state: CgState, node: Int) -> String {
+    if node < 0 || node >= ast.nodes.len() {
+        return "?"
+    }
+    let item = ast.nodes[node]
+    if item.kind == ak_number() {
+        return "Int"
+    }
+    if item.kind == ak_string() || item.kind == ak_interp() || item.kind == ak_str_part() {
+        return "String"
+    }
+    if item.kind == ak_bool() {
+        return "Bool"
+    }
+    if item.kind == ak_ident() {
+        let index = cg_local_index(state.locals, item.text)
+        if index >= 0 {
+            return state.locals[index].source
+        }
+        return "?"
+    }
+    if item.kind == ak_unary() {
+        return cg_guess_type(ast, state, a_child(ast, node, 0))
+    }
+    if item.kind == ak_binary() {
+        let op = item.text
+        if op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=" || op == "&&" || op == "||" {
+            return "Bool"
+        }
+        if op == "+" {
+            let left = cg_guess_type(ast, state, a_child(ast, node, 0))
+            if left == "String" || left.starts_with("List<") {
+                return left
+            }
+        }
+        if op == "+" || op == "-" || op == "*" || op == "/" || op == "%" {
+            return "Int"
+        }
+        if op == ".." {
+            return "Range"
+        }
+        return "?"
+    }
+    if item.kind == ak_call() {
+        let callee = a_child(ast, node, 0)
+        if callee >= 0 {
+            let callee_item = ast.nodes[callee]
+            if callee_item.kind == ak_ident() {
+                let local = cg_local_index(state.locals, callee_item.text)
+                if local >= 0 && cg_is_fn_type(state.locals[local].source) {
+                    return cg_fn_ret(state.locals[local].source)
+                }
+                let index = cg_fn_index(state.fns, callee_item.text)
+                if index >= 0 {
+                    return state.fns[index].ret
+                }
+            }
+            if callee_item.kind == ak_member() {
+                let receiver = cg_guess_type(ast, state, a_child(ast, callee, 0))
+                let index = cg_fn_index(state.fns, receiver + "." + callee_item.text)
+                if index >= 0 {
+                    return state.fns[index].ret
+                }
+            }
+        }
+        return "?"
+    }
+    if item.kind == ak_member() {
+        let receiver = cg_guess_type(ast, state, a_child(ast, node, 0))
+        let index = cg_struct_index(state.structs, receiver)
+        if index >= 0 {
+            let field = cg_field_index(state.structs[index], item.text)
+            if field >= 0 {
+                return state.structs[index].types[field]
+            }
+        }
+        return "?"
+    }
+    if item.kind == ak_struct_lit() {
+        return item.text
+    }
+    if item.kind == ak_list() {
+        if item.count == 0 {
+            return "List<?>"
+        }
+        return "List<" + cg_guess_type(ast, state, a_child(ast, node, 0)) + ">"
+    }
+    if item.kind == ak_tuple() {
+        var text = "("
+        var i = 0
+        while i < item.count {
+            if i > 0 {
+                text = text + ","
+            }
+            text = text + cg_guess_type(ast, state, a_child(ast, node, i))
+            i = i + 1
+        }
+        return text + ")"
+    }
+    return "?"
+}
+
+fn cg_closure_sig(ast: Ast, state: CgState, node: Int) -> CgSig {
+    let item = ast.nodes[node]
+    var params: List<String> = []
+    var param_types: List<String> = []
+    var i = 0
+    while i < item.count - 1 {
+        let param = ast.nodes[a_child(ast, node, i)]
+        params.push(param.text)
+        param_types.push(param.aux)
+        i = i + 1
+    }
+    var ret = item.aux
+    if ret.len() == 0 {
+        let returned = cg_find_return(ast, a_child(ast, node, item.count - 1))
+        if returned >= 0 {
+            ret = cg_guess_type(ast, state, returned)
+        } else {
+            ret = "Unit"
+        }
+    }
+    var captures: List<String> = []
+    var capture_types: List<String> = []
+    i = 0
+    while i < state.locals.len() {
+        let local = state.locals[i]
+        if !cg_has_name(captures, local.name) && !cg_has_name(params, local.name) {
+            captures.push(local.name)
+            capture_types.push(local.source)
+        }
+        i = i + 1
+    }
+    return CgSig {
+        name: "__closure_" + node.to_string(),
+        params: params,
+        param_types: param_types,
+        ret: ret,
+        body: a_child(ast, node, item.count - 1),
+        index: 100000 + node,
+        external: false,
+        captures: captures,
+        capture_types: capture_types,
+        closure: true,
+    }
+}
+
+fn cg_emit_closure(ast: Ast, state: CgState, sig: CgSig) -> CgResult {
+    var fns = state.fns
+    fns.push(sig)
+    return cg_emit_fn(ast, fns, state.structs, state.enums, sig)
 }
 
 fn cg_has_name(names: List<String>, name: String) -> Bool {
@@ -914,7 +1257,9 @@ fn cg_enum_call(ast: Ast, state: CgState, node: Int, name: String) -> CgVal {
 
 fn cg_line(state: CgState, text: String) -> CgState {
     nova_ir_line(text)
-    return state
+    var lines = state.lines
+    lines.push(text)
+    return cg_state(state, lines, state.temps, state.slots, state.locals, state.terminated, state.error)
 }
 
 fn cg_error(state: CgState, message: String) -> CgState {
@@ -982,6 +1327,18 @@ fn cg_fn_index(fns: List<CgSig>, name: String) -> Int {
         i = i + 1
     }
     return -1
+}
+
+fn cg_method_exists(fns: List<CgSig>, name: String) -> Bool {
+    let suffix = "." + name
+    var i = 0
+    while i < fns.len() {
+        if fns[i].name.ends_with(suffix) {
+            return true
+        }
+        i = i + 1
+    }
+    return false
 }
 
 fn cg_number(text: String) -> String {
@@ -2595,7 +2952,7 @@ fn cg_compile(source: String) -> CgResult {
                 k = k + 1
             }
             let index = fns.len()
-            fns.push(CgSig { name: item.text, params: params, param_types: param_types, ret: ret, body: a_child(ast, node, item.count - 1), index: index, external: false })
+            fns.push(CgSig { name: item.text, params: params, param_types: param_types, ret: ret, body: a_child(ast, node, item.count - 1), index: index, external: false, captures: [], capture_types: [], closure: false })
         } else if item.kind == ak_extern() {
             var ret = item.aux
             if ret == "" {
@@ -2620,7 +2977,50 @@ fn cg_compile(source: String) -> CgResult {
                 k = k + 1
             }
             let index = fns.len()
-            fns.push(CgSig { name: item.text, params: params, param_types: param_types, ret: ret, body: 0 - 1, index: index, external: true })
+            fns.push(CgSig { name: item.text, params: params, param_types: param_types, ret: ret, body: 0 - 1, index: index, external: true, captures: [], capture_types: [], closure: false })
+        }
+        i = i + 1
+    }
+    i = 0
+    while i < ast.nodes[file].count {
+        let node = a_child(ast, file, i)
+        let item = ast.nodes[node]
+        if item.kind == ak_impl() {
+            var k = 0
+            while k < item.count {
+                let method_node = a_child(ast, node, k)
+                let method = ast.nodes[method_node]
+                let symbol = item.text + "." + method.text
+                var ret = method.aux
+                if ret == "" {
+                    ret = "Unit"
+                }
+                if !cg_supported_type(structs, enums, ret) {
+                    return CgResult { ir: "", error: "unsupported return type on " + symbol }
+                }
+                if cg_fn_index(fns, symbol) >= 0 {
+                    return CgResult { ir: "", error: "duplicate method " + symbol }
+                }
+                var params: List<String> = []
+                var param_types: List<String> = []
+                var p = 0
+                while p < method.count - 1 {
+                    let param = ast.nodes[a_child(ast, method_node, p)]
+                    var param_type = param.aux
+                    if param.text == "self" && param_type.len() == 0 {
+                        param_type = item.text
+                    }
+                    if !cg_supported_type(structs, enums, param_type) || param_type == "Unit" || param_type == "" {
+                        return CgResult { ir: "", error: "unsupported parameter type on " + symbol }
+                    }
+                    params.push(param.text)
+                    param_types.push(param_type)
+                    p = p + 1
+                }
+                let index = fns.len()
+                fns.push(CgSig { name: symbol, params: params, param_types: param_types, ret: ret, body: a_child(ast, method_node, method.count - 1), index: index, external: false, captures: [], capture_types: [], closure: false })
+                k = k + 1
+            }
         }
         i = i + 1
     }
@@ -2636,6 +3036,7 @@ fn cg_compile(source: String) -> CgResult {
     out = out + "%nova.list = type { ptr, i64, i64 }\n"
     out = out + "%nova.slice = type { ptr, i64 }\n"
     out = out + "%nova.map = type { ptr, ptr, i64, i64, i64, i32 }\n"
+    out = out + "%nova.fn = type { ptr, ptr }\n"
     var type_index = 0
     while type_index < structs.len() {
         var line = "%nova.struct." + structs[type_index].name + " = type { "
@@ -2778,6 +3179,25 @@ fn cg_emit_fn(ast: Ast, fns: List<CgSig>, structs: List<CgStruct>, enums: List<C
         state = cg_state(state, state.lines, state.temps, state.slots, locals, state.terminated, state.error)
         i = i + 1
     }
+    if sig.closure {
+        let layout = cg_capture_layout(structs, enums, sig.capture_types)
+        var c = 0
+        while c < sig.captures.len() {
+            let capture_ty = cg_llvm_type_in(structs, enums, sig.capture_types[c])
+            let pointer_result = cg_temp(state)
+            state = pointer_result.0
+            let pointer = pointer_result.1
+            state = cg_line(state, "  " + pointer + " = getelementptr i8, ptr %arg_env, i64 " + layout.0[c].to_string())
+            let value_result = cg_temp(state)
+            state = value_result.0
+            let value = value_result.1
+            state = cg_line(state, "  " + value + " = load " + capture_ty + ", ptr " + pointer)
+            var locals = state.locals
+            locals.push(CgLocal { name: sig.captures[c], ty: capture_ty, slot: "", value: value, mutable: false, elem: cg_list_elem(sig.capture_types[c]), source: sig.capture_types[c] })
+            state = cg_state(state, state.lines, state.temps, state.slots, locals, state.terminated, state.error)
+            c = c + 1
+        }
+    }
     state = cg_block(ast, state, sig.body)
     if state.error.len() > 0 {
         return CgResult { ir: "", error: "in " + sig.name + ": " + state.error }
@@ -2790,9 +3210,9 @@ fn cg_emit_fn(ast: Ast, fns: List<CgSig>, structs: List<CgStruct>, enums: List<C
             return CgResult { ir: "", error: "function " + sig.name + " does not end with return" }
         }
     }
-    let symbol = "nova_user_" + sig.index.to_string()
+    let symbol = cg_sig_symbol(sig)
     let ret_llvm = cg_llvm_type_in(structs, enums, sig.ret)
-    let body = nova_ir_take()
+    let body = state.lines.join("\n")
     var text = ""
     for global in state.globals {
         text = text + global + "\n"
@@ -3163,11 +3583,11 @@ fn cg_for_list(ast: Ast, state: CgState, node: Int, iter: Int) -> CgState {
     }
     let array = cg_array_layout(list.source)
     if array.1 >= 0 {
-        return cg_for_array(ast, state, node, list, array.0, array.1)
+        return cg_for_array(ast, work, node, list, array.0, array.1)
     }
     let slice_elem = cg_slice_elem(list.source)
     if slice_elem.len() > 0 {
-        return cg_for_slice(ast, state, node, list, slice_elem)
+        return cg_for_slice(ast, work, node, list, slice_elem)
     }
     if list.ty != "%nova.list" {
         return cg_error(work, "for expects a range, list or slice")
@@ -4592,6 +5012,210 @@ fn cg_call_function(ast: Ast, state: CgState, node: Int, name: String) -> CgVal 
     return cg_val_from_source(work, temp, sig.ret)
 }
 
+fn cg_call_method(ast: Ast, state: CgState, node: Int, callee: Int) -> CgVal {
+    let recv = cg_expr2(ast, state, a_child(ast, callee, 0))
+    let method = ast.nodes[callee].text
+    let symbol = recv.source + "." + method
+    let index = cg_fn_index(recv.state.fns, symbol)
+    if index < 0 {
+        return cg_val(cg_error(recv.state, "type " + recv.source + " has no method " + method), "0")
+    }
+    let sig = recv.state.fns[index]
+    let got = ast.nodes[node].count - 1
+    if sig.params.len() == 0 {
+        return cg_val(cg_error(recv.state, "method " + symbol + " has no receiver"), "0")
+    }
+    if got != sig.params.len() - 1 {
+        return cg_val(cg_error(recv.state, method + " arity mismatch"), "0")
+    }
+    let self_ty = cg_llvm_type_in(recv.state.structs, recv.state.enums, sig.param_types[0])
+    var work = recv.state
+    var args = "ptr null, " + self_ty + " " + recv.value
+    var k = 0
+    while k < got {
+        let arg = cg_expr_expected(ast, work, a_child(ast, node, k + 1), sig.param_types[k + 1])
+        work = arg.state
+        let expected = cg_llvm_type_in(work.structs, work.enums, sig.param_types[k + 1])
+        if arg.ty != expected {
+            return cg_val(cg_error(work, symbol + " argument type mismatch"), "0")
+        }
+        args = args + ", " + expected + " " + arg.value
+        k = k + 1
+    }
+    let symbol_name = "nova_user_" + sig.index.to_string()
+    let ret_ty = cg_llvm_type_in(work.structs, work.enums, sig.ret)
+    if ret_ty == "void" {
+        work = cg_line(work, "  call void @" + symbol_name + "(" + args + ")")
+        return cg_val_typed(work, "", "void")
+    }
+    let temp_result = cg_temp(work)
+    work = temp_result.0
+    let temp = temp_result.1
+    work = cg_line(work, "  " + temp + " = call " + ret_ty + " @" + symbol_name + "(" + args + ")")
+    return cg_val_from_source(work, temp, sig.ret)
+}
+
+fn cg_call_fn_value(ast: Ast, state: CgState, node: Int, callee: CgVal) -> CgVal {
+    let params = cg_fn_params(callee.source)
+    let ret = cg_fn_ret(callee.source)
+    if !cg_is_fn_type(callee.source) || ret.len() == 0 {
+        return cg_val(cg_error(callee.state, "value is not callable"), "0")
+    }
+    let got = ast.nodes[node].count - 1
+    if got != params.len() {
+        return cg_val(cg_error(callee.state, "function value arity mismatch"), "0")
+    }
+    var work = callee.state
+    var args = ""
+    var k = 0
+    while k < got {
+        let arg = cg_expr_expected(ast, work, a_child(ast, node, k + 1), params[k])
+        work = arg.state
+        let expected = cg_llvm_type_in(work.structs, work.enums, params[k])
+        if arg.ty != expected {
+            return cg_val(cg_error(work, "function value argument type mismatch"), "0")
+        }
+        if k > 0 {
+            args = args + ", "
+        }
+        args = args + expected + " " + arg.value
+        k = k + 1
+    }
+    let fn_result = cg_temp(work)
+    work = fn_result.0
+    let fn_ptr = fn_result.1
+    work = cg_line(work, "  " + fn_ptr + " = extractvalue %nova.fn " + callee.value + ", 0")
+    let env_result = cg_temp(work)
+    work = env_result.0
+    let env = env_result.1
+    work = cg_line(work, "  " + env + " = extractvalue %nova.fn " + callee.value + ", 1")
+    var call_args = "ptr " + env
+    if args.len() > 0 {
+        call_args = call_args + ", " + args
+    }
+    let ret_ty = cg_llvm_type_in(work.structs, work.enums, ret)
+    if ret_ty == "void" {
+        work = cg_line(work, "  call void " + fn_ptr + "(" + call_args + ")")
+        return cg_val_typed(work, "", "void")
+    }
+    let result = cg_temp(work)
+    work = result.0
+    let value = result.1
+    work = cg_line(work, "  " + value + " = call " + ret_ty + " " + fn_ptr + "(" + call_args + ")")
+    return cg_val_from_source(work, value, ret)
+}
+
+fn cg_function_ref(ast: Ast, state: CgState, node: Int, index: Int) -> CgVal {
+    let sig = state.fns[index]
+    if sig.external || sig.closure {
+        return cg_val(cg_error(state, "cannot take a function value for " + sig.name), "0")
+    }
+    let thunk = "__fnref_" + sig.index.to_string() + "_" + node.to_string()
+    let ret_ty = cg_llvm_type_in(state.structs, state.enums, sig.ret)
+    var text = "define " + ret_ty + " @" + thunk + "(ptr %arg_env"
+    var k = 0
+    while k < sig.param_types.len() {
+        text = text + ", " + cg_llvm_type_in(state.structs, state.enums, sig.param_types[k]) + " %a" + k.to_string()
+        k = k + 1
+    }
+    text = text + ") {\n"
+    var call_args = "ptr null"
+    k = 0
+    while k < sig.param_types.len() {
+        call_args = call_args + ", " + cg_llvm_type_in(state.structs, state.enums, sig.param_types[k]) + " %a" + k.to_string()
+        k = k + 1
+    }
+    if ret_ty == "void" {
+        text = text + "  call void @nova_user_" + sig.index.to_string() + "(" + call_args + ")\n  ret void\n}\n"
+    } else {
+        text = text + "  %r = call " + ret_ty + " @nova_user_" + sig.index.to_string() + "(" + call_args + ")\n"
+        text = text + "  ret " + ret_ty + " %r\n}\n"
+    }
+    var work = state
+    var globals = work.globals
+    globals.push(text)
+    work = cg_state_globals(work, globals, work.strings)
+    let first_result = cg_temp(work)
+    work = first_result.0
+    let first = first_result.1
+    work = cg_line(work, "  " + first + " = insertvalue %nova.fn undef, ptr @" + thunk + ", 0")
+    let value_result = cg_temp(work)
+    work = value_result.0
+    let value = value_result.1
+    work = cg_line(work, "  " + value + " = insertvalue %nova.fn " + first + ", ptr null, 1")
+    var fn_type = "fn("
+    k = 0
+    while k < sig.param_types.len() {
+        if k > 0 {
+            fn_type = fn_type + ","
+        }
+        fn_type = fn_type + sig.param_types[k]
+        k = k + 1
+    }
+    fn_type = fn_type + ")->" + sig.ret
+    return cg_val_source(work, value, fn_type)
+}
+
+fn cg_make_closure(ast: Ast, state: CgState, node: Int) -> CgVal {
+    let sig = cg_closure_sig(ast, state, node)
+    let emitted = cg_emit_closure(ast, state, sig)
+    if emitted.error.len() > 0 {
+        return cg_val(cg_error(state, emitted.error), "0")
+    }
+    var work = state
+    var globals = work.globals
+    globals.push(emitted.ir)
+    work = cg_state_globals(work, globals, work.strings)
+    let layout = cg_capture_layout(work.structs, work.enums, sig.capture_types)
+    var env = "null"
+    if sig.captures.len() > 0 {
+        let env_result = cg_temp(work)
+        work = env_result.0
+        env = env_result.1
+        work = cg_line(work, "  " + env + " = call ptr @malloc(i64 " + layout.1.to_string() + ")")
+        var c = 0
+        while c < sig.captures.len() {
+            let local_index = cg_local_index(work.locals, sig.captures[c])
+            if local_index < 0 {
+                return cg_val(cg_error(work, "unknown closure capture " + sig.captures[c]), "0")
+            }
+            let local = work.locals[local_index]
+            var cap_value = local.value
+            if cap_value.len() == 0 {
+                let load_result = cg_temp(work)
+                work = load_result.0
+                cap_value = load_result.1
+                work = cg_line(work, "  " + cap_value + " = load " + local.ty + ", ptr " + local.slot)
+            }
+            let pointer_result = cg_temp(work)
+            work = pointer_result.0
+            let pointer = pointer_result.1
+            work = cg_line(work, "  " + pointer + " = getelementptr i8, ptr " + env + ", i64 " + layout.0[c].to_string())
+            work = cg_line(work, "  store " + local.ty + " " + cap_value + ", ptr " + pointer)
+            c = c + 1
+        }
+    }
+    let first_result = cg_temp(work)
+    work = first_result.0
+    let first = first_result.1
+    work = cg_line(work, "  " + first + " = insertvalue %nova.fn undef, ptr @" + sig.name + ", 0")
+    let value_result = cg_temp(work)
+    work = value_result.0
+    let value = value_result.1
+    work = cg_line(work, "  " + value + " = insertvalue %nova.fn " + first + ", ptr " + env + ", 1")
+    var fn_type = "fn("
+    var p = 0
+    while p < sig.param_types.len() {
+        if p > 0 {
+            fn_type = fn_type + ","
+        }
+        fn_type = fn_type + sig.param_types[p]
+        p = p + 1
+    }
+    fn_type = fn_type + ")->" + sig.ret
+    return cg_val_source(work, value, fn_type)
+}
+
 fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
     if state.error.len() > 0 {
         return cg_val(state, "0")
@@ -4618,6 +5242,9 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
     }
     if item.kind == ak_bool() {
         return cg_val_typed(state, item.text, "i1")
+    }
+    if item.kind == ak_closure() {
+        return cg_make_closure(ast, state, node)
     }
     if item.kind == ak_tuple() {
         return cg_tuple_lit(ast, state, node)
@@ -4646,6 +5273,10 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
     if item.kind == ak_ident() {
         let index = cg_local_index(state.locals, item.text)
         if index < 0 {
+            let function_index = cg_fn_index(state.fns, item.text)
+            if function_index >= 0 {
+                return cg_function_ref(ast, state, node, function_index)
+            }
             let found = cg_find_variant(state.enums, item.text)
             if found.0 >= 0 {
                 let count = cg_variant_payload_count(state.enums[found.0], found.1)
@@ -4813,7 +5444,21 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
     }
     if item.kind == ak_call() {
         let callee = a_child(ast, node, 0)
+        if callee >= 0 && ast.nodes[callee].kind == ak_ident() {
+            let local_index = cg_local_index(state.locals, ast.nodes[callee].text)
+            if local_index >= 0 && cg_is_fn_type(state.locals[local_index].source) {
+                let value = cg_expr2(ast, state, callee)
+                return cg_call_fn_value(ast, value.state, node, value)
+            }
+        }
+        if callee >= 0 && ast.nodes[callee].kind == ak_closure() {
+            let value = cg_expr2(ast, state, callee)
+            return cg_call_fn_value(ast, value.state, node, value)
+        }
         if callee >= 0 && ast.nodes[callee].kind == ak_member() {
+            if cg_method_exists(state.fns, ast.nodes[callee].text) {
+                return cg_call_method(ast, state, node, callee)
+            }
             if ast.nodes[callee].text == "push" {
                 return cg_list_push(ast, state, node)
             }

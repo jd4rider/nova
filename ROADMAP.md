@@ -6,8 +6,8 @@ Status means: **tested** = covered by automated tests and passing; **implemented
 
 | Area | Status | Notes |
 |---|---|---|
-| UTF-8 lexer, Unicode identifiers, spans, comments, raw strings | tested | `examples/nova-tool/tests/parser.sh` (51/51) |
-| Recursive-descent + Pratt parser, interpolation | tested | `examples/nova-tool/tests/parser.sh` (51/51); recovery parity is incomplete |
+| UTF-8 lexer, Unicode identifiers, spans, comments, raw strings | tested | `examples/nova-tool/tests/parser.sh` (54/54) |
+| Recursive-descent + Pratt parser, interpolation | tested | `examples/nova-tool/tests/parser.sh` (54/54); recovery parity is incomplete |
 | Name resolution, local inference, signatures, match exhaustiveness | partial | 39 sema-ast assertions and 27 frozen diagnostics; not full type inference |
 | Scalars, `String`, `List`, structs, Option, Result, `?` | tested | Native codegen tests |
 | `let`/`var`, if/while/for, ranges, assignment, `+=` family | tested | Checked overflow, bounds checks |
@@ -17,22 +17,22 @@ Status means: **tested** = covered by automated tests and passing; **implemented
 | Modules/imports | tested | `import "util.nova"` flattens relative source files with cycle checks; `import "util"` and `import "@publisher/box"` resolve declared dependencies through `Box.toml` and `Box.lock`. The underlying namespace is still flat, so duplicate unqualified names remain errors; only direct dependencies are mapped |
 | Generics | partial | Explicit generic functions with one type parameter are monomorphized from `name<Type>(...)`; generic structs, generic methods and inference without an explicit type argument remain |
 | User enums | tested | Unit or multi-payload variants; nominal tagged heap payload, exhaustive `match`; native codegen test |
-| `impl` methods | planned | Not implemented by the Nova compiler; tracked with COMP-01.04 |
+| `impl` methods | tested | Non-generic inherent and trait methods take `self`; trait conformance and concrete dispatch are checked; CLI, parser and codegen coverage |
 | Tuples, fixed arrays, slices | partial | Tuple construction/access/patterns and mutation, `[T; N]` bounds-checked indexing, borrowed `Slice<T>` views; no tuple `let` destructuring |
-| Traits | planned | Not implemented by the Nova compiler; tracked with COMP-01.04 |
-| Closures/first-class functions | planned | Not implemented by the Nova compiler; tracked with COMP-01.04 |
-| Async/await, tasks, channels | experimental | `async fn`/`await` run synchronously; no scheduler, tasks or channels |
+| Traits | partial | Static `trait` declarations, `impl Trait for Type` conformance and concrete method dispatch; `dyn Trait` and generic trait impls are planned |
+| Closures/first-class functions | partial | Value-capturing closures and named function values, including higher-order, returned and nested use; mutable captures are planned |
+| Async/await, tasks, channels | planned | No async syntax, scheduler, tasks or channels |
 | FFI / `extern "C"` | tested | Scalar-only C ABI (Bool/Int/Float/Char/Unit) validated at compile time, declarations emitted `nounwind`, values passed by copy; no pointer ownership transfer or unwinding across the boundary |
 | Debug info and DAP | planned | No DWARF emission yet |
 | Incremental compilation | planned | Artifacts cached only per invocation |
 | `Map`, `Set`, fixed-width ints | partial | Annotated `map()`/`set()` with `len`, `get`, `contains` and `insert` for Int/Bool/String keys; no literals or iteration; fixed-width ints planned |
-| Defer, named/default arguments, macros | partial | Expression and statement macros expand by AST substitution; `defer` and named/default arguments remain planned |
+| Defer, named/default arguments, macros | planned | None are implemented |
 
 ## Tooling
 
 | Area | Status | Notes |
 |---|---|---|
-| `nova new/init/run/build/check/test/repl/fmt/clean/doctor/tree` and `nova box` | tested | `cli.sh` 28/28 and `toolchain.sh` 126/126; the test runner compiles each `@test` function, the REPL compiles each accepted line, and explicit generic functions are monomorphized |
+| `nova new/init/run/build/check/test/repl/fmt/clean/doctor/tree` and `nova box` | tested | `cli.sh` 33/33 and `toolchain.sh` 126/126; the test runner compiles each `@test` function, the REPL compiles each accepted line, and explicit generic functions are monomorphized |
 | Project manifest, lockfile, path and registry dependencies | tested | `Box.toml`, `Box.lock`, SemVer and fetched registry boxes via `nt_registry_module`; no workspaces |
 | Formatter | implemented | Conservative indentation/whitespace; not a full pretty-printer |
 | LSP stdio JSON-RPC | tested manually | Full sync, diagnostics, completion, hover, definition, symbols, formatting |

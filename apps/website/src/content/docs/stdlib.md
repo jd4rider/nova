@@ -43,9 +43,10 @@ Builtins are available to checked programs; `import std.io { println }` and `imp
 - Tuples: inline values, `.0` access, tuple patterns and field mutation.
 - Arrays: `[T; N]`, compile-time length, bounds-checked indexing, `.len()` and `.as_slice()`.
 - `Slice<T>`: borrowed `{ptr, len}` view with bounds-checked indexing and `.len()`.
-- `Map<K, V>` / `Set<T>`: hashed collections built with `map()` / `set()` and a type annotation; open addressing with FNV-1a key hashing; keys limited to `Int`, `Bool`, `Char` and `String`.
-- Generic structs, enums and inherent methods: `struct Pair<T>`, `enum Boxed<T>` and `impl<T> Pair<T>`, monomorphised from concrete annotations.
+- `Map<K, V>` / `Set<T>`: hashed collections built with `map()` / `set()` and a type annotation; open addressing with FNV-1a key hashing; keys limited to `Int`, `Bool` and `String`.
+- Generic functions: explicit one-parameter functions such as `fn id<T>(x: T) -> T`, monomorphised from `id<Int>(...)`. Generic structs, enums and methods are not implemented.
 - `fn(...) -> T`: function values for named functions and capturing closures; captures copy the outer value at closure creation.
+- Traits: static `trait` declarations and `impl Trait for Type` conformance with concrete method dispatch. `dyn Trait` is not implemented.
 
 Byte and Unicode-scalar string indexes, general string slicing, iterators, fixed-width integers, mutable captures and lifetime-checked references are **not implemented**. `clip`, `wrap` and `graphemes` are layout operations, not general indexing; they do not expose byte offsets, and cluster segmentation is an approximation rather than full UAX #29.
 

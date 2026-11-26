@@ -739,3 +739,29 @@ field, argument and return) and a non-empty mismatch that still reports
 `E0308`. At that checkpoint, codegen 226/0, diff 15/0, diff-errors 19/19
 identical, CLI 22/0 and toolchain 126/0 passed after the diagnostic-vocabulary
 change.
+
+## Post-removal traits/closures checkpoint (2026-11-26)
+
+```sh
+(cd examples/nova-tool && ../../bootstrap/nova build)
+cp examples/nova-tool/target/nova/nova-tool bootstrap/nova
+cd examples/nova-tool
+for t in codegen diff diff-errors parser sema sema-ast cli lsp boxes formatter toolchain; do
+  sh ./tests/$t.sh || exit 1
+done
+```
+
+Result: PASS — codegen 248/0, diff 18/18, diff-errors 27/27, parser 54/0,
+sema 4/0, sema-ast 39/0, CLI 33/0, LSP diagnostics/completion/hover/definition/
+symbols/formatting ok, boxes 64/0, formatter 6/0, toolchain 126/0.
+
+The new CLI assertions build and run generic identity (`7`), closure capture,
+higher-order/returned/nested closures, trait dispatch and a missing trait method
+(`E0201`). The runtime probes printed `17 13 8 8 15 7 5` for closures and `12`,
+`rect`, `24` for methods. Parser fixtures cover trait, signature, trait impl and
+closure AST rendering. This evidence does not cover generic structs/methods,
+`dyn Trait`, generic trait impls or mutable captures.
+
+CI change: the Nova job is `runs-on: macos-15` instead of cancelled `macos-14`.
+This is a hypothesis until a hosted run executes the steps; no CI-success claim
+is made here.

@@ -308,6 +308,174 @@ fn sa_builtin(name: String) -> Bool {
     return name == "assert"
 }
 
+fn sa_is_fn_type(name: String) -> Bool {
+    if !name.starts_with("fn(") || !name.contains(")->") {
+        return false
+    }
+    return true
+}
+
+fn sa_fn_params(name: String) -> List<String> {
+    if !sa_is_fn_type(name) {
+        return []
+    }
+    let chars = name.chars()
+    var start = 3
+    var stop = -1
+    var i = 0
+    while i + 2 < chars.len() {
+        if chars[i] == ")" && chars[i + 1] == "-" && chars[i + 2] == ">" {
+            stop = i
+            i = chars.len()
+        } else {
+            i = i + 1
+        }
+    }
+    if stop < start {
+        return []
+    }
+    return sa_split_types(lx_slice(chars, start, stop))
+}
+
+fn sa_fn_ret(name: String) -> String {
+    if !sa_is_fn_type(name) {
+        return ""
+    }
+    let chars = name.chars()
+    var i = 0
+    while i + 2 < chars.len() {
+        if chars[i] == ")" && chars[i + 1] == "-" && chars[i + 2] == ">" {
+            return lx_slice(chars, i + 3, chars.len())
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+fn sa_find_return(ast: Ast, node: Int) -> Int {
+    if node < 0 || node >= ast.nodes.len() {
+        return -1
+    }
+    let item = ast.nodes[node]
+    if item.kind == ak_closure() {
+        return -1
+    }
+    if item.kind == ak_return() && item.count > 0 {
+        return a_child(ast, node, 0)
+    }
+    var i = 0
+    while i < item.count {
+        let found = sa_find_return(ast, a_child(ast, node, i))
+        if found >= 0 {
+            return found
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+fn sa_guess_type(ctx: SaCtx, node: Int) -> String {
+    if node < 0 || node >= ctx.ast.nodes.len() {
+        return "?"
+    }
+    let item = ctx.ast.nodes[node]
+    if item.kind == ak_number() {
+        return "Int"
+    }
+    if item.kind == ak_string() || item.kind == ak_interp() || item.kind == ak_str_part() {
+        return "String"
+    }
+    if item.kind == ak_bool() {
+        return "Bool"
+    }
+    if item.kind == ak_ident() {
+        return sa_lookup(ctx, item.text)
+    }
+    if item.kind == ak_unary() {
+        return sa_guess_type(ctx, a_child(ctx.ast, node, 0))
+    }
+    if item.kind == ak_binary() {
+        let op = item.text
+        if op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=" || op == "&&" || op == "||" {
+            return "Bool"
+        }
+        if op == "+" {
+            let left = sa_guess_type(ctx, a_child(ctx.ast, node, 0))
+            if left == "String" {
+                return "String"
+            }
+            if left.starts_with("List<") {
+                return left
+            }
+        }
+        if op == "+" || op == "-" || op == "*" || op == "/" || op == "%" {
+            return "Int"
+        }
+        if op == ".." {
+            return "Range"
+        }
+        return "?"
+    }
+    if item.kind == ak_call() {
+        let callee = a_child(ctx.ast, node, 0)
+        if callee >= 0 {
+            let callee_item = ctx.ast.nodes[callee]
+            if callee_item.kind == ak_ident() {
+                let local = sa_lookup(ctx, callee_item.text)
+                if sa_is_fn_type(local) {
+                    return sa_fn_ret(local)
+                }
+                let index = sa_fn_index(ctx.fns, callee_item.text)
+                if index >= 0 {
+                    return ctx.fns[index].ret
+                }
+            }
+            if callee_item.kind == ak_member() {
+                let receiver = sa_guess_type(ctx, a_child(ctx.ast, callee, 0))
+                let symbol = receiver + "." + callee_item.text
+                let index = sa_fn_index(ctx.fns, symbol)
+                if index >= 0 {
+                    return ctx.fns[index].ret
+                }
+            }
+        }
+        return "?"
+    }
+    if item.kind == ak_member() {
+        let receiver = sa_guess_type(ctx, a_child(ctx.ast, node, 0))
+        let index = sa_struct_index(ctx.structs, receiver)
+        if index >= 0 {
+            let field = sa_field_index(ctx.structs[index], item.text)
+            if field >= 0 {
+                return ctx.structs[index].types[field]
+            }
+        }
+        return "?"
+    }
+    if item.kind == ak_struct_lit() {
+        return item.text
+    }
+    if item.kind == ak_list() {
+        if item.count == 0 {
+            return "List<?>"
+        }
+        return "List<" + sa_guess_type(ctx, a_child(ctx.ast, node, 0)) + ">"
+    }
+    if item.kind == ak_tuple() {
+        var text = "("
+        var i = 0
+        while i < item.count {
+            if i > 0 {
+                text = text + ","
+            }
+            text = text + sa_guess_type(ctx, a_child(ctx.ast, node, i))
+            i = i + 1
+        }
+        return text + ")"
+    }
+    return "?"
+}
+
 fn sa_generic_args(name: String) -> List<String> {
     let chars = name.chars()
     if chars.len() < 3 || chars[chars.len() - 1] != ">" {
@@ -1051,6 +1219,50 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
     if item.kind == ak_bool() {
         return sa_result(ctx, "Bool")
     }
+    if item.kind == ak_closure() {
+        var work = ctx
+        var types: List<String> = []
+        var i = 0
+        while i < item.count - 1 {
+            let param = ctx.ast.nodes[a_child(ctx.ast, node, i)]
+            if param.aux.len() == 0 {
+                work = sa_error(work, a_child(ctx.ast, node, i), "E0103", "closure parameter `" + param.text + "` needs a type")
+                types.push("?")
+            } else {
+                types.push(param.aux)
+            }
+            i = i + 1
+        }
+        let saved = work.locals.len()
+        i = 0
+        while i < item.count - 1 {
+            let param = ctx.ast.nodes[a_child(ctx.ast, node, i)]
+            work = sa_push_local(work, param.text, types[i])
+            i = i + 1
+        }
+        var ret = item.aux
+        if ret.len() == 0 {
+            let returned = sa_find_return(ctx.ast, a_child(ctx.ast, node, item.count - 1))
+            if returned >= 0 {
+                ret = sa_guess_type(work, returned)
+            } else {
+                ret = "Unit"
+            }
+        }
+        work = sa_ctx_ret(work, ret)
+        work = sa_block(work, a_child(ctx.ast, node, item.count - 1))
+        work = sa_trim_locals(work, saved)
+        var text = "fn("
+        i = 0
+        while i < types.len() {
+            if i > 0 {
+                text = text + ","
+            }
+            text = text + types[i]
+            i = i + 1
+        }
+        return sa_result(work, text + ")->" + ret)
+    }
     if item.kind == ak_ident() {
         let local = sa_lookup(ctx, item.text)
         if local.len() > 0 {
@@ -1338,6 +1550,22 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
                 let work = sa_args(ctx, node, 1, [], false)
                 return sa_result(work, "Unit")
             }
+            let callable = sa_lookup(ctx, callee_node.text)
+            if sa_is_fn_type(callable) {
+                let types = sa_fn_params(callable)
+                let got = ctx.ast.nodes[node].count - 1
+                var work = ctx
+                if got != types.len() {
+                    work = sa_error(
+                        work,
+                        callee,
+                        "E0208",
+                        "function value expects " + types.len().to_string() + " arguments, found " + got.to_string()
+                    )
+                }
+                work = sa_args(work, node, 1, types, true)
+                return sa_result(work, sa_fn_ret(callable))
+            }
             let index = sa_fn_index(ctx.fns, callee_node.text)
             if index < 0 {
                 let local = sa_lookup(ctx, callee_node.text)
@@ -1388,6 +1616,31 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
             }
             let object = sa_expr(ctx, a_child(ctx.ast, callee, 0))
             let got = ctx.ast.nodes[node].count - 1
+            let method_symbol = object.type_name + "." + callee_node.text
+            let method_index = sa_fn_index(ctx.fns, method_symbol)
+            if method_index >= 0 {
+                let sig = ctx.fns[method_index]
+                var work = object.ctx
+                if sig.params.len() == 0 {
+                    return sa_fail(work, callee, "E0201", "method `" + callee_node.text + "` has no receiver")
+                }
+                if got != sig.params.len() - 1 {
+                    work = sa_error(
+                        work,
+                        node,
+                        "E0208",
+                        "`" + callee_node.text + "` expects " + (sig.params.len() - 1).to_string() + " arguments, found " + got.to_string()
+                    )
+                }
+                var expected: List<String> = []
+                var k = 1
+                while k < sig.types.len() {
+                    expected.push(sig.types[k])
+                    k = k + 1
+                }
+                work = sa_args(work, node, 1, expected, true)
+                return sa_result(work, sig.ret)
+            }
             let option_inner = sa_option_inner(object.type_name)
             let result_ok = sa_result_ok(object.type_name)
             if callee_node.text == "is_some" || callee_node.text == "is_none" {
@@ -1969,13 +2222,7 @@ fn sa_stmt(ctx: SaCtx, node: Int) -> SaCtx {
     return ctx
 }
 
-fn sa_check_fn(ctx: SaCtx, node: Int) -> SaCtx {
-    let item = ctx.ast.nodes[node]
-    let index = sa_fn_index(ctx.fns, item.text)
-    if index < 0 {
-        return ctx
-    }
-    let sig = ctx.fns[index]
+fn sa_check_fn_body(ctx: SaCtx, node: Int, sig: SaFn) -> SaCtx {
     var locals: List<SaLocal> = []
     var i = 0
     while i < sig.params.len() {
@@ -1985,8 +2232,26 @@ fn sa_check_fn(ctx: SaCtx, node: Int) -> SaCtx {
     var work = sa_ctx_locals(ctx, locals)
     work = sa_ctx_ret(work, sig.ret)
     work = sa_ctx_loops(work, 0)
-    let body = a_child(ctx.ast, node, item.count - 1)
+    let body = a_child(ctx.ast, node, ctx.ast.nodes[node].count - 1)
     return sa_block(work, body)
+}
+
+fn sa_check_fn(ctx: SaCtx, node: Int) -> SaCtx {
+    let item = ctx.ast.nodes[node]
+    let index = sa_fn_index(ctx.fns, item.text)
+    if index < 0 {
+        return ctx
+    }
+    return sa_check_fn_body(ctx, node, ctx.fns[index])
+}
+
+fn sa_check_method(ctx: SaCtx, impl_node: Int, method: Int) -> SaCtx {
+    let symbol = ctx.ast.nodes[impl_node].text + "." + ctx.ast.nodes[method].text
+    let index = sa_fn_index(ctx.fns, symbol)
+    if index < 0 {
+        return ctx
+    }
+    return sa_check_fn_body(ctx, method, ctx.fns[index])
 }
 
 fn sa_collect(ctx: SaCtx) -> SaCtx {
@@ -2084,6 +2349,59 @@ fn sa_collect(ctx: SaCtx) -> SaCtx {
                     loops: work.loops,
                 }
             }
+        } else if item.kind == ak_trait() {
+            var k = 0
+            while k < item.count {
+                let sig_node = a_child(ctx.ast, node, k)
+                let sig = ctx.ast.nodes[sig_node]
+                let symbol = item.text + "." + sig.text
+                if sa_fn_index(work.fns, symbol) >= 0 {
+                    work = sa_error(work, sig_node, "E0200", "duplicate trait method `" + symbol + "`")
+                } else {
+                    var params: List<String> = []
+                    var types: List<String> = []
+                    var p = 0
+                    while p < sig.count {
+                        let param = ctx.ast.nodes[a_child(ctx.ast, sig_node, p)]
+                        var type_name = param.aux
+                        if param.text == "self" && type_name.len() == 0 {
+                            type_name = "Self"
+                        }
+                        params.push(param.text)
+                        types.push(type_name)
+                        p = p + 1
+                    }
+                    if params.len() == 0 || params[0] != "self" {
+                        work = sa_error(work, sig_node, "E0201", "trait method `" + sig.text + "` must take `self` as its first parameter")
+                    }
+                    var ret = sig.aux
+                    if ret.len() == 0 {
+                        ret = "Unit"
+                    }
+                    var fns = work.fns
+                    fns.push(
+                        SaFn {
+                            name: symbol,
+                            params: params,
+                            types: types,
+                            ret: ret,
+                            line: sig.line,
+                            column: sig.column,
+                        }
+                    )
+                    work = SaCtx {
+                        ast: work.ast,
+                        fns: fns,
+                        structs: work.structs,
+                        enums: work.enums,
+                        errors: work.errors,
+                        locals: work.locals,
+                        ret: work.ret,
+                        loops: work.loops,
+                    }
+                }
+                k = k + 1
+            }
         } else if item.kind == ak_enum() {
             if sa_enum_index(work.enums, item.text) >= 0 {
                 work = sa_error(work, node, "E0307", "duplicate enum `" + item.text + "`")
@@ -2137,6 +2455,119 @@ fn sa_collect(ctx: SaCtx) -> SaCtx {
         }
         i = i + 1
     }
+    var impl_index = 0
+    while impl_index < ctx.ast.nodes[file].count {
+        let node = a_child(ctx.ast, file, impl_index)
+        let item = ctx.ast.nodes[node]
+        if item.kind == ak_impl() {
+            let type_name = item.text
+            let trait_name = item.aux
+            if sa_struct_index(work.structs, type_name) < 0 && sa_enum_index(work.enums, type_name) < 0 {
+                work = sa_error(work, node, "E0201", "cannot implement methods for unknown type `" + type_name + "`")
+            }
+            var k = 0
+            while k < item.count {
+                let method_node = a_child(ctx.ast, node, k)
+                let method = ctx.ast.nodes[method_node]
+                let symbol = type_name + "." + method.text
+                var params: List<String> = []
+                var types: List<String> = []
+                var p = 0
+                while p < method.count - 1 {
+                    let param = ctx.ast.nodes[a_child(ctx.ast, method_node, p)]
+                    var param_type = param.aux
+                    if param.text == "self" && param_type.len() == 0 {
+                        param_type = type_name
+                    }
+                    params.push(param.text)
+                    types.push(param_type)
+                    p = p + 1
+                }
+                if params.len() == 0 || params[0] != "self" {
+                    work = sa_error(work, method_node, "E0201", "method `" + method.text + "` must take `self` as its first parameter")
+                }
+                if sa_fn_index(work.fns, symbol) >= 0 {
+                    work = sa_error(work, method_node, "E0200", "duplicate method `" + symbol + "`")
+                } else {
+                    var ret = method.aux
+                    if ret.len() == 0 {
+                        ret = "Unit"
+                    }
+                    var fns = work.fns
+                    fns.push(
+                        SaFn {
+                            name: symbol,
+                            params: params,
+                            types: types,
+                            ret: ret,
+                            line: method.line,
+                            column: method.column,
+                        }
+                    )
+                    work = SaCtx {
+                        ast: work.ast,
+                        fns: fns,
+                        structs: work.structs,
+                        enums: work.enums,
+                        errors: work.errors,
+                        locals: work.locals,
+                        ret: work.ret,
+                        loops: work.loops,
+                    }
+                }
+                k = k + 1
+            }
+            if trait_name.len() > 0 {
+                var found_trait = false
+                var t = 0
+                while t < work.fns.len() {
+                    let trait_fn = work.fns[t]
+                    let prefix = trait_name + "."
+                    if trait_fn.name.starts_with(prefix) {
+                        found_trait = true
+                        let chars = trait_fn.name.chars()
+                        let method_name = lx_slice(chars, prefix.len(), chars.len())
+                        let impl_fn_index = sa_fn_index(work.fns, type_name + "." + method_name)
+                        if impl_fn_index < 0 {
+                            work = sa_error(
+                                work,
+                                node,
+                                "E0201",
+                                "`impl " + trait_name + " for " + type_name + "` is missing required method `" + method_name + "`"
+                            )
+                        } else {
+                            let impl_fn = work.fns[impl_fn_index]
+                            var mismatch = impl_fn.ret != trait_fn.ret
+                            if impl_fn.types.len() != trait_fn.types.len() {
+                                mismatch = true
+                            } else {
+                                var q = 1
+                                while q < impl_fn.types.len() {
+                                    if impl_fn.types[q] != trait_fn.types[q] {
+                                        mismatch = true
+                                    }
+                                    q = q + 1
+                                }
+                            }
+                            if mismatch {
+                                work = sa_error(
+                                    work,
+                                    node,
+                                    "E0201",
+                                    "method `" + method_name + "` in `impl " + trait_name + " for " + type_name + "` does not match the trait signature"
+                                )
+                            }
+                        }
+                    }
+                    t = t + 1
+                }
+                if !found_trait {
+                    work = sa_error(work, node, "E0201", "unknown trait `" + trait_name + "`")
+                }
+            }
+        }
+        impl_index = impl_index + 1
+    }
     return work
 }
 
@@ -2162,6 +2593,13 @@ fn sa_check(source: String) -> List<String> {
         let node = a_child(ast, file, i)
         if ast.nodes[node].kind == ak_fn() {
             ctx = sa_check_fn(ctx, node)
+        }
+        if ast.nodes[node].kind == ak_impl() {
+            var k = 0
+            while k < ast.nodes[node].count {
+                ctx = sa_check_method(ctx, node, a_child(ast, node, k))
+                k = k + 1
+            }
         }
         i = i + 1
     }

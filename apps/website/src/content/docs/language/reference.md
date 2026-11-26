@@ -23,7 +23,7 @@ struct    = "struct" ident "{" { ident ":" type } "}"
 import    = "import" ident { "." ident } [ "{" ident { "," ident } "}" ]
 ```
 
-Function parameters and return types are required when a value is returned. `main` returns `Unit`. Generic parameters (`<T>`) are parsed experimentally but rejected by semantic checking.
+Function parameters and return types are required when a value is returned. `main` returns `Unit`. Explicit one-parameter generic functions are monomorphized at concrete call sites; generic structs and generic methods are not implemented.
 
 ## Statements
 
@@ -71,6 +71,6 @@ Runtime allocation currently lasts for the process lifetime. There is no referen
 
 ## Not in the accepted grammar
 
-Async scheduling/channels, mutable captures, namespaced modules, fixed-width integers, unsafe blocks, `defer` and named/default arguments. Unsupported constructs should produce a diagnostic; if one is silently accepted, treat it as a compiler bug.
+Not in the accepted grammar: `dyn Trait` dispatch, generic structs/enums/methods, mutable captures, async scheduling/channels, macros, namespaced modules, fixed-width integers, unsafe blocks, `defer` and named/default arguments. Unsupported constructs should produce a diagnostic; if one is silently accepted, treat it as a compiler bug.
 
-Accepted in the current grammar: user enums (including multi-field variants), `impl` methods with `self`, tuples, fixed arrays, borrowed `Slice<T>`, capturing closures and function values, monomorphised generic functions, structs, enums and inherent methods, static `trait`/`impl Trait for Type` conformance, `dyn Trait` objects that box a copy of the value and dispatch through a per-type vtable, hashed `Map`/`Set`, path imports with optional `as` aliases for qualified calls and type names, synchronous `async`/`await`, `extern "C"` declarations and expression/statement macros. Captures are by value: a closure sees the value an outer local held when the closure was created, and mutating the original local afterwards does not change the capture. `let` does not destructure tuples, slices are not lifetime-checked, and async does not create concurrency.
+Accepted in the current grammar: user enums, non-generic `impl` methods with `self`, structs, tuples, fixed arrays, borrowed `Slice<T>`, explicit one-parameter generic functions, static `trait` declarations with `impl Trait for Type` conformance and concrete method dispatch, value-capturing closures and function values, hashed `Map`/`Set` basics, path imports, and `extern "C"` declarations. Captures are by value: a closure sees the value an outer local held when the closure was created, and mutating the original local afterwards does not change the capture. `let` does not destructure tuples, and slices are not lifetime-checked.

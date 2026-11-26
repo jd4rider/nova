@@ -36,6 +36,32 @@ echo "$out" | grep -q "(fn identity (param value:T) -> T" && ok || no "ast gener
 echo "$out" | grep -q "(match cmd (arm Red true) (arm Green(_) false) (arm Blue true))" && ok || no "ast match"
 echo "$out" | grep -q "(+= i 1)" && ok || no "ast compound assignment"
 
+cat > "$tmp/traits-closures.nova" <<'NOVA'
+trait Shape {
+    fn area(self) -> Int
+}
+
+struct Rect {
+    w: Int,
+    h: Int,
+}
+
+impl Shape for Rect {
+    fn area(self) -> Int {
+        return self.w * self.h
+    }
+}
+
+fn main() {
+    let add = |x: Int| x + 1
+    println(add(2))
+}
+NOVA
+out=$(NOVA_TOOL=ast-dump NOVA_TOOL_PATH="$tmp/traits-closures.nova" "$tool")
+echo "$out" | grep -q "(trait Shape (sig area (param self) -> Int))" && ok || no "ast trait signature"
+echo "$out" | grep -q "(impl Shape for Rect" && ok || no "ast trait impl"
+echo "$out" | grep -q "(closure (param x:Int)" && ok || no "ast closure"
+
 printf 'type Alias = Int\n' > "$tmp/unsupported.nova"
 out=$(NOVA_TOOL=ast-dump NOVA_TOOL_PATH="$tmp/unsupported.nova" "$tool")
 echo "$out" | grep -q "unsupported item" && ok || no "ast rejects unsupported item"

@@ -3,10 +3,15 @@
 program        = { import | item } ;
 import         = "import", path, [ "{" , ident_list, "}" ] ;
 path           = ident, { ".", ident } ;
-item           = function | struct ;
+item           = function | struct | trait | impl ;
 function       = "fn", ident, [ generic_params ], "(", [ params ], ")", [ "->", type ], block ;
-generic_params = "<", ident, { ",", ident }, ">" ;   (* parsed, not yet type-checked *)
+generic_params = "<", ident, ">" ;   (* one type parameter; calls use id<Type>(...) *)
 struct         = "struct", ident, "{", { field, newline }, "}" ;
+trait          = "trait", ident, "{", { method_sig, [ ";" ] }, "}" ;
+method_sig     = "fn", ident, "(", "self", [ ",", params ], ")", [ "->", type ] ;
+impl           = "impl", [ trait_ref, "for" ], type_path, "{", { function }, "}" ;
+trait_ref      = ident ;
+type_path      = ident ;
 field          = ident, ":", type ;
 params         = param, { ",", param } ;
 param          = ident, ":", type ;
@@ -41,7 +46,11 @@ postfix        = primary, { call | field | index | "?" } ;
 call           = "(", [ args ], ")" ;
 field          = ".", ident ;
 index          = "[", expr, "]" ;
-primary        = literal | ident | "(", expr, ")" | list | struct_literal | if_expr ;
+primary        = literal | ident | "(", expr, ")" | list | struct_literal | if_expr
+               | closure ;
+closure        = ( "|", [ closure_param, { ",", closure_param } ], "|" )
+               | "||", [ "->", type ], ( expr | block ) ;
+closure_param  = ident, ":", type ;
 list           = "[", [ expr, { ",", expr } ], "]" ;
 struct_literal = type_path, "{", [ field_init, { ",", field_init } ], "}" ;
 field_init     = ident, ":", expr ;

@@ -4,14 +4,15 @@ Updated: 2026-11-26
 Master directive: owner-supplied; parity matrix in `engineering/continuation/`.
 Repository / branch: `nova` / `main` (Rust-free commit merged; backup at
 `backup/main-pre-rustfree-2026-11-26`)
-HEAD: `4e4ad38` (LSP completion + IR sink); the LSP feature-parity and
-entry-point wiring checkpoint is uncommitted in the working tree.
-Working tree: this checkpoint includes the `editor/` LSP wiring; the playground
-wasm remains untouched.
+HEAD: pending traits/closures checkpoint on `main`; the prior Rust-free +
+website rollback is `bb54237` / `5d99152`.
+Working tree: this checkpoint adds traits/closures, their tests and the CI
+runner fix; the playground wasm remains untouched.
 
-Active milestone: `BOOT-02` / `CODEGEN-01` — self-compilation and LLVM lowering
-Active task: `COMP-01.07` is PARTIAL — Option/Result and fixed-array checking
-and codegen landed, as did `Slice<T>` views and map/set basics; generic checking remains.
+Active milestone: `COMP-01.04` / `CODEGEN-01` — language parity and LLVM lowering
+Active task: `COMP-01.04` is PARTIAL — static traits, non-generic methods,
+value-capturing closures and function values landed; generic structs/methods,
+`dyn Trait` and generic trait impls remain.
 Status: RUST-FREE / PARITY INCOMPLETE — the Rust workspace, all 13 `.rs` files
 and the Rust build artifacts were deleted on 2026-11-26. `bootstrap/nova` is a
 Nova-built compiler; all eleven Nova suites pass, the website checks pass, and a
@@ -25,9 +26,11 @@ interpolation lowers end-to-end (`COMP-01.05`), and `nova check` accepts the
 tool's own source; all 27 golden invalid programs match the recorded reference diagnostics.
 Registry Box imports resolve through the fetch cache and Box.lock. `nova test`
 discovers `@test` functions and compiles each into its own process; `nova repl`
-is a native compile-run REPL. Remaining work is language parity: generic structs/methods, traits and closures
-(`COMP-01.04`), fuller sema and a Nova wasm backend. Explicit single-parameter
-generic functions are monomorphized and covered by `cli.sh`.
+is a native compile-run REPL. `trait`/`impl Trait for Type` conformance and
+non-generic method dispatch work; closures capture visible locals by value and
+support higher-order, returned and nested use. Remaining work is generic
+structs/enums/methods, `dyn Trait`, fuller sema and a Nova wasm backend.
+Explicit single-parameter generic functions remain monomorphized.
 
 ## Last verified behavior
 
@@ -277,8 +280,11 @@ generic functions are monomorphized and covered by `cli.sh`.
 - Registry Box dependencies resolve through `nt_registry_module` from the
   fetched cache and `Box.lock`. Std imports are validated but remain compiler
   builtins.
-- Sema lacks generics, traits, methods and full diagnostics; the Nova LSP
-  covers transport, full-document sync, diagnostics and completion.
+- Sema checks explicit generic functions, non-generic inherent/trait methods,
+  static conformance and closures, but generic structs/enums/methods, `dyn
+  Trait`, generic trait impls and full diagnostics remain.
+- Closure captures are by value and never freed with their environment;
+  mutable captures are not supported.
 - Overflow, division-by-zero and alignment checks remain.
 - Match lacks nested enum/struct patterns and enum-typed payloads. Map/set
   coverage excludes literals, iteration, Char keys and non-Int/Bool/String
@@ -295,16 +301,16 @@ generic functions are monomorphized and covered by `cli.sh`.
 
 ## Resume here
 
-1. Continue `COMP-01.04` with generics, traits, methods and closures; then
-   close the remaining map/set literal, iteration and key-type gaps. Rerun the
-   check benchmark once coverage converges. Parse and LSP workloads remain
-   unmeasured.
-2. Port `nova test` and the REPL, which were lost with the Rust CLI, and add
-   their tests to CI.
-3. Add a Nova wasm backend so the playground artifacts can be rebuilt without
-   the former Rust front end.
-4. Build non-macOS bootstrap artifacts before advertising Linux/Windows CLI
+1. Continue `COMP-01.04` with generic structs/enums/methods, `dyn Trait` and
+   generic trait impls; then close the remaining map/set literal, iteration and
+   key-type gaps. Rerun the check benchmark once coverage converges. Parse and
+   LSP workloads remain unmeasured.
+2. Add a Nova wasm backend so the playground artifacts can be rebuilt without
+   the former front end.
+3. Build non-macOS bootstrap artifacts before advertising Linux/Windows CLI
    downloads; the checked-in bootstrap is macOS arm64 only.
+4. Verify the `macos-15` CI runner actually executes; if it still cancels,
+   document the hosted-runner limitation rather than claiming CI is fixed.
 
 ## Validation
 
@@ -313,7 +319,7 @@ generic functions are monomorphized and covered by `cli.sh`.
 - Command: `sh examples/nova-tool/tests/codegen.sh`
 - Result: PASS (248/0; `codegen-interp` exits 19)
 - Command: `sh examples/nova-tool/tests/cli.sh`
-- Result: PASS (22/0)
+- Result: PASS (33/0)
 - Command: `sh examples/nova-tool/tests/diff.sh`
 - Result: PASS (18 programs matched, 0 differed)
 - Command: `sh examples/nova-tool/tests/diff-errors.sh`
