@@ -200,7 +200,7 @@ h1, h2, h3 { line-height: 1.1; letter-spacing: -0.035em; margin: 0; }
 .hero-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 22px; }
 .proof { display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 0; margin: 0; list-style: none; color: var(--muted); font-size: 13px; }
 .proof li::before { content: '✓'; color: var(--green); margin-right: 6px; }
-.rust-pill {
+.hero-pill {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -214,7 +214,6 @@ h1, h2, h3 { line-height: 1.1; letter-spacing: -0.035em; margin: 0; }
   font-size: 11px;
   letter-spacing: 0.02em;
 }
-.rust-crab { width: 26px; height: 24px; color: var(--orange); flex: none; }
 .docs-crab { width: 60px; height: 54px; opacity: 0.85; }
 .blog-post .page-hero { padding-bottom: 8px; }
 .blog-post .lede { margin-bottom: 18px; }

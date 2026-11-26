@@ -2,7 +2,8 @@
 
 Updated: 2026-11-26
 Master directive: owner-supplied; parity matrix in `engineering/continuation/`.
-Repository / branch: `nova` / `selfhost/pure-nova`
+Repository / branch: `nova` / `main` (Rust-free commit merged; backup at
+`backup/main-pre-rustfree-2026-11-26`)
 HEAD: `4e4ad38` (LSP completion + IR sink); the LSP feature-parity and
 entry-point wiring checkpoint is uncommitted in the working tree.
 Working tree: this checkpoint includes the `editor/` LSP wiring; the playground

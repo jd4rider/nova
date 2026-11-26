@@ -3,7 +3,7 @@ title: Browser playground
 description: The real Nova parser, type checker and formatter compiled to WebAssembly.
 ---
 
-The [Nova playground](../../playground/) is a static page that compiles the same Rust front end used by the CLI and language server to WebAssembly.
+The [Nova playground](../../playground/) is a static page that runs a checked-in WebAssembly build of the front end. Rebuilding that artifact still needs a Nova wasm backend.
 
 It is a **check and format** environment, not an interpreter. LLVM emission, Clang linking and the native runtime stay on the host, so execution remains `nova run` or Nova Studio.
 

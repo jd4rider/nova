@@ -3,7 +3,7 @@ title: VS Code extension
 description: Install Nova syntax highlighting and the Nova language server in Visual Studio Code.
 ---
 
-The **Nova Language** extension brings `.nova` editing to Visual Studio Code without Nova Studio. It provides TextMate syntax highlighting and a language client for the same Rust server used by Studio.
+The **Nova Language** extension brings `.nova` editing to Visual Studio Code without Nova Studio. It provides TextMate syntax highlighting and a language client for the same Nova language server used by Studio.
 
 **Status:** v0.2.0 local VSIX. TypeScript compilation, VSIX packaging and `code --install-extension` were verified. A direct `nova lsp` transcript (initialize, open buffer, diagnostic, shutdown) also passed. Automated Extension Host interaction tests are not included.
 

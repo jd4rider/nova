@@ -3,10 +3,10 @@ import SiteLayout from '../layouts/SiteLayout.astro'
 import { href } from '../lib/url'
 import { playgroundExamples } from '../data/playground'
 ---
-<SiteLayout title="Playground" path="playground" description="Write Nova in the browser with the real Rust parser, type checker and formatter compiled to WebAssembly.">
+<SiteLayout title="Playground" path="playground" description="Write Nova in the browser with the WebAssembly checker and formatter.">
   <section class="page-hero playground-hero">
     <div class="wrap">
-      <span class="eyebrow"><span class="status-dot"></span> Real Rust front end · WebAssembly · no server</span>
+      <span class="eyebrow"><span class="status-dot"></span> WebAssembly front end · no server</span>
       <h1>Write Nova.<br /><span style="color: var(--yellow)">Check it instantly.</span></h1>
       <p>The playground runs the same lexer, parser, type checker and formatter as the native toolchain. Edit an example, press <kbd>Ctrl</kbd> + <kbd>Enter</kbd>, and explore real diagnostics.</p>
       <div class="hero-actions" style="margin-top: 26px;">
@@ -42,7 +42,7 @@ import { playgroundExamples } from '../data/playground'
             ))}
           </div>
           <div class="playground-tools">
-            <span id="playground-wasm-status" class="playground-status" role="status">Loading Rust front end…</span>
+            <span id="playground-wasm-status" class="playground-status" role="status">Loading WebAssembly checker…</span>
             <button class="button small" id="playground-share" type="button" disabled>Share</button>
             <button class="button small" id="playground-reset" type="button">Reset</button>
           </div>
@@ -62,7 +62,7 @@ import { playgroundExamples } from '../data/playground'
               <span id="playground-result-state">Waiting for the compiler</span>
             </div>
             <div id="playground-diagnostics" class="playground-diagnostics">
-              <div class="playground-loading">Loading the Rust front end…</div>
+              <div class="playground-loading">Loading the WebAssembly checker…</div>
             </div>
             <div id="playground-stats" class="playground-stats"></div>
             <p class="playground-hint">Ctrl/Cmd + Enter checks. Click a diagnostic to jump to its source. <strong>This playground checks and formats; native execution still uses <code>nova run</code>.</strong></p>
@@ -116,7 +116,6 @@ import { playgroundExamples } from '../data/playground'
     font-size: 13px;
     font-family: var(--mono);
   }
-  .playground-badge .rust-crab { width: 34px; height: 30px; color: var(--orange); }
   .playground-hero kbd {
     border: 1px solid var(--line);
     border-bottom-width: 2px;

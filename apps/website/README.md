@@ -36,7 +36,7 @@ BASE_PATH=/nova/ SITE_URL=https://jd4rider.github.io npm run test:site
 
 - `src/content/docs/` — Starlight documentation: getting started, language, stdlib, toolchain, Studio, internals, project and website guide.
 - `src/pages/docs/index.astro` — documentation hub tab.
-- `src/pages/blog/` — field notes and the Rust launch post.
+- `src/pages/blog/` — field notes and the self-hosting migration note.
 - `src/pages/` — marketing, install, Studio, roadmap, status, security and license pages.
 - `src/data/maturity.ts` — central feature status manifest.
 - `../../grammar/nova.tmLanguage.json` — shared syntax grammar.
