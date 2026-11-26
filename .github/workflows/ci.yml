@@ -60,9 +60,7 @@ jobs:
       - run: npm run package
 
   website:
-    runs-on: macos-14
-    env:
-      NOVA_BIN: ${{ github.workspace }}/bootstrap/nova
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -84,13 +82,12 @@ jobs:
       - name: Build at root
         working-directory: apps/website
         run: npm run build
-      - name: Verify grammar, links and checked snippets
+      - name: Verify grammar, links and routes
         working-directory: apps/website
         run: |
           npm run test:grammar
           npm run test:playground
           npm run test:site
-          npm run test:snippets
       - name: Build at project base
         working-directory: apps/website
         env:

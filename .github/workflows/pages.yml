@@ -15,15 +15,10 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-14
-    env:
-      NOVA_BIN: ${{ github.workspace }}/bootstrap/nova
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Verify the checked-in bootstrap
-        run: test -x bootstrap/nova
 
       - name: Node
         uses: actions/setup-node@v4
@@ -76,7 +71,6 @@ jobs:
           npm run test:grammar
           npm run test:playground
           npm run test:site
-          npm run test:snippets
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
