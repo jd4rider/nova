@@ -11,10 +11,11 @@ interface StoredAi {
   keys: Partial<Record<AiProviderId, string>>
 }
 
-const PROVIDERS: AiProviderId[] = ['anthropic', 'openai']
+const PROVIDERS: AiProviderId[] = ['anthropic', 'openai', 'copilot']
 const ENVIRONMENT_VARIABLES: Record<AiProviderId, string[]> = {
   anthropic: ['ANTHROPIC_API_KEY'],
-  openai: ['OPENAI_API_KEY', 'GITHUB_TOKEN', 'GITHUB_MODELS_TOKEN']
+  openai: ['OPENAI_API_KEY', 'GITHUB_TOKEN', 'GITHUB_MODELS_TOKEN'],
+  copilot: []
 }
 
 function settingsFile(): string {
@@ -69,6 +70,15 @@ function environmentKey(provider: AiProviderId): string | null {
 export function getAiSettings(): AiProviderSettings {
   const stored = read()
   const provider = stored.provider
+  if (provider === 'copilot') {
+    return {
+      provider,
+      model: stored.models.copilot?.trim() || DEFAULT_MODELS.copilot,
+      baseUrl: defaultBaseUrl('copilot'),
+      hasApiKey: true,
+      keySource: 'github'
+    }
+  }
   return {
     provider,
     model: stored.models[provider]?.trim() || DEFAULT_MODELS[provider],
@@ -101,7 +111,7 @@ export function configureAi(patch: AiConfigurePatch): AiProviderSettings {
     else delete stored.baseUrls[provider]
   }
 
-  if (patch.apiKey !== undefined) {
+  if (patch.apiKey !== undefined && provider !== 'copilot') {
     const apiKey = patch.apiKey?.trim() ?? ''
     if (!apiKey) {
       delete stored.keys[provider]
@@ -122,6 +132,14 @@ export function configureAi(patch: AiConfigurePatch): AiProviderSettings {
 export function resolveAiConfig(): { provider: AiProviderId; model: string; baseUrl: string; apiKey: string } {
   const stored = read()
   const provider = stored.provider
+  if (provider === 'copilot') {
+    return {
+      provider,
+      model: stored.models.copilot?.trim() || DEFAULT_MODELS.copilot,
+      baseUrl: defaultBaseUrl('copilot'),
+      apiKey: ''
+    }
+  }
   const apiKey = storedKey(stored, provider) ?? environmentKey(provider)
   if (!apiKey) {
     const variable = ENVIRONMENT_VARIABLES[provider][0]

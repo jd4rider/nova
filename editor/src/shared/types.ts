@@ -40,20 +40,50 @@ export interface LspDiagnostic {
 export interface FreeBuffStatus {
   available: boolean
   version?: string
-  mode: 'terminal'
+  mode: 'terminal' | 'scraped-chat'
   /** True when the installed CLI documents a non-interactive mode. 0.2.36 does not. */
   headless: boolean
+  /** True when node-pty is available and the TUI can be driven in a real PTY. */
+  pty: boolean
   reason: string
 }
 
-export type AiProviderId = 'anthropic' | 'openai'
+export interface FreeBuffChatEvent {
+  type: 'status' | 'screen' | 'user' | 'error' | 'exit'
+  status?: 'starting' | 'started' | 'busy' | 'ready'
+  detail?: string
+  text?: string
+  message?: string
+}
+
+export interface CopilotStatus {
+  available: boolean
+  authenticated: boolean
+  user: string | null
+  message: string
+  busy: boolean
+  deviceCode: string | null
+}
+
+export interface CopilotModel {
+  id: string
+  label: string
+  default?: boolean
+}
+
+export interface CopilotCompletion {
+  insertText: string
+  range?: Range
+}
+
+export type AiProviderId = 'anthropic' | 'openai' | 'copilot'
 
 export interface AiProviderSettings {
   provider: AiProviderId
   model: string
   baseUrl: string
   hasApiKey: boolean
-  keySource: 'stored' | 'environment' | 'none'
+  keySource: 'stored' | 'environment' | 'github' | 'none'
 }
 
 export interface AiConfigurePatch {
@@ -142,6 +172,32 @@ export interface NovaApi {
   }
   freebuff: {
     status(): Promise<FreeBuffStatus>
+    start(root: string): Promise<void>
+    send(text: string): Promise<void>
+    reset(): Promise<void>
+    stop(): Promise<void>
+    complete(input: {
+      uri: string
+      version: number
+      text: string
+      line: number
+      character: number
+    }): Promise<CopilotCompletion | null>
+    onEvent(cb: (event: FreeBuffChatEvent) => void): () => void
+  }
+  copilot: {
+    status(): Promise<CopilotStatus>
+    signIn(): Promise<{ userCode: string; verificationUri: string }>
+    signOut(): Promise<CopilotStatus>
+    models(): Promise<CopilotModel[]>
+    complete(input: {
+      uri: string
+      version: number
+      text: string
+      line: number
+      character: number
+    }): Promise<CopilotCompletion | null>
+    onStatus(cb: (status: CopilotStatus) => void): () => void
   }
   app: {
     version(): Promise<string>

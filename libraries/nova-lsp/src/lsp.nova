@@ -1,11 +1,12 @@
 // A small, real Nova language server over stdio.
 //
-// This is the first LSP slice: length-framed JSON-RPC transport, initialize,
-// shutdown, full-document sync, published semantic diagnostics and completion.
-// Formatting, hover and navigation are intentionally not advertised yet.
+// Length-framed JSON-RPC transport, initialize, shutdown, full-document sync,
+// published semantic diagnostics, completion, hover, definition, document
+// symbols and whole-document formatting.
 
 import "../../nova-boxes/src/json.nova"
 import "../../nova-check/src/sema.nova"
+import "../../nova-fmt/src/fmt.nova"
 
 extern "C" fn nova_stdin_read_line() -> String
 extern "C" fn nova_stdin_read_bytes(count: Int) -> String
@@ -288,7 +289,7 @@ fn lsp_completion_items(text: String, offset: Int) -> String {
             items.push(lsp_completion_item(name, 3, "builtin"))
         }
         let ast = a_parse(text)
-        if ast.error.len() == 0 && ast.nodes.len() > 0 {
+        if ast.errors.len() == 0 && ast.nodes.len() > 0 {
             let file = ast.nodes.len() - 1
             var i = 0
             while i < ast.nodes[file].count {
@@ -308,6 +309,329 @@ fn lsp_completion_items(text: String, offset: Int) -> String {
         }
     }
     return "[" + items.join(",") + "]"
+}
+
+struct LspWord {
+    text: String,
+    start: Int,
+    stop: Int,
+}
+
+fn lsp_is_word_char(c: String) -> Bool {
+    for part in "_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".chars() {
+        if part == c {
+            return true
+        }
+    }
+    return false
+}
+
+fn lsp_word_at(text: String, line: Int, character: Int) -> LspWord {
+    let chars = text.chars()
+    let offset = lsp_offset_at(text, line, character)
+    var start = offset
+    while start > 0 && lsp_is_word_char(chars[start - 1]) {
+        start = start - 1
+    }
+    var stop = offset
+    while stop < chars.len() && lsp_is_word_char(chars[stop]) {
+        stop = stop + 1
+    }
+    return LspWord { text: lsp_slice(chars, start, stop), start: start, stop: stop }
+}
+
+fn lsp_position_at(text: String, offset: Int) -> (Int, Int) {
+    let chars = text.chars()
+    var line = 0
+    var character = 0
+    var i = 0
+    while i < offset && i < chars.len() {
+        if chars[i] == "\n" {
+            line = line + 1
+            character = 0
+        } else {
+            character = character + 1
+        }
+        i = i + 1
+    }
+    return (line, character)
+}
+
+fn lsp_range(line: Int, character: Int, end_line: Int, end_character: Int) -> String {
+    return "{\"start\":{\"line\":" + line.to_string() + ",\"character\":" + character.to_string() + "},\"end\":{\"line\":" + end_line.to_string() + ",\"character\":" + end_character.to_string() + "}}"
+}
+
+fn lsp_decl_score(kind: Int) -> Int {
+    if kind == ak_fn() || kind == ak_struct() || kind == ak_enum() || kind == ak_extern() {
+        return 3
+    }
+    if kind == ak_param() || kind == ak_field() || kind == ak_variant() {
+        return 2
+    }
+    if kind == ak_let() || kind == ak_var() {
+        return 1
+    }
+    return 0
+}
+
+// Finds the declaration for `word` at or above `line`. Top-level declarations
+// win over parameters and bindings, and the latest match wins on a tie.
+fn lsp_find_decl(ast: Ast, word: String, line: Int) -> Int {
+    var best = 0 - 1
+    var best_score = 0
+    if word.len() == 0 {
+        return best
+    }
+    var i = 0
+    while i < ast.nodes.len() {
+        let item = ast.nodes[i]
+        if item.text == word && item.line <= line && lsp_decl_score(item.kind) >= best_score {
+            if lsp_decl_score(item.kind) > 0 {
+                best = i
+                best_score = lsp_decl_score(item.kind)
+            }
+        }
+        i = i + 1
+    }
+    return best
+}
+
+fn lsp_signature(ast: Ast, node: Int) -> String {
+    let item = ast.nodes[node]
+    if item.kind == ak_param() {
+        if item.aux.len() > 0 {
+            return "parameter `" + item.text + ": " + item.aux + "`"
+        }
+        return "parameter `" + item.text + "`"
+    }
+    if item.kind == ak_field() {
+        return "field `" + item.text + ": " + item.aux + "`"
+    }
+    if item.kind == ak_variant() {
+        if item.aux.len() > 0 {
+            return "variant `" + item.text + "(" + item.aux + ")`"
+        }
+        return "variant `" + item.text + "`"
+    }
+    if item.kind == ak_let() || item.kind == ak_var() {
+        let keyword = if item.kind == ak_let() { "let" } else { "var" }
+        var out = keyword + " " + item.text
+        if item.aux.len() > 0 {
+            out = out + ": " + item.aux
+        }
+        return "binding `" + out + "`"
+    }
+    if item.kind == ak_struct() {
+        var out = "struct " + item.text + " {"
+        var i = 0
+        while i < item.count {
+            let field = ast.nodes[a_child(ast, node, i)]
+            if i > 0 {
+                out = out + ","
+            }
+            out = out + " " + field.text + ": " + field.aux
+            i = i + 1
+        }
+        return out + " }"
+    }
+    if item.kind == ak_enum() {
+        var out = "enum " + item.text + " {"
+        var i = 0
+        while i < item.count {
+            let variant = ast.nodes[a_child(ast, node, i)]
+            if i > 0 {
+                out = out + ","
+            }
+            out = out + " " + variant.text
+            if variant.aux.len() > 0 {
+                out = out + "(" + variant.aux + ")"
+            }
+            i = i + 1
+        }
+        return out + " }"
+    }
+    var out = ""
+    if item.kind == ak_extern() {
+        out = "extern \"C\" "
+    }
+    out = out + "fn " + item.text + "("
+    var i = 0
+    var done = false
+    while i < item.count && !done {
+        let param = ast.nodes[a_child(ast, node, i)]
+        if param.kind != ak_param() {
+            done = true
+        } else {
+            if i > 0 {
+                out = out + ", "
+            }
+            out = out + param.text
+            if param.aux.len() > 0 {
+                out = out + ": " + param.aux
+            }
+            i = i + 1
+        }
+    }
+    out = out + ")"
+    if item.aux.len() > 0 {
+        out = out + " -> " + item.aux
+    }
+    return out
+}
+
+fn lsp_hover(text: String, line: Int, character: Int) -> String {
+    let word = lsp_word_at(text, line, character)
+    if word.text.len() == 0 {
+        return "null"
+    }
+    let ast = a_parse(text)
+    if ast.errors.len() > 0 || ast.nodes.len() == 0 {
+        return "null"
+    }
+    let node = lsp_find_decl(ast, word.text, line + 1)
+    if node < 0 {
+        return "null"
+    }
+    let start = lsp_position_at(text, word.start)
+    let stop = lsp_position_at(text, word.stop)
+    let value = lsp_signature(ast, node)
+    return "{\"contents\":{\"kind\":\"markdown\",\"value\":" + js_quote("```nova\n" + value + "\n```") + "},\"range\":" + lsp_range(start.0, start.1, stop.0, stop.1) + "}"
+}
+
+fn lsp_name_offset(kind: Int) -> Int {
+    if kind == ak_fn() {
+        return 3
+    }
+    if kind == ak_struct() {
+        return 7
+    }
+    if kind == ak_enum() {
+        return 5
+    }
+    return 0
+}
+
+fn lsp_definition(text: String, uri: String, line: Int, character: Int) -> String {
+    let word = lsp_word_at(text, line, character)
+    if word.text.len() == 0 {
+        return "null"
+    }
+    let ast = a_parse(text)
+    if ast.errors.len() > 0 || ast.nodes.len() == 0 {
+        return "null"
+    }
+    let node = lsp_find_decl(ast, word.text, line + 1)
+    if node < 0 {
+        return "null"
+    }
+    let item = ast.nodes[node]
+    var start_line = item.line - 1
+    var start_column = item.column - 1 + lsp_name_offset(item.kind)
+    if start_line < 0 {
+        start_line = 0
+    }
+    if start_column < 0 {
+        start_column = 0
+    }
+    return "{\"uri\":" + js_quote(uri) + ",\"range\":" + lsp_range(start_line, start_column, start_line, start_column + item.text.len()) + "}"
+}
+
+fn lsp_symbol_kind(kind: Int) -> Int {
+    if kind == ak_fn() || kind == ak_extern() {
+        return 12
+    }
+    if kind == ak_struct() {
+        return 23
+    }
+    if kind == ak_enum() {
+        return 10
+    }
+    if kind == ak_field() {
+        return 8
+    }
+    if kind == ak_variant() {
+        return 22
+    }
+    if kind == ak_impl() {
+        return 5
+    }
+    return 13
+}
+
+fn lsp_symbol(name: String, kind: Int, line: Int, column: Int, end_line: Int, end_column: Int, children: String) -> String {
+    var out = "{\"name\":" + js_quote(name) + ",\"kind\":" + kind.to_string() + ",\"range\":" + lsp_range(line, column, end_line, end_column) + ",\"selectionRange\":" + lsp_range(line, column, line, column + name.len()) + ",\"children\":" + children
+    return out + "}"
+}
+
+fn lsp_symbol_children(ast: Ast, node: Int) -> String {
+    let item = ast.nodes[node]
+    var out = "["
+    if item.kind == ak_struct() || item.kind == ak_enum() || item.kind == ak_impl() {
+        var i = 0
+        while i < item.count {
+            let child = a_child(ast, node, i)
+            let part = ast.nodes[child]
+            if i > 0 {
+                out = out + ","
+            }
+            out = out + lsp_symbol(part.text, lsp_symbol_kind(part.kind), part.line - 1, part.column - 1, part.line - 1, part.column - 1 + part.text.len(), "[]")
+            i = i + 1
+        }
+    }
+    return out + "]"
+}
+
+fn lsp_document_symbols(text: String) -> String {
+    let ast = a_parse(text)
+    if ast.errors.len() > 0 || ast.nodes.len() == 0 {
+        return "[]"
+    }
+    let file = ast.nodes.len() - 1
+    if ast.nodes[file].kind != ak_file() {
+        return "[]"
+    }
+    let lines = text.split("\n")
+    let last_line = lines.len() - 1
+    let last_column = lines[last_line].len()
+    var out = "["
+    var i = 0
+    while i < ast.nodes[file].count {
+        let node = a_child(ast, file, i)
+        let item = ast.nodes[node]
+        var end_line = last_line
+        var end_column = last_column
+        if i + 1 < ast.nodes[file].count {
+            let next = ast.nodes[a_child(ast, file, i + 1)]
+            end_line = next.line - 1
+            end_column = next.column - 1
+            if end_line < 0 {
+                end_line = 0
+            }
+            if end_column < 0 {
+                end_column = 0
+            }
+        }
+        if i > 0 {
+            out = out + ","
+        }
+        out = out + lsp_symbol(item.text, lsp_symbol_kind(item.kind), item.line - 1, item.column - 1, end_line, end_column, lsp_symbol_children(ast, node))
+        i = i + 1
+    }
+    return out + "]"
+}
+
+fn lsp_formatting(text: String) -> String {
+    if text.len() == 0 {
+        return "[]"
+    }
+    let formatted = fmt_source(text)
+    if formatted == text {
+        return "[]"
+    }
+    let lines = text.split("\n")
+    let last_line = lines.len() - 1
+    let last_column = lines[last_line].len()
+    return "[{\"range\":" + lsp_range(0, 0, last_line, last_column) + ",\"newText\":" + js_quote(formatted) + "}]"
 }
 
 fn lsp_run_stdio() -> Int {
@@ -331,7 +655,7 @@ fn lsp_run_stdio() -> Int {
                     if has_id {
                         id = js_render(doc, id_node)
                     }
-                    let result = "{\"capabilities\":{\"textDocumentSync\":1,\"completionProvider\":{\"triggerCharacters\":[\".\",\"$\"],\"resolveProvider\":false}},\"serverInfo\":{\"name\":\"nova-lsp\",\"version\":\"0.1.0\"}}"
+                    let result = "{\"capabilities\":{\"textDocumentSync\":1,\"hoverProvider\":true,\"definitionProvider\":true,\"documentSymbolProvider\":true,\"documentFormattingProvider\":true,\"completionProvider\":{\"triggerCharacters\":[\".\",\"$\"],\"resolveProvider\":false}},\"serverInfo\":{\"name\":\"nova-lsp\",\"version\":\"0.2.0\"}}"
                     lsp_send(lsp_response(id, result))
                 } else if method == "shutdown" {
                     var id = "null"
@@ -391,6 +715,52 @@ fn lsp_run_stdio() -> Int {
                     }
                     let result = "{\"isIncomplete\":false,\"items\":" + lsp_completion_items(text, offset) + "}"
                     lsp_send(lsp_response(id, result))
+                } else if method == "textDocument/hover" {
+                    let params = js_get(doc, root, "params")
+                    let document = js_get(doc, params, "textDocument")
+                    let uri = lsp_json_string(doc, document, "uri")
+                    let position = js_get(doc, params, "position")
+                    let line = lsp_int(js_str(doc, js_get(doc, position, "line")))
+                    let character = lsp_int(js_str(doc, js_get(doc, position, "character")))
+                    let text = lsp_doc_text(documents, uri)
+                    var id = "null"
+                    if has_id {
+                        id = js_render(doc, id_node)
+                    }
+                    lsp_send(lsp_response(id, lsp_hover(text, line, character)))
+                } else if method == "textDocument/definition" {
+                    let params = js_get(doc, root, "params")
+                    let document = js_get(doc, params, "textDocument")
+                    let uri = lsp_json_string(doc, document, "uri")
+                    let position = js_get(doc, params, "position")
+                    let line = lsp_int(js_str(doc, js_get(doc, position, "line")))
+                    let character = lsp_int(js_str(doc, js_get(doc, position, "character")))
+                    let text = lsp_doc_text(documents, uri)
+                    var id = "null"
+                    if has_id {
+                        id = js_render(doc, id_node)
+                    }
+                    lsp_send(lsp_response(id, lsp_definition(text, uri, line, character)))
+                } else if method == "textDocument/documentSymbol" {
+                    let params = js_get(doc, root, "params")
+                    let document = js_get(doc, params, "textDocument")
+                    let uri = lsp_json_string(doc, document, "uri")
+                    let text = lsp_doc_text(documents, uri)
+                    var id = "null"
+                    if has_id {
+                        id = js_render(doc, id_node)
+                    }
+                    lsp_send(lsp_response(id, lsp_document_symbols(text)))
+                } else if method == "textDocument/formatting" {
+                    let params = js_get(doc, root, "params")
+                    let document = js_get(doc, params, "textDocument")
+                    let uri = lsp_json_string(doc, document, "uri")
+                    let text = lsp_doc_text(documents, uri)
+                    var id = "null"
+                    if has_id {
+                        id = js_render(doc, id_node)
+                    }
+                    lsp_send(lsp_response(id, lsp_formatting(text)))
                 } else if has_id {
                     let id = js_render(doc, id_node)
                     lsp_send(lsp_error(id, 0 - 32601, "method not implemented"))

@@ -6,11 +6,11 @@ The library has no package dependencies. The native runtime supplies raw-mode in
 
 ```sh
 cd examples/tui
-../../target/debug/nova build
+../../bootstrap/nova build
 ./target/nova/tui-demo
 
 cd examples/bible
-../../target/debug/nova build
+../../bootstrap/nova build
 ./target/nova/nova-bible
 ```
 

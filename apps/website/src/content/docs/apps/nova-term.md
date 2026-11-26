@@ -8,9 +8,8 @@ description: A native terminal emulator written in Nova — pty tabs, ANSI colou
 ## Run it
 
 ```sh
-cargo build -p nova-cli
 cd examples/nova-term
-../../target/debug/nova build
+../../bootstrap/nova build
 NOVA_TERM_ROOT="$PWD" ./target/nova/nova-term
 ```
 

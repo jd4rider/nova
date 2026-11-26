@@ -50,7 +50,7 @@ grep -q 'box "math" "0.2.3"' "$tmp/one.lock" && ok || no "lock entry"
 NOVA_TOOL=box-metadata NOVA_TOOL_PATH="$root/examples/nova-tool/tests/boxes/app/Box.toml" "$tool" > "$tmp/meta.json"
 grep -q '"name":"app"' "$tmp/meta.json" && grep -q '"name":"math"' "$tmp/meta.json" && ok || no "metadata json"
 
-nova="$root/target/debug/nova"
+nova="${NOVA_BIN:-$root/bootstrap/nova}"
 if [ -x "$nova" ]; then
     cp -R "$root/examples/nova-tool/tests/boxes" "$tmp/project"
     ( cd "$tmp/project/app" && NOVA_TOOL_BIN="$tool" "$nova" box tree ) > "$tmp/cli-tree.txt" 2>&1

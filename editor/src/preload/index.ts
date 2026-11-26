@@ -69,7 +69,29 @@ const api: NovaApi = {
     }
   },
   freebuff: {
-    status: () => ipcRenderer.invoke('freebuff:status')
+    status: () => ipcRenderer.invoke('freebuff:status'),
+    start: (root) => ipcRenderer.invoke('freebuff:start', root),
+    send: (text) => ipcRenderer.invoke('freebuff:send', text),
+    reset: () => ipcRenderer.invoke('freebuff:reset'),
+    stop: () => ipcRenderer.invoke('freebuff:stop'),
+    complete: (input) => ipcRenderer.invoke('freebuff:complete', input),
+    onEvent: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: any) => callback(payload)
+      ipcRenderer.on('freebuff:event', listener)
+      return () => ipcRenderer.removeListener('freebuff:event', listener)
+    }
+  },
+  copilot: {
+    status: () => ipcRenderer.invoke('copilot:status'),
+    signIn: () => ipcRenderer.invoke('copilot:sign-in'),
+    signOut: () => ipcRenderer.invoke('copilot:sign-out'),
+    models: () => ipcRenderer.invoke('copilot:models'),
+    complete: (input) => ipcRenderer.invoke('copilot:complete', input),
+    onStatus: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: any) => callback(payload)
+      ipcRenderer.on('copilot:status', listener)
+      return () => ipcRenderer.removeListener('copilot:status', listener)
+    }
   },
   app: {
     version: () => ipcRenderer.invoke('app:version'),

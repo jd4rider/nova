@@ -1,6 +1,6 @@
 # Nova Studio
 
-**A native desktop workbench for the Nova language: Monaco, a real Rust language server and actual compiler tasks.**
+**A native desktop workbench for the Nova language: Monaco, the Nova language server and actual compiler tasks.**
 
 Nova Studio is an Electron + React + strict TypeScript application. It is part of the [Nova repository](https://github.com/jd4rider/nova) and is not a wrapper around VS Code or an AI service.
 
@@ -28,18 +28,17 @@ The installers are unsigned. The DMG installs Studio only; install the CLI separ
 
 ### Prefer VS Code?
 
-Install the [Nova Language extension](../editors/vscode/README.md) for `.nova` syntax highlighting and the same Rust LSP without Studio. The extension is a local VSIX, not a Marketplace listing.
+Install the [Nova Language extension](../editors/vscode/README.md) for `.nova` syntax highlighting and the same Nova LSP without Studio. The extension is a local VSIX, not a Marketplace listing.
 
 ## Run from source
 
 Prerequisites: Node 20+ (tested with Node 26 locally and Node 22 in CI) and a built `nova` binary.
 
 ```sh
-cargo build -p nova-cli
 
 cd editor
 npm ci --no-audit --no-fund
-NOVA_BIN="$PWD/../target/debug/nova" npm run dev
+NOVA_BIN="$PWD/../bootstrap/nova" npm run dev
 ```
 
 If npm has a root-owned cache, use `npm ci --cache /tmp/nova-npm-cache`. Electron's postinstall may be blocked by npm policy; run `node node_modules/electron/install.js` if the runtime is missing.
@@ -59,8 +58,8 @@ Artifacts are written to `release/`. The Windows command disables native-module 
 
 ## Features
 
-- **Monaco editor** with Nova syntax highlighting. The UI and editor default to a Visual Studio Code Dark+ look, with Gruvbox Dark, Light and High Contrast still selectable.
-- **Rust LSP** diagnostics, completion, hover, go-to-definition, document symbols and formatting on unsaved buffers.
+- **Monaco editor** with Nova syntax highlighting, the bundled JetBrains Mono Nerd Font and Material Icon Theme file/folder icons. The UI and editor default to a Visual Studio Code Dark+ look, with Gruvbox Dark, Light and High Contrast still selectable.
+- **Nova LSP** diagnostics, completion, hover, go-to-definition, document symbols and formatting on unsaved buffers. Studio runs the Nova-built server (`nova-tool lsp`) and falls back to `nova lsp` when it is not installed.
 - **Remembered workspace**: the last opened folder is reopened at launch when it still exists; missing or moved folders fall back to an empty workbench.
 - **Explorer and tabs** with dirty state, a live recursive workspace watcher (external creates and edits refresh the tree; clean tabs reload, dirty buffers do not), and external-change-aware atomic saves.
 - **Tab actions**: context menu for close/close others/close all, copy path and reveal; Save All; Go to Line; VS Code-style shortcuts.
@@ -69,13 +68,13 @@ Artifacts are written to `release/`. The Windows command disables native-module 
 - **Search** via ripgrep; quick open, command palette and keyboard-first navigation.
 - **Vim mode** via `monaco-vim` (partial emulation; see the docs).
 - **Visual effects**: current-line lens, typing/scroll sparkles and synthesized Web Audio SFX. Toggle animation and sound independently in Settings; effects respect OS reduced-motion.
-- **AI panel** with two tabs: the real FreeBuff CLI in a PTY, and streaming chat from Claude or any OpenAI-compatible endpoint (GitHub Models, OpenAI, OpenRouter, local Ollama). Keys are encrypted with the OS credential store in the main process.
+- **AI panel** with two tabs: a real FreeBuff CLI session reconstructed as chat, and streaming chat through the official GitHub Copilot SDK, Claude, or any OpenAI-compatible endpoint (GitHub Models, OpenAI, OpenRouter, local Ollama). Copilot uses GitHub device sign-in; API keys are encrypted with the OS credential store in the main process.
 
 ## Terminal and FreeBuff
 
 `node-pty` is an optional dependency. If its native module is unavailable, the terminal runs in **pipe mode** (no TTY), the status bar reports `pipe`, and FreeBuff’s interactive TUI cannot run. This is an honest limitation, not a simulated terminal.
 
-FreeBuff 0.2.36 exposes an interactive TUI only: `--print` and `-p` are rejected and stdin just starts the TUI. Studio therefore embeds the real CLI rather than scraping its screen or inventing a headless protocol. Structured chat is a separate, opt-in provider path: Claude or any OpenAI-compatible endpoint, with the key supplied by the user and encrypted by the OS credential store. No Copilot/OAuth sign-in, inline ghost text or agent edit review exists yet.
+FreeBuff 0.2.36 exposes an interactive TUI only: `--print` and `-p` are rejected and stdin just starts the TUI. Studio runs the real CLI in a PTY, reconstructs its screen with a headless terminal, and extracts the transcript above the composer. This is a version-specific scrape, not a FreeBuff API; the Raw TUI remains available when the heuristic is wrong. FreeBuff cannot provide inline ghost text because the installed CLI has no completion channel. Copilot chat/auth/models use the official `@microsoft/copilot-sdk`; Copilot inline completion uses the Copilot language server.
 
 ## Security
 
@@ -96,7 +95,7 @@ See [`docs/adr/0006-electron-security.md`](../docs/adr/0006-electron-security.md
 - Vim mode is partial, not Neovim.
 - macOS and Windows installers are published unsigned; no Developer ID/notarized or Authenticode build exists.
 - No automated tests cover the AI panel or a live provider call; adapters are exercised against a local SSE server and the app is checked by typecheck and build.
-- No Copilot/OAuth sign-in; GitHub Models works through a personal access token.
+- FreeBuff inline completion is not available; only its scraped chat is supported by the current CLI. Copilot inline completion depends on the Copilot language server and the account authorized through the SDK.
 - The Windows installer does not include the language, and its terminal is pipe-only.
 - Tauri 2 and native Rust alternatives were evaluated on paper but not prototyped; see ADR 0001.
 

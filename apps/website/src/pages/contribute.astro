@@ -15,8 +15,9 @@ import { links } from '../data/site'
     <div class="wrap grid-2" style="align-items: start;">
       <div class="prose">
         <h2>Start here</h2>
-        <pre><code>cargo fmt --check
-cargo test --workspace
+        <pre><code>(cd examples/nova-tool && ../../bootstrap/nova build)
+sh examples/nova-tool/tests/codegen.sh
+sh examples/nova-tool/tests/boxes.sh
 
 cd editor
 npm run typecheck

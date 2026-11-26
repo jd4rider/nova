@@ -80,7 +80,7 @@ Windows Studio is built without the optional native `node-pty` module. The termi
 
 ## VS Code extension
 
-The **Nova Language** extension adds `.nova` syntax highlighting and the Rust language server to VS Code without requiring Nova Studio. It is a local VSIX, not a Marketplace listing.
+The **Nova Language** extension adds `.nova` syntax highlighting and the Nova language server to VS Code without requiring Nova Studio. It is a local VSIX, not a Marketplace listing.
 
 **[Download nova-language-0.1.0.vsix](https://github.com/jd4rider/nova/releases/download/v0.1.0/nova-language-0.1.0.vsix)** (309 KB)
 
@@ -96,7 +96,7 @@ The extension ID is `jd4rider.nova-language`. Syntax highlighting works without 
 brew install jd4rider/tap/nova
 ```
 
-If VS Code was launched from the GUI and cannot see your Homebrew or Cargo path, set **Nova: Server Path** (`nova.serverPath`) to the absolute binary path. The extension has a **Nova: Restart Language Server** command.
+If VS Code was launched from the GUI and cannot see your Homebrew path, set **Nova: Server Path** (`nova.serverPath`) to the absolute binary path. The extension has a **Nova: Restart Language Server** command.
 
 ### Build the extension from source
 
@@ -114,15 +114,15 @@ The language server uses full-document synchronization and single-file indexing.
 
 Requirements:
 
-- Rust 1.96+ and Cargo
+- The checked-in Nova bootstrap (`bootstrap/nova`)
 - Clang/Apple Clang on `PATH`
 - Node 20+ only for Studio
 
 ```sh
 git clone https://github.com/jd4rider/nova.git
 cd nova
-cargo build --release -p nova-cli
-export PATH="$PWD/target/release:$PATH"
+(cd examples/nova-tool && ../../bootstrap/nova build)
+export PATH="$PWD/bootstrap:$PATH"
 nova --version
 nova doctor
 ```
@@ -143,7 +143,7 @@ cd ../editor
 npm ci --no-audit --no-fund
 npm run typecheck
 npm run build
-NOVA_BIN="$PWD/../target/release/nova" npm run dev
+NOVA_BIN="$PWD/../bootstrap/nova" npm run dev
 ```
 
 Build installers locally:

@@ -1,3 +1,25 @@
+@font-face {
+  font-family: 'JetBrainsMono Nerd Font Mono';
+  src: url('./assets/fonts/JetBrainsMonoNerdFontMono-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrainsMono Nerd Font Mono';
+  src: url('./assets/fonts/JetBrainsMonoNerdFontMono-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrainsMono Nerd Font Mono';
+  src: url('./assets/fonts/JetBrainsMonoNerdFontMono-Italic.ttf') format('truetype');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
 :root {
   --bg: #1e1e1e;
   --bg-hard: #181818;
@@ -28,7 +50,7 @@
   --sidebar-width: 300px;
   --ai-width: 380px;
   --ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Cantarell', 'Ubuntu', sans-serif;
-  --mono: 'SF Mono', Menlo, Monaco, 'Cascadia Code', 'Courier New', monospace;
+  --mono: 'JetBrainsMono Nerd Font Mono', 'SF Mono', Menlo, Monaco, 'Cascadia Code', 'Courier New', monospace;
 }
 
 [data-theme='gruvbox-dark'] {
@@ -305,10 +327,7 @@ a { color: var(--link); }
   line-height: 1;
   color: var(--muted);
 }
-.file-glyph.nova { color: #dcb67a; }
-.file-glyph.toml { color: #9cdcfe; }
-.file-glyph.md { color: #519aba; }
-.file-glyph.json { color: #cbcb41; }
+.file-glyph.material svg { width: 15px; height: 15px; display: block; }
 .tab .file-glyph { width: 16px; }
 
 .search-panel { display: flex; flex-direction: column; min-height: 0; flex: 1; }
@@ -686,3 +705,21 @@ button.primary:hover { background: #026ec1; }
   .aipanel { display: none; }
   :root { --sidebar-width: 200px; }
 }
+
+.ai-note-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ai-mini { font-size: 10px; padding: 2px 7px; border: 1px solid var(--border-strong); }
+.ai-scrape-status { color: var(--faint); font-size: 10px; }
+.terminal-command-label { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; }
+.copilot-box { border: 1px solid var(--border-strong); background: var(--panel); padding: 9px; display: flex; flex-direction: column; gap: 7px; }
+.copilot-box p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.copilot-code { align-self: flex-start; padding: 3px 8px; border: 1px dashed var(--link); color: var(--link); font-size: 15px; letter-spacing: 0.14em; }
+.ai-action-group { display: flex; gap: 6px; }
+.ai-action-group button { font-size: 11px; padding: 3px 9px; border: 1px solid var(--border-strong); }
+.ai-diff-overlay { align-items: stretch; padding: 3vh 3vw; }
+.ai-diff-card { width: min(1280px, 94vw); height: 88vh; margin: 0 auto; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--border-strong); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55); }
+.ai-diff-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+.ai-diff-header strong { color: var(--fg-bright); font-size: 13px; }
+.ai-diff-header span { color: var(--muted); font-size: 11px; margin-left: 8px; }
+.ai-diff-editor { flex: 1; min-height: 0; }
+.ai-diff-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 9px 12px; border-top: 1px solid var(--border); }
+.ai-diff-actions button { font-size: 12px; padding: 4px 14px; border: 1px solid var(--border-strong); }

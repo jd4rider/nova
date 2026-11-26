@@ -3,7 +3,7 @@ title: CLI reference
 description: Commands implemented by the Nova compiler and their current limits.
 ---
 
-The binary is `nova`. Build it with `cargo build --release -p nova-cli` or run `cargo run -p nova-cli -- <command>`.
+The binary is `nova`. The checked-in `bootstrap/nova` runs every command, or rebuild it with `(cd examples/nova-tool && ../../bootstrap/nova build)`.
 
 ## Implemented commands
 
@@ -19,14 +19,13 @@ The binary is `nova`. Build it with `cargo build --release -p nova-cli` or run `
 | `nova clean` | Remove generated artifacts. |
 | `nova tree` | Print the project structure. |
 | `nova repl` | Interactive evaluation labeled as interpreter-backed; not the native backend. |
-| `nova lsp` | Start the Rust bootstrap language server on stdio. |
+| `nova lsp` | Start the Nova compiler language server on stdio. |
 | `nova doctor` | Report toolchain, runtime ABI, LSP, FreeBuff and platform status. |
 
 `nova box` owns package operations: `add`, `remove`, `update`, `search`, `info`, `fetch`, `tree`, `check`, `lock`, `metadata`, `pack`, `verify` and `unpack`. The top-level `nova add/remove/update` aliases are not commands; unsupported roadmap commands (`bench`, `lint`, `doc`) exit with status 2 and an explicit message.
 
-`nova fmt` is not the Rust formatter: it runs the Nova formatter in
-`libraries/nova-fmt` through `nova-tool`. The language server and the compiler
-remain the Rust bootstrap.
+`nova fmt` runs the Nova formatter in `libraries/nova-fmt`. The language server
+and the compiler are Nova implementations in `libraries/`.
 
 ## Diagnostics
 

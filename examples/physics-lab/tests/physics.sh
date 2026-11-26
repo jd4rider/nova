@@ -4,7 +4,7 @@ set -eu
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
 cd "$HERE/.."
-"$ROOT/target/debug/nova" build >/dev/null
+"${NOVA_BIN:-$ROOT/bootstrap/nova}" build >/dev/null
 OUT="$(./target/nova/physics-lab)"
 echo "$OUT"
 echo "$OUT" | grep -q "failed 0"

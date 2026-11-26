@@ -47,25 +47,25 @@ If VS Code cannot find `nova`, set `nova.serverPath` to the binary's absolute pa
 
 ## Requirements
 
-- Rust stable (tested with 1.96) and Cargo for source builds
+- The checked-in Nova bootstrap (`bootstrap/nova`) for source builds
 - Clang or Apple Clang on `PATH` (tested with Apple clang 21)
 - Node.js 20+ and npm only if you want to build Nova Studio, the VS Code extension or the website
 - A 64-bit macOS, Linux or Windows host for local compilation; only macOS arm64 is currently tested
 
 You do **not** need a system LLVM installation. Nova emits textual LLVM IR and asks the host Clang to optimize, verify and link it. The backend tradeoff is recorded in ADR `0003-llvm-backend.md` in the repository.
 
-The compiler and language server are the Rust bootstrap in `bootstrap/`. The
-formatter, diagnostics and package manager (Nova Boxes) are Nova programs in
-`libraries/`, run through `nova-tool`; the compiler is not self-hosted yet. See
-[Compiler pipeline](../../internals/compiler/) for the exact split.
+The compiler, formatter, diagnostics, language server and package manager
+(Nova Boxes) are Nova programs under `libraries/`; `bootstrap/nova` is the
+checked-in Nova-built bootstrap compiler. See
+[Compiler pipeline](../../internals/compiler/) for the pipeline.
 
 ## Build from source
 
 ```sh
 git clone https://github.com/jd4rider/nova.git
 cd nova
-cargo build --release -p nova-cli
-export PATH="$PWD/target/release:$PATH"
+(cd examples/nova-tool && ../../bootstrap/nova build)
+export PATH="$PWD/bootstrap:$PATH"
 nova --version
 nova doctor
 ```
@@ -91,7 +91,7 @@ cd editor
 npm install --cache /tmp/nova-npm-cache
 npm run typecheck
 npm run build
-NOVA_BIN="$PWD/../target/release/nova" npm run dev
+NOVA_BIN="$PWD/../bootstrap/nova" npm run dev
 ```
 
 If npm blocks Electron's postinstall script, run `node node_modules/electron/install.js` and `node node_modules/esbuild/install.js` manually. `node-pty` is optional; without it the terminal runs in pipe mode, and FreeBuff's terminal remains unavailable because it requires a TTY.

@@ -13,13 +13,13 @@ From the repository root:
 
 ```sh
 cd examples/tui
-../../target/debug/nova build
+../../bootstrap/nova build
 ./target/nova/tui-demo
 ```
 
 ```sh
 cd examples/bible
-../../target/debug/nova build
+../../bootstrap/nova build
 ./target/nova/nova-bible
 ```
 
@@ -226,7 +226,7 @@ These builtins are implemented in the native runtime, so a program needs no pack
 
 ## Verified behavior
 
-`cargo test --workspace` covers the compiler, including the new qualified-name resolution. The interactive paths were exercised through real PTYs on macOS:
+`sh examples/nova-tool/tests/toolchain.sh` covers the compiler, including qualified-name resolution. The interactive paths were exercised through real PTYs on macOS:
 
 - resize to 100×30 and 90×30 → the status line reports the new size
 - wheel, click and bracketed paste → selection moves, coordinates and pasted character count are reported

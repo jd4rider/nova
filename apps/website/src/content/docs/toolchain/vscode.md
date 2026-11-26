@@ -1,6 +1,6 @@
 ---
 title: VS Code extension
-description: Install Nova syntax highlighting and the Rust language server in Visual Studio Code.
+description: Install Nova syntax highlighting and the Nova language server in Visual Studio Code.
 ---
 
 The **Nova Language** extension brings `.nova` editing to Visual Studio Code without Nova Studio. It provides TextMate syntax highlighting and a language client for the same Rust server used by Studio.
@@ -35,7 +35,7 @@ brew install jd4rider/tap/nova
 nova --version
 ```
 
-If VS Code cannot see your Homebrew or Cargo path, set **Nova: Server Path** (`nova.serverPath`) to the absolute path of the binary. The extension starts `nova lsp` over stdio and reports failures in **Output → Nova Language Server**.
+If VS Code cannot see your Homebrew path, set **Nova: Server Path** (`nova.serverPath`) to the absolute path of the binary. The extension starts `nova lsp` over stdio and reports failures in **Output → Nova Language Server**.
 
 ## What it provides
 

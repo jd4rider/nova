@@ -98,7 +98,7 @@ open -a "Nova Studio"</code></pre>
       <div class="prose" style="max-width: none;">
         <div class="kicker">Use your own editor</div>
         <h2>Nova in VS Code.</h2>
-        <p>The <strong>Nova Language</strong> extension adds <code>.nova</code> syntax highlighting and launches the same Rust language server as Studio. It does not require the Studio app.</p>
+        <p>The <strong>Nova Language</strong> extension adds <code>.nova</code> syntax highlighting and launches the same Nova language server as Studio. It does not require the Studio app.</p>
         <pre><code>code --install-extension nova-language-0.2.0.vsix</code></pre>
         <p>Download the VSIX and use the terminal command above, or open <strong>Extensions → … → Install from VSIX…</strong> in VS Code.</p>
         <a class="button primary" href={vsix} rel="noreferrer">Download VSIX ↓</a>
@@ -130,11 +130,11 @@ nova --version</code></pre>
       <div class="prose" style="max-width: none;">
         <div class="kicker">Build from source</div>
         <h2>No binaries required.</h2>
-        <p>You need Rust 1.96+, Cargo and Clang. Node 20+ is only needed for Studio or the website.</p>
+        <p>You need the checked-in Nova bootstrap and Clang. Node 20+ is only needed for Studio or the website.</p>
         <pre><code>git clone https://github.com/jd4rider/nova.git
 cd nova
-cargo build --release -p nova-cli
-export PATH="$PWD/target/release:$PATH"
+(cd examples/nova-tool && ../../bootstrap/nova build)
+export PATH="$PWD/bootstrap:$PATH"
 nova --version
 nova doctor</code></pre>
         <p>Build a program and Studio:</p>
@@ -143,7 +143,7 @@ cd hello
 nova run
 cd ../editor
 npm ci --no-audit --no-fund
-NOVA_BIN="$PWD/../target/release/nova" npm run dev</code></pre>
+NOVA_BIN="$PWD/../bootstrap/nova" npm run dev</code></pre>
       </div>
       <aside class="card">
         <div class="kicker">Platform matrix</div>

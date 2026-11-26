@@ -3,12 +3,12 @@
 set -eu
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
-NOVA="$ROOT/target/debug/nova"
+NOVA="${NOVA_BIN:-$ROOT/bootstrap/nova}"
 DIST="$HERE/dist"
 APP_NAME="Nova Terminal"
 APP="$DIST/$APP_NAME.app"
 
-[ -x "$NOVA" ] || { echo "install: build the compiler first (cargo build -p nova-cli)" >&2; exit 1; }
+[ -x "$NOVA" ] || { echo "install: missing $NOVA (build the Nova compiler first)" >&2; exit 1; }
 (cd "$HERE" && "$NOVA" build)
 
 BIN="$HERE/target/nova/nova-term"

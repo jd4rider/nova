@@ -15,21 +15,15 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: macos-14
+    env:
+      NOVA_BIN: ${{ github.workspace }}/bootstrap/nova
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install Clang
-        run: sudo apt-get update && sudo apt-get install -y clang
-
-      - name: Build compiler for checked snippets
-        run: |
-          cargo build -p nova-cli
-          echo "NOVA_BIN=$GITHUB_WORKSPACE/target/debug/nova" >> "$GITHUB_ENV"
+      - name: Verify the checked-in bootstrap
+        run: test -x bootstrap/nova
 
       - name: Node
         uses: actions/setup-node@v4
@@ -42,14 +36,9 @@ jobs:
         working-directory: apps/website
         run: npm ci --no-audit --no-fund
 
-      - name: Add WebAssembly target
-        run: rustup target add wasm32-unknown-unknown
-
-      - name: Build and verify playground front end
+      - name: Verify checked-in playground artifacts
         working-directory: apps/website
-        run: |
-          npm run build:playground
-          npm run test:playground
+        run: npm run test:playground
 
       - name: Astro check and lint
         working-directory: apps/website

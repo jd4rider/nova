@@ -66,7 +66,7 @@
         "nova.serverPath": {
           "type": "string",
           "default": "nova",
-          "markdownDescription": "Path to the `nova` executable used to start `nova lsp`. Keep the default to use `nova` from `PATH`; set an absolute path when VS Code cannot see your shell's Homebrew or Cargo path.",
+          "markdownDescription": "Path to the `nova` executable used to start `nova lsp`. Keep the default to use `nova` from `PATH`; set an absolute path when VS Code cannot see your shell's Homebrew path.",
           "scope": "machine-overridable"
         }
       }

@@ -2,14 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type * as Monaco from 'monaco-editor'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
-import { monaco, registerLspProviders } from './monaco'
+import { monaco, registerCopilotCompletion, registerLspProviders } from './monaco'
+import { MaterialFileIcon } from './MaterialFileIcon'
+import { MONO_FONT } from './fonts'
+import { AiPanel } from './AiPanel'
 import { EffectsLayer, type EffectsHandle } from './effects'
 import { playScroll, playTyping } from './sfx'
 import type {
-  AiContext,
-  AiMessage,
-  AiProviderId,
-  AiProviderSettings,
   FileEntry,
   FreeBuffStatus,
   LspDiagnostic,
@@ -107,7 +106,7 @@ export default function App(): JSX.Element {
   const [lineDialog, setLineDialog] = useState(false)
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number; path: string } | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
-  const [terminalCommand, setTerminalCommand] = useState<'shell' | 'freebuff'>('shell')
+  const [terminalCommand, setTerminalCommand] = useState<string>('shell')
   const [terminalPty, setTerminalPty] = useState<boolean | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const diagnosticsRef = useRef<Map<string, LspDiagnostic[]>>(new Map())
@@ -388,6 +387,7 @@ export default function App(): JSX.Element {
     if (!lspProvidersRegistered) {
       lspProvidersRegistered = true
       registerLspProviders((method, params) => window.nova.lsp.request(method, params))
+      registerCopilotCompletion()
     }
     const offDiagnostics = window.nova.lsp.onDiagnostics(({ uri, diagnostics }) => applyDiagnostics(uri, diagnostics))
     const offStatus = window.nova.lsp.onStatus((status) => setLspStatus(status))
@@ -713,6 +713,28 @@ export default function App(): JSX.Element {
     }
   }, [editor, effectsActive])
 
+  const keepAiEdit = useCallback(
+    async (path: string, content: string) => {
+      const tab = tabsRef.current.find((candidate) => candidate.path === path)
+      if (!tab) throw new Error('The file is not open. Open it and review the edit again.')
+      const result = await window.nova.fs.write(path, content, tab.mtimeMs)
+      if (result.conflict) {
+        throw new Error('The file changed on disk. Reopen it and review the edit again.')
+      }
+      tab.model.setValue(content)
+      updateTabs((previous) => previous.map((candidate) =>
+        candidate.path === path ? { ...candidate, mtimeMs: result.mtimeMs, dirty: false } : candidate
+      ))
+      window.nova.lsp.notify('textDocument/didChange', {
+        textDocument: { uri: tab.uri, version: tab.model.getVersionId() },
+        contentChanges: [{ text: content }]
+      })
+      window.nova.lsp.notify('textDocument/didSave', { textDocument: { uri: tab.uri } })
+      setOutput((previous) => `${previous}\nKept AI edit in ${path}\n`)
+    },
+    [updateTabs]
+  )
+
   const activeTab = tabs.find((tab) => tab.path === activePath) ?? null
   const activeModel = activeTab?.model ?? null
 
@@ -756,7 +778,7 @@ export default function App(): JSX.Element {
                 onContextMenu={(event) => { event.preventDefault(); setTabMenu({ x: event.clientX, y: event.clientY, path: tab.path }) }}
                 title={tab.path}
               >
-                <FileGlyph name={tab.name} />
+                <MaterialFileIcon name={tab.name} />
                 <span className="tab-label">{tab.name}</span>
                 {tab.dirty ? <span className="tab-dirty" aria-label="Unsaved changes">●</span> : null}
                 <span
@@ -833,6 +855,7 @@ export default function App(): JSX.Element {
                   <>
                     <button className="toolbar-button" onClick={() => setTerminalCommand('shell')}>Shell</button>
                     <button className="toolbar-button" onClick={() => setTerminalCommand('freebuff')}>FreeBuff</button>
+                    {terminalCommand.startsWith('cmd:') && <span className="terminal-command-label">{terminalCommand.slice(4)}</span>}
                   </>
                 )}
                 <button className="icon-button" aria-label="Close panel" onClick={() => setBottomVisible(false)}>×</button>
@@ -841,7 +864,7 @@ export default function App(): JSX.Element {
                 {bottomTab === 'problems' && <ProblemsPanel problems={problems} onOpen={(problem) => void openPath(problem.file, problem.line)} />}
                 {bottomTab === 'output' && <pre className="output">{output}</pre>}
                 {bottomTab === 'tests' && <pre className="output">{testsOutput}</pre>}
-                {bottomTab === 'terminal' && (root ? <TerminalPanel key={`${terminalCommand}-${root}`} cwd={root} command={terminalCommand === 'freebuff' ? 'freebuff' : undefined} onMode={setTerminalPty} /> : <div className="empty-panel">Open a folder to start a terminal.</div>)}
+                {bottomTab === 'terminal' && (root ? <TerminalPanel key={`${terminalCommand}-${root}`} cwd={root} command={terminalCommand === 'shell' ? undefined : terminalCommand} onMode={setTerminalPty} /> : <div className="empty-panel">Open a folder to start a terminal.</div>)}
                 {bottomTab === 'docs' && <DocsPanel />}
               </div>
             </div>
@@ -849,13 +872,18 @@ export default function App(): JSX.Element {
         </main>
         {aiVisible && (
           <AiPanel
-            status={freebuff}
+            freebuff={freebuff}
             root={root}
             activePath={activeTab?.path ?? null}
             activeModel={activeModel}
             editor={editor}
-            onMode={setTerminalPty}
             onStatus={setAiLabel}
+            onTerminal={(command) => {
+              setTerminalCommand(command)
+              setBottomVisible(true)
+              setBottomTab('terminal')
+            }}
+            onKeepEdit={keepAiEdit}
           />
         )}
       </div>
@@ -945,13 +973,6 @@ function Icon({ name, size = 16, className }: { name: IconName; size?: number; c
       {ICON_PATHS[name]}
     </svg>
   )
-}
-
-function FileGlyph({ name }: { name: string }): JSX.Element {
-  const extension = name.includes('.') ? name.split('.').pop() ?? '' : ''
-  const kind = name.endsWith('.nova') ? 'nova' : extension === 'toml' ? 'toml' : extension === 'md' ? 'md' : extension === 'json' ? 'json' : 'text'
-  const label = kind === 'nova' ? 'N' : kind === 'toml' ? 'T' : kind === 'md' ? 'M' : kind === 'json' ? '{}' : '·'
-  return <span className={`file-glyph ${kind}`} aria-hidden="true">{label}</span>
 }
 
 function TitleBar({ sidebar, panel, ai, onPalette, onToggleSidebar, onTogglePanel, onToggleAi }: {
@@ -1061,7 +1082,7 @@ function TreeNode({ entry, activePath, expanded, onToggle, onOpen, refreshKey, o
   return (
     <div>
       <div className={`tree-row ${activePath === entry.path ? 'active' : ''}`} onClick={() => entry.isDir ? onToggle(entry.path) : onOpen(entry.path)} onContextMenu={(event) => { event.preventDefault(); setMenu({ x: event.clientX, y: event.clientY }) }}>
-        {entry.isDir ? <span className="tree-icon"><Icon name="chevron" size={12} className={open ? 'chevron chevron-open' : 'chevron'} /></span> : <FileGlyph name={entry.name} />}
+        {entry.isDir ? <><span className="tree-icon"><Icon name="chevron" size={12} className={open ? 'chevron chevron-open' : 'chevron'} /></span><MaterialFileIcon name={entry.name} isDir open={open} /></> : <MaterialFileIcon name={entry.name} />}
         <span className={entry.name.endsWith('.nova') ? 'nova-file' : ''}>{entry.name}</span>
       </div>
       {entry.isDir && open && <div className="tree-children">{children.map((child) => <TreeNode key={child.path} entry={child} activePath={activePath} expanded={expanded} onToggle={onToggle} onOpen={onOpen} refreshKey={refreshKey} onRefresh={onRefresh} />)}</div>}
@@ -1147,8 +1168,8 @@ function EditorPane({ editorReady, model, settings, onChange }: { editorReady: (
     const editor = monaco.editor.create(container.current, {
       theme: settings.theme,
       automaticLayout: true,
-      fontFamily: "'SF Mono', Menlo, Monaco, 'Cascadia Code', 'Courier New', monospace",
-      fontLigatures: false,
+      fontFamily: MONO_FONT,
+      fontLigatures: true,
       fontSize: settings.fontSize,
       lineHeight: 22,
       minimap: { enabled: settings.minimap, showSlider: 'mouseover', renderCharacters: false },
@@ -1201,7 +1222,7 @@ function DocsPanel(): JSX.Element {
       <div className="docs-grid">
         <section>
           <h3>Language</h3>
-          <p>Bindings, functions, structs, lists, strings, Option/Result, match and loops. Unsupported generics, traits and closures are rejected with diagnostics.</p>
+          <p>Bindings, functions, structs, lists, strings, Option/Result, match and loops, plus generic functions, static traits, methods, tuples/arrays/slices, capturing closures and expression/statement macros. Trait impls on generic types and real async scheduling are rejected with diagnostics.</p>
           <span className="docs-key">docs/language/reference</span>
         </section>
         <section>
@@ -1216,7 +1237,7 @@ function DocsPanel(): JSX.Element {
         </section>
         <section>
           <h3>Building Nova</h3>
-          <p>Build the compiler with <code>cargo build --workspace</code>, then point Studio at it with <code>NOVA_BIN</code>. LSP startup needs a project manifest.</p>
+          <p>Build the compiler with <code>(cd examples/nova-tool &amp;&amp; ../../bootstrap/nova build)</code>, then point Studio at it with <code>NOVA_BIN</code>. LSP startup needs a project manifest.</p>
           <span className="docs-key">README.md</span>
         </section>
       </div>
@@ -1234,7 +1255,7 @@ function TerminalPanel({ cwd, command, onMode }: { cwd: string; command?: string
   useEffect(() => {
     if (!container.current) return
     const term = new Terminal({
-      fontFamily: "'SF Mono', Menlo, Monaco, 'Cascadia Code', 'Courier New', monospace",
+      fontFamily: MONO_FONT,
       fontSize: 12,
       cursorBlink: true,
       theme: {
@@ -1292,341 +1313,8 @@ function TerminalPanel({ cwd, command, onMode }: { cwd: string; command?: string
       term.dispose()
     }
   }, [command, cwd, onMode])
-  return <div className="terminal-wrap"><div className="terminal-status">{command === 'freebuff' ? 'FreeBuff terminal' : 'Shell'} · {status}</div><div className="terminal" ref={container} /></div>
-}
-
-interface ChatEntry {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-  pending?: boolean
-  error?: boolean
-}
-
-interface AiForm {
-  provider: AiProviderId
-  model: string
-  baseUrl: string
-}
-
-const AI_PRESETS: Array<{ label: string; provider: AiProviderId; model: string; baseUrl: string; hint: string }> = [
-  { label: 'Claude', provider: 'anthropic', model: 'claude-sonnet-4-5', baseUrl: 'https://api.anthropic.com', hint: 'Anthropic API key' },
-  { label: 'GitHub Models', provider: 'openai', model: 'openai/gpt-4o-mini', baseUrl: 'https://models.github.ai/inference', hint: 'GitHub token with models:read — no separate AI vendor account' },
-  { label: 'OpenAI', provider: 'openai', model: 'gpt-4o-mini', baseUrl: 'https://api.openai.com/v1', hint: 'OpenAI API key' },
-  { label: 'Local', provider: 'openai', model: 'llama3.1', baseUrl: 'http://localhost:11434/v1', hint: 'Ollama or any local OpenAI-compatible server' }
-]
-
-function AiPanel({ status, root, activePath, activeModel, editor, onMode, onStatus }: {
-  status: FreeBuffStatus | null
-  root: string | null
-  activePath: string | null
-  activeModel: Monaco.editor.ITextModel | null
-  editor: Monaco.editor.IStandaloneCodeEditor | null
-  onMode: (pty: boolean) => void
-  onStatus: (label: string) => void
-}): JSX.Element {
-  const [tab, setTab] = useState<'chat' | 'freebuff'>('chat')
-  const [settings, setSettings] = useState<AiProviderSettings | null>(null)
-  const [form, setForm] = useState<AiForm>({ provider: 'anthropic', model: '', baseUrl: '' })
-  const [apiKey, setApiKey] = useState('')
-  const [configOpen, setConfigOpen] = useState(false)
-  const [messages, setMessages] = useState<ChatEntry[]>([])
-  const [input, setInput] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [attach, setAttach] = useState(true)
-  const [notice, setNotice] = useState<string | null>(null)
-  const requestRef = useRef<string | null>(null)
-  const scroller = useRef<HTMLDivElement | null>(null)
-
-  useEffect(() => {
-    window.nova.ai
-      .settings()
-      .then((next) => {
-        setSettings(next)
-        setForm({ provider: next.provider, model: next.model, baseUrl: next.baseUrl })
-      })
-      .catch((error) => setNotice((error as Error).message))
-  }, [])
-
-  useEffect(() => {
-    if (!settings) return
-    const name = settings.provider === 'anthropic' ? 'Claude' : 'chat'
-    onStatus(`${name} ${settings.model}${settings.hasApiKey ? '' : ' · no key'}`)
-  }, [settings, onStatus])
-
-  useEffect(
-    () =>
-      window.nova.ai.onEvent((event) => {
-        if (event.requestId !== requestRef.current) return
-        if (event.type === 'delta' && event.text) {
-          setMessages((previous) =>
-            previous.map((entry) =>
-              entry.id === event.requestId ? { ...entry, content: entry.content + (event.text ?? '') } : entry
-            )
-          )
-        } else if (event.type === 'done') {
-          requestRef.current = null
-          setBusy(false)
-          setMessages((previous) =>
-            previous.map((entry) =>
-              entry.id === event.requestId
-                ? { ...entry, pending: false, content: entry.content || '(the provider returned no text)' }
-                : entry
-            )
-          )
-        } else if (event.type === 'error') {
-          requestRef.current = null
-          setBusy(false)
-          setMessages((previous) =>
-            previous.map((entry) =>
-              entry.id === event.requestId
-                ? { ...entry, pending: false, error: true, content: event.message ?? 'The request failed.' }
-                : entry
-            )
-          )
-        }
-      }),
-    []
-  )
-
-  useEffect(() => {
-    scroller.current?.scrollTo({ top: scroller.current.scrollHeight })
-  }, [messages])
-
-  const buildContext = useCallback((): AiContext | null => {
-    if (!attach || !activeModel || !activePath) return null
-    const selection = editor?.getSelection()
-    const selected = selection && !selection.isEmpty() ? activeModel.getValueInRange(selection) : undefined
-    return { path: activePath, language: 'nova', content: activeModel.getValue(), selection: selected }
-  }, [activeModel, activePath, attach, editor])
-
-  const insertIntoEditor = useCallback(
-    (text: string) => {
-      if (!editor) {
-        void navigator.clipboard.writeText(text)
-        return
-      }
-      const selection = editor.getSelection()
-      if (!selection) return
-      editor.executeEdits('nova-ai', [{ range: selection, text, forceMoveMarkers: true }])
-      editor.focus()
-    },
-    [editor]
-  )
-
-  const send = useCallback(async () => {
-    const text = input.trim()
-    if (!text || busy || !settings?.hasApiKey) return
-    const history: AiMessage[] = [
-      ...messages.filter((entry) => !entry.pending && !entry.error).map((entry) => ({ role: entry.role, content: entry.content })),
-      { role: 'user', content: text }
-    ]
-    const requestId = crypto.randomUUID()
-    requestRef.current = requestId
-    setMessages((previous) => [
-      ...previous,
-      { id: `user-${requestId}`, role: 'user', content: text },
-      { id: requestId, role: 'assistant', content: '', pending: true }
-    ])
-    setInput('')
-    setBusy(true)
-    setNotice(null)
-    try {
-      await window.nova.ai.send(requestId, history, buildContext())
-    } catch (error) {
-      requestRef.current = null
-      setBusy(false)
-      setMessages((previous) =>
-        previous.map((entry) =>
-          entry.id === requestId ? { ...entry, pending: false, error: true, content: (error as Error).message } : entry
-        )
-      )
-    }
-  }, [buildContext, busy, input, messages, settings])
-
-  const stop = () => {
-    const requestId = requestRef.current
-    if (!requestId) return
-    void window.nova.ai.cancel(requestId)
-    requestRef.current = null
-    setBusy(false)
-  }
-
-  const saveConfig = async (keyValue: string) => {
-    try {
-      const next = await window.nova.ai.configure({
-        provider: form.provider,
-        model: form.model,
-        baseUrl: form.baseUrl,
-        ...(keyValue.trim() ? { apiKey: keyValue } : {})
-      })
-      setSettings(next)
-      setForm({ provider: next.provider, model: next.model, baseUrl: next.baseUrl })
-      setApiKey('')
-      setConfigOpen(false)
-      setNotice(next.hasApiKey ? 'Saved. The key is encrypted with the OS credential store.' : 'Saved. Add an API key to send messages.')
-    } catch (error) {
-      setNotice((error as Error).message)
-    }
-  }
-
-  const clearKey = async () => {
-    try {
-      setSettings(await window.nova.ai.configure({ apiKey: null }))
-      setNotice('Stored key removed.')
-    } catch (error) {
-      setNotice((error as Error).message)
-    }
-  }
-
-  return (
-    <aside className="aipanel">
-      <div className="panel-header ai-header">
-        <span>AI</span>
-        <div className="ai-tabs">
-          <button className={tab === 'chat' ? 'active' : ''} onClick={() => setTab('chat')}>Chat</button>
-          <button className={tab === 'freebuff' ? 'active' : ''} onClick={() => setTab('freebuff')}>FreeBuff</button>
-        </div>
-      </div>
-      {tab === 'freebuff' ? (
-        <div className="ai-freebuff">
-          <div className="ai-note">
-            <strong>{status?.available ? `FreeBuff ${status.version}` : 'FreeBuff unavailable'}</strong>
-            <p>{status?.reason ?? 'Checking the installed CLI…'}</p>
-          </div>
-          {root ? (
-            <TerminalPanel key={`ai-freebuff-${root}`} cwd={root} command="freebuff" onMode={onMode} />
-          ) : (
-            <div className="empty-panel">Open a folder to run FreeBuff.</div>
-          )}
-        </div>
-      ) : (
-        <div className="ai-chat">
-          <div className="ai-configbar">
-            <button className="ai-config-toggle" onClick={() => setConfigOpen((value) => !value)}>
-              {settings
-                ? `${settings.provider === 'anthropic' ? 'Claude' : 'OpenAI-compatible'} · ${settings.model}`
-                : 'Loading provider…'}
-            </button>
-            <span className={`badge ${settings?.hasApiKey ? 'ok' : 'warn'}`}>
-              {settings ? (settings.hasApiKey ? settings.keySource : 'no key') : '…'}
-            </span>
-          </div>
-          {configOpen && (
-            <div className="ai-config">
-              <div className="ai-presets">
-                {AI_PRESETS.map((preset) => (
-                  <button
-                    key={preset.label}
-                    title={preset.hint}
-                    className={form.provider === preset.provider && form.model === preset.model ? 'active' : ''}
-                    onClick={() => setForm({ provider: preset.provider, model: preset.model, baseUrl: preset.baseUrl })}
-                  >
-                    {preset.label}
-                  </button>
-                ))}
-              </div>
-              <label>Provider
-                <select
-                  value={form.provider}
-                  onChange={(event) => {
-                    const provider = event.target.value as AiProviderId
-                    const preset = AI_PRESETS.find((candidate) => candidate.provider === provider)
-                    setForm({ provider, model: preset?.model ?? '', baseUrl: preset?.baseUrl ?? '' })
-                  }}
-                >
-                  <option value="anthropic">Anthropic (Claude)</option>
-                  <option value="openai">OpenAI-compatible</option>
-                </select>
-              </label>
-              <label>Model
-                <input value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })} />
-              </label>
-              <label>Base URL
-                <input value={form.baseUrl} onChange={(event) => setForm({ ...form, baseUrl: event.target.value })} />
-              </label>
-              <label>API key
-                <input
-                  type="password"
-                  value={apiKey}
-                  autoComplete="off"
-                  placeholder={settings?.hasApiKey ? `set (${settings.keySource})` : 'not set'}
-                  onChange={(event) => setApiKey(event.target.value)}
-                />
-              </label>
-              <div className="ai-config-actions">
-                <button className="primary" onClick={() => void saveConfig(apiKey)}>Save</button>
-                {settings?.keySource === 'stored' && <button onClick={() => void clearKey()}>Remove stored key</button>}
-              </div>
-              <p className="settings-note">
-                Requests are sent by Studio's main process; keys are encrypted with the OS credential store and
-                never enter the renderer, the workspace or the webview. Conversation text and the attached file
-                go only to the endpoint above.
-              </p>
-            </div>
-          )}
-          <div className="ai-messages" ref={scroller}>
-            {messages.length === 0 && (
-              <div className="ai-empty">
-                <p>Ask about the open file, a diagnostic, or a Nova program. Replies stream from the provider you configure.</p>
-                <p className="muted">
-                  FreeBuff's CLI has no headless mode, so it runs as the FreeBuff tab rather than being scraped for text.
-                </p>
-              </div>
-            )}
-            {messages.map((entry) => (
-              <div key={entry.id} className={`ai-message ${entry.role} ${entry.error ? 'error' : ''}`}>
-                <div className="ai-message-role">
-                  {entry.role === 'user' ? 'You' : 'Assistant'}
-                  {entry.pending ? ' · streaming…' : ''}
-                </div>
-                <div className="ai-message-text">{entry.content || (entry.pending ? '…' : '')}</div>
-                {entry.role === 'assistant' && !entry.pending && !entry.error && (
-                  <div className="ai-message-actions">
-                    <button onClick={() => insertIntoEditor(entry.content)}>Insert</button>
-                    <button onClick={() => void navigator.clipboard.writeText(entry.content)}>Copy</button>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-          {notice && <div className="ai-notice">{notice}</div>}
-          <div className="ai-composer">
-            <label className="ai-context-toggle">
-              <input type="checkbox" checked={attach} onChange={(event) => setAttach(event.target.checked)} />
-              attach {activePath ? activePath.split('/').pop() : 'current file (save an editor first)'}
-            </label>
-            <textarea
-              rows={3}
-              value={input}
-              placeholder={
-                settings?.hasApiKey
-                  ? 'Ask about this file…  Enter sends, Shift+Enter adds a newline'
-                  : 'Add an API key above, or set ANTHROPIC_API_KEY / OPENAI_API_KEY.'
-              }
-              onChange={(event) => setInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.shiftKey) {
-                  event.preventDefault()
-                  void send()
-                }
-              }}
-            />
-            <div className="ai-composer-actions">
-              <span className="muted">{busy ? 'Streaming…' : 'Nothing is sent until you press Send.'}</span>
-              {busy ? (
-                <button onClick={stop}>Stop</button>
-              ) : (
-                <button className="primary" onClick={() => void send()} disabled={!input.trim() || !settings?.hasApiKey}>
-                  Send
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-    </aside>
-  )
+  const label = command === 'freebuff' ? 'FreeBuff terminal' : command?.startsWith('cmd:') ? command.slice(4) : 'Shell'
+  return <div className="terminal-wrap"><div className="terminal-status">{label} · {status}</div><div className="terminal" ref={container} /></div>
 }
 
 function StatusBar({ cursor, lspStatus, vim, aiLabel, terminalPty, vimStatusRef, active, effects, sound, problemCount }: { cursor: { line: number; column: number }; lspStatus: string; vim: boolean; aiLabel: string; terminalPty: boolean | null; vimStatusRef: React.RefObject<HTMLSpanElement>; active: string | null; effects: boolean; sound: boolean; problemCount: number }): JSX.Element {

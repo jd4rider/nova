@@ -1,0 +1,9 @@
+fn main() -> Int {
+    let values = [1, 2, 3]
+    let view = values.as_slice()
+    var total = 0
+    for value in view {
+        total = total + value
+    }
+    return total
+}

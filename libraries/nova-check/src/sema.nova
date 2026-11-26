@@ -34,6 +34,7 @@ struct SaEnum {
 struct SaLocal {
     name: String,
     type_name: String,
+    mutable: Bool,
 }
 
 struct SaCtx {
@@ -249,6 +250,48 @@ fn sa_lookup(ctx: SaCtx, name: String) -> String {
     return ""
 }
 
+fn sa_local_index(ctx: SaCtx, name: String) -> Int {
+    var i = ctx.locals.len() - 1
+    while i >= 0 {
+        if ctx.locals[i].name == name {
+            return i
+        }
+        i = i - 1
+    }
+    return -1
+}
+
+fn sa_local_mutable(ctx: SaCtx, name: String) -> Bool {
+    let index = sa_local_index(ctx, name)
+    if index >= 0 {
+        return ctx.locals[index].mutable
+    }
+    return true
+}
+
+fn sa_root_ident(ast: Ast, node: Int) -> Int {
+    if node < 0 || node >= ast.nodes.len() {
+        return -1
+    }
+    var current = node
+    var steps = 0
+    while steps < ast.nodes.len() {
+        let item = ast.nodes[current]
+        if item.kind == ak_ident() {
+            return current
+        }
+        if item.kind != ak_member() && item.kind != ak_index() {
+            return -1
+        }
+        current = a_child(ast, current, 0)
+        if current < 0 {
+            return -1
+        }
+        steps = steps + 1
+    }
+    return -1
+}
+
 fn sa_variant_enum(ctx: SaCtx, name: String) -> String {
     for item in ctx.enums {
         if sa_has(item.variants, name) {
@@ -265,12 +308,209 @@ fn sa_builtin(name: String) -> Bool {
     return name == "assert"
 }
 
+fn sa_generic_args(name: String) -> List<String> {
+    let chars = name.chars()
+    if chars.len() < 3 || chars[chars.len() - 1] != ">" {
+        return []
+    }
+    var start = -1
+    var i = 0
+    while i < chars.len() {
+        if chars[i] == "<" {
+            start = i
+            i = chars.len()
+        } else {
+            i = i + 1
+        }
+    }
+    if start < 0 {
+        return []
+    }
+    return sa_split_types(lx_slice(chars, start + 1, chars.len() - 1))
+}
+
+fn sa_option_inner(name: String) -> String {
+    if name.starts_with("Option<") {
+        let args = sa_generic_args(name)
+        if args.len() == 1 {
+            return args[0]
+        }
+    }
+    return ""
+}
+
+fn sa_result_ok(name: String) -> String {
+    if name.starts_with("Result<") {
+        let args = sa_generic_args(name)
+        if args.len() == 2 {
+            return args[0]
+        }
+    }
+    return ""
+}
+
+fn sa_result_err(name: String) -> String {
+    if name.starts_with("Result<") {
+        let args = sa_generic_args(name)
+        if args.len() == 2 {
+            return args[1]
+        }
+    }
+    return ""
+}
+
+fn sa_is_map(name: String) -> Bool {
+    return name.starts_with("Map<") && name.ends_with(">")
+}
+
+fn sa_map_key(name: String) -> String {
+    if !sa_is_map(name) {
+        return ""
+    }
+    let args = sa_generic_args(name)
+    if args.len() != 2 {
+        return ""
+    }
+    return args[0]
+}
+
+fn sa_map_value(name: String) -> String {
+    if !sa_is_map(name) {
+        return ""
+    }
+    let args = sa_generic_args(name)
+    if args.len() != 2 {
+        return ""
+    }
+    return args[1]
+}
+
+fn sa_is_set(name: String) -> Bool {
+    return name.starts_with("Set<") && name.ends_with(">")
+}
+
+fn sa_set_elem(name: String) -> String {
+    if !sa_is_set(name) {
+        return ""
+    }
+    let args = sa_generic_args(name)
+    if args.len() != 1 {
+        return ""
+    }
+    return args[0]
+}
+
+fn sa_map_key_ok(name: String) -> Bool {
+    return name == "Int" || name == "Bool" || name == "String" || name == "?"
+}
+
+fn sa_digit(c: String) -> Int {
+    if c == "0" {
+        return 0
+    }
+    if c == "1" {
+        return 1
+    }
+    if c == "2" {
+        return 2
+    }
+    if c == "3" {
+        return 3
+    }
+    if c == "4" {
+        return 4
+    }
+    if c == "5" {
+        return 5
+    }
+    if c == "6" {
+        return 6
+    }
+    if c == "7" {
+        return 7
+    }
+    if c == "8" {
+        return 8
+    }
+    if c == "9" {
+        return 9
+    }
+    return -1
+}
+
+// `[elem; N]` returns (elem, N); a non-array returns ("", -1).
+fn sa_array_layout(name: String) -> (String, Int) {
+    let chars = name.chars()
+    if chars.len() < 4 || chars[0] != "[" || chars[chars.len() - 1] != "]" {
+        return ("", -1)
+    }
+    var depth = 0
+    var split = -1
+    var i = 1
+    while i < chars.len() - 1 {
+        let c = chars[i]
+        if c == "[" || c == "<" || c == "(" {
+            depth = depth + 1
+        } else if c == "]" || c == ">" || c == ")" {
+            depth = depth - 1
+        } else if c == ";" && depth == 0 {
+            split = i
+            i = chars.len()
+        }
+        i = i + 1
+    }
+    if split < 0 {
+        return ("", -1)
+    }
+    let elem = lx_slice(chars, 1, split)
+    var length = 0
+    var digits = 0
+    var k = split + 1
+    while k < chars.len() - 1 {
+        let c = chars[k]
+        if c != "_" {
+            let digit = sa_digit(c)
+            if digit < 0 {
+                return ("", -1)
+            }
+            length = length * 10 + digit
+            digits = digits + 1
+        }
+        k = k + 1
+    }
+    if digits == 0 {
+        return ("", -1)
+    }
+    return (elem, length)
+}
+
 fn sa_elem_type(name: String) -> String {
+    let array = sa_array_layout(name)
+    if array.1 >= 0 {
+        return array.0
+    }
     let chars = name.chars()
     if chars.len() > 6 && name.starts_with("List<") && name.ends_with(">") {
         return lx_slice(chars, 5, chars.len() - 1)
     }
+    if chars.len() > 7 && name.starts_with("Slice<") && name.ends_with(">") {
+        return lx_slice(chars, 6, chars.len() - 1)
+    }
     return "?"
+}
+
+fn sa_display_type(name: String) -> String {
+    var out = ""
+    for c in name.chars() {
+        if c == "?" {
+            out = out + "_"
+        } else if c == "," {
+            out = out + ", "
+        } else {
+            out = out + c
+        }
+    }
+    return out
 }
 
 fn sa_string_pattern(text: String) -> Bool {
@@ -306,8 +546,17 @@ fn sa_match_expr(ctx: SaCtx, node: Int, scrutinee: String) -> SaResult {
     var has_true = false
     var has_false = false
     var seen: List<String> = []
+    var has_some = false
+    var has_none = false
+    var has_ok = false
+    var has_err = false
+    let option_inner = sa_option_inner(scrutinee)
+    let result_ok = sa_result_ok(scrutinee)
+    let result_err = sa_result_err(scrutinee)
+    let is_option = option_inner.len() > 0
+    let is_result = result_ok.len() > 0 && result_err.len() > 0
     let enum_index = sa_enum_index(ctx.enums, scrutinee)
-    let supported = scrutinee == "Int" || scrutinee == "Bool" || scrutinee == "String" || scrutinee == "?" || enum_index >= 0
+    let supported = scrutinee == "Int" || scrutinee == "Bool" || scrutinee == "String" || scrutinee == "?" || is_option || is_result || enum_index >= 0
     if !supported {
         work = sa_error(work, node, "E0311", "match supports Int, Bool, String or enum scrutinees, got " + scrutinee)
     }
@@ -321,10 +570,72 @@ fn sa_match_expr(ctx: SaCtx, node: Int, scrutinee: String) -> SaResult {
             var bindings: List<SaLocal> = []
             if pattern.len() == 0 {
                 work = sa_error(work, arm, "E0311", "empty match pattern")
-            } else if wildcard {
-                work = sa_error(work, arm, "E0312", "unreachable match arm after `_`")
             } else if pattern == "_" {
                 wildcard = true
+            } else if is_option {
+                let variant_name = sa_pattern_variant(pattern)
+                let args = sa_pattern_args(pattern)
+                if variant_name == "None" {
+                    has_none = true
+                    if args.len() != 0 {
+                        work = sa_error(work, arm, "E0311", "`None` does not take a payload pattern")
+                    }
+                } else if variant_name == "Some" {
+                    has_some = true
+                    if args.len() != 1 {
+                        work = sa_error(
+                            work,
+                            arm,
+                            "E0311",
+                            "`Some` pattern expects 1 payload pattern, found " + args.len().to_string()
+                        )
+                    } else if args[0] != "_" {
+                        if !sa_identifier(args[0]) {
+                            work = sa_error(work, arm, "E0311", "unsupported payload pattern `" + args[0] + "`")
+                        } else {
+                            bindings.push(
+                                SaLocal { name: args[0], type_name: option_inner, mutable: false }
+                            )
+                        }
+                    }
+                } else if args.len() > 0 || !sa_identifier(variant_name) {
+                    work = sa_error(work, arm, "E0311", "unsupported pattern `" + pattern + "` for Option")
+                } else {
+                    bindings.push(SaLocal { name: variant_name, type_name: scrutinee, mutable: false })
+                    wildcard = true
+                }
+            } else if is_result {
+                let variant_name = sa_pattern_variant(pattern)
+                let args = sa_pattern_args(pattern)
+                if variant_name == "Ok" || variant_name == "Err" {
+                    if variant_name == "Ok" {
+                        has_ok = true
+                    } else {
+                        has_err = true
+                    }
+                    if args.len() != 1 {
+                        work = sa_error(
+                            work,
+                            arm,
+                            "E0311",
+                            "`" + variant_name + "` pattern expects 1 payload pattern, found " + args.len().to_string()
+                        )
+                    } else if args[0] != "_" {
+                        if !sa_identifier(args[0]) {
+                            work = sa_error(work, arm, "E0311", "unsupported payload pattern `" + args[0] + "`")
+                        } else {
+                            let payload = if variant_name == "Ok" { result_ok } else { result_err }
+                            bindings.push(
+                                SaLocal { name: args[0], type_name: payload, mutable: false }
+                            )
+                        }
+                    }
+                } else if args.len() > 0 || !sa_identifier(variant_name) {
+                    work = sa_error(work, arm, "E0311", "unsupported pattern `" + pattern + "` for Result")
+                } else {
+                    bindings.push(SaLocal { name: variant_name, type_name: scrutinee, mutable: false })
+                    wildcard = true
+                }
             } else if enum_index >= 0 {
                 let def = work.enums[enum_index]
                 let variant_name = sa_pattern_variant(pattern)
@@ -341,8 +652,6 @@ fn sa_match_expr(ctx: SaCtx, node: Int, scrutinee: String) -> SaResult {
                             "E0303",
                             def.name + "." + variant_name + " expects " + expected.to_string() + " payload bindings, got " + args.len().to_string()
                         )
-                    } else if sa_has(seen, variant_name) {
-                        work = sa_error(work, arm, "E0312", "duplicate match arm `" + variant_name + "`")
                     } else {
                         seen.push(variant_name)
                         var b = 0
@@ -358,6 +667,7 @@ fn sa_match_expr(ctx: SaCtx, node: Int, scrutinee: String) -> SaResult {
                                         SaLocal {
                                             name: binding,
                                             type_name: sa_variant_payload_types(def, variant)[b],
+                                            mutable: false,
                                         }
                                     )
                                 }
@@ -369,8 +679,6 @@ fn sa_match_expr(ctx: SaCtx, node: Int, scrutinee: String) -> SaResult {
             } else if supported && scrutinee == "String" {
                 if !sa_string_pattern(pattern) {
                     work = sa_error(work, arm, "E0311", "unsupported match pattern `" + pattern + "` for String")
-                } else if sa_has(seen, pattern) {
-                    work = sa_error(work, arm, "E0312", "duplicate match arm `" + pattern + "`")
                 } else {
                     seen.push(pattern)
                 }
@@ -384,22 +692,16 @@ fn sa_match_expr(ctx: SaCtx, node: Int, scrutinee: String) -> SaResult {
                     )
                 } else if !sa_int_pattern(pattern) {
                     work = sa_error(work, arm, "E0311", "unsupported match pattern `" + pattern + "` for Int")
-                } else if sa_has(seen, pattern) {
-                    work = sa_error(work, arm, "E0312", "duplicate match arm `" + pattern + "`")
                 } else {
                     seen.push(pattern)
                 }
             } else if supported && scrutinee == "Bool" {
                 if pattern == "true" || pattern == "false" {
-                    if sa_has(seen, pattern) {
-                        work = sa_error(work, arm, "E0312", "duplicate match arm `" + pattern + "`")
+                    seen.push(pattern)
+                    if pattern == "true" {
+                        has_true = true
                     } else {
-                        seen.push(pattern)
-                        if pattern == "true" {
-                            has_true = true
-                        } else {
-                            has_false = true
-                        }
+                        has_false = true
                     }
                 } else if sa_int_pattern(pattern) {
                     work = sa_error(
@@ -429,7 +731,7 @@ fn sa_match_expr(ctx: SaCtx, node: Int, scrutinee: String) -> SaResult {
             work = sa_trim_locals(work, saved)
             if result.len() == 0 {
                 result = body_ty
-            } else if body_ty != "?" && result != "?" && !sa_same(result, body_ty) {
+            } else if body_ty != "?" && result != "?" && !sa_compatible(result, body_ty) {
                 work = sa_error(
                     work,
                     body,
@@ -444,18 +746,17 @@ fn sa_match_expr(ctx: SaCtx, node: Int, scrutinee: String) -> SaResult {
     if item.count == 1 {
         work = sa_error(work, node, "E0313", "match has no arms")
     } else if scrutinee == "Int" && !wildcard {
-        work = sa_error(work, node, "E0313", "non-exhaustive match on Int; add `_`")
+        work = sa_error(work, node, "E0310", "non-exhaustive `match` on `Int`")
     } else if scrutinee == "Bool" && !wildcard && !(has_true && has_false) {
-        work = sa_error(work, node, "E0313", "non-exhaustive match on Bool; cover true and false or add `_`")
+        work = sa_error(work, node, "E0310", "non-exhaustive `match` on `Bool`")
     } else if scrutinee == "String" && !wildcard {
-        work = sa_error(work, node, "E0313", "non-exhaustive match on String; add `_`")
+        work = sa_error(work, node, "E0310", "non-exhaustive `match` on `String`")
+    } else if is_option && !wildcard && !(has_some && has_none) {
+        work = sa_error(work, node, "E0310", "non-exhaustive `match` on `" + sa_display_type(scrutinee) + "`")
+    } else if is_result && !wildcard && !(has_ok && has_err) {
+        work = sa_error(work, node, "E0310", "non-exhaustive `match` on `" + sa_display_type(scrutinee) + "`")
     } else if enum_index >= 0 && !wildcard && seen.len() < work.enums[enum_index].variants.len() {
-        work = sa_error(
-            work,
-            node,
-            "E0313",
-            "non-exhaustive match on " + scrutinee + "; cover every variant or add `_`"
-        )
+        work = sa_error(work, node, "E0310", "non-exhaustive `match` on `" + scrutinee + "`")
     }
     if result.len() == 0 {
         result = "?"
@@ -468,6 +769,67 @@ fn sa_same(expected: String, actual: String) -> Bool {
         return true
     }
     return expected == actual
+}
+
+// Like `sa_same`, but treats an unknown element inside a list or tuple as a
+// wildcard. An empty `List` literal has type `List<?>`; assigning it to a typed
+// binding, argument, field or return is valid, while concrete mismatches still
+// fail.
+fn sa_compatible(expected: String, actual: String) -> Bool {
+    if sa_same(expected, actual) {
+        return true
+    }
+    let expected_chars = expected.chars()
+    let actual_chars = actual.chars()
+    if expected_chars.len() >= 2 && actual_chars.len() >= 2 && expected_chars[0] == "(" && actual_chars[0] == "(" && expected_chars[expected_chars.len() - 1] == ")" && actual_chars[actual_chars.len() - 1] == ")" {
+        let left = sa_split_types(lx_slice(expected_chars, 1, expected_chars.len() - 1))
+        let right = sa_split_types(lx_slice(actual_chars, 1, actual_chars.len() - 1))
+        if left.len() != right.len() {
+            return false
+        }
+        var i = 0
+        while i < left.len() {
+            if !sa_compatible(left[i], right[i]) {
+                return false
+            }
+            i = i + 1
+        }
+        return true
+    }
+    if expected.starts_with("Option<") && actual.starts_with("Option<") {
+        let left = sa_option_inner(expected)
+        let right = sa_option_inner(actual)
+        if left.len() > 0 && right.len() > 0 {
+            return sa_compatible(left, right)
+        }
+    }
+    if expected.starts_with("Result<") && actual.starts_with("Result<") {
+        let left_ok = sa_result_ok(expected)
+        let left_err = sa_result_err(expected)
+        let right_ok = sa_result_ok(actual)
+        let right_err = sa_result_err(actual)
+        if left_ok.len() > 0 && left_err.len() > 0 && right_ok.len() > 0 && right_err.len() > 0 {
+            return sa_compatible(left_ok, right_ok) && sa_compatible(left_err, right_err)
+        }
+    }
+    if sa_is_map(expected) && sa_is_map(actual) {
+        return sa_compatible(sa_map_key(expected), sa_map_key(actual)) && sa_compatible(sa_map_value(expected), sa_map_value(actual))
+    }
+    if sa_is_set(expected) && sa_is_set(actual) {
+        return sa_compatible(sa_set_elem(expected), sa_set_elem(actual))
+    }
+    let expected_array = sa_array_layout(expected)
+    let actual_array = sa_array_layout(actual)
+    if expected_array.1 >= 0 && actual_array.1 >= 0 {
+        return expected_array.1 == actual_array.1 && sa_compatible(expected_array.0, actual_array.0)
+    }
+    if expected.starts_with("List<") && actual.starts_with("List<") {
+        return sa_compatible(sa_elem_type(expected), sa_elem_type(actual))
+    }
+    if expected.starts_with("Slice<") && actual.starts_with("Slice<") {
+        return sa_compatible(sa_elem_type(expected), sa_elem_type(actual))
+    }
+    return false
 }
 
 fn sa_ctx_errors(ctx: SaCtx, errors: List<String>) -> SaCtx {
@@ -532,6 +894,16 @@ fn sa_error(ctx: SaCtx, node: Int, code: String, message: String) -> SaCtx {
     return sa_ctx_errors(ctx, errors)
 }
 
+fn sa_error_at(ctx: SaCtx, node: Int, column: Int, code: String, message: String) -> SaCtx {
+    if node < 0 || node >= ctx.ast.nodes.len() {
+        return ctx
+    }
+    let item = ctx.ast.nodes[node]
+    var errors = ctx.errors
+    errors.push(code + " " + message + " at line " + item.line.to_string() + ", column " + column.to_string())
+    return sa_ctx_errors(ctx, errors)
+}
+
 fn sa_result(ctx: SaCtx, type_name: String) -> SaResult {
     return SaResult { ctx: ctx, type_name: type_name }
 }
@@ -542,7 +914,13 @@ fn sa_fail(ctx: SaCtx, node: Int, code: String, message: String) -> SaResult {
 
 fn sa_push_local(ctx: SaCtx, name: String, type_name: String) -> SaCtx {
     var locals = ctx.locals
-    locals.push(SaLocal { name: name, type_name: type_name })
+    locals.push(SaLocal { name: name, type_name: type_name, mutable: false })
+    return sa_ctx_locals(ctx, locals)
+}
+
+fn sa_push_mutable(ctx: SaCtx, name: String, type_name: String) -> SaCtx {
+    var locals = ctx.locals
+    locals.push(SaLocal { name: name, type_name: type_name, mutable: true })
     return sa_ctx_locals(ctx, locals)
 }
 
@@ -559,9 +937,54 @@ fn sa_trim_locals(ctx: SaCtx, count: Int) -> SaCtx {
 fn sa_check_bool(ctx: SaCtx, node: Int) -> SaCtx {
     let value = sa_expr(ctx, node)
     if value.type_name != "?" && value.type_name != "Bool" {
-        return sa_error(value.ctx, node, "E0309", "condition must be Bool, got " + value.type_name)
+        return sa_error(
+            value.ctx,
+            node,
+            "E0308",
+            "type mismatch: expected `Bool`, found `" + value.type_name + "`"
+        )
     }
     return value.ctx
+}
+
+fn sa_array_literal(ctx: SaCtx, node: Int, array: String) -> SaCtx {
+    if node < 0 || node >= ctx.ast.nodes.len() || ctx.ast.nodes[node].kind != ak_list() {
+        return ctx
+    }
+    let layout = sa_array_layout(array)
+    let elem = layout.0
+    let expected_len = layout.1
+    let got = ctx.ast.nodes[node].count
+    var work = ctx
+    if expected_len >= 0 && got != expected_len {
+        work = sa_error(
+            work,
+            node,
+            "E0308",
+            "array length mismatch: expected " + expected_len.to_string() + " element(s), found " + got.to_string()
+        )
+    }
+    var i = 0
+    while i < got {
+        let child = a_child(work.ast, node, i)
+        let value_node = work.ast.nodes[child]
+        if value_node.kind == ak_list() && sa_array_layout(elem).1 >= 0 {
+            work = sa_array_literal(work, child, elem)
+        } else {
+            let value = sa_expr(work, child)
+            work = value.ctx
+            if !sa_compatible(elem, value.type_name) {
+                work = sa_error(
+                    work,
+                    child,
+                    "E0308",
+                    "type mismatch: expected `" + sa_display_type(elem) + "`, found `" + sa_display_type(value.type_name) + "`"
+                )
+            }
+        }
+        i = i + 1
+    }
+    return work
 }
 
 fn sa_args(ctx: SaCtx, call: Int, start: Int, expected: List<String>, check_types: Bool) -> SaCtx {
@@ -571,14 +994,22 @@ fn sa_args(ctx: SaCtx, call: Int, start: Int, expected: List<String>, check_type
     var index = 0
     while i < total {
         let child = a_child(work.ast, call, i)
-        let value = sa_expr(work, child)
-        work = value.ctx
-        if check_types && index < expected.len() && !sa_same(expected[index], value.type_name) {
+        var actual = "?"
+        let expected_type = if index < expected.len() { expected[index] } else { "" }
+        if check_types && sa_array_layout(expected_type).1 >= 0 && work.ast.nodes[child].kind == ak_list() {
+            work = sa_array_literal(work, child, expected_type)
+            actual = expected_type
+        } else {
+            let value = sa_expr(work, child)
+            work = value.ctx
+            actual = value.type_name
+        }
+        if check_types && expected_type.len() > 0 && !sa_compatible(expected_type, actual) {
             work = sa_error(
                 work,
                 child,
-                "E0301",
-                "argument " + (index + 1).to_string() + " expected " + expected[index] + ", got " + value.type_name
+                "E0308",
+                "type mismatch: expected `" + sa_display_type(expected_type) + "`, found `" + sa_display_type(actual) + "`"
             )
         }
         i = i + 1
@@ -598,6 +1029,25 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
     if item.kind == ak_string() {
         return sa_result(ctx, "String")
     }
+    if item.kind == ak_str_part() {
+        return sa_result(ctx, "String")
+    }
+    if item.kind == ak_interp() {
+        var work = ctx
+        var i = 0
+        while i < item.count {
+            let child = a_child(work.ast, node, i)
+            if child >= 0 && work.ast.nodes[child].kind != ak_str_part() {
+                let part = sa_expr(work, child)
+                work = part.ctx
+                if part.type_name != "?" && part.type_name != "Int" && part.type_name != "Bool" && part.type_name != "String" {
+                    work = sa_error(work, child, "E0309", "cannot interpolate " + part.type_name + " into a string")
+                }
+            }
+            i = i + 1
+        }
+        return sa_result(work, "String")
+    }
     if item.kind == ak_bool() {
         return sa_result(ctx, "Bool")
     }
@@ -605,6 +1055,17 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
         let local = sa_lookup(ctx, item.text)
         if local.len() > 0 {
             return sa_result(ctx, local)
+        }
+        if item.text == "None" {
+            return sa_result(ctx, "Option<?>")
+        }
+        if item.text == "Some" || item.text == "Ok" || item.text == "Err" {
+            return sa_fail(
+                ctx,
+                node,
+                "E0205",
+                "`" + item.text + "` is a constructor and requires an argument"
+            )
         }
         let variant = sa_variant_enum(ctx, item.text)
         if variant.len() > 0 {
@@ -621,7 +1082,7 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
             }
             return sa_result(ctx, variant)
         }
-        return sa_fail(ctx, node, "E0300", "unknown name `" + item.text + "`")
+        return sa_fail(ctx, node, "E0203", "unknown name `" + item.text + "`")
     }
     if item.kind == ak_unary() {
         let value = sa_expr(ctx, a_child(ctx.ast, node, 0))
@@ -636,6 +1097,59 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
         }
         return sa_result(value.ctx, value.type_name)
     }
+    if item.kind == ak_try() {
+        let value = sa_expr(ctx, a_child(ctx.ast, node, 0))
+        var work = value.ctx
+        let type_name = value.type_name
+        if type_name == "?" {
+            return sa_result(work, "?")
+        }
+        let option_inner = sa_option_inner(type_name)
+        if option_inner.len() > 0 {
+            if work.ret != "?" && sa_option_inner(work.ret).len() == 0 {
+                work = sa_error(
+                    work,
+                    node,
+                    "E0306",
+                    "`?` on Option requires the function to return Option, found `" + sa_display_type(work.ret) + "`"
+                )
+                return sa_result(work, "?")
+            }
+            return sa_result(work, option_inner)
+        }
+        let ok = sa_result_ok(type_name)
+        let err = sa_result_err(type_name)
+        if ok.len() > 0 && err.len() > 0 {
+            let ret_ok = sa_result_ok(work.ret)
+            let ret_err = sa_result_err(work.ret)
+            if work.ret != "?" && (ret_ok.len() == 0 || ret_err.len() == 0) {
+                work = sa_error(
+                    work,
+                    node,
+                    "E0306",
+                    "`?` on Result requires the function to return Result, found `" + sa_display_type(work.ret) + "`"
+                )
+                return sa_result(work, "?")
+            }
+            if ret_err.len() > 0 && err != ret_err {
+                work = sa_error(
+                    work,
+                    node,
+                    "E0306",
+                    "`?` cannot propagate error type `" + err + "` from a function returning `Result<_, " + ret_err + ">`"
+                )
+                return sa_result(work, "?")
+            }
+            return sa_result(work, ok)
+        }
+        work = sa_error(
+            work,
+            node,
+            "E0306",
+            "`?` is not defined for `" + sa_display_type(type_name) + "`"
+        )
+        return sa_result(work, "?")
+    }
     if item.kind == ak_binary() {
         let left = sa_expr(ctx, a_child(ctx.ast, node, 0))
         let right = sa_expr(left.ctx, a_child(ctx.ast, node, 1))
@@ -644,11 +1158,28 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
         let l = left.type_name
         let r = right.type_name
         if op == "=" || op == "+=" || op == "-=" || op == "*=" || op == "/=" || op == "%=" {
+            let target = a_child(ctx.ast, node, 0)
+            let root = sa_root_ident(ctx.ast, target)
+            if root >= 0 {
+                let name = ctx.ast.nodes[root].text
+                if sa_local_index(work, name) >= 0 && !sa_local_mutable(work, name) {
+                    work = sa_error(work, root, "E0301", "cannot assign to immutable binding `" + name + "`")
+                }
+            }
             if op != "=" && l != "?" && l != "Int" {
                 work = sa_error(work, node, "E0309", "compound assignment expects Int, got " + l)
             }
-            if !sa_same(l, r) {
-                work = sa_error(work, node, "E0301", "assignment expected " + l + ", got " + r)
+            if !sa_compatible(l, r) {
+                if op == "=" {
+                    work = sa_error(
+                        work,
+                        a_child(ctx.ast, node, 1),
+                        "E0308",
+                        "type mismatch: expected `" + l + "`, found `" + r + "`"
+                    )
+                } else {
+                    work = sa_error(work, node, "E0301", "assignment expected " + l + ", got " + r)
+                }
             }
             return sa_result(work, l)
         }
@@ -663,7 +1194,23 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
                 return sa_result(work, "Int")
             }
             if l != "?" && r != "?" {
-                return sa_fail(work, node, "E0309", "operator " + op + " expects Int operands, got " + l + " and " + r)
+                if l != "Int" {
+                    work = sa_error(
+                        work,
+                        a_child(ctx.ast, node, 0),
+                        "E0308",
+                        "type mismatch: expected `Int`, found `" + l + "`"
+                    )
+                }
+                if r != "Int" {
+                    work = sa_error(
+                        work,
+                        a_child(ctx.ast, node, 1),
+                        "E0308",
+                        "type mismatch: expected `Int`, found `" + r + "`"
+                    )
+                }
+                return sa_result(work, "Int")
             }
             return sa_result(work, "?")
         }
@@ -683,7 +1230,7 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
             return sa_fail(work, node, "E0309", "operator " + op + " expects Bool operands, got " + l + " and " + r)
         }
         if op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=" {
-            if !sa_same(l, r) {
+            if !sa_compatible(l, r) {
                 return sa_fail(work, node, "E0301", "comparison operands differ: " + l + " and " + r)
             }
             return sa_result(work, "Bool")
@@ -697,6 +1244,51 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
         }
         let callee_node = ctx.ast.nodes[callee]
         if callee_node.kind == ak_ident() {
+            if callee_node.text == "Some" || callee_node.text == "Ok" || callee_node.text == "Err" {
+                let got = ctx.ast.nodes[node].count - 1
+                var work = ctx
+                var inner = "?"
+                var i = 1
+                while i < ctx.ast.nodes[node].count {
+                    let value = sa_expr(work, a_child(ctx.ast, node, i))
+                    work = value.ctx
+                    if i == 1 {
+                        inner = value.type_name
+                    }
+                    i = i + 1
+                }
+                if got != 1 {
+                    work = sa_error(
+                        work,
+                        callee,
+                        "E0208",
+                        "`" + callee_node.text + "` expects 1 argument, found " + got.to_string()
+                    )
+                }
+                if callee_node.text == "Some" {
+                    return sa_result(work, "Option<" + inner + ">")
+                }
+                if callee_node.text == "Ok" {
+                    return sa_result(work, "Result<" + inner + ",?>")
+                }
+                return sa_result(work, "Result<?," + inner + ">")
+            }
+            if callee_node.text == "None" {
+                let work = sa_args(ctx, node, 1, [], false)
+                return sa_fail(work, node, "E0205", "`None` does not take arguments")
+            }
+            if callee_node.text == "map" || callee_node.text == "set" {
+                let got = ctx.ast.nodes[node].count - 1
+                var work = ctx
+                if got != 0 {
+                    work = sa_error(work, node, "E0208", "`" + callee_node.text + "` expects 0 arguments, found " + got.to_string())
+                }
+                work = sa_args(work, node, 1, [], false)
+                if callee_node.text == "map" {
+                    return sa_result(work, "Map<?,?>")
+                }
+                return sa_result(work, "Set<?>")
+            }
             let variant = sa_variant_enum(ctx, callee_node.text)
             if variant.len() > 0 {
                 let enum_index = sa_enum_index(ctx.enums, variant)
@@ -748,8 +1340,17 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
             }
             let index = sa_fn_index(ctx.fns, callee_node.text)
             if index < 0 {
+                let local = sa_lookup(ctx, callee_node.text)
                 let work = sa_args(ctx, node, 1, [], false)
-                return sa_fail(work, node, "E0302", "unknown function `" + callee_node.text + "`")
+                if local.len() > 0 {
+                    return sa_fail(
+                        work,
+                        callee,
+                        "E0205",
+                        "only functions can be called, found `" + local + "`"
+                    )
+                }
+                return sa_fail(work, callee, "E0203", "unknown function `" + callee_node.text + "`")
             }
             let sig = ctx.fns[index]
             let got = ctx.ast.nodes[node].count - 1
@@ -757,9 +1358,9 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
             if got != sig.params.len() {
                 work = sa_error(
                     work,
-                    node,
-                    "E0303",
-                    callee_node.text + " expects " + sig.params.len().to_string() + " arguments, got " + got.to_string()
+                    callee,
+                    "E0208",
+                    "`" + callee_node.text + "` expects " + sig.params.len().to_string() + " arguments, found " + got.to_string()
                 )
             }
             work = sa_args(work, node, 1, sig.types, true)
@@ -786,7 +1387,166 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
                 }
             }
             let object = sa_expr(ctx, a_child(ctx.ast, callee, 0))
+            let got = ctx.ast.nodes[node].count - 1
+            let option_inner = sa_option_inner(object.type_name)
+            let result_ok = sa_result_ok(object.type_name)
+            if callee_node.text == "is_some" || callee_node.text == "is_none" {
+                var work = object.ctx
+                if object.type_name != "?" && option_inner.len() == 0 {
+                    work = sa_error(
+                        work,
+                        callee,
+                        "E0206",
+                        "type `" + sa_display_type(object.type_name) + "` has no method `" + callee_node.text + "`"
+                    )
+                }
+                if got != 0 {
+                    work = sa_error(
+                        work,
+                        node,
+                        "E0208",
+                        "`" + callee_node.text + "` expects 0 arguments, found " + got.to_string()
+                    )
+                }
+                return sa_result(work, "Bool")
+            }
+            if callee_node.text == "is_ok" || callee_node.text == "is_err" {
+                var work = object.ctx
+                if object.type_name != "?" && result_ok.len() == 0 {
+                    work = sa_error(
+                        work,
+                        callee,
+                        "E0206",
+                        "type `" + sa_display_type(object.type_name) + "` has no method `" + callee_node.text + "`"
+                    )
+                }
+                if got != 0 {
+                    work = sa_error(
+                        work,
+                        node,
+                        "E0208",
+                        "`" + callee_node.text + "` expects 0 arguments, found " + got.to_string()
+                    )
+                }
+                return sa_result(work, "Bool")
+            }
+            if callee_node.text == "unwrap_or" && (option_inner.len() > 0 || result_ok.len() > 0) {
+                var work = object.ctx
+                let inner = if option_inner.len() > 0 { option_inner } else { result_ok }
+                if got != 1 {
+                    work = sa_error(
+                        work,
+                        node,
+                        "E0208",
+                        "`unwrap_or` expects 1 argument, found " + got.to_string()
+                    )
+                }
+                work = sa_args(work, node, 1, [inner], true)
+                return sa_result(work, inner)
+            }
+            if callee_node.text == "as_slice" {
+                var work = object.ctx
+                if got != 0 {
+                    work = sa_error(
+                        work,
+                        node,
+                        "E0208",
+                        "`as_slice` expects 0 arguments, found " + got.to_string()
+                    )
+                }
+                let valid = object.type_name == "?" || object.type_name.starts_with("List<") || sa_array_layout(object.type_name).1 >= 0
+                if !valid {
+                    work = sa_error(
+                        work,
+                        callee,
+                        "E0206",
+                        "type `" + sa_display_type(object.type_name) + "` has no method `as_slice`"
+                    )
+                }
+                return sa_result(work, "Slice<" + sa_elem_type(object.type_name) + ">")
+            }
+            if sa_is_map(object.type_name) {
+                let key_type = sa_map_key(object.type_name)
+                let value_type = sa_map_value(object.type_name)
+                if callee_node.text == "get" {
+                    var work = sa_args(object.ctx, node, 1, [key_type], true)
+                    if got != 1 {
+                        work = sa_error(work, node, "E0208", "`get` expects 1 argument, found " + got.to_string())
+                    }
+                    if !sa_map_key_ok(key_type) {
+                        work = sa_error(work, callee, "E0306", "`" + sa_display_type(key_type) + "` cannot be used as a map/set key in this build")
+                    }
+                    return sa_result(work, "Option<" + value_type + ">")
+                }
+                if callee_node.text == "contains_key" {
+                    var work = sa_args(object.ctx, node, 1, [key_type], true)
+                    if got != 1 {
+                        work = sa_error(work, node, "E0208", "`contains_key` expects 1 argument, found " + got.to_string())
+                    }
+                    if !sa_map_key_ok(key_type) {
+                        work = sa_error(work, callee, "E0306", "`" + sa_display_type(key_type) + "` cannot be used as a map/set key in this build")
+                    }
+                    return sa_result(work, "Bool")
+                }
+                if callee_node.text == "insert" {
+                    var work = sa_args(object.ctx, node, 1, [key_type, value_type], true)
+                    if got != 2 {
+                        work = sa_error(work, node, "E0208", "`insert` expects 2 arguments, found " + got.to_string())
+                    }
+                    if !sa_map_key_ok(key_type) {
+                        work = sa_error(work, callee, "E0306", "`" + sa_display_type(key_type) + "` cannot be used as a map/set key in this build")
+                    }
+                    let receiver = a_child(ctx.ast, callee, 0)
+                    if receiver >= 0 && ctx.ast.nodes[receiver].kind == ak_ident() {
+                        let name = ctx.ast.nodes[receiver].text
+                        if sa_local_index(work, name) >= 0 && !sa_local_mutable(work, name) {
+                            work = sa_error(work, receiver, "E0301", "`insert` requires a mutable map binding")
+                        }
+                    }
+                    return sa_result(work, "Unit")
+                }
+            }
+            if sa_is_set(object.type_name) {
+                let elem_type = sa_set_elem(object.type_name)
+                if callee_node.text == "contains" {
+                    var work = sa_args(object.ctx, node, 1, [elem_type], true)
+                    if got != 1 {
+                        work = sa_error(work, node, "E0208", "`contains` expects 1 argument, found " + got.to_string())
+                    }
+                    if !sa_map_key_ok(elem_type) {
+                        work = sa_error(work, callee, "E0306", "`" + sa_display_type(elem_type) + "` cannot be used as a map/set key in this build")
+                    }
+                    return sa_result(work, "Bool")
+                }
+                if callee_node.text == "insert" {
+                    var work = sa_args(object.ctx, node, 1, [elem_type], true)
+                    if got != 1 {
+                        work = sa_error(work, node, "E0208", "`insert` expects 1 argument, found " + got.to_string())
+                    }
+                    if !sa_map_key_ok(elem_type) {
+                        work = sa_error(work, callee, "E0306", "`" + sa_display_type(elem_type) + "` cannot be used as a map/set key in this build")
+                    }
+                    let receiver = a_child(ctx.ast, callee, 0)
+                    if receiver >= 0 && ctx.ast.nodes[receiver].kind == ak_ident() {
+                        let name = ctx.ast.nodes[receiver].text
+                        if sa_local_index(work, name) >= 0 && !sa_local_mutable(work, name) {
+                            work = sa_error(work, receiver, "E0301", "`insert` requires a mutable set binding")
+                        }
+                    }
+                    return sa_result(work, "Bool")
+                }
+            }
             var work = sa_args(object.ctx, node, 1, [], false)
+            if callee_node.text == "push" {
+                let receiver = a_child(ctx.ast, callee, 0)
+                if receiver >= 0 && ctx.ast.nodes[receiver].kind == ak_ident() {
+                    let name = ctx.ast.nodes[receiver].text
+                    if sa_local_index(work, name) >= 0 && !sa_local_mutable(work, name) {
+                        work = sa_error(work, receiver, "E0301", "`push` requires a mutable list binding")
+                    }
+                }
+                return sa_result(work, "?")
+            }
             if callee_node.text == "index_of" && object.type_name == "List<Int>" {
                 work = sa_args(work, node, 1, ["Int"], true)
                 return sa_result(work, "Int")
@@ -893,7 +1653,7 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
         if index >= 0 {
             let field = sa_field_index(ctx.structs[index], item.text)
             if field < 0 {
-                return sa_fail(object.ctx, node, "E0305", "unknown field `" + item.text + "` on " + object.type_name)
+                return sa_fail(object.ctx, node, "E0207", "struct `" + object.type_name + "` has no field `" + item.text + "`")
             }
             return sa_result(object.ctx, ctx.structs[index].types[field])
         }
@@ -920,9 +1680,23 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
         let index = sa_expr(object.ctx, a_child(ctx.ast, node, 1))
         var work = index.ctx
         if !sa_same("Int", index.type_name) && index.type_name != "?" {
-            work = sa_error(work, a_child(ctx.ast, node, 1), "E0301", "index must be Int, got " + index.type_name)
+            work = sa_error(
+                work,
+                a_child(ctx.ast, node, 1),
+                "E0308",
+                "type mismatch: expected `Int`, found `" + index.type_name + "`"
+            )
         }
-        return sa_result(work, sa_elem_type(object.type_name))
+        let element = sa_elem_type(object.type_name)
+        if object.type_name != "?" && element == "?" {
+            work = sa_error(
+                work,
+                node,
+                "E0205",
+                "indexing is not defined for `" + sa_display_type(object.type_name) + "`"
+            )
+        }
+        return sa_result(work, element)
     }
     if item.kind == ak_list() {
         var work = ctx
@@ -933,7 +1707,7 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
             work = value.ctx
             if element.len() == 0 {
                 element = value.type_name
-            } else if !sa_same(element, value.type_name) {
+            } else if !sa_compatible(element, value.type_name) {
                 work = sa_error(work, node, "E0301", "list elements must share a type, got " + element + " and " + value.type_name)
             }
             i = i + 1
@@ -979,13 +1753,18 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
             if index >= 0 {
                 let slot = sa_field_index(ctx.structs[index], field_node.text)
                 if slot < 0 {
-                    work = sa_error(work, field, "E0305", "unknown field `" + field_node.text + "` on " + item.text)
-                } else if !sa_same(ctx.structs[index].types[slot], value.type_name) {
                     work = sa_error(
                         work,
                         field,
-                        "E0301",
-                        "field " + field_node.text + " expected " + ctx.structs[index].types[slot] + ", got " + value.type_name
+                        "E0207",
+                        "struct `" + item.text + "` has no field `" + field_node.text + "`"
+                    )
+                } else if !sa_compatible(ctx.structs[index].types[slot], value.type_name) {
+                    work = sa_error(
+                        work,
+                        a_child(ctx.ast, field, 0),
+                        "E0308",
+                        "type mismatch: expected `" + ctx.structs[index].types[slot] + "`, found `" + value.type_name + "`"
                     )
                 }
             }
@@ -994,7 +1773,13 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
         if index >= 0 {
             for required in ctx.structs[index].fields {
                 if !sa_has(seen, required) {
-                    work = sa_error(work, node, "E0306", "missing field `" + required + "` on " + item.text)
+                    work = sa_error_at(
+                        work,
+                        node,
+                        item.column - item.text.len() - 1,
+                        "E0207",
+                        "missing field `" + required + "` in `" + item.text + "` literal"
+                    )
                 }
             }
         }
@@ -1042,15 +1827,61 @@ fn sa_stmt(ctx: SaCtx, node: Int) -> SaCtx {
     }
     let item = ctx.ast.nodes[node]
     if item.kind == ak_let() || item.kind == ak_var() {
-        let value = sa_expr(ctx, a_child(ctx.ast, node, 0))
-        var work = value.ctx
+        let value_node = a_child(ctx.ast, node, 0)
+        var work = ctx
         var type_name = item.aux
+        var actual = "?"
+        if type_name.len() > 0 && sa_array_layout(type_name).1 >= 0 && ctx.ast.nodes[value_node].kind == ak_list() {
+            work = sa_array_literal(ctx, value_node, type_name)
+            actual = type_name
+        } else {
+            let value = sa_expr(ctx, value_node)
+            work = value.ctx
+            actual = value.type_name
+        }
         if type_name.len() > 0 {
-            if !sa_same(type_name, value.type_name) {
-                work = sa_error(work, node, "E0301", "binding " + item.text + " expected " + type_name + ", got " + value.type_name)
+            if !sa_compatible(type_name, actual) {
+                let prefix = if actual == "Option<?>" { "" } else { "type mismatch: " }
+                work = sa_error(
+                    work,
+                    value_node,
+                    "E0308",
+                    prefix + "expected `" + sa_display_type(type_name) + "`, found `" + sa_display_type(actual) + "`"
+                )
             }
         } else {
-            type_name = value.type_name
+            if actual == "Option<?>" {
+                work = sa_error(
+                    work,
+                    value_node,
+                    "E0210",
+                    "cannot infer the type parameter of `None`"
+                )
+            } else if actual.starts_with("Result<") {
+                let ok = sa_result_ok(actual)
+                let err = sa_result_err(actual)
+                if ok == "?" || err == "?" {
+                    let constructor = if err == "?" { "Ok" } else { "Err" }
+                    work = sa_error(
+                        work,
+                        value_node,
+                        "E0210",
+                        "cannot infer the full `Result` type from `" + constructor + "` alone"
+                    )
+                }
+            } else if sa_is_map(actual) {
+                if sa_map_key(actual) == "?" || sa_map_value(actual) == "?" {
+                    work = sa_error(work, value_node, "E0210", "cannot infer the type of `map()`")
+                }
+            } else if sa_is_set(actual) {
+                if sa_set_elem(actual) == "?" {
+                    work = sa_error(work, value_node, "E0210", "cannot infer the type of `set()`")
+                }
+            }
+            type_name = actual
+        }
+        if item.kind == ak_var() {
+            return sa_push_mutable(work, item.text, type_name)
         }
         return sa_push_local(work, item.text, type_name)
     }
@@ -1061,16 +1892,26 @@ fn sa_stmt(ctx: SaCtx, node: Int) -> SaCtx {
             }
             return ctx
         }
-        let value = sa_expr(ctx, a_child(ctx.ast, node, 0))
-        if ctx.ret != "?" && !sa_same(ctx.ret, value.type_name) {
+        let value_node = a_child(ctx.ast, node, 0)
+        var work = ctx
+        var actual = "?"
+        if ctx.ret != "?" && sa_array_layout(ctx.ret).1 >= 0 && ctx.ast.nodes[value_node].kind == ak_list() {
+            work = sa_array_literal(ctx, value_node, ctx.ret)
+            actual = ctx.ret
+        } else {
+            let value = sa_expr(ctx, value_node)
+            work = value.ctx
+            actual = value.type_name
+        }
+        if ctx.ret != "?" && !sa_compatible(ctx.ret, actual) {
             return sa_error(
-                value.ctx,
-                node,
+                work,
+                value_node,
                 "E0308",
-                "return expected " + ctx.ret + ", got " + value.type_name
+                "type mismatch: expected `" + sa_display_type(ctx.ret) + "`, found `" + sa_display_type(actual) + "`"
             )
         }
-        return value.ctx
+        return work
     }
     if item.kind == ak_expr_stmt() {
         return sa_expr(ctx, a_child(ctx.ast, node, 0)).ctx
@@ -1103,6 +1944,10 @@ fn sa_stmt(ctx: SaCtx, node: Int) -> SaCtx {
         var element = "?"
         if iter.type_name.starts_with("List<") {
             element = sa_elem_type(iter.type_name)
+        } else if iter.type_name.starts_with("Slice<") {
+            element = sa_elem_type(iter.type_name)
+        } else if sa_array_layout(iter.type_name).1 >= 0 {
+            element = sa_array_layout(iter.type_name).0
         } else if iter.type_name == "Range" {
             element = "Int"
         }
@@ -1113,7 +1958,8 @@ fn sa_stmt(ctx: SaCtx, node: Int) -> SaCtx {
     }
     if item.kind == ak_break() || item.kind == ak_continue() {
         if ctx.loops == 0 {
-            return sa_error(ctx, node, "E0310", "`" + item.text + "` outside a loop")
+            let keyword = if item.kind == ak_break() { "break" } else { "continue" }
+            return sa_error(ctx, node, "E0302", "`" + keyword + "` outside of a loop")
         }
         return ctx
     }
@@ -1133,7 +1979,7 @@ fn sa_check_fn(ctx: SaCtx, node: Int) -> SaCtx {
     var locals: List<SaLocal> = []
     var i = 0
     while i < sig.params.len() {
-        locals.push(SaLocal { name: sig.params[i], type_name: sig.types[i] })
+        locals.push(SaLocal { name: sig.params[i], type_name: sig.types[i], mutable: false })
         i = i + 1
     }
     var work = sa_ctx_locals(ctx, locals)
@@ -1152,14 +1998,33 @@ fn sa_collect(ctx: SaCtx) -> SaCtx {
         let item = ctx.ast.nodes[node]
         if item.kind == ak_fn() || item.kind == ak_extern() {
             if sa_fn_index(work.fns, item.text) >= 0 {
-                work = sa_error(work, node, "E0307", "duplicate function `" + item.text + "`")
+                work = sa_error_at(
+                    work,
+                    node,
+                    item.column + 3,
+                    "E0200",
+                    "duplicate function `" + item.text + "`"
+                )
             } else {
                 var params: List<String> = []
                 var types: List<String> = []
+                var seen_params: List<String> = []
                 let last = if item.kind == ak_fn() { item.count - 1 } else { item.count }
                 var k = 0
                 while k < last {
-                    let param = ctx.ast.nodes[a_child(ctx.ast, node, k)]
+                    let param_node = a_child(ctx.ast, node, k)
+                    let param = ctx.ast.nodes[param_node]
+                    if sa_has(seen_params, param.text) {
+                        work = sa_error(work, param_node, "E0200", "duplicate parameter `" + param.text + "`")
+                        work = sa_error(
+                            work,
+                            param_node,
+                            "E0200",
+                            "duplicate binding `" + param.text + "` in the same scope"
+                        )
+                    } else {
+                        seen_params.push(param.text)
+                    }
                     params.push(param.text)
                     types.push(param.aux)
                     k = k + 1
@@ -1277,8 +2142,8 @@ fn sa_collect(ctx: SaCtx) -> SaCtx {
 
 fn sa_check(source: String) -> List<String> {
     let ast = a_parse(source)
-    if ast.error.len() > 0 {
-        return ["E0001 parse error: " + ast.error]
+    if ast.errors.len() > 0 {
+        return ast.errors
     }
     var ctx = SaCtx {
         ast: ast,

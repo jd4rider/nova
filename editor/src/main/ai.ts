@@ -9,12 +9,14 @@ export interface ProviderConfig {
 
 export const DEFAULT_MODELS: Record<AiProviderId, string> = {
   anthropic: 'claude-sonnet-4-5',
-  openai: 'gpt-4o-mini'
+  openai: 'gpt-4o-mini',
+  copilot: 'auto'
 }
 
 const DEFAULT_BASE_URLS: Record<AiProviderId, string> = {
   anthropic: 'https://api.anthropic.com',
-  openai: 'https://api.openai.com/v1'
+  openai: 'https://api.openai.com/v1',
+  copilot: 'https://github.com'
 }
 
 export function defaultBaseUrl(provider: AiProviderId): string {
@@ -22,7 +24,9 @@ export function defaultBaseUrl(provider: AiProviderId): string {
 }
 
 export function providerLabel(provider: AiProviderId): string {
-  return provider === 'anthropic' ? 'Anthropic' : 'OpenAI-compatible endpoint'
+  if (provider === 'anthropic') return 'Anthropic'
+  if (provider === 'copilot') return 'GitHub Copilot'
+  return 'OpenAI-compatible endpoint'
 }
 
 /**

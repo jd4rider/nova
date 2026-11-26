@@ -1,7 +1,7 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { spawn } from 'node:child_process'
 import type { LspDiagnostic } from '../shared/types'
-import { novaExecutable } from './toolchain'
+import { novaExecutable, novaToolExecutable } from './toolchain'
 
 interface Pending {
   resolve: (value: unknown) => void
@@ -22,10 +22,10 @@ export class LspClient {
 
   async start(root: string): Promise<void> {
     this.stop()
-    const executable = novaExecutable()
+    const executable = novaToolExecutable() ?? novaExecutable()
     this.onStatus('starting')
-    // `nova lsp` already speaks JSON-RPC over stdio; passing `--stdio` makes
-    // clap reject the command and the server exits before initialize.
+    // Both `nova-tool lsp` and `nova lsp` speak JSON-RPC over stdio; passing
+    // `--stdio` makes the CLI reject the command before initialize.
     const child = spawn(executable, ['lsp'], {
       cwd: root,
       env: process.env,

@@ -1,0 +1,76 @@
+fn maybe(flag: Bool) -> Option<Int> {
+    if flag {
+        return Some(7)
+    }
+    return None
+}
+
+fn checked(flag: Bool) -> Option<Int> {
+    let value = maybe(flag)?
+    return Some(value + 1)
+}
+
+fn result(flag: Bool) -> Result<Int, String> {
+    if flag {
+        return Ok(10)
+    }
+    return Err("bad")
+}
+
+fn checked_result(flag: Bool) -> Result<Int, String> {
+    let value = result(flag)?
+    return Ok(value + 2)
+}
+
+fn first(values: [Int; 3]) -> Int {
+    return values[0]
+}
+
+fn triple() -> [Int; 3] {
+    return [3, 4, 5]
+}
+
+fn main() -> Int {
+    let value = maybe(true)
+    let missing = maybe(false)
+    let sum = value.unwrap_or(0) + missing.unwrap_or(5)
+    let matched = match value {
+        Some(x) => x
+        None => 0
+    }
+    let ok = result(true)
+    let bad = result(false)
+    var flags = 0
+    if value.is_some() {
+        flags = flags + 1
+    }
+    if missing.is_none() {
+        flags = flags + 1
+    }
+    if ok.is_ok() {
+        flags = flags + 1
+    }
+    if bad.is_err() {
+        flags = flags + 1
+    }
+    let matched_ok = match ok {
+        Ok(x) => x
+        Err(_) => 0
+    }
+    let matched_err = match bad {
+        Ok(_) => 0
+        Err(_) => 4
+    }
+    let unwrapped = ok.unwrap_or(0) + bad.unwrap_or(4)
+    let propagated = checked(true).unwrap_or(0) + checked(false).unwrap_or(6)
+    let propagated_result = checked_result(true).unwrap_or(0) + checked_result(false).unwrap_or(9)
+    var numbers: [Int; 3] = [1, 2, 3]
+    numbers[1] = 8
+    var total = numbers[0] + numbers[1] + numbers[2] + numbers.len()
+    for number in numbers {
+        total = total + number
+    }
+    let extra = triple()
+    total = total + extra[2] + first(numbers)
+    return sum + matched + unwrapped + propagated + propagated_result + total + flags + matched_ok + matched_err
+}

@@ -56,9 +56,9 @@ jobs:
       - name: Build CLI archive and source archive
         run: |
           version="${GITHUB_REF_NAME#v}"
-          cargo build --release -p nova-cli
           mkdir -p "release-assets/nova-${version}-aarch64-apple-darwin"
-          cp target/release/nova "release-assets/nova-${version}-aarch64-apple-darwin/nova"
+          cp bootstrap/nova "release-assets/nova-${version}-aarch64-apple-darwin/nova"
+          cp -R runtime "release-assets/nova-${version}-aarch64-apple-darwin/runtime"
           cp README.md "release-assets/nova-${version}-aarch64-apple-darwin/README.md"
           tar -C release-assets -czf "release-assets/nova-${version}-aarch64-apple-darwin.tar.gz" \
             "nova-${version}-aarch64-apple-darwin"

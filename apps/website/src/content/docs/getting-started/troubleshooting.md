@@ -23,11 +23,11 @@ Set `NOVA_CC` to an explicit compiler path if needed. A system LLVM installation
 
 ## `nova: command not found`
 
-Use the Cargo binary directly or add it to `PATH`:
+Use the checked-in bootstrap directly or add it to `PATH`:
 
 ```sh
-cargo build --release -p nova-cli
-export PATH="$PWD/target/release:$PATH"
+(cd examples/nova-tool && ../../bootstrap/nova build)
+export PATH="$PWD/bootstrap:$PATH"
 ```
 
 ## Studio cannot find the compiler
@@ -35,7 +35,7 @@ export PATH="$PWD/target/release:$PATH"
 Pass an absolute path when starting Studio:
 
 ```sh
-NOVA_BIN="$PWD/target/debug/nova" npm run dev
+NOVA_BIN="$PWD/bootstrap/nova" npm run dev
 ```
 
 Without `nova.toml`, Studio opens and highlights files but reports that LSP startup and tasks are unavailable.

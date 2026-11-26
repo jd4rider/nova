@@ -33,10 +33,10 @@ fn main() {
 
 ```sh
 cd examples/nova-wasm-site
-NOVA_TARGET=wasm32 ../../target/debug/nova build
+NOVA_TARGET=wasm32 ../../bootstrap/nova build
 ```
 
-`nova build` compiles Nova to wasm32 with clang, links the freestanding runtime with `rust-lld` (found under `~/.rustup`, overridable with `NOVA_WASM_LD`) and writes `target/nova/nova-wasm-site.wasm`. Exports are `main`, `nova_state_get/set`, `nova_output_ptr/len`, `nova_reset_output` and memory.
+`nova build` compiles Nova to wasm32 with clang, links the freestanding runtime with clang's `wasm-ld` (overridable with `NOVA_WASM_LD`) and writes `target/nova/nova-wasm-site.wasm`. Exports are `main`, `nova_state_get/set`, `nova_output_ptr/len`, `nova_reset_output` and memory.
 
 ## The site
 
@@ -49,5 +49,5 @@ NOVA_TARGET=wasm32 ../../target/debug/nova build
 - **One exported entry.** `main` is the only Nova function called from JS.
 - **No DOM access from Nova.** All DOM work is in the shell; event handling is delegated clicks on `data-action`.
 - **No string input.** JS cannot hand a string to Nova, so fetched text is injected by the shell.
-- **POSIX-hosted build.** The module runs anywhere; building it needs clang with wasm32 and `rust-lld`.
+- **POSIX-hosted build.** The module runs anywhere; building it needs clang with wasm32 and `wasm-ld`.
 - **Experimental.** The API can change, and the wasm runtime has no garbage collector.

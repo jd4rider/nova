@@ -26,6 +26,11 @@
 - Consequence: sema is not yet a complete acceptance gate.
 
 ## DEC-004 — Keep the Rust seed until stage-2/3 passes
+
+> Superseded 2026-11-26: the Nova compiler self-builds with identical IR and
+> every suite passes from the checked-in bootstrap, so the Rust workspace was
+> removed. The Rust-only language features it provided are now tracked as
+> parity gaps, not as a retained dependency.
 - Status: accepted.
 - Decision: do not delete `bootstrap/` while it is the only compiler that can
   build `nova`.

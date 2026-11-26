@@ -1,6 +1,5 @@
 ---
 import SiteLayout from '../../layouts/SiteLayout.astro'
-import RustCrab from '../../components/RustCrab.astro'
 import { href } from '../../lib/url'
 ---
 <SiteLayout title="Documentation" path="docs" description="Nova language, toolchain, Studio and project documentation in one place.">
@@ -24,7 +23,6 @@ import { href } from '../../lib/url'
           <h2>Language, editor, toolchain.</h2>
           <p class="section-intro">The docs are also available inside Nova Studio under the <strong>Docs</strong> tab. The public site remains the canonical version.</p>
         </div>
-        <RustCrab class="docs-crab" />
       </div>
       <div class="grid-3">
         <article class="card">
@@ -72,7 +70,7 @@ import { href } from '../../lib/url'
         <article class="card">
           <div class="card-icon" aria-hidden="true">⌘</div>
           <h3>Toolchain</h3>
-          <p>CLI commands, Box.toml projects, Nova Boxes, the Rust language server and the VS Code extension. Commands that are planned are labeled as planned.</p>
+          <p>CLI commands, Box.toml projects, Nova Boxes, the Nova language server and the VS Code extension. Commands that are planned are labeled as planned.</p>
           <div class="meta"><a href={href('toolchain/cli/')}>CLI</a> · <a href={href('toolchain/projects/')}>Projects</a> · <a href={href('toolchain/lsp/')}>LSP</a> · <a href={href('toolchain/vscode/')}>VS Code</a> · <a href={href('playground')}>Playground</a></div>
         </article>
         <article class="card">

@@ -23,7 +23,7 @@ npm run build      # static production build
 npm run test       # grammar scopes, routes, links, search, checked Nova snippets
 ```
 
-The snippet check requires a working compiler. By default it runs `target/debug/nova` from the repository root; set `NOVA_BIN` to override it.
+The snippet check requires a working compiler. By default it runs `bootstrap/nova` from the repository root; set `NOVA_BIN` to override it.
 
 Project-base validation, matching Pages:
 

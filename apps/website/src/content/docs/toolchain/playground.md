@@ -20,14 +20,14 @@ The page fetches a local `playground/nova.wasm` file and calls a small exported 
 
 ## Build locally
 
-The checked-in WASM is generated from the repository:
+The checked-in WASM artifacts are verified without rebuilding:
 
 ```sh
-rustup target add wasm32-unknown-unknown
 cd apps/website
-npm run build:playground
 npm run test:playground
 ```
+
+Rebuilding them requires a Nova wasm backend, which is still a tracked gap.
 
 `build:playground` builds `crates/nova-wasm` and copies `nova_wasm.wasm` to `public/playground/nova.wasm`. `test:playground` instantiates the module in Node, checks that it has no imports, verifies a passing program and asserts that a bad type annotation produces `E0308`.
 

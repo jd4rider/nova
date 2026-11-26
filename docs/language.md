@@ -21,7 +21,7 @@ Functions require parameter and return types. Struct fields require types. `let`
 
 ## Types
 
-Implemented: `Bool`, `Int` (i64), `Float` (f64), `Char`, `String` (UTF-8), `Unit`, `List<T>`, `Option<T>`, `Result<T, E>`, structs, and nominal user enums.
+Implemented types: `Bool`, `Int` (i64), `Float` (f64), `Char`, `String` (UTF-8), `Unit`, `List<T>`, `Slice<T>`, `Map<K, V>`, `Set<T>`, `Option<T>`, `Result<T, E>`, fixed arrays `[T; N]`, structs, and nominal user enums. Arrays, slice views, basic maps/sets and `Option`/`Result` values are checked and lowered natively.
 
 `Option<T>` is `None` or `Some(value)`; `Result<T,E>` is `Ok(value)` or `Err(error)`. `?` propagates `None`/`Err` from the current function. Match must be exhaustive over these variants.
 
@@ -35,9 +35,9 @@ enum Shape {
 
 A variant takes zero or one payload. Variant constructors are global in this build (`Circle(2)`, `Empty`), so variant names must be unique across enums, and `Some`, `None`, `Ok` and `Err` are reserved.
 
-Implemented `String` methods: `len`, `is_empty`, `to_string`, `contains`, `starts_with`, `ends_with` and `trim`. `List` has `len`, `is_empty`, `get` and `push`.
+Implemented `String` methods: `len`, `is_empty`, `to_string`, `contains`, `starts_with`, `ends_with` and `trim`. `List` has `len`, `is_empty`, `get`, `push` and `as_slice`. Fixed arrays support `len`, indexing, index assignment, `for` and `as_slice`. `Slice<T>` supports `len`, indexing, assignment through a mutable view, `for`, parameters and returns. `Map<K,V>` and `Set<T>` support annotated `map()`/`set()` constructors, `len`, `get`/`contains_key`/`contains` and `insert` for `Int`, `Bool` and `String` keys. `Option` and `Result` have `is_some`/`is_none` and `is_ok`/`is_err`, plus `unwrap_or(value)`.
 
-Planned but rejected by the checker today: fixed-width integers, `USize`, `f32`, arrays/slices, tuples, `Map`, `Set`, generics, traits, methods on user types, closures, variants with multiple payload fields.
+Planned but rejected by the checker today: fixed-width integers, `USize`, `f32`, tuples, generics, traits, methods on user types, closures, variants with multiple payload fields. Arrays, `Slice<T>` views, basic `Map`/`Set` and `Option`/`Result` are accepted and lowered; map/set literals, map/set iteration and Char keys remain. Range slicing `list[start..end]` is accepted by Nova but rejected by the seed.
 
 ## Expressions and control flow
 

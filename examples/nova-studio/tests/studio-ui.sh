@@ -6,10 +6,10 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 APP="$HERE/.."
 ROOT=$(cd "$APP/../.." && pwd)
 BIN="$APP/target/nova/nova-studio"
-NOVA_BIN="$ROOT/target/debug/nova"
+NOVA_BIN="${NOVA_BIN:-$ROOT/bootstrap/nova}"
 FIXTURE="$HERE/fixtures/sample.nova"
 if [ ! -x "$BIN" ]; then
-    echo "missing $BIN — run: (cd examples/nova-studio && ../../target/debug/nova build)" >&2
+    echo "missing $BIN — run: (cd examples/nova-studio && ../../bootstrap/nova build)" >&2
     exit 2
 fi
 WORK=$(mktemp -d)

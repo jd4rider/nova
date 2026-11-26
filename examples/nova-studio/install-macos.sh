@@ -11,13 +11,13 @@ set -eu
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
-NOVA="$ROOT/target/debug/nova"
+NOVA="${NOVA_BIN:-$ROOT/bootstrap/nova}"
 DIST="$HERE/dist"
 APP_NAME="${APP_NAME:-Nova Studio (Nova)}"
 APP="$DIST/$APP_NAME.app"
 CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
-[ -x "$NOVA" ] || { echo "install: build the compiler first (cargo build -p nova-cli)" >&2; exit 1; }
+[ -x "$NOVA" ] || { echo "install: missing $NOVA (build the Nova compiler first)" >&2; exit 1; }
 (cd "$HERE" && "$NOVA" build)
 
 GAME="$HERE/target/nova/nova-studio"

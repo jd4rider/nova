@@ -9,7 +9,7 @@ description: A small 2D game engine written in Nova, with Breakout as a desktop 
 
 ```sh
 cd examples/breakout
-../../target/debug/nova build
+../../bootstrap/nova build
 ./target/nova/breakout
 ```
 
@@ -102,7 +102,7 @@ and an accent paddle, with score, rally, speed and lives in the header.
 
 ```sh
 cd examples/breakout-gui
-../../target/debug/nova build
+../../bootstrap/nova build
 ./target/nova/breakout-gui          # or: ./install-macos.sh for Nova Breakout.app
 ```
 

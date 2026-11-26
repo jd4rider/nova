@@ -10,7 +10,8 @@ struct         = "struct", ident, "{", { field, newline }, "}" ;
 field          = ident, ":", type ;
 params         = param, { ",", param } ;
 param          = ident, ":", type ;
-type           = ident, [ "<", type, { ",", type }, ">" ] ;
+type           = ident, [ "<", type, { ",", type }, ">" ]
+               | "[", type, ";", int, "]" ;
 
 block          = "{", { statement }, "}" ;
 statement      = let_stmt | var_stmt | assign | expr_stmt | if_stmt | while_stmt

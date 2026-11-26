@@ -1,6 +1,5 @@
 ---
 import SiteLayout from '../layouts/SiteLayout.astro'
-import RustCrab from '../components/RustCrab.astro'
 import { href } from '../lib/url'
 import { playgroundExamples } from '../data/playground'
 ---
@@ -15,7 +14,7 @@ import { playgroundExamples } from '../data/playground'
         <button class="button" id="playground-format" type="button" disabled>Format</button>
         <a class="button" href={href('install')}>Install the compiler</a>
       </div>
-      <div class="playground-badge"><RustCrab /><span>Parsed in Rust. Compiled to WASM. Runs in your tab.</span></div>
+      <div class="playground-badge"><span>Checked and formatted in WebAssembly. Runs in your tab.</span></div>
     </div>
   </section>
 

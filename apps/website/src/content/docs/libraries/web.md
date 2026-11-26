@@ -13,7 +13,7 @@ From the repository root:
 
 ```sh
 cd examples/haiku
-../../target/debug/nova build
+../../bootstrap/nova build
 ./target/nova/nova-haiku
 ```
 

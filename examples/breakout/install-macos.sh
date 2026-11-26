@@ -7,7 +7,7 @@ set -eu
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
-NOVA="$ROOT/target/debug/nova"
+NOVA="${NOVA_BIN:-$ROOT/bootstrap/nova}"
 DIST="$HERE/dist"
 APP="$DIST/Breakout.app"
 CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"

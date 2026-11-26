@@ -1,20 +1,19 @@
-# 🦀 Nova
+# Nova
 
-**A statically typed programming language with a Rust bootstrap compiler, an LLVM native backend, a language server, a desktop IDE, a VS Code extension and a Nova package manager.**
+**A self-hosted, statically typed programming language with an LLVM native backend, a language server, a desktop IDE, a VS Code extension and a Nova package manager.**
 
-The compiler and language server are still the Rust bootstrap in `bootstrap/`.
-The formatter, diagnostics and Nova Boxes are Nova implementations in
-`libraries/`, run through `nova-tool`; the compiler is not self-hosted yet. See
-[the migration plan](docs/rust-migration.md).
+The compiler, formatter, diagnostics, language server and Nova Boxes are all
+written in Nova under `libraries/`; `bootstrap/nova` is the Nova-built bootstrap
+compiler. There is no Rust source or cargo build step. See
+[the Rust-removal record](docs/rust-migration.md).
 
 [![CI](https://github.com/jd4rider/nova/actions/workflows/ci.yml/badge.svg)](https://github.com/jd4rider/nova/actions/workflows/ci.yml)
 [![Website and GitHub Pages](https://github.com/jd4rider/nova/actions/workflows/pages.yml/badge.svg)](https://github.com/jd4rider/nova/actions/workflows/pages.yml)
-[![Rust](https://img.shields.io/badge/Rust-1.96-000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Status: working vertical slice](https://img.shields.io/badge/status-working%20vertical%20slice-fabd2f)](ROADMAP.md)
 
 [Website](https://jd4rider.github.io/nova/) · [Playground](https://jd4rider.github.io/nova/playground/) · [Documentation](https://jd4rider.github.io/nova/docs/) · [Nova Studio](https://jd4rider.github.io/nova/studio/) · [VS Code extension](https://jd4rider.github.io/nova/toolchain/vscode/) · [Launch post](https://jd4rider.github.io/nova/blog/building-nova-in-rust/) · [Roadmap](ROADMAP.md) · [GitHub](https://github.com/jd4rider/nova)
 
-Nova is a **functioning native language toolchain** built in Rust: source is lexed, parsed, type-checked, lowered to LLVM IR and linked into a real executable. It is an early vertical slice — not a claim that the language is complete. The supported subset and every known gap are documented.
+Nova is a **self-hosted native language toolchain**: source is lexed, parsed, type-checked, lowered to LLVM IR and linked into a real executable by the Nova compiler. It is an early vertical slice — not a claim that the language is complete. The supported subset and every known gap are documented.
 
 ## Install
 
@@ -48,7 +47,7 @@ These are **unsigned** preview builds. macOS may require right-click → Open; W
 
 ### VS Code extension
 
-Prefer your own editor? The Nova Language extension adds `.nova` syntax highlighting and launches the same Rust LSP through `nova lsp`:
+Prefer your own editor? The Nova Language extension adds `.nova` syntax highlighting and launches the Nova LSP through `nova lsp`:
 
 ```sh
 code --install-extension nova-language-0.2.0.vsix
@@ -62,29 +61,29 @@ The [website playground](https://jd4rider.github.io/nova/playground/) runs the r
 
 ### Build from source
 
-Requirements: Rust 1.96+, Cargo, and a C compiler/linker (`clang`). Node 20+ is only needed for Nova Studio and the website.
+Requirements: a C compiler/linker (`clang`) and the checked-in Nova bootstrap.
+Node 20+ is only needed for Nova Studio and the website.
 
 ```sh
 git clone https://github.com/jd4rider/nova.git
 cd nova
-cargo build --workspace
-cargo test --workspace
+(cd examples/nova-tool && ../../bootstrap/nova build)
 
-cargo run -p nova-cli -- new hello
+bootstrap/nova new hello
 cd hello
-../target/debug/nova run
+../bootstrap/nova run
 ```
 
-Installed binary: `target/debug/nova`.
+Compiler binary: `bootstrap/nova` (rebuilt at
+`examples/nova-tool/target/nova/nova-tool` after a build).
 
 ```sh
 nova new my-app       # create a project
 nova check            # type-check
 nova build            # emit a native executable
 nova run              # build and run
-nova test             # run project tests
 nova fmt              # format
-nova lsp              # start the Rust language server
+nova lsp              # start the Nova language server
 nova doctor           # inspect the local toolchain
 ```
 
@@ -124,12 +123,12 @@ Ada (36)
 
 | Area | State | Evidence |
 |---|---|---|
-| Lexer, parser, spans, recovery, interpolation | **Tested** | `cargo test -p nova-lexer -p nova-parser` |
-| Type checking, structs, enums, Option/Result, match, string predicates | **Tested** | `cargo test --workspace` |
-| LLVM native codegen, checked arithmetic, bounds | **Tested** | Native codegen tests |
-| CLI, formatter, manifests, project scaffolding | **Tested / implemented** | `nova --help`, integration tests |
+| Lexer, parser, spans, interpolation | **Tested** | `examples/nova-tool/tests/parser.sh` |
+| Type checking, structs, enums, Option/Result, match, string predicates | **Tested** | `examples/nova-tool/tests/sema-ast.sh`, `diff-errors.sh` |
+| LLVM native codegen, bounds checks | **Tested** | `examples/nova-tool/tests/codegen.sh`, `diff.sh` |
+| CLI, formatter, manifests, project scaffolding | **Tested / implemented** | `examples/nova-tool/tests/{cli,formatter,toolchain,boxes}.sh` |
 | Nova Boxes: manifests, SemVer, resolution, archives, fetch | **Implemented** | `examples/nova-tool/tests/boxes.sh` (64 assertions); publishing planned |
-| Rust LSP over stdio | **Implemented** | Diagnostics, completion, hover, definition, symbols, formatting |
+| Nova LSP over stdio | **Implemented** | Diagnostics, completion, hover, definition, symbols, formatting |
 | VS Code extension | **Implemented** | VSIX installs; shared grammar and live `nova lsp` transcript verified |
 | Browser playground | **Implemented** | Real front end compiled to WASM; valid/invalid ABI tests and static route verified |
 | Nova Studio desktop IDE | **Implemented** | Typecheck and production build pass; interaction not yet automated |
@@ -141,20 +140,23 @@ Ada (36)
 
 The full matrix is in [ROADMAP.md](ROADMAP.md).
 
-## The Rust pipeline
+## The Nova pipeline
 
-Nova is not an interpreter and the IDE is not the compiler. The workspace is split into focused Rust crates:
+Nova is not an interpreter and the IDE is not the compiler. The toolchain is
+split into focused Nova libraries:
 
 ```text
-bootstrap/
+bootstrap/nova        Nova-built bootstrap compiler
+libraries/
   nova-lexer          tokens, spans and diagnostics
-  nova-parser         recursive descent + Pratt parser
-  nova-sema           name resolution and type checking
-  nova-codegen-llvm   textual LLVM IR emission
-  nova-cli            build, run, check, test, fmt, lsp, tree
+  nova-parser         recursive descent + Pratt parser and AST
+  nova-check          name resolution, declarations and body semantics
+  nova-codegen        textual LLVM IR emission
   nova-lsp            stdio language server
-  nova-wasm           browser front-end ABI
-  nova-pkg            manifests, projects and lockfiles
+  nova-fmt            formatter
+  nova-boxes          manifests, SemVer, archives, registry and lockfiles
+examples/nova-tool    the `nova` CLI
+runtime/              C runtime and Objective-C GUI host
 ```
 
 Nova emits textual LLVM IR and invokes the host `clang`, so no system LLVM development package is required. See [ADR 0003](docs/adr/0003-llvm-backend.md).
@@ -166,13 +168,13 @@ Install with Homebrew (`brew install --cask jd4rider/tap/nova-studio`) or build 
 ```sh
 cd editor
 npm ci --no-audit --no-fund
-NOVA_BIN="$PWD/../target/debug/nova" npm run dev
+NOVA_BIN="$PWD/../bootstrap/nova" npm run dev
 ```
 
 Open a folder containing `nova.toml`. Studio provides:
 
 - Monaco editing with Nova syntax highlighting and a VS Code Dark+ theme by default; Gruvbox Dark/Light/High Contrast stay selectable.
-- LSP diagnostics, completion, hover, definition and formatting against the real Rust server.
+- LSP diagnostics, completion, hover, definition and formatting against the real Nova server.
 - Reopens the folder from your previous session on launch, or starts cleanly if it was moved or deleted.
 - Explorer with live workspace watching: files created or edited outside Studio refresh the tree, clean tabs reload from disk with the caret preserved, and dirty buffers are never overwritten.
 - Tab context menu (close, close others, close all, copy path, reveal), Save All, Go to Line and VS Code-style shortcuts.
@@ -184,7 +186,7 @@ Open a folder containing `nova.toml`. Studio provides:
 
 The Electron renderer has no Node access: context isolation and sandbox are on, Node integration is off, CSP is applied, navigation is blocked, paths are confined to the workspace, and preload IPC is narrow. See [ADR 0006](docs/adr/0006-electron-security.md).
 
-Prefer VS Code? The [Nova Language extension](editors/vscode/README.md) provides syntax highlighting and the same Rust LSP without the Studio shell. It is distributed as a local VSIX, not through the Marketplace.
+Prefer VS Code? The [Nova Language extension](editors/vscode/README.md) provides syntax highlighting and the same Nova LSP without the Studio shell. It is distributed as a local VSIX, not through the Marketplace.
 
 `node-pty` is optional. Without it the terminal reports **pipe mode** and FreeBuff cannot run its TUI; that limitation is shown, not hidden. The FreeBuff chat scrape is heuristic and experimental, not a supported FreeBuff protocol.
 
@@ -211,7 +213,7 @@ The Pages workflow is [`.github/workflows/pages.yml`](.github/workflows/pages.ym
 ## Project layout
 
 ```text
-bootstrap/         Rust bootstrap compiler (being replaced by Nova, phase by phase)
+bootstrap/nova     Nova-built bootstrap compiler (no Rust)
 editor/            Electron + React + Monaco desktop IDE
 editors/vscode/    VS Code syntax highlighting + LSP client
 apps/website/      Astro/Starlight site, docs and blog
@@ -224,8 +226,9 @@ docs/              Architecture, language, IDE and security notes
 ## Development checks
 
 ```sh
-cargo fmt --check
-cargo test --workspace
+(cd examples/nova-tool && ../../bootstrap/nova build)
+sh examples/nova-tool/tests/codegen.sh
+sh examples/nova-tool/tests/boxes.sh
 
 cd editor
 npm run typecheck
@@ -241,7 +244,7 @@ The website checks include real compiler invocations for documentation snippets.
 
 ## Limitations
 
-- `String` supports `len`, `is_empty`, `to_string`, `contains`, `starts_with`, `ends_with` and `trim`. Generic functions, structs, enums and inherent methods are monomorphised, `trait`/`impl Trait for Type` perform static conformance, `dyn Trait` boxes a copy of the value behind a per-type vtable, closures capture outer locals by value, and expression/statement macros expand by AST substitution. Still missing: real async scheduling or channels, trait impls on generic types, and registry publishing.
+- `String` supports `len`, `is_empty`, `to_string`, `contains`, `starts_with`, `ends_with` and `trim`. The Nova compiler does not implement generics, traits or closures yet; expression/statement macros expand by AST substitution. Also missing: real async scheduling or channels, `nova test`/REPL parity and registry publishing.
 - User modules are loaded with `import "file.nova"`, optionally aliased with `as` for qualified calls and type names. The merged namespace is flat, cycle-checked, and has no package registry.
 - Unsigned macOS/Windows installers and a macOS CLI archive are published; there are no signed/notarized builds, Intel/Linux installers, Windows CLI bundle or package registry.
 - The VS Code extension is a local, unsigned VSIX; it is not published to the VS Code Marketplace or Open VSX and has no automated Extension Host test.

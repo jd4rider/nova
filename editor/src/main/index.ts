@@ -17,6 +17,10 @@ import { LspClient } from './lsp'
 import { isNovaProject, novaExecutable } from './toolchain'
 import { isAbortError, streamChat } from './ai'
 import { configureAi, getAiSettings, resolveAiConfig } from './credentials'
+import { CopilotService } from './copilot'
+import { CopilotSdkService } from './copilot-sdk'
+import { FreeBuffChat } from './freebuff-chat'
+import { FreeBuffCompletion } from './freebuff-completion'
 import type {
   AiConfigurePatch,
   AiContext,
@@ -56,8 +60,14 @@ let terminalCounter = 1
 const aiRequests = new Map<string, AbortController>()
 
 function send(channel: string, payload: unknown): void {
-  mainWindow?.webContents.send(channel, payload)
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
+  mainWindow.webContents.send(channel, payload)
 }
+
+const copilot = new CopilotSdkService((state) => send('copilot:status', state))
+const copilotCompletions = new CopilotService(() => undefined)
+const freebuffChat = new FreeBuffChat((event) => send('freebuff:event', event))
+const freebuffCompletion = new FreeBuffCompletion()
 
 function guard(event: IpcMainInvokeEvent): void {
   if (!mainWindow || event.sender !== mainWindow.webContents) {
@@ -186,6 +196,9 @@ async function chooseWorkspace(): Promise<{ root: string; hasManifest: boolean }
   await setWorkspace(result.filePaths[0])
   lspClient?.stop()
   lspClient = null
+  copilot.stop()
+  copilotCompletions.stop()
+  freebuffChat.stop()
   return { root: result.filePaths[0], hasManifest: isNovaProject(result.filePaths[0]) }
 }
 
@@ -198,9 +211,10 @@ async function freebuffStatus(): Promise<FreeBuffStatus> {
   if (!version) {
     return {
       available: false,
-      mode: 'terminal',
+      mode: 'scraped-chat',
       headless: false,
-      reason: 'FreeBuff CLI was not found on PATH. Install it, or configure a chat provider in the AI panel.'
+      pty: Boolean(ptyModule),
+      reason: 'FreeBuff CLI was not found on PATH. Install it, or use Copilot or another chat provider in the AI panel.'
     }
   }
   // Probe the documented surface instead of hard-coding a version's capabilities.
@@ -213,11 +227,12 @@ async function freebuffStatus(): Promise<FreeBuffStatus> {
   return {
     available: true,
     version,
-    mode: 'terminal',
+    mode: 'scraped-chat',
     headless,
-    reason: headless
-      ? 'This FreeBuff CLI documents a non-interactive mode, but Nova Studio only embeds the real TUI today. The chat tab uses a provider key you supply.'
-      : 'This FreeBuff CLI exposes an interactive TUI only: no headless or JSON mode. Nova Studio embeds that real CLI instead of scraping it or inventing a chat protocol.'
+    pty: Boolean(ptyModule),
+    reason: ptyModule
+      ? 'FreeBuff exposes an interactive TUI only. Studio drives the real CLI in a PTY, reconstructs its screen with a headless terminal, and exposes that scrape as an experimental chat. It is not a supported FreeBuff API.'
+      : 'FreeBuff requires a PTY. Install the optional node-pty dependency to use the scraped chat; the raw terminal needs it too.'
   }
 }
 
@@ -225,8 +240,8 @@ function systemPrompt(context: AiContext | null): string {
   const lines = [
     'You are the coding assistant inside Nova Studio, a desktop IDE for the Nova programming language.',
     'Nova is statically typed with a Rust front end, an LLVM backend and a clang link step.',
-    'Supported today: functions, structs, enums with unit variants or one payload per variant, exhaustive match, let/var, if, while, `for i in 0..n`, Option/Result, lists, string interpolation and std imports such as `import std.io { println }`.',
-    'Variant constructors are global (`Circle(2)`, `Empty`) and match patterns are `Circle(radius)`, `Empty` or `_`. Not supported: generics, traits, methods on user types, closures, async, macros and user modules beyond std imports. Say so instead of inventing syntax.',
+    'Supported today: functions, structs, enums with unit variants or multi-field payloads, exhaustive match, let/var, if, while, `for i in 0..n`, Option/Result, lists, string interpolation, generic functions/types/methods, static traits, `dyn Trait` objects, `impl` methods, tuples/arrays/slices, capturing closures, expression/statement macros, `extern "C"`, synchronous async/await, map/set types, path imports and std imports such as `import std.io { println }`.',
+    'Variant constructors are global (`Circle(2)`, `Empty`) and match patterns are `Circle(radius)`, `Empty` or `_`. Not supported: trait impls on generic types, real async scheduling/channels, namespaced modules, packages and named/default arguments. Say so instead of inventing syntax.',
     'Prefer complete, compilable Nova and keep explanations short. Tag code blocks as nova.'
   ]
   if (!context) {
@@ -243,12 +258,15 @@ function systemPrompt(context: AiContext | null): string {
 
 function createTerminal(cwd: string, cols: number, rows: number, command?: string): TerminalInfo {
   const id = terminalCounter++
-  const shell = command ?? process.env.SHELL ?? '/bin/bash'
+  const shell = process.env.SHELL ?? '/bin/bash'
+  const custom = command?.startsWith('cmd:') ? command.slice(4) : null
+  const executable = custom ? shell : command ?? shell
+  const args = custom ? ['-lc', custom] : []
   if (command === 'freebuff' && !ptyModule) {
     throw new Error('FreeBuff requires a PTY. Install the optional node-pty dependency.')
   }
   if (ptyModule) {
-    const pty = ptyModule.spawn(shell, [], {
+    const pty = ptyModule.spawn(executable, args, {
       cwd,
       cols,
       rows,
@@ -268,7 +286,7 @@ function createTerminal(cwd: string, cols: number, rows: number, command?: strin
     })
     return { id, pty: true }
   }
-  const child = spawn(shell, [], { cwd, env: process.env, stdio: ['pipe', 'pipe', 'pipe'] })
+  const child = spawn(executable, args, { cwd, env: process.env, stdio: ['pipe', 'pipe', 'pipe'] })
   child.stdout?.on('data', (chunk: Buffer) => send('terminal:data', { id, data: chunk.toString('utf8') }))
   child.stderr?.on('data', (chunk: Buffer) => send('terminal:data', { id, data: chunk.toString('utf8') }))
   child.on('exit', () => {
@@ -482,6 +500,7 @@ function createWindow(): void {
     }
   })
 
+  mainWindow.on('closed', () => { mainWindow = null })
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   mainWindow.webContents.on('will-navigate', (event, url) => {
     if (!url.startsWith('http://localhost') && !url.startsWith('file://')) event.preventDefault()
@@ -652,6 +671,77 @@ function registerIpc(): void {
     return freebuffStatus()
   })
 
+  ipcMain.handle('freebuff:start', async (event, root: string) => {
+    guard(event)
+    const absolute = await safeExisting(root)
+    freebuffChat.start(absolute)
+  })
+
+  ipcMain.handle('freebuff:send', async (event, text: string) => {
+    guard(event)
+    if (typeof text !== 'string' || !text.trim() || text.length > 40_000) {
+      throw new Error('invalid FreeBuff message')
+    }
+    freebuffChat.send(text)
+  })
+
+  ipcMain.handle('freebuff:reset', async (event) => {
+    guard(event)
+    freebuffChat.reset()
+  })
+
+  ipcMain.handle('freebuff:stop', async (event) => {
+    guard(event)
+    freebuffChat.stop()
+  })
+
+  ipcMain.handle('freebuff:complete', async (event, input: { uri: string; version: number; text: string; line: number; character: number }) => {
+    guard(event)
+    if (!workspaceRoot || !input || typeof input.text !== 'string' || input.text.length > 120_000) return null
+    return freebuffCompletion.complete({
+      uri: String(input.uri ?? ''),
+      text: input.text,
+      line: Math.max(0, Number(input.line) || 0),
+      character: Math.max(0, Number(input.character) || 0),
+      root: workspaceRoot
+    })
+  })
+
+  ipcMain.handle('copilot:status', async (event) => {
+    guard(event)
+    await copilot.start(workspaceRoot)
+    return copilot.status()
+  })
+
+  ipcMain.handle('copilot:sign-in', async (event) => {
+    guard(event)
+    return copilot.signIn()
+  })
+
+  ipcMain.handle('copilot:sign-out', async (event) => {
+    guard(event)
+    return copilot.signOut()
+  })
+
+  ipcMain.handle('copilot:models', async (event) => {
+    guard(event)
+    return copilot.models()
+  })
+
+  ipcMain.handle('copilot:complete', async (event, input: { uri: string; version: number; text: string; line: number; character: number }) => {
+    guard(event)
+    if (!input || typeof input.uri !== 'string' || typeof input.text !== 'string' || input.text.length > 300_000) {
+      return null
+    }
+    return copilotCompletions.complete({
+      uri: input.uri,
+      version: Number(input.version) || 1,
+      text: input.text,
+      line: Math.max(0, Number(input.line) || 0),
+      character: Math.max(0, Number(input.character) || 0)
+    })
+  })
+
   ipcMain.handle('ai:settings', async (event) => {
     guard(event)
     return getAiSettings()
@@ -694,10 +784,17 @@ function registerIpc(): void {
       try {
         const config = resolveAiConfig()
         send('ai:event', { requestId, type: 'start', model: config.model })
-        const result = await streamChat(config, systemPrompt(safeContext), clean, controller.signal, (text) =>
-          send('ai:event', { requestId, type: 'delta', text })
-        )
-        send('ai:event', { requestId, type: 'done', model: result.model })
+        if (config.provider === 'copilot') {
+          await copilot.chat(clean, safeContext, config.model, (text) =>
+            send('ai:event', { requestId, type: 'delta', text }), controller.signal
+          )
+          send('ai:event', { requestId, type: 'done', model: config.model })
+        } else {
+          const result = await streamChat(config, systemPrompt(safeContext), clean, controller.signal, (text) =>
+            send('ai:event', { requestId, type: 'delta', text })
+          )
+          send('ai:event', { requestId, type: 'done', model: result.model })
+        }
       } catch (error) {
         send('ai:event', {
           requestId,
@@ -741,6 +838,9 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   lspClient?.stop()
+  copilot.stop()
+  copilotCompletions.stop()
+  freebuffChat.stop()
   for (const [, terminal] of terminals) terminal.kill()
   for (const [, controller] of aiRequests) controller.abort()
   if (process.platform !== 'darwin') app.quit()

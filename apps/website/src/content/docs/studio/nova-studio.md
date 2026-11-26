@@ -8,10 +8,9 @@ description: The workbench rebuilt in Nova on nova-gui — same layout and palet
 ## Run it
 
 ```sh
-cargo build -p nova-cli
 cd examples/nova-studio
-../../target/debug/nova build
-NOVA_BIN="$(cd ../.. && pwd)/target/debug/nova" \
+../../bootstrap/nova build
+NOVA_BIN="$(cd ../.. && pwd)/bootstrap/nova" \
 NOVA_STUDIO_ROOT="$(cd ../.. && pwd)" \
 ./target/nova/nova-studio
 ```
@@ -81,7 +80,7 @@ These are gaps, not hidden behaviour:
 
 - **Split editor.** `⌘\` (or *Toggle split editor* in the palette) shows two panes side by side on the same workbench; each pane remembers its own tab, the unfocused pane renders dimmed without a caret, and clicking a pane focuses it. Panes hide below 520px of width.
 - **Go to definition.** `F12` (or `⌘`-click a symbol, or *Go to definition*) jumps to the `fn`, `struct`, `enum` or `impl` that declares the word under the caret — in the current file, then across every `.nova` file in the workspace, opening the file if needed. A status message reports what it found.
-- **No language server.** There is no completions, hover or inline diagnostics; the Problems panel is intentionally empty. The Rust LSP is a separate process that speaks JSON-RPC over stdio, and the host has no asynchronous channel.
+- **No language server.** There is no completions, hover or inline diagnostics; the Problems panel is intentionally empty. The Nova LSP is a separate process that speaks JSON-RPC over stdio, and the host has no asynchronous channel.
 - **One shell per panel.** The PTY panel runs a single shell (restart it from the footer) and no mouse reporting reaches full-screen programs; Run still launches Terminal for TUI programs.
 - **No AI panel.** No Copilot, no FreeBuff chat, no diff review. The host cannot stream a network response.
 - **No search across files.** Quick open and the palette exist; workspace search does not.

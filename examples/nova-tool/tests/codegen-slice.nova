@@ -1,0 +1,30 @@
+fn sum(values: Slice<Int>) -> Int {
+    var index = 0
+    var total = 0
+    while index < values.len() {
+        total = total + values[index]
+        index = index + 1
+    }
+    return total
+}
+
+fn first(values: Slice<Int>) -> Int {
+    return values[0]
+}
+
+fn from_list(values: List<Int>) -> Slice<Int> {
+    return values.as_slice()
+}
+
+fn main() -> Int {
+    let list = [1, 2, 3, 4]
+    var numbers: [Int; 4] = [5, 6, 7, 8]
+    var list_view = list.as_slice()
+    list_view[0] = 9
+    let array_view = numbers.as_slice()
+    let returned = from_list(list)
+    var total = list_view.len() + array_view.len()
+    total = total + list_view[1] + array_view[2]
+    total = total + sum(list_view) + first(array_view) + returned[3]
+    return total
+}

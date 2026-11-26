@@ -1,0 +1,6 @@
+fn main() -> Int {
+    let path = "x"
+    var count = 7
+    let label = "FORMATTED ${path} ${count} ${count > 3}!"
+    return label.len()
+}

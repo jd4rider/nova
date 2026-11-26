@@ -7,15 +7,15 @@ Nova publishes unsigned preview artifacts built from this repository.
 | `Nova-Studio-0.1.0-arm64.dmg` | macOS arm64 | DMG with `Nova Studio.app` and `/Applications` link |
 | `Nova-Studio-0.1.0-arm64.zip` | macOS arm64 | Zipped `.app` |
 | `Nova-Studio-0.1.0-x64-setup.exe` | Windows x64 | NSIS installer, assisted mode |
-| `nova-0.1.0-aarch64-apple-darwin.tar.gz` | macOS arm64 | CLI and README |
-| `nova-language-0.1.0.vsix` | VS Code 1.85+ | TextMate grammar and Rust LSP client |
+| `nova-0.1.0-aarch64-apple-darwin.tar.gz` | macOS arm64 | CLI, runtime and README |
+| `nova-language-0.1.0.vsix` | VS Code 1.85+ | TextMate grammar and Nova LSP client |
 | `nova-0.1.0-source.tar.gz` | Source | Tagged repository source |
 | `SHA256SUMS` | All | SHA-256 manifest |
 
 ## Build locally
 
 ```sh
-cargo build --release -p nova-cli
+(cd examples/nova-tool && ../../bootstrap/nova build)
 
 cd editor
 npm ci --no-audit --no-fund

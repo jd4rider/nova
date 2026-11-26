@@ -21,8 +21,27 @@ struct ANode {
 struct Ast {
     nodes: List<ANode>,
     links: List<Int>,
-    error: String,
+    errors: List<String>,
 }
+
+// Parser AST arena. Appending through value-semantic lists copied the whole
+// arena for every node, so parsing grew quadratically and the compiler's own
+// source exhausted memory. Nodes and links are collected here by index and
+// materialised into plain lists once, at the end of `a_parse`.
+extern "C" fn nova_ast_reset()
+extern "C" fn nova_ast_add_link(child: Int) -> Int
+extern "C" fn nova_ast_link_len() -> Int
+extern "C" fn nova_ast_add_node(kind: Int, text: String, aux: String, first: Int, count: Int, line: Int, column: Int) -> Int
+extern "C" fn nova_ast_node_count() -> Int
+extern "C" fn nova_ast_link_count() -> Int
+extern "C" fn nova_ast_node_kind(index: Int) -> Int
+extern "C" fn nova_ast_node_text(index: Int) -> String
+extern "C" fn nova_ast_node_aux(index: Int) -> String
+extern "C" fn nova_ast_node_first(index: Int) -> Int
+extern "C" fn nova_ast_node_children(index: Int) -> Int
+extern "C" fn nova_ast_node_line(index: Int) -> Int
+extern "C" fn nova_ast_node_column(index: Int) -> Int
+extern "C" fn nova_ast_link_at(index: Int) -> Int
 
 struct AStep {
     ast: Ast,
@@ -179,18 +198,49 @@ fn ak_arm() -> Int {
     return 35
 }
 
-fn a_empty() -> Ast {
-    return Ast { nodes: [], links: [], error: "" }
+fn ak_interp() -> Int {
+    return 36
 }
 
-fn a_fail(ast: Ast, token: Token, message: String) -> AStep {
+fn ak_str_part() -> Int {
+    return 37
+}
+
+fn ak_try() -> Int {
+    return 38
+}
+
+fn a_empty() -> Ast {
+    return Ast { nodes: [], links: [], errors: [] }
+}
+
+fn a_error_line(code: String, message: String, token: Token) -> String {
     let at = " at line " + token.line.to_string() + ", column " + token.column.to_string()
+    return code + " " + message + at
+}
+
+// Appends a diagnostic instead of replacing the first one, so recovery can
+// preserve every error the seed's parser would report for the same token.
+fn a_fail_code(ast: Ast, token: Token, code: String, message: String) -> AStep {
+    var errors = ast.errors
+    errors.push(a_error_line(code, message, token))
     return AStep {
-        ast: Ast { nodes: ast.nodes, links: ast.links, error: message + at },
+        ast: Ast { nodes: ast.nodes, links: ast.links, errors: errors },
         pos: 0,
         node: 0 - 1,
         failed: true,
     }
+}
+
+fn a_fail(ast: Ast, token: Token, message: String) -> AStep {
+    return a_fail_code(ast, token, "E0001", "parse error: " + message)
+}
+
+fn a_found(token: Token) -> String {
+    if token.kind == lx_eof() {
+        return "end of file"
+    }
+    return "`" + token.text + "`"
 }
 
 fn a_token(tokens: List<Token>, pos: Int) -> Token {
@@ -220,24 +270,12 @@ fn a_add(
     children: List<Int>,
     token: Token,
 ) -> (Ast, Int) {
-    let first = ast.links.len()
-    var links = ast.links
+    let first = nova_ast_link_len()
     for child in children {
-        links.push(child)
+        nova_ast_add_link(child)
     }
-    var nodes = ast.nodes
-    nodes.push(
-        ANode {
-            kind: kind,
-            text: text,
-            aux: aux,
-            first: first,
-            count: children.len(),
-            line: token.line,
-            column: token.column,
-        }
-    )
-    return (Ast { nodes: nodes, links: links, error: ast.error }, nodes.len() - 1)
+    let index = nova_ast_add_node(kind, text, aux, first, children.len(), token.line, token.column)
+    return (ast, index)
 }
 
 fn a_child(ast: Ast, node: Int, index: Int) -> Int {
@@ -369,6 +407,140 @@ fn a_args(tokens: List<Token>, ast: Ast, pos: Int) -> AStep {
     return AStep { ast: marker.0, pos: i, node: marker.1, failed: false }
 }
 
+// Splits a string token into literal and `${expr}` parts. A string with no
+// interpolation keeps its raw token text so codegen can unquote it as before.
+fn a_string(tokens: List<Token>, ast: Ast, pos: Int) -> AStep {
+    let token = a_token(tokens, pos)
+    let raw = token.text
+    let chars = raw.chars()
+    if chars.len() < 2 {
+        let added = a_add(ast, ak_string(), raw, "", [], token)
+        return AStep { ast: added.0, pos: pos + 1, node: added.1, failed: false }
+    }
+    let stop = chars.len() - 1
+    var parts: List<Int> = []
+    var work = ast
+    var literal = ""
+    var interpolated = false
+    var i = 1
+    while i < stop {
+        let c = chars[i]
+        if c == "\\" && i + 1 < stop {
+            i = i + 1
+            let escaped = chars[i]
+            if escaped == "n" {
+                literal = literal + "\n"
+            } else if escaped == "t" {
+                literal = literal + "\t"
+            } else if escaped == "r" {
+                literal = literal + "\r"
+            } else {
+                literal = literal + escaped
+            }
+            i = i + 1
+        } else if c == "$" && i + 1 < chars.len() && chars[i + 1] == "{" {
+            interpolated = true
+            if literal.len() > 0 {
+                let added = a_add(work, ak_str_part(), literal, "", [], token)
+                work = added.0
+                parts.push(added.1)
+                literal = ""
+            }
+            let close = a_interp_end(chars, i + 2)
+            if close < 0 {
+                return a_fail(work, token, "unterminated string interpolation; expected '}'")
+            }
+            let inner = lx_slice(chars, i + 2, close)
+            var inner_tokens: List<Token> = []
+            for piece in a_tokens(inner) {
+                if piece.kind != lx_eof() {
+                    inner_tokens.push(piece)
+                }
+            }
+            if inner_tokens.len() == 0 {
+                return a_fail(work, token, "empty string interpolation")
+            }
+            let parsed = a_expr(inner_tokens, work, 0, 1)
+            if parsed.failed {
+                return parsed
+            }
+            if parsed.pos != inner_tokens.len() {
+                return a_fail(parsed.ast, token, "unexpected token after interpolation expression")
+            }
+            work = parsed.ast
+            parts.push(parsed.node)
+            i = close + 1
+        } else {
+            literal = literal + c
+            i = i + 1
+        }
+    }
+    if !interpolated {
+        let added = a_add(ast, ak_string(), raw, "", [], token)
+        return AStep { ast: added.0, pos: pos + 1, node: added.1, failed: false }
+    }
+    if literal.len() > 0 {
+        let added = a_add(work, ak_str_part(), literal, "", [], token)
+        work = added.0
+        parts.push(added.1)
+    }
+    let added = a_add(work, ak_interp(), raw, "", parts, token)
+    return AStep { ast: added.0, pos: pos + 1, node: added.1, failed: false }
+}
+
+// Finds the `}` closing an interpolation, honouring nested braces, quoted
+// strings, char literals and line comments. Returns -1 when it is unterminated.
+fn a_interp_end(chars: List<String>, start: Int) -> Int {
+    var i = start
+    var depth = 1
+    var in_string = false
+    var in_char = false
+    var escaped = false
+    while i < chars.len() {
+        let c = chars[i]
+        if escaped {
+            escaped = false
+            i = i + 1
+        } else if in_string {
+            if c == "\\" {
+                escaped = true
+            } else if c == "\"" {
+                in_string = false
+            }
+            i = i + 1
+        } else if in_char {
+            if c == "\\" {
+                escaped = true
+            } else if c == "'" {
+                in_char = false
+            }
+            i = i + 1
+        } else if c == "\"" {
+            in_string = true
+            i = i + 1
+        } else if c == "'" {
+            in_char = true
+            i = i + 1
+        } else if c == "/" && i + 1 < chars.len() && chars[i + 1] == "/" {
+            while i < chars.len() && chars[i] != "\n" {
+                i = i + 1
+            }
+        } else if c == "{" {
+            depth = depth + 1
+            i = i + 1
+        } else if c == "}" {
+            depth = depth - 1
+            if depth == 0 {
+                return i
+            }
+            i = i + 1
+        } else {
+            i = i + 1
+        }
+    }
+    return 0 - 1
+}
+
 fn a_primary(tokens: List<Token>, ast: Ast, pos: Int) -> AStep {
     var i = pos
     if i >= tokens.len() {
@@ -442,10 +614,13 @@ fn a_primary(tokens: List<Token>, ast: Ast, pos: Int) -> AStep {
         node = added.1
         i = i + 1
     } else if token.kind == lx_string() {
-        let added = a_add(work, ak_string(), token.text, "", [], token)
-        work = added.0
-        node = added.1
-        i = i + 1
+        let parsed = a_string(tokens, work, i)
+        if parsed.failed {
+            return parsed
+        }
+        work = parsed.ast
+        node = parsed.node
+        i = parsed.pos
     } else if token.text == "true" || token.text == "false" {
         let added = a_add(work, ak_bool(), token.text, "", [], token)
         work = added.0
@@ -491,10 +666,10 @@ fn a_primary(tokens: List<Token>, ast: Ast, pos: Int) -> AStep {
             let call = args.node
             var children: List<Int> = []
             children.push(node)
-            let marker = work.nodes[call]
+            let marker_count = nova_ast_node_children(call)
             var k = 0
-            while k < marker.count {
-                children.push(a_child(work, call, k))
+            while k < marker_count {
+                children.push(nova_ast_link_at(nova_ast_node_first(call) + k))
                 k = k + 1
             }
             let rebuilt = a_add(work, ak_call(), "", "", children, part)
@@ -508,8 +683,8 @@ fn a_primary(tokens: List<Token>, ast: Ast, pos: Int) -> AStep {
             work = added.0
             node = added.1
             i = i + 2
-        } else if part.text == "{" && work.nodes[node].kind == ak_ident() && a_upper(work.nodes[node].text) {
-            let lit = a_struct_lit(tokens, work, i, work.nodes[node].text)
+        } else if part.text == "{" && nova_ast_node_kind(node) == ak_ident() && a_upper(nova_ast_node_text(node)) {
+            let lit = a_struct_lit(tokens, work, i, nova_ast_node_text(node))
             if lit.failed {
                 return lit
             }
@@ -533,6 +708,13 @@ fn a_primary(tokens: List<Token>, ast: Ast, pos: Int) -> AStep {
             let added = a_add(work, ak_index(), "", "", children, part)
             work = added.0
             node = added.1
+        } else if part.text == "?" {
+            var children: List<Int> = []
+            children.push(node)
+            let added = a_add(work, ak_try(), "", "", children, part)
+            work = added.0
+            node = added.1
+            i = i + 1
         } else {
             more = false
         }
@@ -968,12 +1150,25 @@ fn a_params(tokens: List<Token>, ast: Ast, pos: Int) -> AParams {
     while i < tokens.len() && !done {
         let param_name = a_token(tokens, i)
         if param_name.kind != lx_ident() {
+            let found = a_found(param_name)
+            let first = a_fail_code(
+                work,
+                param_name,
+                "E0103",
+                "expected an identifier for a parameter name, found " + found
+            )
+            let second = a_fail_code(
+                first.ast,
+                param_name,
+                "E0103",
+                "expected `)` to close the parameter list, found " + found
+            )
             return AParams {
-                ast: work,
+                ast: second.ast,
                 pos: i,
                 nodes: params,
                 failed: true,
-                error: a_fail(work, param_name, "expected a parameter name"),
+                error: second,
             }
         }
         i = i + 1
@@ -1359,6 +1554,7 @@ fn a_item(tokens: List<Token>, ast: Ast, pos: Int) -> AStep {
 
 fn a_parse(source: String) -> Ast {
     let tokens = a_tokens(source)
+    nova_ast_reset()
     var work = a_empty()
     var items: List<Int> = []
     var i = 0
@@ -1371,8 +1567,30 @@ fn a_parse(source: String) -> Ast {
         items.push(item.node)
         i = item.pos
     }
-    let added = a_add(work, ak_file(), "", "", items, a_token(tokens, 0))
-    return added.0
+    a_add(work, ak_file(), "", "", items, a_token(tokens, 0))
+    var nodes: List<ANode> = []
+    var n = 0
+    while n < nova_ast_node_count() {
+        nodes.push(
+            ANode {
+                kind: nova_ast_node_kind(n),
+                text: nova_ast_node_text(n),
+                aux: nova_ast_node_aux(n),
+                first: nova_ast_node_first(n),
+                count: nova_ast_node_children(n),
+                line: nova_ast_node_line(n),
+                column: nova_ast_node_column(n),
+            }
+        )
+        n = n + 1
+    }
+    var links: List<Int> = []
+    var l = 0
+    while l < nova_ast_link_count() {
+        links.push(nova_ast_link_at(l))
+        l = l + 1
+    }
+    return Ast { nodes: nodes, links: links, errors: work.errors }
 }
 
 fn a_text(ast: Ast, node: Int) -> String {
@@ -1389,6 +1607,21 @@ fn a_render(ast: Ast, node: Int) -> String {
     let item = ast.nodes[node]
     if item.kind == ak_ident() || item.kind == ak_number() || item.kind == ak_string() || item.kind == ak_bool() {
         return item.text
+    }
+    if item.kind == ak_interp() {
+        var out = "(interp"
+        var i = 0
+        while i < item.count {
+            out = out + " " + a_render(ast, a_child(ast, node, i))
+            i = i + 1
+        }
+        return out + ")"
+    }
+    if item.kind == ak_str_part() {
+        return "\"" + item.text + "\""
+    }
+    if item.kind == ak_try() {
+        return "(try " + a_render(ast, a_child(ast, node, 0)) + ")"
     }
     if item.kind == ak_import() {
         var out = "(import " + item.text

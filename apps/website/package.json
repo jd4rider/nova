@@ -12,7 +12,6 @@
     "preview": "astro preview",
     "check": "astro check",
     "lint": "astro check",
-    "build:playground": "node scripts/build-playground.mjs",
     "test:grammar": "node scripts/verify-grammar.mjs",
     "test:playground": "node scripts/verify-playground.mjs",
     "test:site": "node scripts/verify-build.mjs",

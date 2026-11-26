@@ -3,7 +3,7 @@ title: Nova Studio overview
 description: The implemented Electron workbench, its architecture and verified limits.
 ---
 
-Nova Studio is a standalone Electron workbench using React, strict TypeScript, Vite, Monaco and xterm. It is not a wrapper around an external editor, and the compiler/LSP work without it. If you prefer VS Code, the [Nova Language extension](../../toolchain/vscode/) provides the shared grammar and the same Rust LSP without the Studio shell.
+Nova Studio is a standalone Electron workbench using React, strict TypeScript, Vite, Monaco and xterm. It is not a wrapper around an external editor, and the compiler/LSP work without it. If you prefer VS Code, the [Nova Language extension](../../toolchain/vscode/) provides the shared grammar and the same Nova LSP without the Studio shell.
 
 **A second workbench exists:** `examples/nova-studio` is Nova Studio rewritten in Nova on the [nova-gui](../../libraries/gui/) library — the same layout and palette, drawn by one native window with no Electron, React or Monaco. It is experimental and does not port the LSP, AI panel, terminal or Vim mode. See [Nova Studio in Nova](../nova-studio/).
 
@@ -14,7 +14,7 @@ Nova Studio is a standalone Electron workbench using React, strict TypeScript, V
 - **Electron 33** with context isolation, sandboxing, no Node integration, CSP, blocked navigation and narrow preload IPC.
 - **Monaco** is the editor engine; Nova uses a Monarch grammar and ships a Visual Studio Code Dark+ theme by default, with Gruvbox alternatives.
 - **Main process** owns filesystem access, tasks, PTYs, search and the LSP subprocess. Renderer has no Node access.
-- **Rust LSP** is started per workspace and reused across open documents.
+- **Nova LSP** is started per workspace and reused across open documents.
 - **Textual LLVM IR + host Clang** builds native binaries; Studio invokes the actual CLI, it does not simulate build output.
 
 See the repository ADR `docs/adr/0001-ide-architecture.md` for the decision record, candidate risks and measurements.
@@ -50,7 +50,7 @@ cd editor
 npm install --cache /tmp/nova-npm-cache
 npm run typecheck
 npm run build
-NOVA_BIN="$PWD/../target/debug/nova" npm run dev
+NOVA_BIN="$PWD/../bootstrap/nova" npm run dev
 ```
 
 Without `node-pty`, the shell terminal reports **pipe mode**. FreeBuff requires a real TTY and will explain that it is unavailable. The AI panel's chat tab does not need a PTY: it streams from a provider you configure, using a key the main process encrypts with the OS credential store.

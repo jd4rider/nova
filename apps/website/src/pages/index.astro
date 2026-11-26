@@ -1,7 +1,6 @@
 ---
 import SiteLayout from '../layouts/SiteLayout.astro'
 import Badge from '../components/Badge.astro'
-import RustCrab from '../components/RustCrab.astro'
 import { href } from '../lib/url'
 import { highlightNova } from '../lib/highlight'
 import { features } from '../data/maturity'
@@ -17,7 +16,7 @@ const statusRows = features.slice(0, 6)
         <span class="eyebrow"><span class="status-dot"></span> Early vertical slice · macOS arm64</span>
         <h1>Native speed.<br /><span class="accent">Readable code.</span></h1>
         <p class="lede">
-          Nova is a statically typed language with Python-like ergonomics, a Rust bootstrap compiler that
+          Nova is a statically typed language with Python-like ergonomics, a Nova compiler that
           emits real native executables, and a growing Nova toolchain. Predictable semantics, precise
           diagnostics, no hidden conversions.
         </p>
@@ -28,11 +27,11 @@ const statusRows = features.slice(0, 6)
           <a class="button" href={href('studio')}>Explore Nova Studio</a>
         </div>
         <ul class="proof">
-          <li>Rust bootstrap compiler</li>
+          <li>Nova compiler</li>
           <li>LLVM native backend</li>
           <li>Static docs, no live server</li>
         </ul>
-        <div class="rust-pill" style="margin-top: 20px;"><RustCrab /><span>Rust bootstrap compiler + LSP · Nova formatter and Boxes</span></div>
+        <div class="rust-pill" style="margin-top: 20px;"><span>Self-hosted Nova compiler + LSP · Nova formatter and Boxes</span></div>
       </div>
       <div class="code-card">
         <div class="code-head">
@@ -70,7 +69,7 @@ Ada is 36
           <div class="card-icon" aria-hidden="true">IR</div>
           <h3>Native pipeline</h3>
           <p>Lexing, parsing, semantic checking, typed IR, textual LLVM IR and a small C runtime. The LLVM verifier runs; programs link with the platform toolchain.</p>
-          <div class="meta">cargo test --workspace · bootstrap suite</div>
+          <div class="meta">codegen.sh 248/248 · diff.sh 18/18</div>
         </article>
         <article class="card">
           <div class="card-icon" aria-hidden="true">▤</div>
@@ -79,7 +78,7 @@ Ada is 36
           <div class="meta">TypeScript strict · production build passes</div>
         </article>
       </div>
-      <p class="section-intro" style="margin-top: 22px;">Prefer your own editor? The <a href={href('toolchain/vscode/')}>Nova Language extension</a> brings the shared grammar and the Rust language server into VS Code.</p>
+      <p class="section-intro" style="margin-top: 22px;">Prefer your own editor? The <a href={href('toolchain/vscode/')}>Nova Language extension</a> brings the shared grammar and the Nova language server into VS Code.</p>
     </div>
   </section>
 

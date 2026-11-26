@@ -1,5 +1,5 @@
 class Nova < Formula
-  desc "Statically typed native language with an LLVM backend and Rust bootstrap compiler"
+  desc "Self-hosted statically typed native language with an LLVM backend"
   homepage "https://github.com/jd4rider/nova"
   url "https://github.com/jd4rider/nova/releases/download/v0.1.0/nova-0.1.0-aarch64-apple-darwin.tar.gz"
   sha256 "03ad1c66644b90837ce5b44fb9fbb375ae7164d4be28851d041bdea0f367c067"

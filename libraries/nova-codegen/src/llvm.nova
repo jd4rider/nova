@@ -34,6 +34,7 @@ struct CgLocal {
     value: String,
     mutable: Bool,
     elem: String,
+    source: String,
 }
 
 struct CgStruct {
@@ -76,6 +77,7 @@ struct CgVal {
     value: String,
     ty: String,
     elem: String,
+    source: String,
 }
 
 struct CgResult {
@@ -211,6 +213,9 @@ fn cg_loop_continue(state: CgState) -> String {
 fn cg_llvm_type(type_name: String) -> String {
     if type_name == "String" {
         return "%nova.string"
+    }
+    if cg_is_map(type_name) || cg_is_set(type_name) {
+        return "%nova.map"
     }
     if cg_is_list(type_name) {
         return "%nova.list"
@@ -506,6 +511,25 @@ fn cg_enum_by_llvm(enums: List<CgEnum>, ty: String) -> Int {
 }
 
 fn cg_llvm_type_in(structs: List<CgStruct>, enums: List<CgEnum>, type_name: String) -> String {
+    if cg_is_map(type_name) || cg_is_set(type_name) {
+        return "%nova.map"
+    }
+    if cg_is_slice(type_name) {
+        return "%nova.slice"
+    }
+    let option_inner = cg_option_inner(type_name)
+    if option_inner.len() > 0 {
+        return "{ i1, " + cg_llvm_type_in(structs, enums, option_inner) + " }"
+    }
+    let result_ok = cg_result_ok(type_name)
+    let result_err = cg_result_err(type_name)
+    if result_ok.len() > 0 && result_err.len() > 0 {
+        return "{ i1, " + cg_llvm_type_in(structs, enums, result_ok) + ", " + cg_llvm_type_in(structs, enums, result_err) + " }"
+    }
+    let array = cg_array_layout(type_name)
+    if array.1 >= 0 {
+        return "[" + array.1.to_string() + " x " + cg_llvm_type_in(structs, enums, array.0) + "]"
+    }
     if cg_is_tuple(type_name) {
         let parts = cg_split_types(cg_tuple_inner(type_name))
         var out = "{ "
@@ -535,6 +559,32 @@ fn cg_supported_type(structs: List<CgStruct>, enums: List<CgEnum>, type_name: St
     if cg_is_list(type_name) {
         let element = cg_list_elem(type_name)
         return element.len() > 0 && cg_supported_type(structs, enums, element)
+    }
+    if cg_is_slice(type_name) {
+        let element = cg_slice_elem(type_name)
+        return element.len() > 0 && cg_supported_type(structs, enums, element)
+    }
+    if cg_is_map(type_name) {
+        let key = cg_map_key(type_name)
+        let value = cg_map_value(type_name)
+        return cg_map_key_kind(key).len() > 0 && cg_supported_type(structs, enums, key) && cg_supported_type(structs, enums, value)
+    }
+    if cg_is_set(type_name) {
+        let element = cg_set_elem(type_name)
+        return cg_map_key_kind(element).len() > 0 && cg_supported_type(structs, enums, element)
+    }
+    let option_inner = cg_option_inner(type_name)
+    if option_inner.len() > 0 {
+        return cg_supported_type(structs, enums, option_inner)
+    }
+    let result_ok = cg_result_ok(type_name)
+    let result_err = cg_result_err(type_name)
+    if result_ok.len() > 0 && result_err.len() > 0 {
+        return cg_supported_type(structs, enums, result_ok) && cg_supported_type(structs, enums, result_err)
+    }
+    let array = cg_array_layout(type_name)
+    if array.1 >= 0 {
+        return cg_supported_type(structs, enums, array.0)
     }
     if cg_is_tuple(type_name) {
         let parts = cg_split_types(cg_tuple_inner(type_name))
@@ -628,10 +678,10 @@ fn cg_llvm_tuple_fields(ty: String) -> List<String> {
     var current = ""
     var depth = 0
     for c in inner.chars() {
-        if c == "{" || c == "<" || c == "(" {
+        if c == "{" || c == "<" || c == "(" || c == "[" {
             depth = depth + 1
             current = current + c
-        } else if c == "}" || c == ">" || c == ")" {
+        } else if c == "}" || c == ">" || c == ")" || c == "]" {
             depth = depth - 1
             current = current + c
         } else if c == "," && depth == 0 {
@@ -777,6 +827,18 @@ fn cg_pattern_args(pattern: String) -> List<String> {
         out.push(current)
     }
     return out
+}
+
+fn cg_pattern_is_bare(text: String) -> Bool {
+    if text.len() == 0 {
+        return false
+    }
+    for c in text.chars() {
+        if "()[]{}.,:<> \t\n".contains(c) {
+            return false
+        }
+    }
+    return true
 }
 
 fn cg_enum_make(state: CgState, enum_index: Int, variant: Int, values: List<CgVal>) -> CgVal {
@@ -937,15 +999,59 @@ fn cg_number(text: String) -> String {
 }
 
 fn cg_val(state: CgState, value: String) -> CgVal {
-    return CgVal { state: state, value: value, ty: "i64", elem: "Int" }
+    return CgVal { state: state, value: value, ty: "i64", elem: "Int", source: "Int" }
+}
+
+fn cg_source_from_llvm(structs: List<CgStruct>, enums: List<CgEnum>, ty: String) -> String {
+    if ty == "i64" {
+        return "Int"
+    }
+    if ty == "i1" {
+        return "Bool"
+    }
+    if ty == "%nova.string" {
+        return "String"
+    }
+    if ty == "%nova.list" {
+        return "List<Int>"
+    }
+    if ty == "%nova.slice" {
+        return "Slice<Int>"
+    }
+    if ty == "%nova.map" {
+        return "Map<Int, Int>"
+    }
+    let struct_index = cg_struct_by_llvm(structs, ty)
+    if struct_index >= 0 {
+        return structs[struct_index].name
+    }
+    let enum_index = cg_enum_by_llvm(enums, ty)
+    if enum_index >= 0 {
+        return enums[enum_index].name
+    }
+    return ""
 }
 
 fn cg_val_typed(state: CgState, value: String, ty: String) -> CgVal {
-    return CgVal { state: state, value: value, ty: ty, elem: "Int" }
+    return CgVal { state: state, value: value, ty: ty, elem: "Int", source: cg_source_from_llvm(state.structs, state.enums, ty) }
+}
+
+fn cg_val_source(state: CgState, value: String, source: String) -> CgVal {
+    return CgVal {
+        state: state,
+        value: value,
+        ty: cg_llvm_type_in(state.structs, state.enums, source),
+        elem: cg_list_elem(source),
+        source: source,
+    }
 }
 
 fn cg_val_list(state: CgState, value: String, elem: String) -> CgVal {
-    return CgVal { state: state, value: value, ty: "%nova.list", elem: elem }
+    return CgVal { state: state, value: value, ty: "%nova.list", elem: elem, source: "List<" + elem + ">" }
+}
+
+fn cg_val_slice(state: CgState, value: String, elem: String) -> CgVal {
+    return CgVal { state: state, value: value, ty: "%nova.slice", elem: elem, source: "Slice<" + elem + ">" }
 }
 
 fn cg_is_list(type_name: String) -> Bool {
@@ -957,6 +1063,197 @@ fn cg_list_elem(type_name: String) -> String {
         return ""
     }
     return lx_slice(type_name.chars(), 5, type_name.len() - 1)
+}
+
+fn cg_is_slice(type_name: String) -> Bool {
+    return type_name.starts_with("Slice<") && type_name.ends_with(">")
+}
+
+fn cg_slice_elem(type_name: String) -> String {
+    if !cg_is_slice(type_name) {
+        return ""
+    }
+    return lx_slice(type_name.chars(), 6, type_name.len() - 1).trim()
+}
+
+fn cg_is_map(type_name: String) -> Bool {
+    return type_name.starts_with("Map<") && type_name.ends_with(">")
+}
+
+fn cg_map_key(type_name: String) -> String {
+    if !cg_is_map(type_name) {
+        return ""
+    }
+    let parts = cg_split_types(lx_slice(type_name.chars(), 4, type_name.len() - 1))
+    if parts.len() != 2 {
+        return ""
+    }
+    return parts[0].trim()
+}
+
+fn cg_map_value(type_name: String) -> String {
+    if !cg_is_map(type_name) {
+        return ""
+    }
+    let parts = cg_split_types(lx_slice(type_name.chars(), 4, type_name.len() - 1))
+    if parts.len() != 2 {
+        return ""
+    }
+    return parts[1].trim()
+}
+
+fn cg_is_set(type_name: String) -> Bool {
+    return type_name.starts_with("Set<") && type_name.ends_with(">")
+}
+
+fn cg_set_elem(type_name: String) -> String {
+    if !cg_is_set(type_name) {
+        return ""
+    }
+    let parts = cg_split_types(lx_slice(type_name.chars(), 4, type_name.len() - 1))
+    if parts.len() != 1 {
+        return ""
+    }
+    return parts[0].trim()
+}
+
+fn cg_map_key_kind(type_name: String) -> String {
+    if type_name == "Int" {
+        return "0"
+    }
+    if type_name == "Bool" {
+        return "1"
+    }
+    if type_name == "String" {
+        return "3"
+    }
+    return ""
+}
+
+fn cg_map_entry_source(type_name: String) -> String {
+    if cg_is_map(type_name) {
+        return "(" + cg_map_key(type_name) + "," + cg_map_value(type_name) + ")"
+    }
+    if cg_is_set(type_name) {
+        return cg_set_elem(type_name)
+    }
+    return ""
+}
+
+fn cg_is_option(type_name: String) -> Bool {
+    return type_name.starts_with("Option<") && type_name.ends_with(">")
+}
+
+fn cg_option_inner(type_name: String) -> String {
+    if !cg_is_option(type_name) {
+        return ""
+    }
+    return lx_slice(type_name.chars(), 7, type_name.len() - 1).trim()
+}
+
+fn cg_is_result(type_name: String) -> Bool {
+    return type_name.starts_with("Result<") && type_name.ends_with(">")
+}
+
+fn cg_result_ok(type_name: String) -> String {
+    if !cg_is_result(type_name) {
+        return ""
+    }
+    let parts = cg_split_types(lx_slice(type_name.chars(), 7, type_name.len() - 1))
+    if parts.len() < 1 {
+        return ""
+    }
+    return parts[0].trim()
+}
+
+fn cg_result_err(type_name: String) -> String {
+    if !cg_is_result(type_name) {
+        return ""
+    }
+    let parts = cg_split_types(lx_slice(type_name.chars(), 7, type_name.len() - 1))
+    if parts.len() < 2 {
+        return ""
+    }
+    return parts[1].trim()
+}
+
+fn cg_digit_char(c: String) -> Int {
+    if c == "0" {
+        return 0
+    }
+    if c == "1" {
+        return 1
+    }
+    if c == "2" {
+        return 2
+    }
+    if c == "3" {
+        return 3
+    }
+    if c == "4" {
+        return 4
+    }
+    if c == "5" {
+        return 5
+    }
+    if c == "6" {
+        return 6
+    }
+    if c == "7" {
+        return 7
+    }
+    if c == "8" {
+        return 8
+    }
+    if c == "9" {
+        return 9
+    }
+    return -1
+}
+
+// `[elem; N]` returns (elem, N); a non-array returns ("", -1).
+fn cg_array_layout(name: String) -> (String, Int) {
+    let chars = name.chars()
+    if chars.len() < 4 || chars[0] != "[" || chars[chars.len() - 1] != "]" {
+        return ("", -1)
+    }
+    var depth = 0
+    var split = -1
+    var i = 1
+    while i < chars.len() - 1 && split < 0 {
+        let c = chars[i]
+        if c == "[" || c == "<" || c == "(" {
+            depth = depth + 1
+        } else if c == "]" || c == ">" || c == ")" {
+            depth = depth - 1
+        } else if c == ";" && depth == 0 {
+            split = i
+        }
+        i = i + 1
+    }
+    if split < 0 {
+        return ("", -1)
+    }
+    let elem = lx_slice(chars, 1, split).trim()
+    var length = 0
+    var digits = 0
+    var k = split + 1
+    while k < chars.len() - 1 {
+        let c = chars[k]
+        if c != "_" {
+            let digit = cg_digit_char(c)
+            if digit < 0 {
+                return ("", -1)
+            }
+            length = length * 10 + digit
+            digits = digits + 1
+        }
+        k = k + 1
+    }
+    if digits == 0 || elem.len() == 0 {
+        return ("", -1)
+    }
+    return (elem, length)
 }
 
 fn cg_elem_name(structs: List<CgStruct>, enums: List<CgEnum>, ty: String) -> String {
@@ -1013,11 +1310,34 @@ fn cg_clone_list(state: CgState, value: CgVal, elem: String) -> (CgState, String
     return (work, temp)
 }
 
+fn cg_element_source(type_name: String) -> String {
+    let array = cg_array_layout(type_name)
+    if array.1 >= 0 {
+        return array.0
+    }
+    if cg_is_list(type_name) {
+        return cg_list_elem(type_name)
+    }
+    if cg_is_slice(type_name) {
+        return cg_slice_elem(type_name)
+    }
+    return ""
+}
+
 fn cg_val_from_source(state: CgState, value: String, source_type: String) -> CgVal {
     if cg_is_list(source_type) {
         return cg_val_list(state, value, cg_list_elem(source_type))
     }
-    return cg_val_typed(state, value, cg_llvm_type_in(state.structs, state.enums, source_type))
+    if cg_is_slice(source_type) {
+        return cg_val_slice(state, value, cg_slice_elem(source_type))
+    }
+    return CgVal {
+        state: state,
+        value: value,
+        ty: cg_llvm_type_in(state.structs, state.enums, source_type),
+        elem: cg_element_source(source_type),
+        source: source_type,
+    }
 }
 
 fn cg_label(state: CgState) -> (CgState, String) {
@@ -1080,7 +1400,12 @@ fn cg_llvm_escape(text: String) -> String {
 }
 
 fn cg_string_lit(state: CgState, raw: String) -> CgVal {
-    let text = cg_string_unquote(raw)
+    return cg_string_text(state, cg_string_unquote(raw))
+}
+
+// Builds a `%nova.string` from already-decoded text, used by interpolation
+// parts and by literal strings after unquoting.
+fn cg_string_text(state: CgState, text: String) -> CgVal {
     let symbol = "@nova.str." + state.fn_index.to_string() + "." + state.strings.to_string()
     var definition = symbol + " = private unnamed_addr constant [1 x i8] zeroinitializer, align 1"
     if text.len() > 0 {
@@ -1098,6 +1423,62 @@ fn cg_string_lit(state: CgState, raw: String) -> CgVal {
     let second = second_result.1
     work = cg_line(work, "  " + second + " = insertvalue %nova.string " + first + ", i64 " + text.len().to_string() + ", 1")
     return cg_val_typed(work, second, "%nova.string")
+}
+
+fn cg_interp_part(value: CgVal) -> CgVal {
+    if value.ty == "%nova.string" {
+        return value
+    }
+    if value.ty == "i64" {
+        let temp_result = cg_temp(value.state)
+        var work = temp_result.0
+        let temp = temp_result.1
+        work = cg_line(work, "  " + temp + " = call %nova.string @nova_i64_to_string(i64 " + value.value + ")")
+        return cg_val_typed(work, temp, "%nova.string")
+    }
+    if value.ty == "i1" {
+        let wide_result = cg_temp(value.state)
+        var work = wide_result.0
+        let wide = wide_result.1
+        work = cg_line(work, "  " + wide + " = zext i1 " + value.value + " to i32")
+        let temp_result = cg_temp(work)
+        work = temp_result.0
+        let temp = temp_result.1
+        work = cg_line(work, "  " + temp + " = call %nova.string @nova_bool_to_string(i32 " + wide + ")")
+        return cg_val_typed(work, temp, "%nova.string")
+    }
+    return cg_val(cg_error(value.state, "cannot interpolate " + value.ty + " into a string"), "0")
+}
+
+// Lowers `"text ${expr}"` to a left-to-right concat of literal pieces and
+// converted expressions, matching the seed's `nova_string_concat` lowering.
+fn cg_interp(ast: Ast, state: CgState, node: Int) -> CgVal {
+    var acc = cg_string_text(state, "")
+    let count = ast.nodes[node].count
+    var i = 0
+    while i < count {
+        let child = a_child(ast, node, i)
+        var piece = cg_val(acc.state, "0")
+        if child >= 0 && ast.nodes[child].kind == ak_str_part() {
+            piece = cg_string_text(acc.state, ast.nodes[child].text)
+        } else {
+            let value = cg_expr2(ast, acc.state, child)
+            if value.state.error.len() > 0 {
+                return cg_val(value.state, "0")
+            }
+            piece = cg_interp_part(value)
+        }
+        if piece.state.error.len() > 0 {
+            return cg_val(piece.state, "0")
+        }
+        let temp_result = cg_temp(piece.state)
+        var work = temp_result.0
+        let temp = temp_result.1
+        work = cg_line(work, "  " + temp + " = call %nova.string @nova_string_concat(%nova.string " + acc.value + ", %nova.string " + piece.value + ")")
+        acc = cg_val_typed(work, temp, "%nova.string")
+        i = i + 1
+    }
+    return acc
 }
 
 fn cg_list_lit(ast: Ast, state: CgState, node: Int) -> CgVal {
@@ -1125,7 +1506,10 @@ fn cg_list_lit(ast: Ast, state: CgState, node: Int) -> CgVal {
         work = cg_line(work, "  " + second + " = insertvalue %nova.list " + first + ", i64 0, 2")
         return cg_val_list(work, second, "Int")
     }
-    let elem = cg_elem_name(work.structs, work.enums, values[0].ty)
+    var elem = values[0].source
+    if elem.len() == 0 || cg_is_tuple(elem) {
+        elem = cg_elem_name(work.structs, work.enums, values[0].ty)
+    }
     let elem_ty = cg_llvm_type_in(work.structs, work.enums, elem)
     var k = 0
     while k < count {
@@ -1182,6 +1566,403 @@ fn cg_list_lit(ast: Ast, state: CgState, node: Int) -> CgVal {
     let third = third_result.1
     work = cg_line(work, "  " + third + " = insertvalue %nova.list " + second + ", i64 " + count.to_string() + ", 2")
     return cg_val_list(work, third, elem)
+}
+
+fn cg_option_some(state: CgState, option_source: String, value: CgVal) -> CgVal {
+    let inner = cg_option_inner(option_source)
+    if inner.len() == 0 {
+        return cg_val(cg_error(state, "Some requires an Option type"), "0")
+    }
+    let inner_ty = cg_llvm_type_in(state.structs, state.enums, inner)
+    if value.ty != inner_ty {
+        return cg_val(cg_error(state, "Some payload type mismatch"), "0")
+    }
+    let ty = cg_llvm_type_in(state.structs, state.enums, option_source)
+    var work = value.state
+    let first_result = cg_temp(work)
+    work = first_result.0
+    let first = first_result.1
+    work = cg_line(work, "  " + first + " = insertvalue " + ty + " undef, " + inner_ty + " " + value.value + ", 1")
+    let second_result = cg_temp(work)
+    work = second_result.0
+    let second = second_result.1
+    work = cg_line(work, "  " + second + " = insertvalue " + ty + " " + first + ", i1 true, 0")
+    return CgVal { state: work, value: second, ty: ty, elem: inner, source: option_source }
+}
+
+fn cg_option_none(state: CgState, option_source: String) -> CgVal {
+    let inner = cg_option_inner(option_source)
+    if inner.len() == 0 {
+        return cg_val(cg_error(state, "None requires an Option type"), "0")
+    }
+    let ty = cg_llvm_type_in(state.structs, state.enums, option_source)
+    let first_result = cg_temp(state)
+    var work = first_result.0
+    let first = first_result.1
+    work = cg_line(work, "  " + first + " = insertvalue " + ty + " zeroinitializer, i1 false, 0")
+    return CgVal { state: work, value: first, ty: ty, elem: inner, source: option_source }
+}
+
+fn cg_make_result_ok(state: CgState, result_source: String, value: CgVal) -> CgVal {
+    let ok = cg_result_ok(result_source)
+    let err = cg_result_err(result_source)
+    if ok.len() == 0 || err.len() == 0 {
+        return cg_val(cg_error(state, "Ok requires a Result type"), "0")
+    }
+    let ok_ty = cg_llvm_type_in(state.structs, state.enums, ok)
+    if value.ty != ok_ty {
+        return cg_val(cg_error(state, "Ok payload type mismatch"), "0")
+    }
+    let ty = cg_llvm_type_in(state.structs, state.enums, result_source)
+    var work = value.state
+    let first_result = cg_temp(work)
+    work = first_result.0
+    let first = first_result.1
+    work = cg_line(work, "  " + first + " = insertvalue " + ty + " undef, " + ok_ty + " " + value.value + ", 1")
+    let second_result = cg_temp(work)
+    work = second_result.0
+    let second = second_result.1
+    work = cg_line(work, "  " + second + " = insertvalue " + ty + " " + first + ", i1 true, 0")
+    return CgVal { state: work, value: second, ty: ty, elem: ok, source: result_source }
+}
+
+fn cg_make_result_err(state: CgState, result_source: String, value: CgVal) -> CgVal {
+    let ok = cg_result_ok(result_source)
+    let err = cg_result_err(result_source)
+    if ok.len() == 0 || err.len() == 0 {
+        return cg_val(cg_error(state, "Err requires a Result type"), "0")
+    }
+    let err_ty = cg_llvm_type_in(state.structs, state.enums, err)
+    if value.ty != err_ty {
+        return cg_val(cg_error(state, "Err payload type mismatch"), "0")
+    }
+    let ty = cg_llvm_type_in(state.structs, state.enums, result_source)
+    var work = value.state
+    let first_result = cg_temp(work)
+    work = first_result.0
+    let first = first_result.1
+    work = cg_line(work, "  " + first + " = insertvalue " + ty + " undef, " + err_ty + " " + value.value + ", 2")
+    let second_result = cg_temp(work)
+    work = second_result.0
+    let second = second_result.1
+    work = cg_line(work, "  " + second + " = insertvalue " + ty + " " + first + ", i1 false, 0")
+    return CgVal { state: work, value: second, ty: ty, elem: err, source: result_source }
+}
+
+fn cg_array_lit(ast: Ast, state: CgState, node: Int, array_source: String) -> CgVal {
+    let layout = cg_array_layout(array_source)
+    if layout.1 < 0 {
+        return cg_val(cg_error(state, "array literal requires an array type"), "0")
+    }
+    let count = ast.nodes[node].count
+    if count != layout.1 {
+        return cg_val(cg_error(state, "array length mismatch"), "0")
+    }
+    let elem_ty = cg_llvm_type_in(state.structs, state.enums, layout.0)
+    let array_ty = cg_llvm_type_in(state.structs, state.enums, array_source)
+    var work = state
+    var aggregate = "undef"
+    var i = 0
+    while i < count {
+        let value = cg_expr_expected(ast, work, a_child(ast, node, i), layout.0)
+        work = value.state
+        if value.ty != elem_ty {
+            return cg_val(cg_error(work, "array element type mismatch"), "0")
+        }
+        let temp_result = cg_temp(work)
+        work = temp_result.0
+        let temp = temp_result.1
+        work = cg_line(work, "  " + temp + " = insertvalue " + array_ty + " " + aggregate + ", " + elem_ty + " " + value.value + ", " + i.to_string())
+        aggregate = temp
+        i = i + 1
+    }
+    return CgVal { state: work, value: aggregate, ty: array_ty, elem: layout.0, source: array_source }
+}
+
+fn cg_map_empty(state: CgState, source: String) -> CgVal {
+    let map = cg_is_map(source)
+    let set = cg_is_set(source)
+    if !map && !set {
+        return cg_val(cg_error(state, "map()/set() requires a Map or Set type"), "0")
+    }
+    let key = if map { cg_map_key(source) } else { cg_set_elem(source) }
+    let value = if map { cg_map_value(source) } else { cg_set_elem(source) }
+    if key.len() == 0 || value.len() == 0 {
+        return cg_val(cg_error(state, "map()/set() requires concrete type parameters"), "0")
+    }
+    let kind = cg_map_key_kind(key)
+    if kind.len() == 0 {
+        return cg_val(cg_error(state, "unsupported map/set key type " + key), "0")
+    }
+    let size_result = cg_elem_size(state, cg_map_entry_source(source))
+    var work = size_result.0
+    let entry_size = size_result.1
+    let first_result = cg_temp(work)
+    work = first_result.0
+    let first = first_result.1
+    work = cg_line(work, "  " + first + " = insertvalue %nova.map zeroinitializer, i64 " + entry_size + ", 4")
+    let second_result = cg_temp(work)
+    work = second_result.0
+    let second = second_result.1
+    work = cg_line(work, "  " + second + " = insertvalue %nova.map " + first + ", i32 " + kind + ", 5")
+    return CgVal { state: work, value: second, ty: "%nova.map", elem: "", source: source }
+}
+
+fn cg_map_insert(ast: Ast, state: CgState, node: Int, callee: Int, recv: CgVal) -> CgVal {
+    let receiver = a_child(ast, callee, 0)
+    if receiver < 0 || ast.nodes[receiver].kind != ak_ident() {
+        return cg_val(cg_error(state, "map/set insert requires a mutable binding"), "0")
+    }
+    let index = cg_local_index(recv.state.locals, ast.nodes[receiver].text)
+    if index < 0 {
+        return cg_val(cg_error(recv.state, "unknown map/set local " + ast.nodes[receiver].text), "0")
+    }
+    let local = recv.state.locals[index]
+    if !local.mutable || local.slot.len() == 0 {
+        return cg_val(cg_error(recv.state, "map/set insert requires a mutable binding"), "0")
+    }
+    if cg_is_map(local.source) {
+        let key_type = cg_map_key(local.source)
+        let value_type = cg_map_value(local.source)
+        let key = cg_expr_expected(ast, recv.state, a_child(ast, node, 1), key_type)
+        let value = cg_expr_expected(ast, key.state, a_child(ast, node, 2), value_type)
+        var work = value.state
+        let key_ty = cg_llvm_type_in(work.structs, work.enums, key_type)
+        let value_ty = cg_llvm_type_in(work.structs, work.enums, value_type)
+        let entry_ty = "{ " + key_ty + ", " + value_ty + " }"
+        let first_result = cg_temp(work)
+        work = first_result.0
+        let first = first_result.1
+        work = cg_line(work, "  " + first + " = insertvalue " + entry_ty + " undef, " + key_ty + " " + key.value + ", 0")
+        let entry_result = cg_temp(work)
+        work = entry_result.0
+        let entry = entry_result.1
+        work = cg_line(work, "  " + entry + " = insertvalue " + entry_ty + " " + first + ", " + value_ty + " " + value.value + ", 1")
+        let slot_result = cg_entry_slot(work, entry_ty)
+        work = slot_result.0
+        let slot = slot_result.1
+        work = cg_line(work, "  store " + entry_ty + " " + entry + ", ptr " + slot)
+        work = cg_line(work, "  call void @nova_map_insert(ptr " + local.slot + ", ptr " + slot + ")")
+        return cg_val_typed(work, "", "void")
+    }
+    if cg_is_set(local.source) {
+        let elem_type = cg_set_elem(local.source)
+        let value = cg_expr_expected(ast, recv.state, a_child(ast, node, 1), elem_type)
+        var work = value.state
+        let elem_ty = cg_llvm_type_in(work.structs, work.enums, elem_type)
+        let slot_result = cg_entry_slot(work, elem_ty)
+        work = slot_result.0
+        let slot = slot_result.1
+        work = cg_line(work, "  store " + elem_ty + " " + value.value + ", ptr " + slot)
+        let result_result = cg_temp(work)
+        work = result_result.0
+        let result = result_result.1
+        work = cg_line(work, "  " + result + " = call i32 @nova_map_add(ptr " + local.slot + ", ptr " + slot + ")")
+        let inserted_result = cg_temp(work)
+        work = inserted_result.0
+        let inserted = inserted_result.1
+        work = cg_line(work, "  " + inserted + " = icmp ne i32 " + result + ", 0")
+        return cg_val_typed(work, inserted, "i1")
+    }
+    return cg_val(cg_error(recv.state, "map/set insert requires a map or set"), "0")
+}
+
+fn cg_map_get(ast: Ast, state: CgState, node: Int, recv: CgVal) -> CgVal {
+    let key_type = cg_map_key(recv.source)
+    let value_type = cg_map_value(recv.source)
+    if key_type.len() == 0 || value_type.len() == 0 {
+        return cg_val(cg_error(recv.state, "get requires a Map"), "0")
+    }
+    let key = cg_expr_expected(ast, recv.state, a_child(ast, node, 1), key_type)
+    var work = key.state
+    let key_ty = cg_llvm_type_in(work.structs, work.enums, key_type)
+    let map_slot_result = cg_entry_slot(work, "%nova.map")
+    work = map_slot_result.0
+    let map_slot = map_slot_result.1
+    work = cg_line(work, "  store %nova.map " + recv.value + ", ptr " + map_slot)
+    let key_slot_result = cg_entry_slot(work, key_ty)
+    work = key_slot_result.0
+    let key_slot = key_slot_result.1
+    work = cg_line(work, "  store " + key_ty + " " + key.value + ", ptr " + key_slot)
+    let found_result = cg_temp(work)
+    work = found_result.0
+    let found = found_result.1
+    work = cg_line(work, "  " + found + " = call ptr @nova_map_get(ptr " + map_slot + ", ptr " + key_slot + ")")
+    let option_source = "Option<" + value_type + ">"
+    let option_ty = cg_llvm_type_in(work.structs, work.enums, option_source)
+    let result_slot_result = cg_entry_slot(work, option_ty)
+    work = result_slot_result.0
+    let result_slot = result_slot_result.1
+    let missing_result = cg_temp(work)
+    work = missing_result.0
+    let missing = missing_result.1
+    work = cg_line(work, "  " + missing + " = icmp eq ptr " + found + ", null")
+    let none_result = cg_label(work)
+    work = none_result.0
+    let none = none_result.1
+    let some_result = cg_label(work)
+    work = some_result.0
+    let some = some_result.1
+    let done_result = cg_label(work)
+    work = done_result.0
+    let done = done_result.1
+    work = cg_line(work, "  br i1 " + missing + ", label %" + none + ", label %" + some)
+    work = cg_line(work, none + ":")
+    let none_value = cg_option_none(work, option_source)
+    work = none_value.state
+    work = cg_line(work, "  store " + option_ty + " " + none_value.value + ", ptr " + result_slot)
+    work = cg_line(work, "  br label %" + done)
+    work = cg_line(work, some + ":")
+    let entry_ty = "{ " + key_ty + ", " + cg_llvm_type_in(work.structs, work.enums, value_type) + " }"
+    let entry_result = cg_temp(work)
+    work = entry_result.0
+    let entry = entry_result.1
+    work = cg_line(work, "  " + entry + " = load " + entry_ty + ", ptr " + found)
+    let value_result = cg_temp(work)
+    work = value_result.0
+    let value_value = value_result.1
+    work = cg_line(work, "  " + value_value + " = extractvalue " + entry_ty + " " + entry + ", 1")
+    let value = cg_val_from_source(work, value_value, value_type)
+    let some_value = cg_option_some(value.state, option_source, value)
+    work = some_value.state
+    work = cg_line(work, "  store " + option_ty + " " + some_value.value + ", ptr " + result_slot)
+    work = cg_line(work, "  br label %" + done)
+    work = cg_line(work, done + ":")
+    let result_result = cg_temp(work)
+    work = result_result.0
+    let result = result_result.1
+    work = cg_line(work, "  " + result + " = load " + option_ty + ", ptr " + result_slot)
+    return CgVal { state: work, value: result, ty: option_ty, elem: value_type, source: option_source }
+}
+
+fn cg_map_contains(ast: Ast, state: CgState, node: Int, recv: CgVal) -> CgVal {
+    let key_type = cg_map_key(recv.source)
+    if key_type.len() == 0 {
+        return cg_val(cg_error(recv.state, "contains_key requires a Map"), "0")
+    }
+    let key = cg_expr_expected(ast, recv.state, a_child(ast, node, 1), key_type)
+    var work = key.state
+    let key_ty = cg_llvm_type_in(work.structs, work.enums, key_type)
+    let map_slot_result = cg_entry_slot(work, "%nova.map")
+    work = map_slot_result.0
+    let map_slot = map_slot_result.1
+    work = cg_line(work, "  store %nova.map " + recv.value + ", ptr " + map_slot)
+    let key_slot_result = cg_entry_slot(work, key_ty)
+    work = key_slot_result.0
+    let key_slot = key_slot_result.1
+    work = cg_line(work, "  store " + key_ty + " " + key.value + ", ptr " + key_slot)
+    let found_result = cg_temp(work)
+    work = found_result.0
+    let found = found_result.1
+    work = cg_line(work, "  " + found + " = call ptr @nova_map_get(ptr " + map_slot + ", ptr " + key_slot + ")")
+    let result_result = cg_temp(work)
+    work = result_result.0
+    let result = result_result.1
+    work = cg_line(work, "  " + result + " = icmp ne ptr " + found + ", null")
+    return cg_val_typed(work, result, "i1")
+}
+
+fn cg_set_contains(ast: Ast, state: CgState, node: Int, recv: CgVal) -> CgVal {
+    let elem_type = cg_set_elem(recv.source)
+    if elem_type.len() == 0 {
+        return cg_val(cg_error(recv.state, "contains requires a Set"), "0")
+    }
+    let value = cg_expr_expected(ast, recv.state, a_child(ast, node, 1), elem_type)
+    var work = value.state
+    let elem_ty = cg_llvm_type_in(work.structs, work.enums, elem_type)
+    let set_slot_result = cg_entry_slot(work, "%nova.map")
+    work = set_slot_result.0
+    let set_slot = set_slot_result.1
+    work = cg_line(work, "  store %nova.map " + recv.value + ", ptr " + set_slot)
+    let value_slot_result = cg_entry_slot(work, elem_ty)
+    work = value_slot_result.0
+    let value_slot = value_slot_result.1
+    work = cg_line(work, "  store " + elem_ty + " " + value.value + ", ptr " + value_slot)
+    let found_result = cg_temp(work)
+    work = found_result.0
+    let found = found_result.1
+    work = cg_line(work, "  " + found + " = call ptr @nova_map_get(ptr " + set_slot + ", ptr " + value_slot + ")")
+    let result_result = cg_temp(work)
+    work = result_result.0
+    let result = result_result.1
+    work = cg_line(work, "  " + result + " = icmp ne ptr " + found + ", null")
+    return cg_val_typed(work, result, "i1")
+}
+
+fn cg_map_len(state: CgState, recv: CgVal) -> CgVal {
+    let map_slot_result = cg_entry_slot(state, "%nova.map")
+    var work = map_slot_result.0
+    let map_slot = map_slot_result.1
+    work = cg_line(work, "  store %nova.map " + recv.value + ", ptr " + map_slot)
+    let result_result = cg_temp(work)
+    work = result_result.0
+    let result = result_result.1
+    work = cg_line(work, "  " + result + " = call i64 @nova_map_len(ptr " + map_slot + ")")
+    return cg_val(work, result)
+}
+
+fn cg_expr_expected(ast: Ast, state: CgState, node: Int, expected: String) -> CgVal {
+    if expected.len() == 0 {
+        return cg_expr2(ast, state, node)
+    }
+    if node < 0 || node >= ast.nodes.len() {
+        return cg_val(cg_error(state, "invalid expression node"), "0")
+    }
+    let item = ast.nodes[node]
+    if (cg_is_map(expected) || cg_is_set(expected)) && item.kind == ak_call() {
+        let callee = a_child(ast, node, 0)
+        if callee >= 0 && ast.nodes[callee].kind == ak_ident() {
+            let name = ast.nodes[callee].text
+            if (cg_is_map(expected) && name == "map") || (cg_is_set(expected) && name == "set") {
+                if item.count - 1 != 0 {
+                    return cg_val(cg_error(state, name + " expects no arguments"), "0")
+                }
+                return cg_map_empty(state, expected)
+            }
+        }
+    }
+    let array = cg_array_layout(expected)
+    if array.1 >= 0 && item.kind == ak_list() {
+        return cg_array_lit(ast, state, node, expected)
+    }
+    let option_inner = cg_option_inner(expected)
+    if option_inner.len() > 0 {
+        if item.kind == ak_ident() && item.text == "None" {
+            return cg_option_none(state, expected)
+        }
+        if item.kind == ak_call() {
+            let callee = a_child(ast, node, 0)
+            if callee >= 0 && ast.nodes[callee].kind == ak_ident() && ast.nodes[callee].text == "Some" {
+                let got = item.count - 1
+                if got != 1 {
+                    return cg_val(cg_error(state, "Some expects one argument"), "0")
+                }
+                let value = cg_expr_expected(ast, state, a_child(ast, node, 1), option_inner)
+                return cg_option_some(value.state, expected, value)
+            }
+        }
+    }
+    let result_ok = cg_result_ok(expected)
+    let result_err = cg_result_err(expected)
+    if result_ok.len() > 0 && result_err.len() > 0 && item.kind == ak_call() {
+        let callee = a_child(ast, node, 0)
+        if callee >= 0 && ast.nodes[callee].kind == ak_ident() {
+            let name = ast.nodes[callee].text
+            if name == "Ok" || name == "Err" {
+                let got = item.count - 1
+                if got != 1 {
+                    return cg_val(cg_error(state, name + " expects one argument"), "0")
+                }
+                let payload_type = if name == "Ok" { result_ok } else { result_err }
+                let value = cg_expr_expected(ast, state, a_child(ast, node, 1), payload_type)
+                if name == "Ok" {
+                    return cg_make_result_ok(value.state, expected, value)
+                }
+                return cg_make_result_err(value.state, expected, value)
+            }
+        }
+    }
+    return cg_expr2(ast, state, node)
 }
 
 fn cg_tuple_lit(ast: Ast, state: CgState, node: Int) -> CgVal {
@@ -1297,6 +2078,33 @@ fn cg_list_slice(ast: Ast, state: CgState, node: Int, base_node: Int, range_node
     return cg_val_typed(work, result, "%nova.list")
 }
 
+fn cg_bounds_check(state: CgState, index: String, len: String, line: String) -> CgState {
+    let neg_result = cg_temp(state)
+    var work = neg_result.0
+    let neg = neg_result.1
+    work = cg_line(work, "  " + neg + " = icmp slt i64 " + index + ", 0")
+    let too_big_result = cg_temp(work)
+    work = too_big_result.0
+    let too_big = too_big_result.1
+    work = cg_line(work, "  " + too_big + " = icmp sge i64 " + index + ", " + len)
+    let oob_result = cg_temp(work)
+    work = oob_result.0
+    let oob = oob_result.1
+    work = cg_line(work, "  " + oob + " = or i1 " + neg + ", " + too_big)
+    let ok_result = cg_label(work)
+    work = ok_result.0
+    let ok = ok_result.1
+    let bad_result = cg_label(work)
+    work = bad_result.0
+    let bad = bad_result.1
+    work = cg_line(work, "  br i1 " + oob + ", label %" + bad + ", label %" + ok)
+    work = cg_line(work, bad + ":")
+    work = cg_line(work, "  call void @nova_panic_bounds(i64 " + index + ", i64 " + len + ", i64 " + line + ")")
+    work = cg_line(work, "  unreachable")
+    work = cg_line(work, ok + ":")
+    return work
+}
+
 fn cg_index(ast: Ast, state: CgState, node: Int) -> CgVal {
     let index_node = a_child(ast, node, 1)
     if index_node >= 0 && ast.nodes[index_node].kind == ak_binary() && ast.nodes[index_node].text == ".." {
@@ -1304,6 +2112,55 @@ fn cg_index(ast: Ast, state: CgState, node: Int) -> CgVal {
     }
     let base = cg_expr2(ast, state, a_child(ast, node, 0))
     let index = cg_expr2(ast, base.state, a_child(ast, node, 1))
+    let array = cg_array_layout(base.source)
+    if array.1 >= 0 {
+        if index.ty != "i64" {
+            return cg_val(cg_error(index.state, "array index must be Int"), "0")
+        }
+        let elem_ty = cg_llvm_type_in(index.state.structs, index.state.enums, array.0)
+        let slot_result = cg_entry_slot(index.state, base.ty)
+        var work = slot_result.0
+        let slot = slot_result.1
+        work = cg_line(work, "  store " + base.ty + " " + base.value + ", ptr " + slot)
+        work = cg_bounds_check(work, index.value, array.1.to_string(), ast.nodes[node].line.to_string())
+        let ptr_result = cg_temp(work)
+        work = ptr_result.0
+        let ptr = ptr_result.1
+        work = cg_line(work, "  " + ptr + " = getelementptr " + base.ty + ", ptr " + slot + ", i64 0, i64 " + index.value)
+        let val_result = cg_temp(work)
+        work = val_result.0
+        let val = val_result.1
+        work = cg_line(work, "  " + val + " = load " + elem_ty + ", ptr " + ptr)
+        return cg_val_from_source(work, val, array.0)
+    }
+    let slice_elem = cg_slice_elem(base.source)
+    if slice_elem.len() > 0 {
+        if index.ty != "i64" {
+            return cg_val(cg_error(index.state, "slice index must be Int"), "0")
+        }
+        if base.elem.len() == 0 {
+            return cg_val(cg_error(index.state, "slice element type is unknown"), "0")
+        }
+        let elem_ty = cg_llvm_type_in(index.state.structs, index.state.enums, base.elem)
+        let data_result = cg_temp(index.state)
+        var work = data_result.0
+        let data = data_result.1
+        work = cg_line(work, "  " + data + " = extractvalue %nova.slice " + base.value + ", 0")
+        let len_result = cg_temp(work)
+        work = len_result.0
+        let len = len_result.1
+        work = cg_line(work, "  " + len + " = extractvalue %nova.slice " + base.value + ", 1")
+        work = cg_bounds_check(work, index.value, len, ast.nodes[node].line.to_string())
+        let ptr_result = cg_temp(work)
+        work = ptr_result.0
+        let ptr = ptr_result.1
+        work = cg_line(work, "  " + ptr + " = getelementptr " + elem_ty + ", ptr " + data + ", i64 " + index.value)
+        let val_result = cg_temp(work)
+        work = val_result.0
+        let val = val_result.1
+        work = cg_line(work, "  " + val + " = load " + elem_ty + ", ptr " + ptr)
+        return cg_val_from_source(work, val, slice_elem)
+    }
     if base.ty != "%nova.list" {
         return cg_val(cg_error(index.state, "indexing expects a list"), "0")
     }
@@ -1335,7 +2192,7 @@ fn cg_index(ast: Ast, state: CgState, node: Int) -> CgVal {
     work = val_result.0
     let val = val_result.1
     work = cg_line(work, "  " + val + " = load " + elem_ty + ", ptr " + ptr)
-    return cg_val_typed(work, val, elem_ty)
+    return cg_val_from_source(work, val, base.elem)
 }
 
 fn cg_index_assign(ast: Ast, state: CgState, target: Int, value_node: Int) -> CgVal {
@@ -1348,6 +2205,64 @@ fn cg_index_assign(ast: Ast, state: CgState, target: Int, value_node: Int) -> Cg
         return cg_val(cg_error(state, "unknown local " + ast.nodes[recv].text), "0")
     }
     let local = state.locals[index]
+    let array = cg_array_layout(local.source)
+    if array.1 >= 0 {
+        if !local.mutable || local.slot.len() == 0 {
+            return cg_val(cg_error(state, "array assignment requires a mutable array variable"), "0")
+        }
+        let at = cg_expr2(ast, state, a_child(ast, target, 1))
+        if at.ty != "i64" {
+            return cg_val(cg_error(at.state, "array index must be Int"), "0")
+        }
+        let value = cg_expr_expected(ast, at.state, value_node, array.0)
+        var work = value.state
+        let elem_ty = cg_llvm_type_in(work.structs, work.enums, array.0)
+        if value.ty != elem_ty {
+            return cg_val(cg_error(work, "array element type mismatch"), "0")
+        }
+        work = cg_bounds_check(work, at.value, array.1.to_string(), ast.nodes[target].line.to_string())
+        let ptr_result = cg_temp(work)
+        work = ptr_result.0
+        let ptr = ptr_result.1
+        work = cg_line(work, "  " + ptr + " = getelementptr " + local.ty + ", ptr " + local.slot + ", i64 0, i64 " + at.value)
+        work = cg_line(work, "  store " + elem_ty + " " + value.value + ", ptr " + ptr)
+        return cg_val_from_source(work, value.value, array.0)
+    }
+    let slice_elem = cg_slice_elem(local.source)
+    if slice_elem.len() > 0 {
+        if !local.mutable || local.slot.len() == 0 {
+            return cg_val(cg_error(state, "slice assignment requires a mutable slice variable"), "0")
+        }
+        let at = cg_expr2(ast, state, a_child(ast, target, 1))
+        if at.ty != "i64" {
+            return cg_val(cg_error(at.state, "slice index must be Int"), "0")
+        }
+        let value = cg_expr_expected(ast, at.state, value_node, slice_elem)
+        var work = value.state
+        let elem_ty = cg_llvm_type_in(work.structs, work.enums, slice_elem)
+        if value.ty != elem_ty {
+            return cg_val(cg_error(work, "slice element type mismatch"), "0")
+        }
+        let slice_result = cg_temp(work)
+        work = slice_result.0
+        let slice = slice_result.1
+        work = cg_line(work, "  " + slice + " = load %nova.slice, ptr " + local.slot)
+        let data_result = cg_temp(work)
+        work = data_result.0
+        let data = data_result.1
+        work = cg_line(work, "  " + data + " = extractvalue %nova.slice " + slice + ", 0")
+        let len_result = cg_temp(work)
+        work = len_result.0
+        let len = len_result.1
+        work = cg_line(work, "  " + len + " = extractvalue %nova.slice " + slice + ", 1")
+        work = cg_bounds_check(work, at.value, len, ast.nodes[target].line.to_string())
+        let ptr_result = cg_temp(work)
+        work = ptr_result.0
+        let ptr = ptr_result.1
+        work = cg_line(work, "  " + ptr + " = getelementptr " + elem_ty + ", ptr " + data + ", i64 " + at.value)
+        work = cg_line(work, "  store " + elem_ty + " " + value.value + ", ptr " + ptr)
+        return cg_val_from_source(work, value.value, slice_elem)
+    }
     if local.ty != "%nova.list" {
         return cg_val(cg_error(state, "index assignment expects a list"), "0")
     }
@@ -1361,7 +2276,7 @@ fn cg_index_assign(ast: Ast, state: CgState, target: Int, value_node: Int) -> Cg
     if at.ty != "i64" {
         return cg_val(cg_error(at.state, "list index must be Int"), "0")
     }
-    let value = cg_expr2(ast, at.state, value_node)
+    let value = cg_expr_expected(ast, at.state, value_node, local.elem)
     var work = value.state
     let elem_ty = cg_llvm_type_in(work.structs, work.enums, local.elem)
     if value.ty != elem_ty {
@@ -1378,7 +2293,7 @@ fn cg_index_assign(ast: Ast, state: CgState, target: Int, value_node: Int) -> Cg
         "  " + ptr + " = call ptr @nova_list_at(ptr " + local.slot + ", i64 " + at.value + ", i64 " + elem_size + ", i64 " + ast.nodes[target].line.to_string() + ")",
     )
     work = cg_line(work, "  store " + elem_ty + " " + value.value + ", ptr " + ptr)
-    return cg_val_typed(work, value.value, elem_ty)
+    return cg_val_from_source(work, value.value, local.elem)
 }
 
 fn cg_list_push(ast: Ast, state: CgState, node: Int) -> CgVal {
@@ -1405,7 +2320,7 @@ fn cg_list_push(ast: Ast, state: CgState, node: Int) -> CgVal {
     if !local.mutable || local.slot.len() == 0 {
         return cg_val(cg_error(state, "push requires a mutable list variable"), "0")
     }
-    let value = cg_expr2(ast, state, a_child(ast, node, 1))
+    let value = cg_expr_expected(ast, state, a_child(ast, node, 1), local.elem)
     var work = value.state
     let elem_ty = cg_llvm_type_in(work.structs, work.enums, local.elem)
     if value.ty != elem_ty {
@@ -1523,7 +2438,7 @@ fn cg_if_expr(ast: Ast, state: CgState, node: Int) -> CgVal {
     work = result_result.0
     let result = result_result.1
     work = cg_line(work, "  " + result + " = load " + then_value.ty + ", ptr " + slot)
-    return cg_val_typed(work, result, then_value.ty)
+    return CgVal { state: work, value: result, ty: then_value.ty, elem: then_value.elem, source: then_value.source }
 }
 
 fn cg_logical(ast: Ast, state: CgState, node: Int, is_and: Bool) -> CgVal {
@@ -1565,8 +2480,8 @@ fn cg_logical(ast: Ast, state: CgState, node: Int, is_and: Bool) -> CgVal {
 
 fn cg_compile(source: String) -> CgResult {
     let ast = a_parse(source)
-    if ast.error.len() > 0 {
-        return CgResult { ir: "", error: "parse error: " + ast.error }
+    if ast.errors.len() > 0 {
+        return CgResult { ir: "", error: ast.errors[0] }
     }
     var structs: List<CgStruct> = []
     var enums: List<CgEnum> = []
@@ -1719,6 +2634,8 @@ fn cg_compile(source: String) -> CgResult {
     var out = "; generated by Nova codegen (CODEGEN-01.01)\n"
     out = out + "%nova.string = type { ptr, i64 }\n"
     out = out + "%nova.list = type { ptr, i64, i64 }\n"
+    out = out + "%nova.slice = type { ptr, i64 }\n"
+    out = out + "%nova.map = type { ptr, ptr, i64, i64, i64, i32 }\n"
     var type_index = 0
     while type_index < structs.len() {
         var line = "%nova.struct." + structs[type_index].name + " = type { "
@@ -1752,7 +2669,12 @@ fn cg_compile(source: String) -> CgResult {
     out = out + "declare ptr @nova_list_at(ptr, i64, i64, i64)\n"
     out = out + "declare void @nova_list_push(ptr, ptr, i64)\n"
     out = out + "declare void @nova_list_clone(ptr, ptr, i64)\n"
+    out = out + "declare void @nova_map_insert(ptr, ptr)\n"
+    out = out + "declare i32 @nova_map_add(ptr, ptr)\n"
+    out = out + "declare ptr @nova_map_get(ptr, ptr)\n"
+    out = out + "declare i64 @nova_map_len(ptr)\n"
     out = out + "declare void @nova_panic_str(%nova.string, i64)\n"
+    out = out + "declare void @nova_panic_bounds(i64, i64, i64)\n"
     out = out + "declare %nova.string @nova_string_concat(%nova.string, %nova.string)\n"
     out = out + "declare i32 @nova_string_eq(%nova.string, %nova.string)\n"
     out = out + "declare i32 @nova_string_contains(%nova.string, %nova.string)\n"
@@ -1852,7 +2774,7 @@ fn cg_emit_fn(ast: Ast, fns: List<CgSig>, structs: List<CgStruct>, enums: List<C
         // Parameters are immutable Nova values: keep them in SSA instead of
         // spilling to the stack.
         var locals = state.locals
-        locals.push(CgLocal { name: sig.params[i], ty: cg_llvm_type_in(structs, enums, sig.param_types[i]), slot: "", value: "%p" + i.to_string(), mutable: false, elem: cg_list_elem(sig.param_types[i]) })
+        locals.push(CgLocal { name: sig.params[i], ty: cg_llvm_type_in(structs, enums, sig.param_types[i]), slot: "", value: "%p" + i.to_string(), mutable: false, elem: cg_list_elem(sig.param_types[i]), source: sig.param_types[i] })
         state = cg_state(state, state.lines, state.temps, state.slots, locals, state.terminated, state.error)
         i = i + 1
     }
@@ -2004,7 +2926,7 @@ fn cg_for_range(ast: Ast, state: CgState, node: Int, iter: Int) -> CgState {
     work = cg_line(work, "  store i64 " + start.value + ", ptr " + slot)
     let base = work.locals.len()
     var locals = work.locals
-    locals.push(CgLocal { name: ast.nodes[node].text, ty: "i64", slot: slot, value: "", mutable: false, elem: "" })
+    locals.push(CgLocal { name: ast.nodes[node].text, ty: "i64", slot: slot, value: "", mutable: false, elem: "", source: "Int" })
     work = cg_state(work, work.lines, work.temps, work.slots, locals, work.terminated, work.error)
 
     let header_result = cg_label(work)
@@ -2057,14 +2979,198 @@ fn cg_for_range(ast: Ast, state: CgState, node: Int, iter: Int) -> CgState {
     return cg_state(work, work.lines, work.temps, work.slots, cg_locals_before(work.locals, base), false, work.error)
 }
 
+fn cg_for_array(ast: Ast, state: CgState, node: Int, list: CgVal, elem: String, len: Int) -> CgState {
+    let elem_ty = cg_llvm_type_in(state.structs, state.enums, elem)
+    let array_slot_result = cg_slot(state)
+    var work = array_slot_result.0
+    let array_slot = array_slot_result.1
+    work = cg_line(work, "  " + array_slot + " = alloca " + list.ty)
+    work = cg_line(work, "  store " + list.ty + " " + list.value + ", ptr " + array_slot)
+    let index_slot_result = cg_slot(work)
+    work = index_slot_result.0
+    let index_slot = index_slot_result.1
+    work = cg_line(work, "  " + index_slot + " = alloca i64")
+    work = cg_line(work, "  store i64 0, ptr " + index_slot)
+    let var_slot_result = cg_slot(work)
+    work = var_slot_result.0
+    let var_slot = var_slot_result.1
+    work = cg_line(work, "  " + var_slot + " = alloca " + elem_ty)
+    let base = work.locals.len()
+    var locals = work.locals
+    locals.push(CgLocal { name: ast.nodes[node].text, ty: elem_ty, slot: var_slot, value: "", mutable: false, elem: "", source: elem })
+    work = cg_state(work, work.lines, work.temps, work.slots, locals, work.terminated, work.error)
+
+    let header_result = cg_label(work)
+    work = header_result.0
+    let header = header_result.1
+    let body_result = cg_label(work)
+    work = body_result.0
+    let body = body_result.1
+    let step_result = cg_label(work)
+    work = step_result.0
+    let step = step_result.1
+    let end_result = cg_label(work)
+    work = end_result.0
+    let end_label = end_result.1
+
+    work = cg_line(work, "  br label %" + header)
+    work = cg_line(work, header + ":")
+    let index_result = cg_temp(work)
+    work = index_result.0
+    let index = index_result.1
+    work = cg_line(work, "  " + index + " = load i64, ptr " + index_slot)
+    let cond_result = cg_temp(work)
+    work = cond_result.0
+    let cond = cond_result.1
+    work = cg_line(work, "  " + cond + " = icmp slt i64 " + index + ", " + len.to_string())
+    work = cg_line(work, "  br i1 " + cond + ", label %" + body + ", label %" + end_label)
+    work = cg_line(work, body + ":")
+    let ptr_result = cg_temp(work)
+    work = ptr_result.0
+    let ptr = ptr_result.1
+    work = cg_line(work, "  " + ptr + " = getelementptr " + list.ty + ", ptr " + array_slot + ", i64 0, i64 " + index)
+    let element_result = cg_temp(work)
+    work = element_result.0
+    let element = element_result.1
+    work = cg_line(work, "  " + element + " = load " + elem_ty + ", ptr " + ptr)
+    work = cg_line(work, "  store " + elem_ty + " " + element + ", ptr " + var_slot)
+    work = cg_loop_enter(work, end_label, step)
+    let body_state = cg_block(ast, work, a_child(ast, node, 1))
+    if body_state.error.len() > 0 {
+        return body_state
+    }
+    let body_ended = body_state.terminated
+    work = cg_loop_exit(body_state)
+    if !body_ended {
+        work = cg_line(work, "  br label %" + step)
+    }
+    work = cg_line(work, step + ":")
+    let step_value_result = cg_temp(work)
+    work = step_value_result.0
+    let step_value = step_value_result.1
+    work = cg_line(work, "  " + step_value + " = load i64, ptr " + index_slot)
+    let next_result = cg_temp(work)
+    work = next_result.0
+    let next = next_result.1
+    work = cg_line(work, "  " + next + " = add i64 " + step_value + ", 1")
+    work = cg_line(work, "  store i64 " + next + ", ptr " + index_slot)
+    work = cg_line(work, "  br label %" + header)
+    work = cg_line(work, end_label + ":")
+    return cg_state(work, work.lines, work.temps, work.slots, cg_locals_before(work.locals, base), false, work.error)
+}
+
+fn cg_for_slice(ast: Ast, state: CgState, node: Int, list: CgVal, elem: String) -> CgState {
+    let elem_ty = cg_llvm_type_in(state.structs, state.enums, elem)
+    let slice_slot_result = cg_slot(state)
+    var work = slice_slot_result.0
+    let slice_slot = slice_slot_result.1
+    work = cg_line(work, "  " + slice_slot + " = alloca %nova.slice")
+    work = cg_line(work, "  store %nova.slice " + list.value + ", ptr " + slice_slot)
+    let index_slot_result = cg_slot(work)
+    work = index_slot_result.0
+    let index_slot = index_slot_result.1
+    work = cg_line(work, "  " + index_slot + " = alloca i64")
+    work = cg_line(work, "  store i64 0, ptr " + index_slot)
+    let var_slot_result = cg_slot(work)
+    work = var_slot_result.0
+    let var_slot = var_slot_result.1
+    work = cg_line(work, "  " + var_slot + " = alloca " + elem_ty)
+    let base = work.locals.len()
+    var locals = work.locals
+    locals.push(CgLocal { name: ast.nodes[node].text, ty: elem_ty, slot: var_slot, value: "", mutable: false, elem: "", source: elem })
+    work = cg_state(work, work.lines, work.temps, work.slots, locals, work.terminated, work.error)
+
+    let header_result = cg_label(work)
+    work = header_result.0
+    let header = header_result.1
+    let body_result = cg_label(work)
+    work = body_result.0
+    let body = body_result.1
+    let step_result = cg_label(work)
+    work = step_result.0
+    let step = step_result.1
+    let end_result = cg_label(work)
+    work = end_result.0
+    let end_label = end_result.1
+
+    work = cg_line(work, "  br label %" + header)
+    work = cg_line(work, header + ":")
+    let index_result = cg_temp(work)
+    work = index_result.0
+    let index = index_result.1
+    work = cg_line(work, "  " + index + " = load i64, ptr " + index_slot)
+    let header_slice_result = cg_temp(work)
+    work = header_slice_result.0
+    let header_slice = header_slice_result.1
+    work = cg_line(work, "  " + header_slice + " = load %nova.slice, ptr " + slice_slot)
+    let len_result = cg_temp(work)
+    work = len_result.0
+    let len = len_result.1
+    work = cg_line(work, "  " + len + " = extractvalue %nova.slice " + header_slice + ", 1")
+    let cond_result = cg_temp(work)
+    work = cond_result.0
+    let cond = cond_result.1
+    work = cg_line(work, "  " + cond + " = icmp slt i64 " + index + ", " + len)
+    work = cg_line(work, "  br i1 " + cond + ", label %" + body + ", label %" + end_label)
+    work = cg_line(work, body + ":")
+    let body_slice_result = cg_temp(work)
+    work = body_slice_result.0
+    let body_slice = body_slice_result.1
+    work = cg_line(work, "  " + body_slice + " = load %nova.slice, ptr " + slice_slot)
+    let data_result = cg_temp(work)
+    work = data_result.0
+    let data = data_result.1
+    work = cg_line(work, "  " + data + " = extractvalue %nova.slice " + body_slice + ", 0")
+    let ptr_result = cg_temp(work)
+    work = ptr_result.0
+    let ptr = ptr_result.1
+    work = cg_line(work, "  " + ptr + " = getelementptr " + elem_ty + ", ptr " + data + ", i64 " + index)
+    let element_result = cg_temp(work)
+    work = element_result.0
+    let element = element_result.1
+    work = cg_line(work, "  " + element + " = load " + elem_ty + ", ptr " + ptr)
+    work = cg_line(work, "  store " + elem_ty + " " + element + ", ptr " + var_slot)
+    work = cg_loop_enter(work, end_label, step)
+    let body_state = cg_block(ast, work, a_child(ast, node, 1))
+    if body_state.error.len() > 0 {
+        return body_state
+    }
+    let body_ended = body_state.terminated
+    work = cg_loop_exit(body_state)
+    if !body_ended {
+        work = cg_line(work, "  br label %" + step)
+    }
+    work = cg_line(work, step + ":")
+    let step_value_result = cg_temp(work)
+    work = step_value_result.0
+    let step_value = step_value_result.1
+    work = cg_line(work, "  " + step_value + " = load i64, ptr " + index_slot)
+    let next_result = cg_temp(work)
+    work = next_result.0
+    let next = next_result.1
+    work = cg_line(work, "  " + next + " = add i64 " + step_value + ", 1")
+    work = cg_line(work, "  store i64 " + next + ", ptr " + index_slot)
+    work = cg_line(work, "  br label %" + header)
+    work = cg_line(work, end_label + ":")
+    return cg_state(work, work.lines, work.temps, work.slots, cg_locals_before(work.locals, base), false, work.error)
+}
+
 fn cg_for_list(ast: Ast, state: CgState, node: Int, iter: Int) -> CgState {
     let list = cg_expr2(ast, state, iter)
     var work = list.state
     if work.error.len() > 0 {
         return work
     }
+    let array = cg_array_layout(list.source)
+    if array.1 >= 0 {
+        return cg_for_array(ast, state, node, list, array.0, array.1)
+    }
+    let slice_elem = cg_slice_elem(list.source)
+    if slice_elem.len() > 0 {
+        return cg_for_slice(ast, state, node, list, slice_elem)
+    }
     if list.ty != "%nova.list" {
-        return cg_error(work, "for expects a range or list")
+        return cg_error(work, "for expects a range, list or slice")
     }
     if list.elem.len() == 0 {
         return cg_error(work, "for list element type is unknown")
@@ -2089,7 +3195,7 @@ fn cg_for_list(ast: Ast, state: CgState, node: Int, iter: Int) -> CgState {
     work = cg_line(work, "  " + var_slot + " = alloca " + elem_ty)
     let base = work.locals.len()
     var locals = work.locals
-    locals.push(CgLocal { name: ast.nodes[node].text, ty: elem_ty, slot: var_slot, value: "", mutable: false, elem: "" })
+    locals.push(CgLocal { name: ast.nodes[node].text, ty: elem_ty, slot: var_slot, value: "", mutable: false, elem: "", source: list.elem })
     work = cg_state(work, work.lines, work.temps, work.slots, locals, work.terminated, work.error)
 
     let header_result = cg_label(work)
@@ -2194,19 +3300,20 @@ fn cg_stmt(ast: Ast, state: CgState, node: Int) -> CgState {
         return cg_state(work, work.lines, work.temps, work.slots, work.locals, true, work.error)
     }
     if item.kind == ak_let() || item.kind == ak_var() {
-        let value = cg_expr2(ast, state, a_child(ast, node, 0))
+        let value = cg_expr_expected(ast, state, a_child(ast, node, 0), item.aux)
         var work = value.state
         if value.ty == "void" {
             return cg_error(work, "cannot bind a Unit value")
         }
-        var elem = value.elem
-        if cg_is_list(item.aux) {
-            elem = cg_list_elem(item.aux)
+        var value_source = value.source
+        if item.aux.len() > 0 {
+            value_source = item.aux
         }
+        let elem = cg_element_source(value_source)
         if item.kind == ak_let() {
             // Immutable bindings can name the SSA value directly.
             var locals = work.locals
-            locals.push(CgLocal { name: item.text, ty: value.ty, slot: "", value: value.value, mutable: false, elem: elem })
+            locals.push(CgLocal { name: item.text, ty: value.ty, slot: "", value: value.value, mutable: false, elem: elem, source: value_source })
             return cg_state(work, work.lines, work.temps, work.slots, locals, work.terminated, work.error)
         }
         var init_value = value.value
@@ -2224,7 +3331,7 @@ fn cg_stmt(ast: Ast, state: CgState, node: Int) -> CgState {
         work = cg_line(work, "  " + slot + " = alloca " + value.ty)
         work = cg_line(work, "  store " + value.ty + " " + init_value + ", ptr " + slot)
         var locals = work.locals
-        locals.push(CgLocal { name: item.text, ty: value.ty, slot: slot, value: "", mutable: true, elem: elem })
+        locals.push(CgLocal { name: item.text, ty: value.ty, slot: slot, value: "", mutable: true, elem: elem, source: value_source })
         return cg_state(work, work.lines, work.temps, work.slots, locals, work.terminated, work.error)
     }
     if item.kind == ak_return() {
@@ -2235,7 +3342,7 @@ fn cg_stmt(ast: Ast, state: CgState, node: Int) -> CgState {
             let work = cg_line(state, "  ret void")
             return cg_state(work, work.lines, work.temps, work.slots, work.locals, true, work.error)
         }
-        let value = cg_expr2(ast, state, a_child(ast, node, 0))
+        let value = cg_expr_expected(ast, state, a_child(ast, node, 0), state.ret)
         var work = value.state
         if state.ret == "Unit" {
             return cg_error(work, "Unit function cannot return a value")
@@ -2857,6 +3964,71 @@ fn cg_list_contains(ast: Ast, node: Int, recv: CgVal) -> CgVal {
     return cg_val_typed(work, result, "i1")
 }
 
+fn cg_try(ast: Ast, state: CgState, node: Int) -> CgVal {
+    let operand = cg_expr2(ast, state, a_child(ast, node, 0))
+    var work = operand.state
+    if work.error.len() > 0 {
+        return cg_val(work, "0")
+    }
+    let option_inner = cg_option_inner(operand.source)
+    let result_ok = cg_result_ok(operand.source)
+    let result_err = cg_result_err(operand.source)
+    if option_inner.len() == 0 && (result_ok.len() == 0 || result_err.len() == 0) {
+        return cg_val(cg_error(work, "? requires an Option or Result"), "0")
+    }
+    let slot_result = cg_slot(work)
+    work = slot_result.0
+    let slot = slot_result.1
+    work = cg_line(work, "  " + slot + " = alloca " + operand.ty)
+    work = cg_line(work, "  store " + operand.ty + " " + operand.value + ", ptr " + slot)
+    let loaded_result = cg_temp(work)
+    work = loaded_result.0
+    let loaded = loaded_result.1
+    work = cg_line(work, "  " + loaded + " = load " + operand.ty + ", ptr " + slot)
+    let tag_result = cg_temp(work)
+    work = tag_result.0
+    let tag = tag_result.1
+    work = cg_line(work, "  " + tag + " = extractvalue " + operand.ty + " " + loaded + ", 0")
+    let success_result = cg_label(work)
+    work = success_result.0
+    let success = success_result.1
+    let failure_result = cg_label(work)
+    work = failure_result.0
+    let failure = failure_result.1
+    work = cg_line(work, "  br i1 " + tag + ", label %" + success + ", label %" + failure)
+    work = cg_line(work, failure + ":")
+    if option_inner.len() > 0 {
+        if cg_option_inner(work.ret).len() == 0 {
+            return cg_val(cg_error(work, "? on Option requires an Option return type"), "0")
+        }
+        let none = cg_option_none(work, work.ret)
+        work = none.state
+        let ret_ty = cg_llvm_type_in(work.structs, work.enums, work.ret)
+        work = cg_line(work, "  ret " + ret_ty + " " + none.value)
+    } else {
+        if cg_result_ok(work.ret).len() == 0 || cg_result_err(work.ret).len() == 0 {
+            return cg_val(cg_error(work, "? on Result requires a Result return type"), "0")
+        }
+        let err_ty = cg_llvm_type_in(work.structs, work.enums, result_err)
+        let payload_result = cg_temp(work)
+        work = payload_result.0
+        let payload = payload_result.1
+        work = cg_line(work, "  " + payload + " = extractvalue " + operand.ty + " " + loaded + ", 2")
+        let error = cg_val_from_source(work, payload, result_err)
+        let failed = cg_make_result_err(error.state, work.ret, error)
+        work = failed.state
+        let ret_ty = cg_llvm_type_in(work.structs, work.enums, work.ret)
+        work = cg_line(work, "  ret " + ret_ty + " " + failed.value)
+    }
+    work = cg_state(work, work.lines, work.temps, work.slots, work.locals, false, work.error)
+    work = cg_line(work, success + ":")
+    let payload_result = cg_temp(work)
+    work = payload_result.0
+    let payload = payload_result.1
+    work = cg_line(work, "  " + payload + " = extractvalue " + operand.ty + " " + loaded + ", 1")
+    return cg_val_from_source(work, payload, if option_inner.len() > 0 { option_inner } else { result_ok })
+}
+
 fn cg_match(ast: Ast, state: CgState, node: Int) -> CgVal {
     let item = ast.nodes[node]
     if item.count < 1 {
@@ -2868,8 +4040,13 @@ fn cg_match(ast: Ast, state: CgState, node: Int) -> CgVal {
         return cg_val(work, "0")
     }
     let enum_index = cg_enum_by_llvm(work.enums, scrut.ty)
-    if scrut.ty != "i64" && scrut.ty != "i1" && scrut.ty != "%nova.string" && enum_index < 0 {
-        return cg_val(cg_error(work, "match supports Int, Bool, String or enum scrutinees"), "0")
+    let option_inner = cg_option_inner(scrut.source)
+    let result_ok = cg_result_ok(scrut.source)
+    let result_err = cg_result_err(scrut.source)
+    let option_match = option_inner.len() > 0
+    let result_match = result_ok.len() > 0 && result_err.len() > 0
+    if scrut.ty != "i64" && scrut.ty != "i1" && scrut.ty != "%nova.string" && enum_index < 0 && !option_match && !result_match {
+        return cg_val(cg_error(work, "match supports Int, Bool, String, Option, Result or enum scrutinees"), "0")
     }
     let slot_result = cg_slot(work)
     work = slot_result.0
@@ -2894,6 +4071,7 @@ fn cg_match(ast: Ast, state: CgState, node: Int) -> CgVal {
     var values: List<String> = []
     var value_labels: List<String> = []
     var result_ty = ""
+    var result_source = ""
     var irrefutable = false
     var next_test = ""
     var i = 0
@@ -2912,6 +4090,10 @@ fn cg_match(ast: Ast, state: CgState, node: Int) -> CgVal {
         let done = done_result.1
         var bindings: List<String> = []
         var binding_types: List<String> = []
+        var whole_bind = ""
+        var payload_bind = ""
+        var payload_index = 1
+        var payload_source = ""
         var next = fail
         next_test = ""
         if i + 1 < arm_count {
@@ -2923,6 +4105,86 @@ fn cg_match(ast: Ast, state: CgState, node: Int) -> CgVal {
         if pattern == "_" {
             work = cg_line(work, "  br label %" + body)
             irrefutable = true
+        } else if option_match {
+            let variant_name = cg_pattern_variant(pattern)
+            let args = cg_pattern_args(pattern)
+            if variant_name == "Some" {
+                if args.len() != 1 {
+                    return cg_val(cg_error(work, "Some expects one payload binding"), "0")
+                }
+                if args[0] != "_" && (args[0].contains("(") || args[0].contains(")")) {
+                    return cg_val(cg_error(work, "nested Option patterns are not supported"), "0")
+                }
+                payload_bind = args[0]
+                payload_index = 1
+                payload_source = option_inner
+                let loaded_result = cg_temp(work)
+                work = loaded_result.0
+                let loaded = loaded_result.1
+                work = cg_line(work, "  " + loaded + " = load " + scrut.ty + ", ptr " + slot)
+                let tag_result = cg_temp(work)
+                work = tag_result.0
+                let tag = tag_result.1
+                work = cg_line(work, "  " + tag + " = extractvalue " + scrut.ty + " " + loaded + ", 0")
+                work = cg_line(work, "  br i1 " + tag + ", label %" + body + ", label %" + next)
+            } else if variant_name == "None" {
+                if args.len() != 0 {
+                    return cg_val(cg_error(work, "None takes no payload binding"), "0")
+                }
+                let loaded_result = cg_temp(work)
+                work = loaded_result.0
+                let loaded = loaded_result.1
+                work = cg_line(work, "  " + loaded + " = load " + scrut.ty + ", ptr " + slot)
+                let tag_result = cg_temp(work)
+                work = tag_result.0
+                let tag = tag_result.1
+                work = cg_line(work, "  " + tag + " = extractvalue " + scrut.ty + " " + loaded + ", 0")
+                work = cg_line(work, "  br i1 " + tag + ", label %" + next + ", label %" + body)
+            } else if cg_pattern_is_bare(pattern) {
+                whole_bind = pattern
+                work = cg_line(work, "  br label %" + body)
+                irrefutable = true
+            } else {
+                return cg_val(cg_error(work, "unsupported Option pattern " + pattern), "0")
+            }
+        } else if result_match {
+            let variant_name = cg_pattern_variant(pattern)
+            let args = cg_pattern_args(pattern)
+            if variant_name == "Ok" || variant_name == "Err" {
+                if args.len() != 1 {
+                    return cg_val(cg_error(work, variant_name + " expects one payload binding"), "0")
+                }
+                if args[0] != "_" && (args[0].contains("(") || args[0].contains(")")) {
+                    return cg_val(cg_error(work, "nested Result patterns are not supported"), "0")
+                }
+                payload_bind = args[0]
+                if variant_name == "Ok" {
+                    payload_index = 1
+                    payload_source = result_ok
+                } else {
+                    payload_index = 2
+                    payload_source = result_err
+                }
+                let loaded_result = cg_temp(work)
+                work = loaded_result.0
+                let loaded = loaded_result.1
+                work = cg_line(work, "  " + loaded + " = load " + scrut.ty + ", ptr " + slot)
+                let tag_result = cg_temp(work)
+                work = tag_result.0
+                let tag = tag_result.1
+                work = cg_line(work, "  " + tag + " = extractvalue " + scrut.ty + " " + loaded + ", 0")
+                if variant_name == "Ok" {
+                    work = cg_line(work, "  br i1 " + tag + ", label %" + body + ", label %" + next)
+                } else {
+                    work = cg_line(work, "  br i1 " + tag + ", label %" + next + ", label %" + body)
+                }
+            } else if cg_pattern_is_bare(pattern) {
+                whole_bind = pattern
+                work = cg_line(work, "  br label %" + body)
+                irrefutable = true
+            } else {
+                return cg_val(cg_error(work, "unsupported Result pattern " + pattern), "0")
+            }
         } else if enum_index >= 0 {
             let def = work.enums[enum_index]
             let variant_name = cg_pattern_variant(pattern)
@@ -3017,6 +4279,25 @@ fn cg_match(ast: Ast, state: CgState, node: Int) -> CgVal {
         }
         work = cg_line(work, body + ":")
         let saved = work.locals.len()
+        if whole_bind.len() > 0 {
+            var locals = work.locals
+            locals.push(CgLocal { name: whole_bind, ty: scrut.ty, slot: "", value: scrut.value, mutable: false, elem: cg_list_elem(scrut.source), source: scrut.source })
+            work = cg_state(work, work.lines, work.temps, work.slots, locals, work.terminated, work.error)
+        }
+        if payload_bind.len() > 0 && payload_bind != "_" {
+            let loaded_result = cg_temp(work)
+            work = loaded_result.0
+            let loaded = loaded_result.1
+            work = cg_line(work, "  " + loaded + " = load " + scrut.ty + ", ptr " + slot)
+            let payload_type = cg_llvm_type_in(work.structs, work.enums, payload_source)
+            let payload_result = cg_temp(work)
+            work = payload_result.0
+            let payload = payload_result.1
+            work = cg_line(work, "  " + payload + " = extractvalue " + scrut.ty + " " + loaded + ", " + payload_index.to_string())
+            var locals = work.locals
+            locals.push(CgLocal { name: payload_bind, ty: payload_type, slot: "", value: payload, mutable: false, elem: cg_list_elem(payload_source), source: payload_source })
+            work = cg_state(work, work.lines, work.temps, work.slots, locals, work.terminated, work.error)
+        }
         if bindings.len() > 0 {
             let loaded_result = cg_temp(work)
             work = loaded_result.0
@@ -3039,7 +4320,7 @@ fn cg_match(ast: Ast, state: CgState, node: Int) -> CgVal {
                         return cg_val(work, "0")
                     }
                     var locals = work.locals
-                    locals.push(CgLocal { name: bindings[b], ty: payload_ty, slot: "", value: payload, mutable: false, elem: cg_list_elem(payload_ty) })
+                    locals.push(CgLocal { name: bindings[b], ty: payload_ty, slot: "", value: payload, mutable: false, elem: cg_list_elem(payload_type), source: payload_type })
                     work = cg_state(work, work.lines, work.temps, work.slots, locals, work.terminated, work.error)
                 } else {
                     slot = slot + cg_type_slot_count(work.structs, payload_type)
@@ -3050,6 +4331,7 @@ fn cg_match(ast: Ast, state: CgState, node: Int) -> CgVal {
         let body_node = a_child(ast, arm, 0)
         var arm_ty = "void"
         var arm_value = ""
+        var arm_source = ""
         if body_node >= 0 && ast.nodes[body_node].kind == ak_block() {
             work = cg_block(ast, work, body_node)
         } else {
@@ -3057,6 +4339,7 @@ fn cg_match(ast: Ast, state: CgState, node: Int) -> CgVal {
             work = value.state
             arm_ty = value.ty
             arm_value = value.value
+            arm_source = value.source
         }
         if work.error.len() > 0 {
             return cg_val(work, "0")
@@ -3072,6 +4355,7 @@ fn cg_match(ast: Ast, state: CgState, node: Int) -> CgVal {
             } else {
                 if result_ty.len() == 0 {
                     result_ty = arm_ty
+                    result_source = arm_source
                 } else if result_ty != arm_ty {
                     return cg_val(cg_error(work, "match arms have incompatible types"), "0")
                 }
@@ -3117,6 +4401,9 @@ fn cg_match(ast: Ast, state: CgState, node: Int) -> CgVal {
         k = k + 1
     }
     work = cg_line(work, line)
+    if result_source.len() > 0 {
+        return CgVal { state: work, value: phi, ty: result_ty, elem: cg_list_elem(result_source), source: result_source }
+    }
     return cg_val_typed(work, phi, result_ty)
 }
 
@@ -3164,7 +4451,7 @@ fn cg_struct_lit(ast: Ast, state: CgState, node: Int) -> CgVal {
         if found < 0 {
             return cg_val(cg_error(work, "missing field " + def.fields[k] + " on " + item.text), "0")
         }
-        let value = cg_expr2(ast, work, a_child(ast, found, 0))
+        let value = cg_expr_expected(ast, work, a_child(ast, found, 0), def.types[k])
         work = value.state
         let expected = cg_llvm_type_in(work.structs, work.enums, def.types[k])
         if value.ty != expected {
@@ -3234,7 +4521,7 @@ fn cg_field_assign(ast: Ast, state: CgState, target: Int, value_node: Int) -> Cg
     if field < 0 {
         return cg_val(cg_error(state, "unknown field " + ast.nodes[target].text + " on " + def.name), "0")
     }
-    let value = cg_expr2(ast, state, value_node)
+    let value = cg_expr_expected(ast, state, value_node, def.types[field])
     var work = value.state
     let expected = cg_llvm_type_in(work.structs, work.enums, def.types[field])
     if value.ty != expected {
@@ -3266,7 +4553,7 @@ fn cg_call_function(ast: Ast, state: CgState, node: Int, name: String) -> CgVal 
     var args = ""
     var k = 0
     while k < got {
-        let arg = cg_expr2(ast, work, a_child(ast, node, k + 1))
+        let arg = cg_expr_expected(ast, work, a_child(ast, node, k + 1), sig.param_types[k])
         work = arg.state
         let expected = cg_llvm_type_in(work.structs, work.enums, sig.param_types[k])
         if arg.ty != expected {
@@ -3323,6 +4610,12 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
     if item.kind == ak_string() {
         return cg_string_lit(state, item.text)
     }
+    if item.kind == ak_interp() {
+        return cg_interp(ast, state, node)
+    }
+    if item.kind == ak_str_part() {
+        return cg_string_text(state, item.text)
+    }
     if item.kind == ak_bool() {
         return cg_val_typed(state, item.text, "i1")
     }
@@ -3340,6 +4633,9 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
     }
     if item.kind == ak_index() {
         return cg_index(ast, state, node)
+    }
+    if item.kind == ak_try() {
+        return cg_try(ast, state, node)
     }
     if item.kind == ak_match() {
         return cg_match(ast, state, node)
@@ -3364,23 +4660,20 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
                 }
                 return cg_enum_make(state, found.0, found.1, [])
             }
+            if item.text == "None" {
+                return cg_val(cg_error(state, "None requires an Option type annotation"), "0")
+            }
             return cg_val(cg_error(state, "unknown local " + item.text), "0")
         }
         let local = state.locals[index]
         if local.value.len() > 0 {
-            if local.ty == "%nova.list" {
-                return cg_val_list(state, local.value, local.elem)
-            }
-            return cg_val_typed(state, local.value, local.ty)
+            return cg_val_from_source(state, local.value, local.source)
         }
         let temp_result = cg_temp(state)
         var work = temp_result.0
         let temp = temp_result.1
         work = cg_line(work, "  " + temp + " = load " + local.ty + ", ptr " + local.slot)
-        if local.ty == "%nova.list" {
-            return cg_val_list(work, temp, local.elem)
-        }
-        return cg_val_typed(work, temp, local.ty)
+        return cg_val_from_source(work, temp, local.source)
     }
     if item.kind == ak_unary() {
         let value = cg_expr2(ast, state, a_child(ast, node, 0))
@@ -3423,7 +4716,7 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
             if !state.locals[index].mutable {
                 return cg_val(cg_error(state, "cannot assign to immutable binding " + ast.nodes[left].text), "0")
             }
-            let value = cg_expr2(ast, state, a_child(ast, node, 1))
+            let value = cg_expr_expected(ast, state, a_child(ast, node, 1), state.locals[index].source)
             if value.ty != state.locals[index].ty {
                 return cg_val(cg_error(value.state, "assignment type mismatch at line " + ast.nodes[node].line.to_string() + ": " + value.ty + " vs " + state.locals[index].ty), "0")
             }
@@ -3524,6 +4817,78 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
             if ast.nodes[callee].text == "push" {
                 return cg_list_push(ast, state, node)
             }
+            if ast.nodes[callee].text == "insert" {
+                let recv = cg_expr2(ast, state, a_child(ast, callee, 0))
+                if cg_is_map(recv.source) || cg_is_set(recv.source) {
+                    return cg_map_insert(ast, state, node, callee, recv)
+                }
+                return cg_val(cg_error(recv.state, "insert requires a map or set"), "0")
+            }
+            if ast.nodes[callee].text == "get" || ast.nodes[callee].text == "contains_key" {
+                let got = ast.nodes[node].count - 1
+                if got != 1 {
+                    return cg_val(cg_error(state, ast.nodes[callee].text + " expects one argument"), "0")
+                }
+                let recv = cg_expr2(ast, state, a_child(ast, callee, 0))
+                if ast.nodes[callee].text == "get" && cg_is_map(recv.source) {
+                    return cg_map_get(ast, state, node, recv)
+                }
+                if ast.nodes[callee].text == "contains_key" && cg_is_map(recv.source) {
+                    return cg_map_contains(ast, state, node, recv)
+                }
+                return cg_val(cg_error(recv.state, ast.nodes[callee].text + " requires a Map"), "0")
+            }
+            if ast.nodes[callee].text == "as_slice" {
+                let got = ast.nodes[node].count - 1
+                if got != 0 {
+                    return cg_val(cg_error(state, "as_slice expects no arguments"), "0")
+                }
+                let recv = cg_expr2(ast, state, a_child(ast, callee, 0))
+                var work = recv.state
+                if work.error.len() > 0 {
+                    return cg_val(work, "0")
+                }
+                let array = cg_array_layout(recv.source)
+                var elem = ""
+                var data = ""
+                var len = ""
+                if cg_is_list(recv.source) {
+                    if recv.elem.len() == 0 {
+                        return cg_val(cg_error(work, "list element type is unknown"), "0")
+                    }
+                    elem = recv.elem
+                    let data_result = cg_temp(work)
+                    work = data_result.0
+                    data = data_result.1
+                    work = cg_line(work, "  " + data + " = extractvalue %nova.list " + recv.value + ", 0")
+                    let len_result = cg_temp(work)
+                    work = len_result.0
+                    len = len_result.1
+                    work = cg_line(work, "  " + len + " = extractvalue %nova.list " + recv.value + ", 1")
+                } else if array.1 >= 0 {
+                    elem = array.0
+                    let slot_result = cg_entry_slot(work, recv.ty)
+                    work = slot_result.0
+                    let slot = slot_result.1
+                    work = cg_line(work, "  store " + recv.ty + " " + recv.value + ", ptr " + slot)
+                    let data_result = cg_temp(work)
+                    work = data_result.0
+                    data = data_result.1
+                    work = cg_line(work, "  " + data + " = getelementptr " + recv.ty + ", ptr " + slot + ", i64 0, i64 0")
+                    len = array.1.to_string()
+                } else {
+                    return cg_val(cg_error(work, "as_slice requires a List or array"), "0")
+                }
+                let first_result = cg_temp(work)
+                work = first_result.0
+                let first = first_result.1
+                work = cg_line(work, "  " + first + " = insertvalue %nova.slice undef, ptr " + data + ", 0")
+                let value_result = cg_temp(work)
+                work = value_result.0
+                let value = value_result.1
+                work = cg_line(work, "  " + value + " = insertvalue %nova.slice " + first + ", i64 " + len + ", 1")
+                return cg_val_slice(work, value, elem)
+            }
             if ast.nodes[callee].text == "index_of" {
                 let got = ast.nodes[node].count - 1
                 if got != 1 {
@@ -3541,6 +4906,9 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
                     return cg_val(cg_error(state, ast.nodes[callee].text + " expects one argument"), "0")
                 }
                 let recv = cg_expr2(ast, state, a_child(ast, callee, 0))
+                if ast.nodes[callee].text == "contains" && cg_is_set(recv.source) {
+                    return cg_set_contains(ast, state, node, recv)
+                }
                 if ast.nodes[callee].text == "contains" && recv.ty == "%nova.list" {
                     return cg_list_contains(ast, node, recv)
                 }
@@ -3648,6 +5016,94 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
                 let value = value_result.1
                 work = cg_line(work, "  " + value + " = load i64, ptr " + ptr)
                 return cg_val_typed(work, value, "i64")
+            }
+            if ast.nodes[callee].text == "is_some" || ast.nodes[callee].text == "is_none" {
+                if ast.nodes[node].count - 1 != 0 {
+                    return cg_val(cg_error(state, ast.nodes[callee].text + " takes no arguments"), "0")
+                }
+                let recv = cg_expr2(ast, state, a_child(ast, callee, 0))
+                if cg_option_inner(recv.source).len() == 0 {
+                    return cg_val(cg_error(recv.state, ast.nodes[callee].text + " requires an Option"), "0")
+                }
+                let tag_result = cg_temp(recv.state)
+                var work = tag_result.0
+                let tag = tag_result.1
+                work = cg_line(work, "  " + tag + " = extractvalue " + recv.ty + " " + recv.value + ", 0")
+                if ast.nodes[callee].text == "is_some" {
+                    return cg_val_typed(work, tag, "i1")
+                }
+                let not_result = cg_temp(work)
+                work = not_result.0
+                let not_value = not_result.1
+                work = cg_line(work, "  " + not_value + " = xor i1 " + tag + ", true")
+                return cg_val_typed(work, not_value, "i1")
+            }
+            if ast.nodes[callee].text == "is_ok" || ast.nodes[callee].text == "is_err" {
+                if ast.nodes[node].count - 1 != 0 {
+                    return cg_val(cg_error(state, ast.nodes[callee].text + " takes no arguments"), "0")
+                }
+                let recv = cg_expr2(ast, state, a_child(ast, callee, 0))
+                if cg_result_ok(recv.source).len() == 0 || cg_result_err(recv.source).len() == 0 {
+                    return cg_val(cg_error(recv.state, ast.nodes[callee].text + " requires a Result"), "0")
+                }
+                let tag_result = cg_temp(recv.state)
+                var work = tag_result.0
+                let tag = tag_result.1
+                work = cg_line(work, "  " + tag + " = extractvalue " + recv.ty + " " + recv.value + ", 0")
+                if ast.nodes[callee].text == "is_ok" {
+                    return cg_val_typed(work, tag, "i1")
+                }
+                let not_result = cg_temp(work)
+                work = not_result.0
+                let not_value = not_result.1
+                work = cg_line(work, "  " + not_value + " = xor i1 " + tag + ", true")
+                return cg_val_typed(work, not_value, "i1")
+            }
+            if ast.nodes[callee].text == "unwrap_or" {
+                if ast.nodes[node].count - 1 != 1 {
+                    return cg_val(cg_error(state, "unwrap_or expects one argument"), "0")
+                }
+                let recv = cg_expr2(ast, state, a_child(ast, callee, 0))
+                let option_inner = cg_option_inner(recv.source)
+                let result_ok = cg_result_ok(recv.source)
+                let inner = if option_inner.len() > 0 { option_inner } else { result_ok }
+                if inner.len() == 0 {
+                    return cg_val(cg_error(recv.state, "unwrap_or requires an Option or Result"), "0")
+                }
+                let fallback = cg_expr_expected(ast, recv.state, a_child(ast, node, 1), inner)
+                var work = fallback.state
+                let inner_ty = cg_llvm_type_in(work.structs, work.enums, inner)
+                if fallback.ty != inner_ty {
+                    return cg_val(cg_error(work, "unwrap_or default type mismatch"), "0")
+                }
+                let slot_result = cg_entry_slot(work, inner_ty)
+                work = slot_result.0
+                let slot = slot_result.1
+                work = cg_line(work, "  store " + inner_ty + " " + fallback.value + ", ptr " + slot)
+                let tag_result = cg_temp(work)
+                work = tag_result.0
+                let tag = tag_result.1
+                work = cg_line(work, "  " + tag + " = extractvalue " + recv.ty + " " + recv.value + ", 0")
+                let hit_result = cg_label(work)
+                work = hit_result.0
+                let hit = hit_result.1
+                let done_result = cg_label(work)
+                work = done_result.0
+                let done = done_result.1
+                work = cg_line(work, "  br i1 " + tag + ", label %" + hit + ", label %" + done)
+                work = cg_line(work, hit + ":")
+                let payload_result = cg_temp(work)
+                work = payload_result.0
+                let payload = payload_result.1
+                work = cg_line(work, "  " + payload + " = extractvalue " + recv.ty + " " + recv.value + ", 1")
+                work = cg_line(work, "  store " + inner_ty + " " + payload + ", ptr " + slot)
+                work = cg_line(work, "  br label %" + done)
+                work = cg_line(work, done + ":")
+                let result_result = cg_temp(work)
+                work = result_result.0
+                let result = result_result.1
+                work = cg_line(work, "  " + result + " = load " + inner_ty + ", ptr " + slot)
+                return cg_val_from_source(work, result, inner)
             }
             if ast.nodes[callee].text == "is_empty" {
                 if ast.nodes[node].count - 1 != 0 {
@@ -3851,8 +5307,22 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
                 return cg_val(cg_error(state, "unsupported method " + ast.nodes[callee].text), "0")
             }
             let recv = cg_expr2(ast, state, a_child(ast, callee, 0))
+            if cg_is_map(recv.source) || cg_is_set(recv.source) {
+                return cg_map_len(recv.state, recv)
+            }
+            let array = cg_array_layout(recv.source)
+            if array.1 >= 0 {
+                return cg_val(recv.state, array.1.to_string())
+            }
+            if cg_is_slice(recv.source) {
+                let temp_result = cg_temp(recv.state)
+                var work = temp_result.0
+                let temp = temp_result.1
+                work = cg_line(work, "  " + temp + " = extractvalue %nova.slice " + recv.value + ", 1")
+                return cg_val(work, temp)
+            }
             if recv.ty != "%nova.string" && recv.ty != "%nova.list" {
-                return cg_val(cg_error(recv.state, "len() expects String or List"), "0")
+                return cg_val(cg_error(recv.state, "len() expects String, List, Slice or array"), "0")
             }
             let temp_result = cg_temp(recv.state)
             var work = temp_result.0
@@ -3865,6 +5335,23 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
         }
         let name = ast.nodes[callee].text
         let got = ast.nodes[node].count - 1
+        if name == "map" || name == "set" {
+            return cg_val(cg_error(state, name + "() requires a concrete Map/Set annotation"), "0")
+        }
+        if name == "Some" && cg_find_variant(state.enums, "Some").0 < 0 {
+            if got != 1 {
+                return cg_val(cg_error(state, "Some expects one argument"), "0")
+            }
+            let value = cg_expr2(ast, state, a_child(ast, node, 1))
+            var payload_source = value.source
+            if payload_source.len() == 0 {
+                payload_source = cg_elem_name(value.state.structs, value.state.enums, value.ty)
+            }
+            return cg_option_some(value.state, "Option<" + payload_source + ">", value)
+        }
+        if name == "Ok" || name == "Err" {
+            return cg_val(cg_error(state, name + " requires a Result type annotation"), "0")
+        }
         if name == "print" || name == "println" {
             if got != 1 {
                 return cg_val(cg_error(state, name + " expects one argument"), "0")

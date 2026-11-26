@@ -1,0 +1,33 @@
+fn main() -> Int {
+    var scores: Map<String, Int> = map()
+    scores.insert("a", 3)
+    scores.insert("b", 4)
+    var tags: Set<Int> = set()
+    tags.insert(2)
+    tags.insert(2)
+    let a = scores.get("a").unwrap_or(0)
+    let b = scores.get("b").unwrap_or(0)
+    let c = scores.get("c").unwrap_or(5)
+    let has = scores.contains_key("a")
+    let has_not = scores.contains_key("z")
+    var total = scores.len() + tags.len() + a + b + c
+    if has {
+        total = total + 1
+    }
+    if has_not {
+        total = total + 10
+    }
+    if tags.contains(2) {
+        total = total + 1
+    }
+    if tags.contains(3) {
+        total = total + 10
+    }
+    if tags.insert(3) {
+        total = total + 6
+    }
+    if tags.insert(2) {
+        total = total + 100
+    }
+    return total
+}

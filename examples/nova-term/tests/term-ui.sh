@@ -6,7 +6,7 @@ APP=$(cd "$HERE/.." && pwd)
 ROOT=$(cd "$APP/../.." && pwd)
 BIN="$APP/target/nova/nova-term"
 if [ ! -x "$BIN" ]; then
-    echo "missing $BIN — run: (cd examples/nova-term && ../../target/debug/nova build)" >&2
+    echo "missing $BIN — run: (cd examples/nova-term && ../../bootstrap/nova build)" >&2
     exit 2
 fi
 WORK=$(mktemp -d)

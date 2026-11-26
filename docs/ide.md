@@ -1,6 +1,6 @@
 # Nova Studio guide
 
-For Visual Studio Code, use the local [Nova Language extension](../editors/vscode/README.md): it provides the shared TextMate grammar and launches the same Rust LSP. Studio remains the full workbench.
+For Visual Studio Code, use the local [Nova Language extension](../editors/vscode/README.md): it provides the shared TextMate grammar and launches the same Nova LSP. Studio remains the full workbench.
 
 ## Start
 

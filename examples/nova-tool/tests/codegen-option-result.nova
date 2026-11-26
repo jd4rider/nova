@@ -1,0 +1,47 @@
+fn maybe(flag: Bool) -> Option<Int> {
+    if flag {
+        return Some(7)
+    }
+    return None
+}
+
+fn checked(flag: Bool) -> Option<Int> {
+    let value = maybe(flag)?
+    return Some(value + 1)
+}
+
+fn result(flag: Bool) -> Result<Int, String> {
+    if flag {
+        return Ok(10)
+    }
+    return Err("bad")
+}
+
+fn checked_result(flag: Bool) -> Result<Int, String> {
+    let value = result(flag)?
+    return Ok(value + 2)
+}
+
+fn main() -> Int {
+    let value = maybe(true)
+    let missing = maybe(false)
+    let sum = value.unwrap_or(0) + missing.unwrap_or(5)
+    let matched = match value {
+        Some(x) => x
+        None => 0
+    }
+    let ok = result(true)
+    let bad = result(false)
+    let matched_ok = match ok {
+        Ok(x) => x
+        Err(_) => 0
+    }
+    let matched_err = match bad {
+        Ok(_) => 0
+        Err(_) => 4
+    }
+    let unwrapped = ok.unwrap_or(0) + bad.unwrap_or(4)
+    let propagated = checked(true).unwrap_or(0) + checked(false).unwrap_or(6)
+    let propagated_result = checked_result(true).unwrap_or(0) + checked_result(false).unwrap_or(9)
+    return sum + matched + unwrapped + propagated + propagated_result + matched_ok + matched_err
+}

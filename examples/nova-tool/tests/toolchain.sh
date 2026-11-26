@@ -6,11 +6,11 @@
 set -eu
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
-NOVA="$ROOT/target/debug/nova"
+NOVA="${NOVA_BIN:-$ROOT/bootstrap/nova}"
 TOOL="$HERE/../target/nova/nova-tool"
 OUT="${TMPDIR:-/tmp}/nova-tool-check"
 
-[ -x "$NOVA" ] || { echo "toolchain: build the compiler first" >&2; exit 1; }
+[ -x "$NOVA" ] || { echo "toolchain: missing $NOVA (build the Nova compiler first)" >&2; exit 1; }
 (cd "$HERE/.." && "$NOVA" build >/dev/null)
 [ -x "$TOOL" ] || { echo "toolchain: build failed" >&2; exit 1; }
 
@@ -90,6 +90,18 @@ check "imports deduplicated" test "$(grep -c 'physics.nova' "$OUT/imports")" -eq
 NOVA_TOOL=diag NOVA_TOOL_PATH="$ROOT/examples/nova-tool/src/main.nova" "$TOOL" > "$OUT/diag"
 assert_contains "diagnostic severity" "error\[E0001\]" "$OUT/diag"
 assert_contains "diagnostic caret" "\^" "$OUT/diag"
+
+# 7. `nova lsp` runs the Nova language server, not the Rust stage-0 one.
+NOVA_TOOL_BIN="$TOOL" python3 - "$NOVA" > "$OUT/entry-lsp" <<'PY'
+import json, subprocess, sys
+nova = sys.argv[1]
+message = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {}}}
+body = json.dumps(message)
+data = ("Content-Length: %d\r\n\r\n%s" % (len(body), body)).encode()
+proc = subprocess.run([nova, "lsp"], input=data, capture_output=True, timeout=120)
+sys.stdout.write(proc.stdout.decode("utf-8", "replace"))
+PY
+assert_contains "nova lsp uses the Nova server" '"version":"0.2.0"' "$OUT/entry-lsp"
 
 echo "passed $passed, failed $failed"
 [ "$failed" -eq 0 ]

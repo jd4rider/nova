@@ -189,6 +189,129 @@ nova_str nova_ir_take(void) {
     return result;
 }
 
+/* Parser AST arena. Building the AST through value-semantic lists copied the
+ * whole arena for every node, so parsing grew quadratically and the compiler's
+ * own 15k-line source exhausted memory. The parser appends nodes and child
+ * links here by index; `a_parse` copies them into fresh local lists once at the
+ * end, where push grows in place. */
+typedef struct {
+    int64_t kind;
+    nova_str text;
+    nova_str aux;
+    int64_t first;
+    int64_t count;
+    int64_t line;
+    int64_t column;
+} nova_anode;
+
+static nova_anode *nova_ast_nodes = NULL;
+static int64_t nova_ast_nodes_len = 0;
+static int64_t nova_ast_nodes_cap = 0;
+static int64_t *nova_ast_links = NULL;
+static int64_t nova_ast_links_len = 0;
+static int64_t nova_ast_links_cap = 0;
+
+void nova_ast_reset(void) {
+    nova_ast_nodes_len = 0;
+    nova_ast_links_len = 0;
+}
+
+int64_t nova_ast_node_count(void) {
+    return nova_ast_nodes_len;
+}
+
+int64_t nova_ast_link_count(void) {
+    return nova_ast_links_len;
+}
+
+int64_t nova_ast_link_len(void) {
+    return nova_ast_links_len;
+}
+
+int64_t nova_ast_add_link(int64_t child) {
+    if (nova_ast_links_len >= nova_ast_links_cap) {
+        int64_t cap = nova_ast_links_cap > 0 ? nova_ast_links_cap * 2 : 256;
+        int64_t *grown = (int64_t *)realloc(nova_ast_links, (size_t)cap * sizeof(int64_t));
+        if (!grown) nova_die_oom();
+        nova_ast_links = grown;
+        nova_ast_links_cap = cap;
+    }
+    nova_ast_links[nova_ast_links_len++] = child;
+    return nova_ast_links_len - 1;
+}
+
+int64_t nova_ast_add_node(
+    int64_t kind,
+    nova_str text,
+    nova_str aux,
+    int64_t first,
+    int64_t count,
+    int64_t line,
+    int64_t column
+) {
+    if (nova_ast_nodes_len >= nova_ast_nodes_cap) {
+        int64_t cap = nova_ast_nodes_cap > 0 ? nova_ast_nodes_cap * 2 : 256;
+        nova_anode *grown = (nova_anode *)realloc(nova_ast_nodes, (size_t)cap * sizeof(nova_anode));
+        if (!grown) nova_die_oom();
+        nova_ast_nodes = grown;
+        nova_ast_nodes_cap = cap;
+    }
+    nova_anode *node = &nova_ast_nodes[nova_ast_nodes_len++];
+    node->kind = kind;
+    node->text = text;
+    node->aux = aux;
+    node->first = first;
+    node->count = count;
+    node->line = line;
+    node->column = column;
+    return nova_ast_nodes_len - 1;
+}
+
+static nova_anode *nova_ast_node(int64_t index) {
+    if (index < 0 || index >= nova_ast_nodes_len) return NULL;
+    return &nova_ast_nodes[index];
+}
+
+int64_t nova_ast_node_kind(int64_t index) {
+    nova_anode *node = nova_ast_node(index);
+    return node ? node->kind : 0;
+}
+
+nova_str nova_ast_node_text(int64_t index) {
+    nova_anode *node = nova_ast_node(index);
+    return node ? node->text : nova_make_str("", 0);
+}
+
+nova_str nova_ast_node_aux(int64_t index) {
+    nova_anode *node = nova_ast_node(index);
+    return node ? node->aux : nova_make_str("", 0);
+}
+
+int64_t nova_ast_node_first(int64_t index) {
+    nova_anode *node = nova_ast_node(index);
+    return node ? node->first : -1;
+}
+
+int64_t nova_ast_node_children(int64_t index) {
+    nova_anode *node = nova_ast_node(index);
+    return node ? node->count : 0;
+}
+
+int64_t nova_ast_node_line(int64_t index) {
+    nova_anode *node = nova_ast_node(index);
+    return node ? node->line : 0;
+}
+
+int64_t nova_ast_node_column(int64_t index) {
+    nova_anode *node = nova_ast_node(index);
+    return node ? node->column : 0;
+}
+
+int64_t nova_ast_link_at(int64_t index) {
+    if (index < 0 || index >= nova_ast_links_len) return -1;
+    return nova_ast_links[index];
+}
+
 static int nova_utf8_decode(
     const unsigned char *text, int64_t len, int64_t index, uint32_t *cp, int64_t *next
 );

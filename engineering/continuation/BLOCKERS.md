@@ -1,27 +1,25 @@
 # Blockers
 
-## No external blockers for the active codegen slice
+## No external blockers for the active parity slice
 
-The host has the Rust seed, a working Cargo build, and Apple clang. The next
-slice does not require credentials, paid services or owner decisions.
+The host has the checked-in Nova bootstrap and Apple clang. The next slice does
+not require credentials, paid services or owner decisions.
 
 ## Owner-authorization boundaries
 
-- Do not push the branch or open/merge a pull request.
+- Do not push the branch or open/merge a pull request without explicit approval.
 - Do not publish packages, releases or registry data.
 - Do not change repository visibility.
-- Do not delete `bootstrap/` or rewrite history.
+- Do not rewrite history.
 
 ## Internal dependencies (not external blockers)
 
-- `LSP-01` needs full sema and a Nova stdio streaming primitive.
-- `BOOT-02` needs a Nova CLI/codegen path that can build a nontrivial program.
-- Module resolution needs a decision on flattening versus qualifying imported
-  names; track it in `DECISIONS.md` when implemented.
-
-## Known technical risks
-
-- LLVM IR must be validated by clang, not assumed correct from string output.
-- The temporary codegen ABI differs from the Rust runtime ABI; this is recorded
-  in `DECISIONS.md` and must be removed before CLI integration.
-- Sema's `?` type can hide unresolved errors; it is not full parity.
+- `COMP-01.04` needs generics, traits, methods and closures in the Nova checker
+  and codegen.
+- `LSP-01` needs the fuller semantic API for rename, references and code
+  actions; the current Nova server covers diagnostics, completion, hover,
+  definition, symbols and formatting.
+- `REL-01` needs bootstrap binaries for Linux and Windows; the checked-in
+  `bootstrap/nova` is macOS arm64 only.
+- The playground needs a Nova wasm backend before its checked-in `.wasm`
+  artifacts can be rebuilt.

@@ -875,6 +875,25 @@ else
     no "to_string binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-interp.nova" "$tool")
+echo "$out" | grep -q "call %nova.string @nova_string_concat" && ok || no "interpolation concat call"
+echo "$out" | grep -q "call %nova.string @nova_i64_to_string" && ok || no "interpolation Int conversion"
+echo "$out" | grep -q "call %nova.string @nova_bool_to_string" && ok || no "interpolation Bool conversion"
+printf '%s\n' "$out" > "$tmp/interp.ll"
+if clang_ir "$tmp/interp.ll" "$tmp/interp" "$tmp/interp-clang.log"; then
+    ok
+else
+    no "clang rejects interpolation IR"
+    cat "$tmp/interp-clang.log"
+fi
+if [ -x "$tmp/interp" ]; then
+    "$tmp/interp"
+    code=$?
+    [ "$code" -eq 19 ] && ok || no "interpolation result (got $code, expected 19)"
+else
+    no "interpolation binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-string-chars.nova" "$tool")
 echo "$out" | grep -q "call void @nova_string_chars" && ok || no "String chars call"
 printf '%s\n' "$out" > "$tmp/string-chars.ll"
@@ -970,6 +989,84 @@ if clang_ir "$tmp/http-get.ll" "$tmp/http-get" "$tmp/http-get-clang.log"; then
 else
     no "clang rejects http_get IR"
     cat "$tmp/http-get-clang.log"
+fi
+
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-option-array.nova" "$tool")
+echo "$out" | grep -q "insertvalue { i1, i64 }" && ok || no "Option aggregate construction"
+echo "$out" | grep -q "insertvalue { i1, i64, %nova.string }" && ok || no "Result aggregate construction"
+echo "$out" | grep -q "getelementptr \[3 x i64\]" && ok || no "array index lowering"
+echo "$out" | grep -q "@nova_panic_bounds" && ok || no "array bounds check"
+echo "$out" | grep -q "extractvalue { i1, i64 }" && ok || no "Option tag/payload access"
+printf '%s\n' "$out" > "$tmp/option-array.ll"
+if clang_ir "$tmp/option-array.ll" "$tmp/option-array" "$tmp/option-array-clang.log"; then
+    ok
+else
+    no "clang rejects Option/Result/array IR"
+    cat "$tmp/option-array-clang.log"
+fi
+if [ -x "$tmp/option-array" ]; then
+    "$tmp/option-array"
+    code=$?
+    [ "$code" -eq 119 ] && ok || no "Option/Result/array result (got $code, expected 119)"
+else
+    no "Option/Result/array binary missing"
+fi
+
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-slice.nova" "$tool")
+echo "$out" | grep -q "%nova.slice = type { ptr, i64 }" && ok || no "slice type declaration"
+echo "$out" | grep -q "insertvalue %nova.slice" && ok || no "slice view construction"
+echo "$out" | grep -q "extractvalue %nova.slice" && ok || no "slice data/length access"
+printf '%s\n' "$out" > "$tmp/slice.ll"
+if clang_ir "$tmp/slice.ll" "$tmp/slice" "$tmp/slice-clang.log"; then
+    ok
+else
+    no "clang rejects slice IR"
+    cat "$tmp/slice-clang.log"
+fi
+if [ -x "$tmp/slice" ]; then
+    "$tmp/slice"
+    code=$?
+    [ "$code" -eq 44 ] && ok || no "slice result (got $code, expected 44)"
+else
+    no "slice binary missing"
+fi
+
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-slice-for.nova" "$tool")
+echo "$out" | grep -q "getelementptr i64, ptr" && ok || no "slice-for indexed access"
+printf '%s\n' "$out" > "$tmp/slice-for.ll"
+if clang_ir "$tmp/slice-for.ll" "$tmp/slice-for" "$tmp/slice-for-clang.log"; then
+    ok
+else
+    no "clang rejects slice-for IR"
+    cat "$tmp/slice-for-clang.log"
+fi
+if [ -x "$tmp/slice-for" ]; then
+    "$tmp/slice-for"
+    code=$?
+    [ "$code" -eq 6 ] && ok || no "slice-for result (got $code, expected 6)"
+else
+    no "slice-for binary missing"
+fi
+
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-map-set.nova" "$tool")
+echo "$out" | grep -q "%nova.map = type { ptr, ptr, i64, i64, i64, i32 }" && ok || no "map type declaration"
+echo "$out" | grep -q "call void @nova_map_insert" && ok || no "map insert call"
+echo "$out" | grep -q "call i32 @nova_map_add" && ok || no "set insert call"
+echo "$out" | grep -q "call ptr @nova_map_get" && ok || no "map lookup call"
+echo "$out" | grep -q "call i64 @nova_map_len" && ok || no "map length call"
+printf '%s\n' "$out" > "$tmp/map-set.ll"
+if clang_ir "$tmp/map-set.ll" "$tmp/map-set" "$tmp/map-set-clang.log"; then
+    ok
+else
+    no "clang rejects map/set IR"
+    cat "$tmp/map-set-clang.log"
+fi
+if [ -x "$tmp/map-set" ]; then
+    "$tmp/map-set"
+    code=$?
+    [ "$code" -eq 23 ] && ok || no "map/set result (got $code, expected 23)"
+else
+    no "map/set binary missing"
 fi
 
 printf 'fn main() -> Int {\n    return "x"\n}\n' > "$tmp/bad.nova"

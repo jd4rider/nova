@@ -14,8 +14,10 @@ description: Build, test and document changes without overstating maturity.
 ## Build and test
 
 ```sh
-cargo fmt --check
-cargo test --workspace
+(cd examples/nova-tool && ../../bootstrap/nova build)
+sh examples/nova-tool/tests/codegen.sh
+sh examples/nova-tool/tests/diff.sh
+sh examples/nova-tool/tests/boxes.sh
 
 cd editor
 npm run typecheck

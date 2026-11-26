@@ -6,10 +6,10 @@ const here = import.meta.dirname
 const siteRoot = resolve(here, '..')
 const repoRoot = resolve(siteRoot, '../..')
 const docsRoot = join(siteRoot, 'src/content/docs')
-const compiler = process.env.NOVA_BIN ?? join(repoRoot, 'target/debug/nova')
+const compiler = process.env.NOVA_BIN ?? join(repoRoot, 'bootstrap/nova')
 
 if (!existsSync(compiler)) {
-  console.error(`Nova compiler not found at ${compiler}. Build it with: cargo build -p nova-cli`)
+  console.error(`Nova compiler not found at ${compiler}. The checked-in bootstrap is bootstrap/nova.`)
   process.exit(1)
 }
 

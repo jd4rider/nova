@@ -262,4 +262,39 @@ export function registerLspProviders(request: Request): void {
   })
 }
 
+let copilotCompletionRegistered = false
+
+/**
+ * Ghost text from the Copilot language server. The request is a file URI and a
+ * line/character position; the main process owns the authenticated LSP.
+ */
+export function registerCopilotCompletion(): void {
+  if (copilotCompletionRegistered) return
+  copilotCompletionRegistered = true
+  monaco.languages.registerInlineCompletionsProvider('nova', {
+    provideInlineCompletions: async (model, position, _context, token) => {
+      if (model.uri.scheme !== 'file') return { items: [] }
+      const input = {
+        uri: model.uri.toString(),
+        version: model.getVersionId(),
+        text: model.getValue(),
+        line: position.lineNumber - 1,
+        character: position.column - 1
+      }
+      const result = await window.nova.copilot.complete(input).catch(() => null)
+      if (token.isCancellationRequested || !result?.insertText) return { items: [] }
+      const range = result.range
+        ? {
+            startLineNumber: result.range.start.line + 1,
+            startColumn: result.range.start.character + 1,
+            endLineNumber: result.range.end.line + 1,
+            endColumn: result.range.end.character + 1
+          }
+        : new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column)
+      return { items: [{ insertText: result.insertText, range }] }
+    },
+    freeInlineCompletions: () => undefined
+  })
+}
+
 export { monaco }
