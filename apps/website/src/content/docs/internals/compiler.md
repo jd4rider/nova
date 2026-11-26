@@ -76,9 +76,10 @@ sanitizer runs are planned.
 
 ## Honest gaps
 
-The compiler is self-hosted but not feature-complete. Generics, traits and
-closures are not implemented by the Nova compiler, sema coverage is a subset,
-and there is no Nova wasm backend, debug info, DAP, incremental compilation or
-reproducible-build guarantee. `nova test` and the REPL are not ported yet. See
+The compiler is self-hosted but not feature-complete. Generic structs and
+methods, traits and closures are not implemented by the Nova compiler, sema
+coverage is a subset, and there is no Nova wasm backend, debug info, DAP,
+incremental compilation or reproducible-build guarantee. `nova test` has no
+machine-readable report, and the REPL rejects declarations. See
 [Status](../../status/) and the repository
 [roadmap](https://github.com/jd4rider/nova/blob/main/ROADMAP.md).
