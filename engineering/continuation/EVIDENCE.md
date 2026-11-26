@@ -763,5 +763,6 @@ closure AST rendering. This evidence does not cover generic structs/methods,
 `dyn Trait`, generic trait impls or mutable captures.
 
 CI change: the Nova job is `runs-on: macos-15` instead of cancelled `macos-14`.
-This is a hypothesis until a hosted run executes the steps; no CI-success claim
-is made here.
+Run `45782985936` on commit `e1a2f74` passed all four jobs (`nova`, `editor`,
+`vscode`, `website`); the Nova job completed its bootstrap build, compiler
+suites and toolchain/package suites in 3m35s.

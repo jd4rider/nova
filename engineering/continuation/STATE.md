@@ -309,8 +309,9 @@ Explicit single-parameter generic functions remain monomorphized.
    the former front end.
 3. Build non-macOS bootstrap artifacts before advertising Linux/Windows CLI
    downloads; the checked-in bootstrap is macOS arm64 only.
-4. Verify the `macos-15` CI runner actually executes; if it still cancels,
-   document the hosted-runner limitation rather than claiming CI is fixed.
+4. Keep CI on `macos-15`; run `45782985936` verified all four jobs, including
+   the Nova compiler and test suites. If a future run cancels before its steps,
+   investigate the runner label rather than the toolchain.
 
 ## Validation
 
