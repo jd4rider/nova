@@ -18,7 +18,7 @@ The binary is `nova`. The checked-in `bootstrap/nova` runs every command, or reb
 | `nova fmt [--check]` | Conservative indentation, blank-line and trailing-whitespace formatting. |
 | `nova clean` | Remove generated artifacts. |
 | `nova tree` | Print the project structure. |
-| `nova repl` | Interactive evaluation labeled as interpreter-backed; not the native backend. |
+| `nova repl` | Compile-run REPL: each accepted line is compiled natively and executed. |
 | `nova lsp` | Start the Nova compiler language server on stdio. |
 | `nova doctor` | Report toolchain, runtime ABI, LSP, FreeBuff and platform status. |
 
@@ -43,4 +43,4 @@ Compiler diagnostics include stable codes, spans and rendered caret ranges. The 
 - Registry publishing and `login` are not implemented; reads need no account.
 - No package installation on folder open.
 - No machine-readable test report.
-- The REPL is not the final execution model.
+- The REPL compiles each accepted line natively; declarations are not supported yet.

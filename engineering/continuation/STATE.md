@@ -23,9 +23,10 @@ hover, definition, document symbols and formatting, and `nova lsp`/Studio launch
 it; the driver resolves file, transitive and path-dependency modules; string
 interpolation lowers end-to-end (`COMP-01.05`), and `nova check` accepts the
 tool's own source; all 27 golden invalid programs match the recorded reference diagnostics.
-Registry Box imports resolve through the fetch cache and Box.lock. Remaining
-work is language parity: generics/traits/closures (`COMP-01.04`), fuller sema,
-`nova test`/REPL and a Nova wasm backend.
+Registry Box imports resolve through the fetch cache and Box.lock. `nova test`
+discovers `@test` functions and compiles each into its own process; `nova repl`
+is a native compile-run REPL. Remaining work is language parity:
+generics/traits/closures (`COMP-01.04`), fuller sema and a Nova wasm backend.
 
 ## Last verified behavior
 

@@ -667,7 +667,7 @@ fn nt_collect_nova(dir: String, out: List<String>) -> List<String> {
         return files
     }
     for entry in gui.list(dir).split("\n") {
-        let name = entry.trim()
+        let name = entry.trim().replace("f\t", "").replace("d\t", "")
         if name.len() == 0 {
             continue
         }
@@ -957,7 +957,7 @@ fn nt_write_project(root: String, name: String) -> Int {
         return 1
     }
     gui.write(root + "/src/main.nova", main_source)
-    gui.write(root + "/tests/hello_test.nova", "fn main() {\n    println(\"hello\")\n}\n")
+    gui.write(root + "/tests/hello_test.nova", "@test\nfn hello() {\n    assert(true)\n}\n")
     gui.write(root + "/.gitignore", "/target\n")
     return 0
 }
@@ -1052,6 +1052,184 @@ fn nt_doctor_command() -> Int {
     return 1
 }
 
+fn nt_test_command() -> Int {
+    let root = nt_find_root()
+    if root.len() == 0 {
+        println("nova test: no nova.toml or Box.toml found in this directory or its parents")
+        return 1
+    }
+    let tests_dir = root + "/tests"
+    if !gui.exists(tests_dir) {
+        println("nova test: no tests/ directory")
+        return 1
+    }
+    var files: List<String> = []
+    files = nt_collect_nova(tests_dir, files)
+    if files.len() == 0 {
+        println("No test files found under tests/.")
+        return 0
+    }
+    let target_dir = root + "/target/nova/tests"
+    if !gui.exists(root + "/target") {
+        gui.mkdir(root + "/target")
+    }
+    if !gui.exists(root + "/target/nova") {
+        gui.mkdir(root + "/target/nova")
+    }
+    if !gui.exists(target_dir) {
+        gui.mkdir(target_dir)
+    }
+    let filter = if gui.args_count() >= 3 { gui.arg(2) } else { "" }
+    var passed = 0
+    var failed = 0
+    var matched = 0
+    var built = 0
+    for file in files {
+        let source = gui.read(file)
+        if source.len() == 0 && !gui.exists(file) {
+            println("nova test: cannot read " + file)
+            failed = failed + 1
+            continue
+        }
+        let clean = source.replace("@test", "")
+        var names: List<String> = []
+        var pending = false
+        for line in source.split("\n") {
+            var decl = ""
+            let trimmed = line.trim()
+            if trimmed.starts_with("@test") {
+                let rest = trimmed.replace("@test", "").trim()
+                if rest.len() == 0 {
+                    pending = true
+                } else {
+                    decl = rest
+                }
+            } else if pending {
+                decl = trimmed
+                pending = false
+            }
+            if decl.starts_with("fn ") {
+                let rest = decl.replace("fn ", "").trim()
+                let parts = rest.split("(")
+                if parts.len() > 0 {
+                    let name = parts[0].trim()
+                    var seen = false
+                    for existing in names {
+                        if existing == name {
+                            seen = true
+                        }
+                    }
+                    if name.len() > 0 && !seen {
+                        names.push(name)
+                    }
+                }
+            }
+        }
+        if names.len() == 0 {
+            println("note: " + file + " has no @test functions (skipped)")
+            continue
+        }
+        let expanded = nt_expand(file, clean, [file], [file], root)
+        if expanded.error.len() > 0 {
+            println("test " + file + " ... FAILED (" + expanded.error + ")")
+            failed = failed + 1
+            continue
+        }
+        for name in names {
+            if filter.len() > 0 && !name.contains(filter) {
+                continue
+            }
+            matched = matched + 1
+            built = built + 1
+            let wrapped = expanded.text + "\nfn main() {\n    " + name + "()\n}\n"
+            let target = target_dir + "/test_" + built.to_string()
+            let status = nt_build_source(file, wrapped, target)
+            if status != 0 {
+                println("test " + file + "::" + name + " ... FAILED (build)")
+                failed = failed + 1
+                continue
+            }
+            let output = gui.run(nt_shell_quote(target), root)
+            let code = gui.exit_status()
+            if output.len() > 0 {
+                println(output)
+            }
+            if code == 0 {
+                println("test " + file + "::" + name + " ... ok")
+                passed = passed + 1
+            } else {
+                println("test " + file + "::" + name + " ... FAILED (exit " + code.to_string() + ")")
+                failed = failed + 1
+            }
+        }
+    }
+    println("\n" + passed.to_string() + " passed, " + failed.to_string() + " failed")
+    if matched == 0 {
+        println("note: filter matched no tests")
+        return 0
+    }
+    if failed == 0 {
+        return 0
+    }
+    return 1
+}
+
+fn nt_repl_command() -> Int {
+    println("Nova compile-run REPL. Each line is compiled natively and executed.")
+    println("Use :quit to exit, :clear to reset.")
+    var buffer = ""
+    var counter = 0
+    var running = true
+    while running {
+        println("nova> ")
+        let line = nova_stdin_read_line()
+        if line.len() == 0 {
+            running = false
+        } else {
+            let trimmed = line.trim()
+            if trimmed.len() == 0 {
+                counter = counter
+            } else if trimmed == ":quit" || trimmed == ":q" || trimmed == "exit" {
+                running = false
+            } else if trimmed == ":clear" {
+                buffer = ""
+            } else if trimmed.starts_with("fn ") || trimmed.starts_with("struct ") || trimmed.starts_with("enum ") || trimmed.starts_with("import ") {
+                println("Declarations are not supported in the REPL yet; put them in a .nova file.")
+            } else {
+                let candidate = buffer + trimmed + "\n"
+                var statement = trimmed
+                var source = "import std.io { println }\n\nfn main() {\n" + candidate + "}\n"
+                let direct = cg_compile(source)
+                let statementy = trimmed.starts_with("var ") || trimmed.starts_with("let ") || trimmed.starts_with("for ") || trimmed.starts_with("while ") || trimmed.starts_with("if ") || trimmed.starts_with("return ") || trimmed.starts_with("break") || trimmed.starts_with("continue") || trimmed.starts_with("println(") || trimmed.starts_with("assert(")
+                if direct.error.len() > 0 || !statementy {
+                    let wrapped = buffer + "println(" + trimmed + ")\n"
+                    let alternate = "import std.io { println }\n\nfn main() {\n" + wrapped + "}\n"
+                    let checked = cg_compile(alternate)
+                    if checked.error.len() == 0 {
+                        source = alternate
+                        statement = "println(" + trimmed + ")"
+                    }
+                }
+                counter = counter + 1
+                let target = "/tmp/nova-repl-" + counter.to_string()
+                if nt_build_source("<repl>", source, target) == 0 {
+                    let output = gui.run(nt_shell_quote(target), gui.cwd())
+                    let code = gui.exit_status()
+                    if output.len() > 0 {
+                        println(output)
+                    }
+                    if code == 0 {
+                        buffer = buffer + statement + "\n"
+                    } else {
+                        println("repl: program exited " + code.to_string())
+                    }
+                }
+            }
+        }
+    }
+    return 0
+}
+
 fn main() {
     let argc = gui.args_count()
     if argc >= 2 && (gui.arg(1) == "--version" || gui.arg(1) == "-V") {
@@ -1100,6 +1278,12 @@ fn main() {
     }
     if argc >= 2 && gui.arg(1) == "check" {
         gui.exit(nt_check_project())
+    }
+    if argc >= 2 && gui.arg(1) == "test" {
+        gui.exit(nt_test_command())
+    }
+    if argc >= 2 && gui.arg(1) == "repl" {
+        gui.exit(nt_repl_command())
     }
     let mode = gui.env("NOVA_TOOL")
     let path = gui.env("NOVA_TOOL_PATH")

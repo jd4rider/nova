@@ -79,6 +79,23 @@ else
 fi
 [ "$code" -eq 10 ] && ok || no "project run exit (got $code, expected 10)"
 
+# ---- Test runner and REPL ------------------------------------------------
+mkdir -p "$tmp/project/tests"
+printf '@test\nfn passes() {\n    assert(true)\n}\n' > "$tmp/project/tests/sample_test.nova"
+if (cd "$tmp/project" && NOVA_TOOL_RUNTIME="$root/runtime/runtime.c" "$tool" test >"$tmp/test.out" 2>"$tmp/test.err"); then
+    ok
+else
+    no "nova test failed for a passing test"
+    cat "$tmp/test.out" "$tmp/test.err"
+fi
+grep -q "1 passed, 0 failed" "$tmp/test.out" && ok || no "test summary ($(cat "$tmp/test.out"))"
+printf '@test\nfn fails() {\n    assert(false)\n}\n' > "$tmp/project/tests/failing_test.nova"
+status=0
+(cd "$tmp/project" && NOVA_TOOL_RUNTIME="$root/runtime/runtime.c" "$tool" test >"$tmp/testfail.out" 2>&1) || status=$?
+[ "$status" -ne 0 ] && grep -q "1 failed" "$tmp/testfail.out" && ok || no "failing test reported ($(cat "$tmp/testfail.out"))"
+repl_out=$(printf '1 + 2\n:quit\n' | (cd "$tmp/project" && NOVA_TOOL_RUNTIME="$root/runtime/runtime.c" "$tool" repl 2>&1))
+echo "$repl_out" | grep -q "3" && ok || no "REPL expression output ($repl_out)"
+
 # ---- Module resolution: extensionless names and transitive imports ------
 mkdir -p "$tmp/modules/src"
 printf '[package]\nname = "modules"\nversion = "0.1.0"\n' > "$tmp/modules/Box.toml"

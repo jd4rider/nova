@@ -32,7 +32,7 @@ Status means: **tested** = covered by automated tests and passing; **implemented
 
 | Area | Status | Notes |
 |---|---|---|
-| `nova new/init/run/build/check/fmt/clean/doctor/tree` and `nova box` | tested | `cli.sh` 22/22 and `toolchain.sh` 126/126; `test` and `repl` are not ported |
+| `nova new/init/run/build/check/test/repl/fmt/clean/doctor/tree` and `nova box` | tested | `cli.sh` 26/26 and `toolchain.sh` 126/126; the test runner compiles each `@test` function and the REPL compiles each accepted line |
 | Project manifest, lockfile, path and registry dependencies | tested | `Box.toml`, `Box.lock`, SemVer and fetched registry boxes via `nt_registry_module`; no workspaces |
 | Formatter | implemented | Conservative indentation/whitespace; not a full pretty-printer |
 | LSP stdio JSON-RPC | tested manually | Full sync, diagnostics, completion, hover, definition, symbols, formatting |
