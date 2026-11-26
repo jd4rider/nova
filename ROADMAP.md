@@ -15,7 +15,7 @@ Status means: **tested** = covered by automated tests and passing; **implemented
 | Pattern matching | tested | Option/Result, literals, bindings, tuple patterns and user enum variants with multiple payload fields |
 | String predicates and trimming | tested | `contains`, `starts_with`, `ends_with`, `trim` lower to runtime helpers; native codegen test executes them |
 | Modules/imports | tested | `import "util.nova"` flattens relative source files with cycle checks; `import "util"` and `import "@publisher/box"` resolve declared dependencies through `Box.toml` and `Box.lock`. The underlying namespace is still flat, so duplicate unqualified names remain errors; only direct dependencies are mapped |
-| Generics | planned | Not implemented by the Nova compiler; tracked as COMP-01.04 |
+| Generics | partial | Explicit generic functions with one type parameter are monomorphized from `name<Type>(...)`; generic structs, generic methods and inference without an explicit type argument remain |
 | User enums | tested | Unit or multi-payload variants; nominal tagged heap payload, exhaustive `match`; native codegen test |
 | `impl` methods | planned | Not implemented by the Nova compiler; tracked with COMP-01.04 |
 | Tuples, fixed arrays, slices | partial | Tuple construction/access/patterns and mutation, `[T; N]` bounds-checked indexing, borrowed `Slice<T>` views; no tuple `let` destructuring |
@@ -32,7 +32,7 @@ Status means: **tested** = covered by automated tests and passing; **implemented
 
 | Area | Status | Notes |
 |---|---|---|
-| `nova new/init/run/build/check/test/repl/fmt/clean/doctor/tree` and `nova box` | tested | `cli.sh` 26/26 and `toolchain.sh` 126/126; the test runner compiles each `@test` function and the REPL compiles each accepted line |
+| `nova new/init/run/build/check/test/repl/fmt/clean/doctor/tree` and `nova box` | tested | `cli.sh` 28/28 and `toolchain.sh` 126/126; the test runner compiles each `@test` function, the REPL compiles each accepted line, and explicit generic functions are monomorphized |
 | Project manifest, lockfile, path and registry dependencies | tested | `Box.toml`, `Box.lock`, SemVer and fetched registry boxes via `nt_registry_module`; no workspaces |
 | Formatter | implemented | Conservative indentation/whitespace; not a full pretty-printer |
 | LSP stdio JSON-RPC | tested manually | Full sync, diagnostics, completion, hover, definition, symbols, formatting |

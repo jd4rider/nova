@@ -246,7 +246,7 @@ The website checks include real compiler invocations for documentation snippets.
 
 ## Limitations
 
-- `String` supports `len`, `is_empty`, `to_string`, `contains`, `starts_with`, `ends_with` and `trim`. The Nova compiler does not implement generics, traits or closures yet; expression/statement macros expand by AST substitution. Also missing: real async scheduling or channels, generics/traits/closures and registry publishing.
+- `String` supports `len`, `is_empty`, `to_string`, `contains`, `starts_with`, `ends_with` and `trim`. Explicit generic functions with one type parameter are monomorphized at build time (`fn id<T>(x: T) -> T` called as `id<Int>(7)`); generic structs, generic methods, traits and closures are not implemented yet. Expression/statement macros expand by AST substitution. Also missing: real async scheduling or channels and registry publishing.
 - User modules are loaded with `import "file.nova"`, optionally aliased with `as` for qualified calls and type names. The merged namespace is flat, cycle-checked, and has no package registry.
 - Unsigned macOS/Windows installers and a macOS CLI archive are published; there are no signed/notarized builds, Intel/Linux installers, Windows CLI bundle or package registry.
 - The VS Code extension is a local, unsigned VSIX; it is not published to the VS Code Marketplace or Open VSX and has no automated Extension Host test.

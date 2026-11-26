@@ -25,8 +25,9 @@ interpolation lowers end-to-end (`COMP-01.05`), and `nova check` accepts the
 tool's own source; all 27 golden invalid programs match the recorded reference diagnostics.
 Registry Box imports resolve through the fetch cache and Box.lock. `nova test`
 discovers `@test` functions and compiles each into its own process; `nova repl`
-is a native compile-run REPL. Remaining work is language parity:
-generics/traits/closures (`COMP-01.04`), fuller sema and a Nova wasm backend.
+is a native compile-run REPL. Remaining work is language parity: generic structs/methods, traits and closures
+(`COMP-01.04`), fuller sema and a Nova wasm backend. Explicit single-parameter
+generic functions are monomorphized and covered by `cli.sh`.
 
 ## Last verified behavior
 

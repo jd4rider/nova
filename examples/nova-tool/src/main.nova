@@ -581,7 +581,7 @@ fn nt_check_project() -> Int {
         println("error: " + expanded.error)
         return 1
     }
-    let diags = sa_check(expanded.text)
+    let diags = sa_check(nt_monomorphize(expanded.text))
     if diags.len() == 0 {
         println("Checked " + entry + ": no errors")
         return 0
@@ -604,8 +604,127 @@ fn nt_shell_quote(text: String) -> String {
     return out + "'"
 }
 
+fn nt_brace_delta(line: String) -> Int {
+    var depth = 0
+    for c in line.chars() {
+        if c == "{" {
+            depth = depth + 1
+        } else if c == "}" {
+            depth = depth - 1
+        }
+    }
+    return depth
+}
+
+// Explicit generic function calls (`id<Int>(7)`) are monomorphized before sema
+// and codegen. This is intentionally a narrow, textual slice: one type
+// parameter, simple type names and no generic structs/methods yet.
+fn nt_monomorphize(source: String) -> String {
+    let lines = source.split("\n")
+    var names: List<String> = []
+    var params: List<String> = []
+    var blocks: List<String> = []
+    var skip: List<Bool> = []
+    var i = 0
+    while i < lines.len() {
+        skip.push(false)
+        i = i + 1
+    }
+    i = 0
+    while i < lines.len() {
+        let trimmed = lines[i].trim()
+        let head = if trimmed.starts_with("fn ") { trimmed.replace("fn ", "").split("(")[0].trim() } else { "" }
+        if head.contains("<") && head.contains(">") {
+            let name = head.split("<")[0].trim()
+            let inside = head.split("<")[1].split(">")[0].trim()
+            if name.len() > 0 && inside.len() > 0 && !inside.contains(",") {
+                var depth = 0
+                var block = ""
+                var j = i
+                var done = false
+                var saw = false
+                while j < lines.len() && !done {
+                    block = block + lines[j] + "\n"
+                    depth = depth + nt_brace_delta(lines[j])
+                    if lines[j].contains("{") {
+                        saw = true
+                    }
+                    skip[j] = true
+                    if saw && depth <= 0 {
+                        done = true
+                    }
+                    j = j + 1
+                }
+                names.push(name)
+                params.push(inside)
+                blocks.push(block)
+                i = j
+            } else {
+                i = i + 1
+            }
+        } else {
+            i = i + 1
+        }
+    }
+    var insts: List<String> = []
+    var n = 0
+    while n < names.len() {
+        var li = 0
+        while li < lines.len() {
+            if !skip[li] {
+                let marker = names[n] + "<"
+                if lines[li].contains(marker) {
+                    let after = lines[li].split(marker)[1]
+                    let ty = after.split(">")[0].trim()
+                    if ty.len() > 0 {
+                        var found = false
+                        for existing in insts {
+                            if existing == names[n] + "|" + ty {
+                                found = true
+                            }
+                        }
+                        if !found {
+                            insts.push(names[n] + "|" + ty)
+                        }
+                    }
+                }
+            }
+            li = li + 1
+        }
+        n = n + 1
+    }
+    var out = ""
+    i = 0
+    while i < lines.len() {
+        if !skip[i] {
+            var line = lines[i]
+            for inst in insts {
+                let parts = inst.split("|")
+                line = line.replace(parts[0] + "<" + parts[1] + ">", parts[0] + "__" + parts[1])
+            }
+            out = out + line + "\n"
+        }
+        i = i + 1
+    }
+    n = 0
+    while n < names.len() {
+        for inst in insts {
+            let parts = inst.split("|")
+            if parts[0] == names[n] {
+                var block = blocks[n]
+                block = block.replace("<" + params[n] + ">", "")
+                block = block.replace("fn " + names[n], "fn " + names[n] + "__" + parts[1])
+                block = block.replace(params[n], parts[1])
+                out = out + block + "\n"
+            }
+        }
+        n = n + 1
+    }
+    return out
+}
+
 fn nt_build_source(path: String, source: String, target: String) -> Int {
-    let result = cg_compile(source)
+    let result = cg_compile(nt_monomorphize(source))
     if result.error.len() > 0 {
         println("error: " + result.error)
         return 1

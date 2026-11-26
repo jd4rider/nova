@@ -93,6 +93,20 @@ printf '@test\nfn fails() {\n    assert(false)\n}\n' > "$tmp/project/tests/faili
 status=0
 (cd "$tmp/project" && NOVA_TOOL_RUNTIME="$root/runtime/runtime.c" "$tool" test >"$tmp/testfail.out" 2>&1) || status=$?
 [ "$status" -ne 0 ] && grep -q "1 failed" "$tmp/testfail.out" && ok || no "failing test reported ($(cat "$tmp/testfail.out"))"
+printf 'fn id<T>(x: T) -> T {\n    return x\n}\n\nfn main() {\n    println(id<Int>(7))\n}\n' > "$tmp/generic.nova"
+if "$tool" build "$tmp/generic.nova" "$tmp/generic" >"$tmp/generic.out" 2>&1; then
+    ok
+else
+    no "generic function build"
+    cat "$tmp/generic.out"
+fi
+if [ -x "$tmp/generic" ]; then
+    code=0
+    generic_out=$("$tmp/generic") || code=$?
+    [ "$code" -eq 0 ] && [ "$generic_out" = "7" ] && ok || no "generic function output (got $code: $generic_out)"
+else
+    no "generic build produced no executable"
+fi
 repl_out=$(printf '1 + 2\n:quit\n' | (cd "$tmp/project" && NOVA_TOOL_RUNTIME="$root/runtime/runtime.c" "$tool" repl 2>&1))
 echo "$repl_out" | grep -q "3" && ok || no "REPL expression output ($repl_out)"
 

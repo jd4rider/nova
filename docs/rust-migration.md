@@ -42,8 +42,9 @@ Nova is now measured against those recordings, not against a live Rust binary.
 
 ## Remaining language gaps
 
-Removal does not complete language parity. The Nova compiler still lacks
-generics/traits/closures and full sema parity (`COMP-01.04`), and the browser
+Removal does not complete language parity. The Nova compiler now monomorphizes
+explicit single-parameter generic functions, but generic structs/methods,
+traits, closures and full sema parity remain (`COMP-01.04`). The browser
 playground uses checked-in wasm artifacts until a Nova wasm backend exists
 (phase 5). These are tracked in `engineering/continuation/PARITY.md` and
 `TASKS.md`; no Rust dependency is required to close them.

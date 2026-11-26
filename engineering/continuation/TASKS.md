@@ -28,7 +28,11 @@ and integration gate pass. The full matrix is `PARITY.md`.
   22/0 (extensionless + transitive three-file program exits 8; path dep exits
   42; four diagnostics). Registry-only Box imports resolve through
   `nt_registry_module` from the fetch cache and `Box.lock`.
-- COMP-01.04 — Generics, methods, traits, closures: **TODO**.
+- COMP-01.04 — Generics, methods, traits, closures: **PARTIAL**. Explicit
+  single-parameter generic functions (`fn id<T>(x: T) -> T` called as
+  `id<Int>(7)`) are monomorphized before sema/codegen and covered by
+  `tests/cli.sh`. Generic structs, generic methods, inference without an
+  explicit type argument, traits and closures remain TODO.
 - COMP-01.05 — Lexer parity, comments/interpolation/recovery: **PARTIAL**.
   String interpolation is lowered end-to-end: the parser splits literal and
   `${expr}` parts (nested braces, quoted strings and escapes handled), sema
