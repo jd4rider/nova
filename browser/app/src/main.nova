@@ -2911,7 +2911,23 @@ fn tooltip_text(target: Int) -> String {
     return ""
 }
 
-fn draw_tooltip(theme: Chrome, tooltip: Tooltip) {
+// NOVA_BROWSER_TOOLTIP_CHECK=<target> forces a tip at the right edge, where
+// the toolbar's last controls sit, so a test can check a box that crosses the
+// page edge without a mouse.
+fn checked_tooltip(session: Session) -> Tooltip {
+    let target = library.number_of(gui.env("NOVA_BROWSER_TOOLTIP_CHECK"))
+    if target > 0 {
+        let text = tooltip_text(target)
+        if text.len() > 0 {
+            // Start just above the page edge so the box genuinely crosses it,
+            // the way a tip on the last toolbar control does.
+            return Tooltip { text: text, x: gui.width() - 24, y: chrome_height(session.vertical) - 12 }
+        }
+    }
+    return Tooltip { text: "", x: 0, y: 0 }
+}
+
+fn draw_tooltip(theme: Chrome, tooltip: Tooltip, vertical: Bool) {
     if tooltip.text.len() == 0 {
         return
     }
@@ -2924,9 +2940,16 @@ fn draw_tooltip(theme: Chrome, tooltip: Tooltip) {
     if y + 26 > gui.height() - 8 {
         y = tooltip.y - 32
     }
+    // The page is a native view above this framebuffer. A tip below the chrome
+    // is painted under it -- that is what hid the tips on the right-hand
+    // controls. The host copies this box above the page instead.
+    gui.overlay(x, y, width, 26, false)
     gui.round_rect(x, y, width, 26, 7, theme.bg_hard)
     gui.stroke(x, y, width, 26, theme.border_strong)
     gui.text(x + 10, y + 6, tooltip.text, 11, theme.fg_bright)
+    if gui.env("NOVA_BROWSER_TOOLTIP_CHECK").len() > 0 {
+        println("tooltip: text=${tooltip.text} x=${x} y=${y} w=${width} h=26 window=${gui.width()} page_top=${chrome_height(vertical)} crosses=${flag(y + 26 > chrome_height(vertical))} overlay=1")
+    }
 }
 
 fn draw_toolbar(handle: Int, theme: Chrome, address: Address, session: Session, fx: Fx, store: Store, downloads: Downloads) {
@@ -3365,7 +3388,7 @@ fn draw_chrome(handle: Int, theme: Chrome, address: Address, session: Session, s
     draw_suggestions(theme, address, session, suggestions, fx)
     draw_reader_panel(theme, store, reader_open, fetching, received, hover)
     draw_notice(theme, session, notice)
-    draw_tooltip(theme, tooltip)
+    draw_tooltip(theme, tooltip, session.vertical)
     ax_chrome(handle, session, address, suggestions, downloads, store)
     ax_reader(store, reader_open)
 }
@@ -4903,7 +4926,7 @@ fn auto_close(session: Session, theme: Chrome, address: Address, store: Store) {
         println("voice: start=${started.text} bytes=${file_bytes(voice_model_path())} ready=${flag(speech.kokoro_ready())} path=${voice_model_path()} note=${result.text}")
     }
     gui.begin()
-    draw_chrome(handle, theme, address, session, suggestions, fx_new(), notice_idle(), store, 0 - 1, downloads_view(store), Tooltip { text: "", x: 0, y: 0 }, rail_open, panel_open, false, 0)
+    draw_chrome(handle, theme, address, session, suggestions, fx_new(), notice_idle(), store, 0 - 1, downloads_view(store), checked_tooltip(session), rail_open, panel_open, false, 0)
     gui.present()
     settle(24)
     let target = gui.env("NOVA_BROWSER_SNAPSHOT")
@@ -5606,6 +5629,10 @@ fn main() {
             if text.len() > 0 {
                 tooltip = Tooltip { text: text, x: pointer_x, y: pointer_y }
             }
+        }
+        let checked = checked_tooltip(session)
+        if checked.text.len() > 0 {
+            tooltip = checked
         }
         let tip_visible = tooltip.text.len() > 0
         let progress = engine.page_progress(handle)

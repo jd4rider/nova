@@ -1119,6 +1119,32 @@ app calls `LSRegisterURL` + `LSSetDefaultHandlerForURLScheme`. The *system*
 default is not changed by any test or by this session; the owner has not asked
 for that switch, so only the reporting path is evidenced (`state=0`).
 
+## 0.9.4 — tooltips over the page
+
+The chrome is the window's content view and each `WKWebView` is its subview, so
+the framebuffer stops at the page edge. A tooltip drawn below the chrome's
+height was behind the page — which is why the controls at the right of the
+toolbar had no visible tips.
+
+`draw_tooltip` now registers its rectangle with `gui.overlay`, the same path the
+autocomplete list and the reader panel use: the host copies those pixels into a
+view above the page, hit-tests outside them to nil, and re-enters input only for
+rectangles that ask for it (the tip does not).
+
+`browser/tests/tooltip.sh` (8/8, exit 0) runs the app with
+`NOVA_BROWSER_TOOLTIP_CHECK=9` (the Downloads control), which places a tip at
+the right edge with the page edge inside the box. The app reports:
+
+`tooltip: text=Downloads x=1094 y=124 w=78 h=26 window=1180 page_top=118
+crosses=1 overlay=1`
+
+and the host trace prints `overlay rects=1 top=1`. The test also checks the box
+stays inside the window. `traffic.sh` 15/15, `reader.sh` and `address.sh` (0
+failures) confirm the overlay still carries the reader panel and the chrome.
+
+Not evidenced: a hand-driven hover — there is no mouse injection here. The forced
+tip takes the same `draw_tooltip` path a real hover does.
+
 ## Not yet evidenced
 
 - hosted CI run of the browser address/lifecycle steps;

@@ -201,6 +201,13 @@ Each task needs a reproducible acceptance check before it is marked done.
   `gui.begin_window_drag`). The old host strip grabbed the top 35 px, which was
   both small and in the way of the tabs. `NOVA_BROWSER_DRAG_CHECK` reports the
   decision for eight probe points per layout in `traffic.sh`.
+- **WB-03.010 — Tooltips above the page.** DONE in 0.9.4. The page is a native
+  subview above the chrome framebuffer, so tips near the page edge were painted
+  under it; the controls at the right of the toolbar showed none. `draw_tooltip`
+  registers its box with the overlay already used by the suggestion list and
+  the reader panel. Evidence: `browser/tests/tooltip.sh` forces a tip that
+  crosses the page edge and requires `overlay=1`, `crosses=1`, an in-window box
+  and the host's `overlay rects` / `top=1` trace.
 
 ## Compiler / library blockers
 
