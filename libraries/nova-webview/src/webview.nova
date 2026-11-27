@@ -217,3 +217,13 @@ fn wv_download_reveal(ident: Int) -> Bool {
 fn wv_download_clear_finished() {
     nova_webview_download_clear_finished()
 }
+
+extern "C" fn nova_webview_apply_blocklist(rules: String) -> Int
+fn wv_blocklist(rules: String) -> Int {
+    return nova_webview_apply_blocklist(rules)
+}
+
+extern "C" fn nova_webview_icon_url(handle: Int) -> String
+fn wv_icon_url(handle: Int) -> String {
+    return nova_webview_icon_url(handle)
+}

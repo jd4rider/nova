@@ -723,6 +723,48 @@ fn scan_chrome_bookmarks(text: String) -> List<String> {
 
 // Reads a Chrome "Bookmarks" profile file. Only http(s) entries are imported:
 // chrome:// rules and javascript: bookmarks are not navigable here.
+// The text after the next colon that opens a JSON string. Safari's plist, after
+// `plutil -convert json`, is one dict per bookmark; only the leaves matter.
+fn json_string_after(text: String) -> String {
+    let chars = text.chars()
+    var i = 0
+    while i < chars.len() && chars[i] != ":" {
+        i = i + 1
+    }
+    while i < chars.len() && chars[i] != "\"" {
+        i = i + 1
+    }
+    if i >= chars.len() {
+        return ""
+    }
+    return chrome_string(chars, i).0
+}
+
+// Safari stores each leaf as URIDictionary (with `title`) followed by
+// `URLString`, so splitting on the key keeps the walk linear and the title with
+// its URL. Only http(s) leaves are imported, like Chrome's.
+fn import_safari_bookmarks(text: String) -> List<String> {
+    var out: List<String> = []
+    if text.len() == 0 {
+        return out
+    }
+    let segments = text.split("\"URLString\"")
+    var i = 1
+    while i < segments.len() {
+        let url = json_string_after(segments[i]).trim()
+        var title = ""
+        let named = segments[i].split("\"title\"")
+        if named.len() > 1 {
+            title = json_string_after(named[named.len() - 1]).trim()
+        }
+        if allowed_url(url) && !seen_key(out, url) {
+            out.push(record("bookmark", url, if title.len() > 0 { title } else { url }))
+        }
+        i = i + 1
+    }
+    return dedupe_bookmarks(out)
+}
+
 fn import_chrome(text: String) -> List<String> {
     return scan_chrome_bookmarks(text)
 }

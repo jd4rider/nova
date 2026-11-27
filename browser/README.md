@@ -96,6 +96,7 @@ blinking caret, and the loading bar follows WebKit's own estimate.
 | Cmd+L | focus the address field |
 | Cmd+R | reload |
 | Cmd+D | bookmark the current page |
+| Cmd+Opt+B | open or close the bookmarks panel |
 | Cmd+Shift+I | import Google Chrome bookmarks |
 | Cmd+Shift+E | tabs: top → sidebar → rail → top |
 | Cmd+Shift+L | read the page aloud, or stop reading |
@@ -257,6 +258,11 @@ record what Chrome has (name from whichever `_locales` locale is installed,
 version, enabled state), but WebKit loads Safari web extensions and cannot load
 a Chrome `.crx` package.
 
+Safari is read too: `--import ~/Library/Safari` (and the no-argument scan when
+the folder is readable) converts `Bookmarks.plist` through `plutil` and queries
+`History.db` with sqlite3. macOS may deny those files without Full Disk Access;
+an unreadable file imports nothing rather than reporting a guess.
+
 Not imported: passwords, cookies, site permissions, open tabs (the last session
 is not read) or themes. Completed downloads come over when the file still exists
 on disk. Passwords in particular stay in Chrome's Keychain-backed store; Nova
@@ -286,6 +292,13 @@ reports `state=0` rather than pretending; the commands only mean something for
 the installed app. This ad-hoc signed build is not notarized, so macOS may still
 show a confirmation for a link opened from another app.
 
+## Bookmarks
+
+The list button in the toolbar opens the bookmarks panel, and Cmd+Opt+B does the
+same. Newest first, twelve rows with each URL under its name; a press opens the
+page in the active tab, Escape or a press outside closes the panel. Cmd+D still
+saves or removes the current page.
+
 ## Downloads
 
 WebKit hands attachment responses to a `WKDownloadDelegate`; Nova polls that
@@ -314,10 +327,22 @@ recorded file that was moved or deleted reports that it is gone instead of
 opening an empty Finder window. A Clear control in the shelf header forgets the
 finished rows and the record together.
 
+## Content blocking
+
+WebKit compiles the rules itself with `WKContentRuleList`; there is no extension
+and no background process. A small list ships built in (DoubleClick, Google Tag
+Manager and Analytics, Facebook, ScorecardResearch), and
+`NOVA_BROWSER_BLOCKLIST=<path>` replaces it with any JSON rule list.
+`browser/tests/blocklist.sh` serves a page whose `/tracker.js` is blocked and
+checks the script never ran.
+
 ## Favicons
 
-Each tab draws the site's `/favicon.ico`, fetched once per host with `curl` into
-`favicons/` under the profile and painted with a new `gui.image` host primitive.
+Each tab draws the icon the page declares with `<link rel="icon">` (or an
+apple-touch-icon), falling back to `/favicon.ico` when it declares none. The
+bytes are fetched once per host with `curl` into `favicons/` under the profile and
+painted with a new `gui.image` host primitive; a sidecar records which URL was
+used so a declared icon replaces an earlier guess.
 Sites without one get a letter tile. The fetch is skipped with
 `NOVA_BROWSER_NO_FAVICONS=1`. `browser/tests/favicons.sh` serves a real PNG over
 loopback and requires the cached bytes to match it.

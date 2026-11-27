@@ -282,6 +282,11 @@ static void nova_webview_install_key_monitor(void) {
         /* Bookmark, tab layout and Google import are chrome commands too, so
          * they have to be queued while the page owns focus. Only the exact
          * chords are taken; Cmd+D/E/I without Shift stay with the page. */
+        if ([key isEqualToString:@"b"] && (event.modifierFlags & NSEventModifierFlagOption)) {
+            nova_pending_shortcut = 98;
+            nova_pending_mods = 1 | 4;
+            return nil;
+        }
         if ([key isEqualToString:@"d"]) {
             nova_pending_shortcut = 100;
             nova_pending_mods = 1;
@@ -466,6 +471,81 @@ decisionHandler:(void (^)(WKNavigationResponsePolicy))decisionHandler {
 
 @end
 
+/* A page can name its icon with <link rel="icon">; the app prefers that over
+ * guessing /favicon.ico. The message carries the absolute href. */
+static NSMutableDictionary<NSNumber *, NSString *> *nova_icon_urls = nil;
+
+@interface NovaIconSink : NSObject <WKScriptMessageHandler>
+@end
+
+@implementation NovaIconSink
+- (void)userContentController:(WKUserContentController *)controller
+      didReceiveScriptMessage:(WKScriptMessage *)message {
+    (void)controller;
+    NSDictionary *body = [message.body isKindOfClass:[NSDictionary class]] ? message.body : nil;
+    NSString *href = body[@"href"];
+    if (![href isKindOfClass:[NSString class]] || href.length == 0) return;
+    for (NSNumber *key in nova_webviews) {
+        NovaWebViewEntry *entry = nova_webviews[key];
+        if (entry.webView != message.webView) continue;
+        if (!nova_icon_urls) nova_icon_urls = [NSMutableDictionary dictionary];
+        nova_icon_urls[key] = href;
+        return;
+    }
+}
+
+@end
+
+static NSString *nova_icon_script(void) {
+    return @"(function(){"
+           "function post(){"
+           "var l=document.querySelector(\"link[rel~='icon'],link[rel='apple-touch-icon']\");"
+           "if(l&&l.href)window.webkit.messageHandlers.novaIcon.postMessage({href:l.href});"
+           "}"
+           "if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',post);else post();"
+           "})();";
+}
+
+@interface NovaBlockList : NSObject
+@end
+
+@implementation NovaBlockList
+@end
+
+static WKContentRuleList *nova_content_rules = nil;
+
+/* Compiles the JSON rules once and applies them to every live tab. WebKit
+ * caches a compiled list by identifier, so relaunches are cheap. */
+int64_t nova_webview_apply_blocklist(nova_str rules) {
+    if (![NSThread isMainThread]) return 0;
+    NSString *text = nova_webview_string(rules);
+    if (text.length == 0) return 0;
+    __block BOOL done = NO;
+    __block WKContentRuleList *compiled = nil;
+    [[WKContentRuleListStore defaultStore]
+        compileContentRuleListForIdentifier:@"nova-blocklist"
+                     encodedContentRuleList:text
+                          completionHandler:^(WKContentRuleList *list, NSError *error) {
+        (void)error;
+        compiled = list;
+        done = YES;
+    }];
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:5.0];
+    while (!done && [deadline timeIntervalSinceNow] > 0) {
+        [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode
+                                 beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+    }
+    if (!compiled) return 0;
+    nova_content_rules = compiled;
+    if (nova_webviews) {
+        for (NSNumber *key in nova_webviews) {
+            [nova_webviews[key].webView.configuration.userContentController
+                addContentRuleList:compiled];
+        }
+    }
+    return 1;
+}
+
 /* Creates a WKWebView. parent_handle is a NovaGuiView pointer from
  * nova_gui_native_view(); 0 creates an offscreen host for tests. Coordinates
  * are Nova points from the top-left; AppKit uses a bottom-left origin. */
@@ -495,6 +575,11 @@ int64_t nova_webview_create(int64_t parent_handle, int64_t x, int64_t y,
         [userContent addUserScript:[[WKUserScript alloc] initWithSource:nova_blob_script()
                                                            injectionTime:WKUserScriptInjectionTimeAtDocumentStart
                                                         forMainFrameOnly:YES]];
+        [userContent addScriptMessageHandler:[[NovaIconSink alloc] init] name:@"novaIcon"];
+        [userContent addUserScript:[[WKUserScript alloc] initWithSource:nova_icon_script()
+                                                           injectionTime:WKUserScriptInjectionTimeAtDocumentStart
+                                                        forMainFrameOnly:YES]];
+        if (nova_content_rules) [userContent addContentRuleList:nova_content_rules];
         WKWebView *web = [[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, width, height)
                                           configuration:configuration];
         if (!web) return 0;
@@ -932,4 +1017,10 @@ int64_t nova_webview_snapshot(int64_t handle, nova_str path) {
         NSString *target = nova_webview_string(path);
         return [png writeToFile:target atomically:YES] ? 1 : 0;
     }
+}
+
+/* The icon href the page announced for this tab, or "" when it announced none. */
+nova_str nova_webview_icon_url(int64_t handle) {
+    NSString *href = nova_icon_urls ? nova_icon_urls[@(handle)] : nil;
+    return nova_webview_copy(href);
 }

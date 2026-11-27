@@ -86,6 +86,7 @@ struct Store {
     startup_urls: List<String>,
     homepage: String,
     downloads_open: Bool,
+    bookmarks_open: Bool,
     downloads_path: String,
     download_history: List<String>,
     dirty_downloads: Bool,
@@ -129,6 +130,7 @@ struct Toolbar {
     voice: Int,
     star: Int,
     downloads: Int,
+    bookmarks: Int,
     docs: Int,
     layout: Int,
     label: Int,
@@ -835,7 +837,8 @@ fn toolbar_metrics(vertical: Bool) -> Toolbar {
     let label = gui.width() - 12 - gui.mono_width("WEBKIT", 10)
     let layout_x = label - 38
     let docs_x = layout_x - 38
-    let downloads_x = docs_x - 38
+    let bookmarks_x = docs_x - 38
+    let downloads_x = bookmarks_x - 38
     let star_x = downloads_x - 38
     // Reading a page aloud sits next to the bookmark, on the same 8 px grid.
     let voice_x = star_x - 38
@@ -853,6 +856,7 @@ fn toolbar_metrics(vertical: Bool) -> Toolbar {
         voice: voice_x,
         star: star_x,
         downloads: downloads_x,
+        bookmarks: bookmarks_x,
         docs: docs_x,
         layout: layout_x,
         label: label,
@@ -1772,6 +1776,7 @@ fn load_store() -> Store {
         startup_urls: startup_urls,
         homepage: homepage,
         downloads_open: false,
+    bookmarks_open: false,
         downloads_path: downloads_path,
         download_history: download_history,
         dirty_downloads: false,
@@ -1849,7 +1854,7 @@ fn import_roots() -> List<String> {
 // use, which is how "Default", "Profile 1" and the like are told apart from
 // cache and extension folders.
 fn is_profile_dir(dir: String) -> Bool {
-    return gui.exists(dir + "/Bookmarks") || gui.exists(dir + "/History") || gui.exists(dir + "/Preferences")
+    return gui.exists(dir + "/Bookmarks") || gui.exists(dir + "/History") || gui.exists(dir + "/Preferences") || is_safari_profile(dir)
 }
 
 // The profile folders under one browser's user-data root. Arc keeps them one
@@ -1876,6 +1881,10 @@ fn profile_dirs_in(base: String) -> List<String> {
 
 fn chrome_profile_dirs() -> List<String> {
     var dirs: List<String> = []
+    let safari = gui.env("HOME") + "/Library/Safari"
+    if is_safari_profile(safari) {
+        dirs.push(safari)
+    }
     for root in import_roots() {
         let base = gui.env("HOME") + "/Library/Application Support/" + root
         if gui.is_dir(base) {
@@ -1966,7 +1975,7 @@ fn origin_of(url: String) -> String {
 
 // Fetches `/favicon.ico` once per host into the profile. A site without one
 // leaves no file, and the tab falls back to a letter tile.
-fn ensure_favicon(store: Store, url: String) {
+fn ensure_favicon(store: Store, url: String, icon: String) {
     if gui.env("NOVA_BROWSER_NO_FAVICONS") == "1" {
         return
     }
@@ -1975,9 +1984,14 @@ fn ensure_favicon(store: Store, url: String) {
     }
     let path = favicon_path(store, url)
     if gui.env("NOVA_BROWSER_FAVICON_TRACE") == "1" {
-        println("favicon: url=${url} path=${path} exists=${flag(gui.exists(path))}")
+        println("favicon: url=${url} icon=${icon} path=${path} exists=${flag(gui.exists(path))}")
     }
-    if path.len() == 0 || gui.exists(path) {
+    let marker = path + ".src"
+    var source = origin_of(url) + "/favicon.ico"
+    if icon.starts_with("http://") || icon.starts_with("https://") {
+        source = icon
+    }
+    if path.len() == 0 || (gui.exists(path) && gui.read(marker) == source) {
         return
     }
     let host = library.host_of(url)
@@ -1985,8 +1999,11 @@ fn ensure_favicon(store: Store, url: String) {
         return
     }
     gui.mkdir(sibling_path(store.bookmarks_path, "favicons"))
-    let command = "curl -sL --max-time 4 -o '" + path + "' '" + origin_of(url) + "/favicon.ico'"
+    let command = "curl -sL --max-time 4 -o '" + path + "' '" + source + "'"
     let output = gui.run(command, "/")
+    if gui.exists(path) {
+        gui.write(marker, source)
+    }
     if gui.env("NOVA_BROWSER_FAVICON_TRACE") == "1" {
         println("favicon: curl=${command} status=${gui.exit_status()} out=${output} exists=${flag(gui.exists(path))}")
     }
@@ -2145,7 +2162,52 @@ fn sibling_path(path: String, name: String) -> String {
     return out
 }
 
+// Safari keeps bookmarks in a binary plist and history in SQLite. `plutil`
+// converts the plist to the JSON the scanner reads; TCC may deny the file, in
+// which case nothing is imported and the report stays honest.
+fn is_safari_profile(dir: String) -> Bool {
+    return gui.exists(dir + "/Bookmarks.plist") || gui.exists(dir + "/History.db")
+}
+
+fn safari_capture(command: String, tag: String) -> String {
+    let path = "/tmp/nova-" + tag + "-${gui.now()}.txt"
+    gui.run(command + " > '" + path + "' 2>/dev/null", "/")
+    let text = gui.read(path)
+    gui.run("rm -f '" + path + "'", "/")
+    return text
+}
+
+fn import_safari_profile(dir: String) -> ProfileImport {
+    var marks: List<String> = []
+    if gui.exists(dir + "/Bookmarks.plist") {
+        let json = "/tmp/nova-safari-${gui.now()}.json"
+        gui.run("plutil -convert json -o '" + json + "' '" + dir + "/Bookmarks.plist'", "/")
+        marks = library.import_safari_bookmarks(gui.read(json))
+        gui.run("rm -f '" + json + "'", "/")
+    }
+    var history: List<String> = []
+    if gui.exists(dir + "/History.db") {
+        let query = "select i.url, ifnull(v.title, ''), v.visit_time from history_visits v join history_items i on i.id = v.history_item order by v.visit_time desc limit 4000"
+        let dump = safari_capture("sqlite3 -readonly -separator '\t' 'file:" + dir + "/History.db?immutable=1' \"" + query + "\"", "safari")
+        history = library.import_chrome_history(dump, 4000)
+    }
+    return ProfileImport {
+        profiles: 1,
+        bookmarks: marks,
+        history: history,
+        search: "",
+        startup: [],
+        startup_mode: 0,
+        homepage: "",
+        extensions: [],
+        downloads: [],
+    }
+}
+
 fn import_profile(dir: String) -> ProfileImport {
+    if is_safari_profile(dir) {
+        return import_safari_profile(dir)
+    }
     var marks: List<String> = []
     if gui.exists(dir + "/Bookmarks") {
         marks = import_file(dir + "/Bookmarks")
@@ -2542,6 +2604,13 @@ fn draw_sidebar_glyph(cx: Int, cy: Int, color: Int) {
 // 1 back, 2 forward, 3 reload, 4 stop, 5 star, 6 star filled, 7 download,
 // 8 help, 9 sidebar, 10 plus, 11 chevron right, 12 chevron left, 13 close,
 // 14 speaker.
+// Three rows: a list of saved pages, distinct from the layout's sidebar box.
+fn draw_bookmarks_glyph(cx: Int, cy: Int, color: Int) {
+    gui.rect(cx - 8, cy - 7, 16, 2, color)
+    gui.rect(cx - 8, cy - 2, 16, 2, color)
+    gui.rect(cx - 8, cy + 3, 16, 2, color)
+}
+
 fn draw_glyph(kind: Int, x: Int, y: Int, ink: Int) {
     let cx = x + 15
     let cy = y + 15
@@ -2573,6 +2642,8 @@ fn draw_glyph(kind: Int, x: Int, y: Int, ink: Int) {
         draw_close(cx, cy, ink)
     } else if kind == 14 {
         draw_speaker(cx, cy, ink)
+    } else if kind == 15 {
+        draw_bookmarks_glyph(cx, cy, ink)
     }
 }
 
@@ -3090,6 +3161,98 @@ fn download_clear_box(downloads: Downloads) -> Box {
     return Box { x: shelf.x + shelf.w - 96, y: shelf.y + 8, w: 58, h: 22 }
 }
 
+// ---------- bookmarks panel ----------
+
+// Twelve rows fit without a scroll view; the rest are counted at the bottom
+// instead of being silently dropped.
+fn bookmark_rows(store: Store) -> Int {
+    return smaller(store.bookmarks.len(), 12)
+}
+
+fn bookmarks_box(session: Session, store: Store) -> Box {
+    let rows = bookmark_rows(store)
+    var height = 58 + rows * 38
+    if rows == 0 {
+        height = 104
+    }
+    let w = 340
+    let x = gui.width() - w - 14
+    let y = chrome_height(session.vertical) + 8
+    if y + height > gui.height() - 14 {
+        height = gui.height() - y - 14
+    }
+    return Box { x: x, y: y, w: w, h: height }
+}
+
+fn bookmark_close_box(session: Session, store: Store) -> Box {
+    let panel = bookmarks_box(session, store)
+    return Box { x: panel.x + panel.w - 32, y: panel.y + 11, w: 22, h: 22 }
+}
+
+fn bookmark_row_box(session: Session, store: Store, index: Int) -> Box {
+    let panel = bookmarks_box(session, store)
+    return Box { x: panel.x + 8, y: panel.y + 44 + index * 38, w: panel.w - 16, h: 34 }
+}
+
+// add_bookmark appends, so newest first means reading the list backwards.
+fn bookmark_at(store: Store, index: Int) -> String {
+    let at = store.bookmarks.len() - 1 - index
+    if at < 0 || at >= store.bookmarks.len() {
+        return ""
+    }
+    return store.bookmarks[at]
+}
+
+fn bookmark_title(record: String) -> String {
+    let title = library.field(record, 2)
+    if title.len() > 0 {
+        return title
+    }
+    return library.field(record, 1)
+}
+
+fn draw_bookmarks(session: Session, theme: Chrome, store: Store, fx: Fx) {
+    if !store.bookmarks_open {
+        return
+    }
+    let panel = bookmarks_box(session, store)
+    gui.rect_alpha(panel.x + 3, panel.y + 6, panel.w, panel.h, 0, 80)
+    gui.round_rect(panel.x, panel.y, panel.w, panel.h, 12, theme.elevated)
+    gui.stroke(panel.x, panel.y, panel.w, panel.h, theme.border_strong)
+    gui.text(panel.x + 14, panel.y + 13, "Bookmarks", 13, theme.fg_bright)
+    gui.mono(panel.x + 14 + gui.text_width("Bookmarks", 13) + 8, panel.y + 15, "${store.bookmarks.len()}", 10, theme.faint)
+    let close = bookmark_close_box(session, store)
+    if slot(fx, 211) > 0 {
+        gui.round_rect(close.x, close.y, close.w, close.h, 5, blend(theme.elevated, theme.border_strong, slot(fx, 211)))
+    }
+    gui.text(close.x + 7, close.y + 3, "×", 12, theme.muted)
+    let rows = bookmark_rows(store)
+    if rows == 0 {
+        gui.text(panel.x + 14, panel.y + 50, "No bookmarks yet", 11, theme.muted)
+        gui.text(panel.x + 14, panel.y + 70, "Cmd+D bookmarks the page you are on", 10, theme.faint)
+        gui.overlay(panel.x, panel.y, panel.w, panel.h, true)
+        return
+    }
+    var i = 0
+    while i < rows {
+        let record = bookmark_at(store, i)
+        let row = bookmark_row_box(session, store, i)
+        let heat = slot(fx, 200 + i)
+        gui.round_rect(row.x, row.y, row.w, row.h, 8, blend(theme.elevated, theme.selection, heat))
+        gui.clip(row.x + 10, row.y + 2, row.w - 20, 20)
+        gui.text(row.x + 10, row.y + 4, bookmark_title(record), 11, theme.fg_bright)
+        gui.clip_reset()
+        gui.clip(row.x + 10, row.y + 19, row.w - 20, 14)
+        gui.text(row.x + 10, row.y + 19, library.field(record, 1), 9, theme.muted)
+        gui.clip_reset()
+        i = i + 1
+    }
+    if store.bookmarks.len() > rows {
+        gui.text(panel.x + 14, panel.y + panel.h - 18, "${store.bookmarks.len() - rows} more not shown", 10, theme.faint)
+    }
+    gui.overlay(panel.x, panel.y, panel.w, panel.h, true)
+}
+
 fn draw_downloads(theme: Chrome, store: Store, downloads: Downloads, fx: Fx) {
     if !store.downloads_open {
         return
@@ -3294,6 +3457,7 @@ fn draw_toolbar(handle: Int, theme: Chrome, address: Address, session: Session, 
         gui.round_rect(metrics.downloads + 21, y, 11, 11, 5, theme.orange)
         gui.text(metrics.downloads + 24, y - 1, "${running}", 8, theme.bg_hard)
     }
+    draw_icon_button(metrics.bookmarks, y + 2, 15, theme, slot(fx, 11), true, store.bookmarks_open)
     draw_icon_button(metrics.docs, y + 2, 8, theme, slot(fx, 6), true, false)
     draw_icon_button(metrics.layout, y + 2, 9, theme, slot(fx, 7), true, vertical)
 
@@ -3546,6 +3710,7 @@ fn ax_chrome(handle: Int, session: Session, address: Address, suggestions: List<
     gui.ax_button(metrics.voice, by, 30, 30, read_label)
     gui.ax_button(metrics.star, by, 30, 30, "Bookmark")
     gui.ax_button(metrics.downloads, by, 30, 30, "Downloads")
+    gui.ax_button(metrics.bookmarks, by, 30, 30, "Bookmarks")
     gui.ax_button(metrics.docs, by, 30, 30, "Nova docs")
     gui.ax_button(metrics.layout, by, 30, 30, "Tab layout")
     gui.ax_label(metrics.label, toolbar_y(vertical) + 10, gui.mono_width("WEBKIT", 10), 14, "Rendering engine: WebKit")
@@ -3566,7 +3731,24 @@ fn ax_chrome(handle: Int, session: Session, address: Address, suggestions: List<
     if store.downloads_open {
         ax_downloads(downloads, store)
     }
+    if store.bookmarks_open {
+        ax_bookmarks(session, store)
+    }
     ax_suggestions(address, session, suggestions)
+}
+
+fn ax_bookmarks(session: Session, store: Store) {
+    let panel = bookmarks_box(session, store)
+    gui.ax_label(panel.x + 14, panel.y + 12, 120, 18, "Bookmarks")
+    let close = bookmark_close_box(session, store)
+    gui.ax_button(close.x, close.y, close.w, close.h, "Close bookmarks")
+    var i = 0
+    while i < bookmark_rows(store) {
+        let record = bookmark_at(store, i)
+        let row = bookmark_row_box(session, store, i)
+        gui.ax_button(row.x, row.y, row.w, row.h, "Open " + bookmark_title(record))
+        i = i + 1
+    }
 }
 
 // The shelf draws its own rows, so its controls must be named here too: the
@@ -3682,6 +3864,7 @@ fn draw_chrome(handle: Int, theme: Chrome, address: Address, session: Session, s
         draw_failure(handle, theme, session, fx)
     }
     draw_downloads(theme, store, downloads, fx)
+    draw_bookmarks(session, theme, store, fx)
     draw_suggestions(theme, address, session, suggestions, fx)
     draw_reader_panel(theme, store, reader_open, fetching, received, hover)
     draw_notice(theme, session, notice)
@@ -3713,6 +3896,24 @@ fn cursor_for(handle: Int, hover: Int) -> Int {
 
 fn hover_target(x: Int, y: Int, session: Session, address: Address, suggestions: List<String>, downloads: Downloads, shelf_open: Bool, store: Store, reader_open: Bool) -> Int {
     let vertical = session.vertical
+    if store.bookmarks_open {
+        let panel = bookmarks_box(session, store)
+        if gui.inside(panel.x, panel.y, panel.w, panel.h, x, y) {
+            let close = bookmark_close_box(session, store)
+            if gui.inside(close.x, close.y, close.w, close.h, x, y) {
+                return 210
+            }
+            var i = 0
+            while i < bookmark_rows(store) {
+                let row = bookmark_row_box(session, store, i)
+                if gui.inside(row.x, row.y, row.w, row.h, x, y) {
+                    return 200 + i
+                }
+                i = i + 1
+            }
+            return 0
+        }
+    }
     if reader_open {
         let panel = reader_panel_box(store)
         if gui.inside(panel.x, panel.y, panel.w, panel.h, x, y) {
@@ -3826,7 +4027,10 @@ fn hover_target(x: Int, y: Int, session: Session, address: Address, suggestions:
         if gui.inside(metrics.star, by, 30, 30, x, y) {
             return 5
         }
-        if gui.inside(metrics.docs, by, 30, 30, x, y) {
+        if gui.inside(metrics.bookmarks, by, 30, 30, x, y) {
+        return 13
+    }
+    if gui.inside(metrics.docs, by, 30, 30, x, y) {
             return 6
         }
     if gui.inside(metrics.layout, by, 30, 30, x, y) {
@@ -4025,6 +4229,36 @@ fn handle_click(handle: Int, x: Int, y: Int, clicks: Int, current: Address, sess
                     }
                     return click_reader(session, current, store, notice, 1, 1)
                 }
+            }
+            return click_action(session, current, store, notice)
+        }
+    }
+
+    // The bookmarks panel floats over the page, so its rows take presses first.
+    if store.bookmarks_open {
+        let panel = bookmarks_box(session, store)
+        if gui.inside(panel.x, panel.y, panel.w, panel.h, x, y) {
+            let close = bookmark_close_box(session, store)
+            if gui.inside(close.x, close.y, close.w, close.h, x, y) {
+                var closed = store
+                closed.bookmarks_open = false
+                return click_action(session, current, closed, notice)
+            }
+            var i = 0
+            while i < bookmark_rows(store) {
+                let row = bookmark_row_box(session, store, i)
+                if gui.inside(row.x, row.y, row.w, row.h, x, y) {
+                    let record = bookmark_at(store, i)
+                    var next = store
+                    next.bookmarks_open = false
+                    engine.navigate(handle, library.field(record, 1))
+                    engine.focus_page(handle)
+                    return click_action(session, address_idle(), next, Notice {
+                        text: "Opened " + bookmark_title(record),
+                        until: gui.now() + 2200,
+                    })
+                }
+                i = i + 1
             }
             return click_action(session, current, store, notice)
         }
@@ -4299,6 +4533,11 @@ fn handle_click(handle: Int, x: Int, y: Int, clicks: Int, current: Address, sess
     if gui.inside(metrics.downloads, by, 30, 30, x, y) {
         var opened = store
         opened.downloads_open = !store.downloads_open
+        return click_action(session, next_address, opened, notice)
+    }
+    if gui.inside(metrics.bookmarks, by, 30, 30, x, y) {
+        var opened = store
+        opened.bookmarks_open = !store.bookmarks_open
         return click_action(session, next_address, opened, notice)
     }
     if gui.inside(metrics.docs, by, 30, 30, x, y) {
@@ -4979,6 +5218,15 @@ fn handle_key(handle: Int, code: Int, mods: Int, current: Address, session: Sess
         engine.focus_page(handle)
         return key_action(session, address_idle(), store, Notice { text: "Home: " + store.homepage, until: gui.now() + 2600 }, false)
     }
+    if command && option && code == 98 {
+        var marked = store
+        marked.bookmarks_open = !store.bookmarks_open
+        return key_action(session, current, marked, Notice {
+            text: if marked.bookmarks_open { "Bookmarks" } else { "" },
+            until: gui.now() + 1200,
+        }, false)
+    }
+
     if command && code == 100 {
         let toggled = toggle_bookmark(handle, store)
         return key_action(session, current, toggled.store, Notice {
@@ -5099,6 +5347,11 @@ fn handle_key(handle: Int, code: Int, mods: Int, current: Address, session: Sess
         return key_action(session, current, store, notice_idle(), false)
     }
     if code == gui.key_escape() {
+        if store.bookmarks_open {
+            var closed = store
+            closed.bookmarks_open = false
+            return key_action(session, current, closed, notice_idle(), false)
+        }
         if reader_open {
             // Escape dismisses the reader panel before it closes the window.
             return key_reader(session, current, store, notice_idle(), 0 - 1, false)
@@ -5153,11 +5406,23 @@ fn auto_close(session: Session, theme: Chrome, address: Address, store: Store) {
     speech.use_engine(stored_engine(store))
     // A headless run starts at the URL it was given, the same one the window
     // would open.
+    let compiled_rules = engine.blocklist(blocklist_rules())
     let initial = gui.env("NOVA_BROWSER_URL")
     if initial.len() > 0 {
         engine.navigate(handle, initial)
     }
     let final_state = engine.wait(handle, 8000)
+    ensure_favicon(store, engine.page_url(handle), engine.icon_url(handle))
+    if gui.env("NOVA_BROWSER_BLOCK_CHECK") == "1" {
+        let tracker = engine.run_js(handle, "typeof window.__novaTracker")
+        println("block: compiled=${compiled_rules} tracker=${tracker}")
+    }
+    if gui.env("NOVA_BROWSER_BOOKMARKS_OPEN") == "1" {
+        var opened = store
+        opened.bookmarks_open = true
+        let panel = bookmarks_box(session, opened)
+        println("bookmarks: open=1 rows=${bookmark_rows(store)} first=${bookmark_title(bookmark_at(store, 0))} panel=${panel.w}x${panel.h}")
+    }
     sync_visibility(session)
     // Headless blob-download check: the page builds a Blob, clicks a download
     // link, and the host must yield the same bytes plus a finished shelf row.
@@ -5247,7 +5512,7 @@ fn auto_close(session: Session, theme: Chrome, address: Address, store: Store) {
         println("voice: start=${started.text} bytes=${file_bytes(voice_model_path())} ready=${flag(speech.kokoro_ready())} path=${voice_model_path()} note=${result.text}")
     }
     gui.begin()
-    ensure_favicon(store, engine.page_url(handle))
+    ensure_favicon(store, engine.page_url(handle), engine.icon_url(handle))
     draw_chrome(handle, theme, address, session, suggestions, fx_new(), notice_idle(), store, 0 - 1, downloads_view(store), checked_tooltip(session), rail_open, panel_open, false, 0)
     gui.present()
     settle(24)
@@ -5574,6 +5839,16 @@ fn bench_run(session: Session, theme: Chrome, address: Address, store: Store) {
     println("bench: frames=${frames} avg=${total / frames}ms worst=${worst}ms fx_step_2000=${fx_ms}ms stack=${gui.stack_peak() / 1024}KB/${gui.stack_span() / 1024}KB")
 }
 
+// A small built-in list, plus whatever NOVA_BROWSER_BLOCKLIST names. WebKit
+// compiles the JSON as a WKContentRuleList and applies it to every tab.
+fn blocklist_rules() -> String {
+    let path = gui.env("NOVA_BROWSER_BLOCKLIST")
+    if path.len() > 0 && gui.exists(path) {
+        return gui.read(path)
+    }
+    return "[{\"trigger\":{\"url-filter\":\"doubleclick\"},\"action\":{\"type\":\"block\"}},{\"trigger\":{\"url-filter\":\"googletagmanager\"},\"action\":{\"type\":\"block\"}},{\"trigger\":{\"url-filter\":\"google-analytics\"},\"action\":{\"type\":\"block\"}},{\"trigger\":{\"url-filter\":\"scorecardresearch\"},\"action\":{\"type\":\"block\"}},{\"trigger\":{\"url-filter\":\"facebook.net\"},\"action\":{\"type\":\"block\"}}]"
+}
+
 fn main() {
     if gui.args_count() >= 2 {
         let argument = gui.arg(1)
@@ -5605,6 +5880,7 @@ fn main() {
     }
 
     var store = load_store()
+    engine.blocklist(blocklist_rules())
     // Test hook: open the shelf before the first frame so its accessibility
     // elements can be inspected without a live download.
     if gui.env("NOVA_BROWSER_DOWNLOADS_OPEN") == "1" {
@@ -5686,7 +5962,7 @@ fn main() {
     }
 
     if gui.env("NOVA_BROWSER_AUTOCLOSE") == "1" {
-        ensure_favicon(store, engine.page_url(active_handle(session)))
+        ensure_favicon(store, engine.page_url(active_handle(session)), engine.icon_url(active_handle(session)))
         auto_close(session, theme, address, store)
         destroy_session(session)
         gui.close()
@@ -5723,6 +5999,7 @@ fn main() {
     var drawn_highlight = 0 - 2
     var drawn_bookmarks = 0 - 1
     var drawn_shelf = 0 - 1
+    var drawn_bookmarks_open = 0 - 1
     var drawn_rail_open = 0 - 1
     var drawn_speaking = 0 - 1
     var drawn_paused = 0 - 1
@@ -5884,7 +6161,7 @@ fn main() {
         if state == 2 {
             if live.len() > 0 && live != session.seen {
                 session.seen = live
-                ensure_favicon(store, live)
+                ensure_favicon(store, live, engine.icon_url(handle))
                 session = mark_active_url(session, live)
                 if !live.contains("fixture.nova.invalid") && store.history_path.len() > 0 {
                     let title = engine.page_title(handle)
@@ -5973,7 +6250,7 @@ fn main() {
                     download_sig != drawn_downloads || hover != drawn_hover ||
                     flag(address.editing) != drawn_editing || address.text != drawn_text ||
                     address.cursor != drawn_cursor || address.highlight != drawn_highlight ||
-                    store.bookmarks.len() != drawn_bookmarks || flag(store.downloads_open) != drawn_shelf ||
+                    store.bookmarks.len() != drawn_bookmarks || flag(store.downloads_open) != drawn_shelf || flag(store.bookmarks_open) != drawn_bookmarks_open ||
                     flag(session.vertical) != drawn_vertical || flag(rail_hover) != drawn_rail_open ||
                     flag(speech.speaking()) != drawn_speaking || flag(speech.paused()) != drawn_paused ||
                     flag(reader_open) != drawn_reader || flag(voice_fetch) != drawn_fetch ||
@@ -6006,6 +6283,7 @@ fn main() {
             drawn_highlight = address.highlight
             drawn_bookmarks = store.bookmarks.len()
             drawn_shelf = flag(store.downloads_open)
+            drawn_bookmarks_open = flag(store.bookmarks_open)
             drawn_rail_open = flag(rail_hover)
             drawn_speaking = flag(speech.speaking())
             drawn_paused = flag(speech.paused())
@@ -6039,6 +6317,14 @@ fn main() {
                 let panel = reader_panel_box(store)
                 if !gui.inside(panel.x, panel.y, panel.w, panel.h, event.x, event.y) {
                     reader_open = false
+                }
+            }
+            if store.bookmarks_open {
+                let panel = bookmarks_box(session, store)
+                if !gui.inside(panel.x, panel.y, panel.w, panel.h, event.x, event.y) {
+                    var closed = store
+                    closed.bookmarks_open = false
+                    store = closed
                 }
             }
             let click = handle_click(handle, event.x, event.y, event.code, address, session, suggestions, store, downloads, reader_open)

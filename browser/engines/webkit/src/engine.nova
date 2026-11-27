@@ -215,3 +215,14 @@ fn download_reveal(ident: Int) -> Bool {
 fn download_clear_finished() {
     view.wv_download_clear_finished()
 }
+
+// Compiles WKContentRuleList JSON and applies it to every tab, including tabs
+// created later. Returns 1 when WebKit accepted the rules.
+fn blocklist(rules: String) -> Int {
+    return view.wv_blocklist(rules)
+}
+
+// The icon the page named with <link rel="icon">, or "" when it named none.
+fn icon_url(handle: Int) -> String {
+    return view.wv_icon_url(handle)
+}

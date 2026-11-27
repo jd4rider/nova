@@ -40,7 +40,7 @@ NOVA_BROWSER_AUTOCLOSE=1 \
 NOVA_GUI_AX_DUMP=1 \
     "$BIN" >"$LOG" 2>&1
 
-check 'ax: children=11 built=11' 'every pushed element becomes an accessibility child'
+check 'ax: children=12 built=12' 'every pushed element becomes an accessibility child'
 check 'role=AXTab label=' 'the tab is exposed as a tab'
 check 'role=AXTab label=New Tab value= selected=1' 'the active tab reports selection'
 check 'role=AXTextField label=Address' 'the address field is a text field'
@@ -53,11 +53,11 @@ check 'browser: state=ready' 'the session still renders with accessibility on'
 # Frames are converted to screen space; an empty or zero-height frame would
 # make the element invisible to VoiceOver even though it is in the tree.
 frames=$(grep -cE '^ax: role=.*frame=[0-9-]+,[0-9-]+,[1-9][0-9]*,[1-9][0-9]*$' "$LOG")
-if [ "$frames" -eq 11 ]; then
+if [ "$frames" -eq 12 ]; then
     echo "PASS all element frames are non-empty and in the drawn geometry"
     pass=$((pass + 1))
 else
-    echo "FAIL expected 11 sized frames, found $frames"
+    echo "FAIL expected 12 sized frames, found $frames"
     fail=$((fail + 1))
 fi
 
@@ -74,7 +74,7 @@ NOVA_BROWSER_AUTOCLOSE=1 \
 NOVA_BROWSER_DOWNLOADS_OPEN=1 \
 NOVA_GUI_AX_DUMP=1 \
     "$BIN" >"$SHELF_LOG" 2>&1
-check_in 'ax: children=13 built=13' "$SHELF_LOG" 'the open shelf adds its controls to the tree'
+check_in 'ax: children=14 built=14' "$SHELF_LOG" 'the open shelf adds its controls to the tree'
 check_in 'role=AXButton label=Close downloads' "$SHELF_LOG" 'the shelf close control is named'
 check_in 'role=AXStaticText label=No downloads yet' "$SHELF_LOG" 'the empty shelf message is readable'
 
@@ -91,7 +91,7 @@ NOVA_BROWSER_FOCUS_ADDRESS=nov \
 NOVA_GUI_AX_DUMP=1 \
     "$BIN" >"$SUG_LOG" 2>&1
 check_in 'role=AXLink label=Nova docs value=https://nova.example/docs' "$SUG_LOG" 'suggestion rows are links with their URL'
-check_in 'ax: children=14 built=14' "$SUG_LOG" 'a bookmark and the engine row add exactly one element each'
+check_in 'ax: children=15 built=15' "$SUG_LOG" 'a bookmark and the engine row add exactly one element each'
 check_in 'role=AXLink label=Search Google for "nov" value=https://www.google.com/search?q=nov' "$SUG_LOG" 'plain text offers a Google search row'
 
 # The dump is opt-in: a normal launch must not print accessibility lines.

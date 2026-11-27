@@ -1226,6 +1226,43 @@ page, not an authenticated session), icon discovery through `<link rel="icon">`
 (only `/favicon.ico` is requested), and favicon rendering in a real window
 (snapshots cannot show the native page or assess glyph alignment).
 
+## 0.9.7 — bookmarks panel, content blocking, Safari import
+
+Bookmarks: the toolbar's list button and Cmd+Opt+B open a panel over the page,
+newest first, twelve rows with the URL under each title; a press navigates the
+active tab, Escape or an outside press closes it, and `ax_bookmarks` publishes
+every row and the close control. `browser/tests/bookmarks.sh` (3/3, exit 0)
+opens it headlessly and requires `rows=2 first=Beta panel=340x134`.
+
+Content blocking: `runtime/webkit.m` compiles WKContentRuleList JSON once and
+adds the list to every web view, including ones created later. The built-in list
+covers DoubleClick, Google Tag Manager/Analytics, ScorecardResearch and
+facebook.net; `NOVA_BROWSER_BLOCKLIST` replaces it with any JSON list.
+`browser/tests/blocklist.sh` (2/2, exit 0) serves `/tracker.js` and requires
+`block: compiled=1 tracker=undefined`, so the subresource never executed.
+`browser/tests/downloads.sh` still passes, so the rule list did not disturb
+navigation or downloads.
+
+Icons: a document-start script posts `<link rel="icon">` (or apple-touch-icon)
+to the `novaIcon` handler; the app prefers that href and falls back to
+`/favicon.ico`, recording the chosen URL in `<host>.img.src` so a newly declared
+icon replaces the guess. `browser/tests/favicons.sh` (4/4, exit 0) serves a
+declared PNG plus a different `/favicon.ico` and requires the cache to equal the
+declared bytes; `NOVA_BROWSER_NO_FAVICONS=1` still writes nothing.
+
+Safari: `--import <dir>` detects `Bookmarks.plist`/`History.db`, converts the
+plist with `plutil -convert json` and scans its leaves, and queries `History.db`
+with sqlite3 (the visit schema, not Chrome's). `browser/tests/safari.sh` (4/4,
+exit 0) imports a binary plist named Safari Doc and one visit, then finds both in
+the profile. TCC can deny the real files; the code imports nothing in that case.
+
+The new toolbar button shifted accessibility counts by one; `accessibility.sh`
+was updated from 11/13/14 to 12/14/15 and passes 17/17.
+
+Not evidenced: pressing the panel rows in a live window (geometry and navigation
+are checked, not a mouse event), a real ad-heavy site with the built-in list,
+and `bookmarks.json` style profile overrides (only the environment file exists).
+
 ## Not yet evidenced
 
 - hosted CI run of the browser address/lifecycle steps;

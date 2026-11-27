@@ -134,6 +134,24 @@ Each task needs a reproducible acceptance check before it is marked done.
   (`downloads=N`), and extension names resolve through every installed
   `_locales/*` directory instead of English only. Evidence: the fixture profile
   carries a real download row and the import reports `downloads=1`.
+- **WB-03.012 — Bookmarks panel.** DONE in 0.9.7. A toolbar button and
+  Cmd+Opt+B open a floating panel listing the newest twelve bookmarks with their
+  URLs; pressing a row navigates the active tab, Escape or a press outside
+  closes it, and the rows and close control are in the accessibility tree.
+  Evidence: `browser/tests/bookmarks.sh` opens the panel headlessly and requires
+  two rows, newest first, with a real rectangle.
+- **BROWSER-EXT-01.a — Content rule list.** SHIPPED in 0.9.7. WebKit compiles a
+  `WKContentRuleList` from JSON and applies it to every tab; a small tracker list
+  is built in and `NOVA_BROWSER_BLOCKLIST` replaces it. Extensions still cannot
+  load `.crx` packages, so BROWSER-EXT-01 stays open for userscripts and
+  Safari-style extension bundles. Evidence: `browser/tests/blocklist.sh` blocks
+  `/tracker.js` and requires the script never ran.
+- **WB-04.012 — Safari import.** DONE in 0.9.7. `Bookmarks.plist` is converted
+  with `plutil` and scanned for leaves, `History.db` is queried with sqlite3;
+  both the explicit path and the automatic scan use it. macOS may deny the files
+  without Full Disk Access; the import then reports nothing rather than a guess.
+  Evidence: `browser/tests/safari.sh` imports a binary plist and a history
+  database and requires `bookmarks=1 history=1` plus both stored rows.
 - **WB-04.002 — Downloads.** DONE. `WKDownloadDelegate` registry, attachment/
   MIME response policy, Nova shelf with cancel/reveal, `--download`, loopback
   test writing a real file. 0.7.3 adds pause/resume: clicking a running row

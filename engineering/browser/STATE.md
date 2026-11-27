@@ -3,7 +3,7 @@
 Updated: 2026-11-26
 Branch: `main`
 Last known good compiler checkpoint: `cfa00e3` (before browser work)
-Browser: **0.9.6 installed at `/Applications/Nova Browser.app`**
+Browser: **0.9.7 installed at `/Applications/Nova Browser.app`**
 Browser working tree: uncommitted; see `git status`
 Active gate: G0 WebKit; G1 WebCore not started
 Active task: **WB-04.002 — downloads** (0.7.5 persisted completed downloads;
@@ -324,6 +324,17 @@ Active task: **WB-04.002 — downloads** (0.7.5 persisted completed downloads;
     `lsregister -f`, `--set-default-browser` reports `set=1 state=1` and
     `NSWorkspace` resolves a web URL to `Nova Browser.app`. Revert in System
     Settings → Desktop & Dock → Default web browser.
+- **0.9.7 — bookmarks panel, content blocking, Safari import**
+  - A Bookmarks panel (toolbar list button, Cmd+Opt+B) lists saved pages newest
+    first with their URLs; a press opens one, Escape or a press outside closes
+    it. Cmd+D still saves or removes the page.
+  - `WKContentRuleList` now blocks a small built-in tracker list, and
+    `NOVA_BROWSER_BLOCKLIST=<file>` replaces it with any JSON rule list.
+  - Tabs prefer the icon a page declares with `<link rel="icon">` and fall back
+    to `/favicon.ico`; a sidecar records which URL produced the cached bytes.
+  - Safari joins Chrome in the import: `Bookmarks.plist` through `plutil`,
+    `History.db` through sqlite3, for an explicit path or the automatic scan.
+
 - **0.9.6 — favicons, blob downloads, more Chrome import**
   - Tabs draw the site's `/favicon.ico` from `favicons/` in the profile, or a
     letter tile when a site has none. `gui.image` paints a decoded image file
