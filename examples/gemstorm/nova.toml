@@ -1,0 +1,9 @@
+[package]
+name = "gemstorm"
+version = "0.1.0"
+edition = "2026"
+
+[bin]
+path = "src/main.nova"
+
+[dependencies]

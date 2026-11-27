@@ -1,0 +1,1567 @@
+// Gemstorm rules — the whole match-three simulation, in Nova.
+//
+// Nothing here draws, reads input or calls the host. Every entry point is
+// state-in / state-out: the same seed and the same move list produce the same
+// board, the same score and the same event stream. The view renders this state
+// and replays its events; it never decides a match itself.
+//
+// Cell encoding (one Int per cell, flat row-major list):
+//   0            empty
+//   4            prism — a colourless special that never joins a colour run
+//   colour*8+s   gem, colour 1..6, s = 0 normal, 1 beam-h, 2 beam-v, 3 burst
+//
+// Obstacles live in parallel columns so a crate never hides inside a gem
+// value: `mask` (0 = hole in the board), `blocked` (1 = crate) and `frost`
+// (durability layers on the gem in that cell).
+
+import "../../../libraries/nova-engine/src/random.nova"
+
+// ---------- small helpers ----------
+
+fn list_has(values: List<Int>, value: Int) -> Bool {
+    var i = 0
+    while i < values.len() {
+        if values[i] == value {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+fn min_int(a: Int, b: Int) -> Int {
+    if a < b {
+        return a
+    }
+    return b
+}
+
+fn max_int(a: Int, b: Int) -> Int {
+    if a > b {
+        return a
+    }
+    return b
+}
+
+fn zeros(count: Int) -> List<Int> {
+    var out: List<Int> = []
+    var i = 0
+    while i < count {
+        out.push(0)
+        i = i + 1
+    }
+    return out
+}
+
+fn ones(count: Int) -> List<Int> {
+    var out: List<Int> = []
+    var i = 0
+    while i < count {
+        out.push(1)
+        i = i + 1
+    }
+    return out
+}
+
+// ---------- gems ----------
+
+fn special_none() -> Int {
+    return 0
+}
+
+fn special_beam_h() -> Int {
+    return 1
+}
+
+fn special_beam_v() -> Int {
+    return 2
+}
+
+fn special_burst() -> Int {
+    return 3
+}
+
+fn special_prism() -> Int {
+    return 4
+}
+
+fn cell_empty() -> Int {
+    return 0
+}
+
+fn cell_prism() -> Int {
+    return 4
+}
+
+fn gem(color: Int, special: Int) -> Int {
+    return color * 8 + special
+}
+
+// 0 for empty, a prism or anything out of range; 1..6 for a coloured gem.
+fn gem_color(cell: Int) -> Int {
+    if cell < 8 {
+        return 0
+    }
+    return cell / 8
+}
+
+fn gem_special(cell: Int) -> Int {
+    if cell < 8 {
+        if cell == 4 {
+            return 4
+        }
+        return 0
+    }
+    return cell % 8
+}
+
+fn gem_is_prism(cell: Int) -> Bool {
+    return cell == 4
+}
+
+// ---------- board ----------
+
+struct Board {
+    width: Int,
+    height: Int,
+    colors: Int,
+    cells: List<Int>,
+    mask: List<Int>,
+    blocked: List<Int>,
+    frost: List<Int>,
+}
+
+fn board_new(width: Int, height: Int, colors: Int) -> Board {
+    return Board {
+        width: width,
+        height: height,
+        colors: colors,
+        cells: zeros(width * height),
+        mask: ones(width * height),
+        blocked: zeros(width * height),
+        frost: zeros(width * height),
+    }
+}
+
+// A board with holes. `mask` is row-major, 1 for a playable cell.
+fn board_new_masked(width: Int, height: Int, colors: Int, mask: List<Int>) -> Board {
+    var b = board_new(width, height, colors)
+    b.mask = mask
+    return b
+}
+
+fn board_index(b: Board, x: Int, y: Int) -> Int {
+    return y * b.width + x
+}
+
+fn board_inside(b: Board, x: Int, y: Int) -> Bool {
+    if x < 0 || y < 0 {
+        return false
+    }
+    if x >= b.width || y >= b.height {
+        return false
+    }
+    return true
+}
+
+// -1 outside the board, otherwise the raw cell value.
+fn board_cell(b: Board, x: Int, y: Int) -> Int {
+    if !board_inside(b, x, y) {
+        return -1
+    }
+    return b.cells[board_index(b, x, y)]
+}
+
+fn board_cell_at(b: Board, index: Int) -> Int {
+    if index < 0 || index >= b.cells.len() {
+        return -1
+    }
+    return b.cells[index]
+}
+
+fn board_is_open_index(b: Board, index: Int) -> Bool {
+    if index < 0 || index >= b.cells.len() {
+        return false
+    }
+    return b.mask[index] == 1 && b.blocked[index] == 0
+}
+
+fn board_open(b: Board, x: Int, y: Int) -> Bool {
+    return board_is_open_index(b, board_index(b, x, y))
+}
+
+fn board_set(b: Board, x: Int, y: Int, cell: Int) -> Board {
+    if !board_inside(b, x, y) {
+        return b
+    }
+    var out = b
+    var cells = out.cells
+    cells[board_index(b, x, y)] = cell
+    out.cells = cells
+    return out
+}
+
+fn board_set_index(b: Board, index: Int, cell: Int) -> Board {
+    if index < 0 || index >= b.cells.len() {
+        return b
+    }
+    var out = b
+    var cells = out.cells
+    cells[index] = cell
+    out.cells = cells
+    return out
+}
+
+fn board_from_cells(width: Int, height: Int, colors: Int, cells: List<Int>) -> Board {
+    var b = board_new(width, height, colors)
+    b.cells = cells
+    return b
+}
+
+// Builds a board from plain colour numbers (0 = empty). Level data and tests are
+// written this way; the storage encoding stays colour*8+special, so a raw 1 is
+// not a gem and this conversion is the only place the two meet.
+fn board_from_colors(width: Int, height: Int, colors: Int, values: List<Int>) -> Board {
+    var b = board_new(width, height, colors)
+    var cells = zeros(width * height)
+    var i = 0
+    while i < values.len() && i < cells.len() {
+        if values[i] > 0 {
+            cells[i] = gem(values[i], 0)
+        }
+        i = i + 1
+    }
+    b.cells = cells
+    return b
+}
+
+// FNV-style hash of the cell column, for determinism assertions and replays.
+fn board_hash(b: Board) -> Int {
+    var h = 2166136261
+    for cell in b.cells {
+        h = (h * 16777619 + cell) % 1000000007
+    }
+    return h
+}
+
+fn board_gem_count(b: Board) -> Int {
+    var count = 0
+    var i = 0
+    while i < b.cells.len() {
+        if b.cells[i] != 0 {
+            count = count + 1
+        }
+        i = i + 1
+    }
+    return count
+}
+
+fn board_empty_count(b: Board) -> Int {
+    var count = 0
+    var i = 0
+    while i < b.cells.len() {
+        if board_is_open_index(b, i) && b.cells[i] == 0 {
+            count = count + 1
+        }
+        i = i + 1
+    }
+    return count
+}
+
+fn board_prism_count(b: Board) -> Int {
+    var count = 0
+    for cell in b.cells {
+        if cell == 4 {
+            count = count + 1
+        }
+    }
+    return count
+}
+
+// ---------- generation ----------
+
+// True when placing `color` at (x, y) would complete a run of three with the
+// cells already filled to the left and above.
+fn board_would_match(b: Board, x: Int, y: Int, color: Int) -> Bool {
+    if x >= 2 {
+        if gem_color(board_cell(b, x - 1, y)) == color && gem_color(board_cell(b, x - 2, y)) == color {
+            return true
+        }
+    }
+    if y >= 2 {
+        if gem_color(board_cell(b, x, y - 1)) == color && gem_color(board_cell(b, x, y - 2)) == color {
+            return true
+        }
+    }
+    return false
+}
+
+struct GenResult {
+    board: Board,
+    rng: Int,
+}
+
+// Fills every open cell with a colour, never completing a run of three, and
+// keeps drawing until the board has a legal move. The attempt count is bounded
+// so a pathological mask cannot spin here.
+fn board_generate(src: Board, rng: Int, colors: Int) -> GenResult {
+    var state = rng
+    var attempt = 0
+    while attempt < 40 {
+        var b = src
+        var cells = zeros(b.width * b.height)
+        b.cells = cells
+        var y = 0
+        while y < b.height {
+            var x = 0
+            while x < b.width {
+                if board_open(b, x, y) {
+                    var allowed: List<Int> = []
+                    var c = 1
+                    while c <= colors {
+                        if !board_would_match(b, x, y, c) {
+                            allowed.push(c)
+                        }
+                        c = c + 1
+                    }
+                    if allowed.len() == 0 {
+                        allowed.push(1)
+                    }
+                    let draw = rng_below(state, allowed.len())
+                    state = draw.state
+                    b = board_set(b, x, y, gem(allowed[draw.value], 0))
+                }
+                x = x + 1
+            }
+            y = y + 1
+        }
+        if board_has_move(b) {
+            return GenResult { board: b, rng: state }
+        }
+        attempt = attempt + 1
+    }
+    // Constructive fallback: a corner block that always leaves one swap.
+    var forced = board_force_move(src, colors)
+    return GenResult { board: forced, rng: state }
+}
+
+// Recolours one cell to a colour that does not complete a run there. Returns
+// the colour actually written, or 0 when no colour is safe.
+fn board_safe_color(b: Board, index: Int, colors: Int, avoid: Int) -> Int {
+    let x = index % b.width
+    let y = index / b.width
+    var c = 1
+    while c <= colors {
+        if c != avoid {
+            if !board_would_match(b, x, y, c) {
+                return c
+            }
+        }
+        c = c + 1
+    }
+    return 0
+}
+
+// Last-resort board: place an A A B / B B A block, then recolour anything that
+// now forms a run outside the block. A swap of the B/A pair always matches, so
+// the result has a legal move even when the random attempts all failed.
+fn board_force_move(src: Board, colors: Int) -> Board {
+    var b = src
+    var block: List<Int> = []
+    var bx = 0
+    while bx + 2 < b.width {
+        var by = 0
+        while by + 1 < b.height {
+            if board_open(b, bx, by) && board_open(b, bx + 1, by) && board_open(b, bx + 2, by) {
+                if board_open(b, bx, by + 1) && board_open(b, bx + 1, by + 1) && board_open(b, bx + 2, by + 1) {
+                    let a = 1
+                    var other = 2
+                    if colors < 2 {
+                        other = 1
+                    }
+                    b = board_set(b, bx, by, gem(a, 0))
+                    b = board_set(b, bx + 1, by, gem(a, 0))
+                    b = board_set(b, bx + 2, by, gem(other, 0))
+                    b = board_set(b, bx, by + 1, gem(other, 0))
+                    b = board_set(b, bx + 1, by + 1, gem(other, 0))
+                    b = board_set(b, bx + 2, by + 1, gem(a, 0))
+                    block = [board_index(b, bx, by), board_index(b, bx + 1, by), board_index(b, bx + 2, by), board_index(b, bx, by + 1), board_index(b, bx + 1, by + 1), board_index(b, bx + 2, by + 1)]
+                    b = board_scrub(b, colors, block)
+                    if board_has_move(b) {
+                        return b
+                    }
+                }
+            }
+            by = by + 1
+        }
+        bx = bx + 1
+    }
+    return b
+}
+
+// Recolours cells that sit in a run of three, preferring cells outside `keep`.
+fn board_scrub(src: Board, colors: Int, keep: List<Int>) -> Board {
+    var b = src
+    var pass = 0
+    while pass < 8 {
+        let groups = match_groups(b)
+        if groups.len() == 0 {
+            return b
+        }
+        for group in groups {
+            var target = -1
+            for index in group.cells {
+                if !list_has(keep, index) && target < 0 {
+                    target = index
+                }
+            }
+            if target < 0 {
+                target = group.cells[0]
+            }
+            let current = gem_color(b.cells[target])
+            let replacement = board_safe_color(b, target, colors, current)
+            if replacement > 0 {
+                b = board_set_index(b, target, gem(replacement, 0))
+            }
+        }
+        pass = pass + 1
+    }
+    return b
+}
+
+// ---------- matching ----------
+
+struct Run {
+    cells: List<Int>,
+    straight: Bool,
+    horizontal: Bool,
+}
+
+fn run_has(run: Run, index: Int) -> Bool {
+    return list_has(run.cells, index)
+}
+
+fn run_share(a: Run, b: Run) -> Bool {
+    for index in a.cells {
+        if list_has(b.cells, index) {
+            return true
+        }
+    }
+    return false
+}
+
+fn run_union(a: Run, b: Run) -> Run {
+    var cells = a.cells
+    for index in b.cells {
+        if !list_has(cells, index) {
+            cells.push(index)
+        }
+    }
+    // Bool equality is not in this compiler build, so orientation is compared
+    // with a conjunction instead of `a.horizontal == b.horizontal`.
+    var straight = false
+    if a.straight && b.straight {
+        if a.horizontal && b.horizontal {
+            straight = true
+        }
+        if !a.horizontal && !b.horizontal {
+            straight = true
+        }
+    }
+    return Run { cells: cells, straight: straight, horizontal: a.horizontal }
+}
+
+// The colour a run can see. A hole, a crate or a prism reads as 0, so all
+// three break a run instead of joining one.
+fn board_run_color(b: Board, x: Int, y: Int) -> Int {
+    if !board_inside(b, x, y) {
+        return 0
+    }
+    if !board_is_open_index(b, board_index(b, x, y)) {
+        return 0
+    }
+    return gem_color(board_cell(b, x, y))
+}
+
+// Every maximal run of three or more same-coloured gems, horizontal first then
+// vertical.
+fn match_runs(b: Board) -> List<Run> {
+    var runs: List<Run> = []
+    var y = 0
+    while y < b.height {
+        var x = 0
+        while x < b.width {
+            let color = board_run_color(b, x, y)
+            if color == 0 {
+                x = x + 1
+            } else {
+                var end = x + 1
+                while end < b.width && board_run_color(b, end, y) == color {
+                    end = end + 1
+                }
+                if end - x >= 3 {
+                    var cells: List<Int> = []
+                    var i = x
+                    while i < end {
+                        cells.push(board_index(b, i, y))
+                        i = i + 1
+                    }
+                    runs.push(Run { cells: cells, straight: true, horizontal: true })
+                }
+                x = end
+            }
+        }
+        y = y + 1
+    }
+    var cx = 0
+    while cx < b.width {
+        var cy = 0
+        while cy < b.height {
+            let color = board_run_color(b, cx, cy)
+            if color == 0 {
+                cy = cy + 1
+            } else {
+                var end = cy + 1
+                while end < b.height && board_run_color(b, cx, end) == color {
+                    end = end + 1
+                }
+                if end - cy >= 3 {
+                    var cells: List<Int> = []
+                    var i = cy
+                    while i < end {
+                        cells.push(board_index(b, cx, i))
+                        i = i + 1
+                    }
+                    runs.push(Run { cells: cells, straight: true, horizontal: false })
+                }
+                cy = end
+            }
+        }
+        cx = cx + 1
+    }
+    return runs
+}
+
+// Runs that share a cell are one group, so a T or a cross is cleared and scored
+// once. Every cell appears in at most one returned group.
+fn match_groups(b: Board) -> List<Run> {
+    let runs = match_runs(b)
+    var out: List<Run> = []
+    for run in runs {
+        var merged = run
+        var used: List<Int> = []
+        var i = 0
+        while i < out.len() {
+            if run_share(out[i], merged) {
+                merged = run_union(out[i], merged)
+                used.push(i)
+            }
+            i = i + 1
+        }
+        var kept: List<Run> = []
+        var j = 0
+        while j < out.len() {
+            if !list_has(used, j) {
+                kept.push(out[j])
+            }
+            j = j + 1
+        }
+        kept.push(merged)
+        out = kept
+    }
+    return out
+}
+
+fn match_any(b: Board) -> Bool {
+    return match_groups(b).len() > 0
+}
+
+fn match_group_color(b: Board, group: Run) -> Int {
+    if group.cells.len() == 0 {
+        return 0
+    }
+    return gem_color(b.cells[group.cells[0]])
+}
+
+// Priority is prism > burst > beam; one special per group. A straight five is a
+// prism, a bent five (T, L, cross) is a burst, and a four is a beam whose axis
+// follows the run: a horizontal four clears its row, a vertical four its column.
+fn match_special_for(group: Run) -> Int {
+    if group.cells.len() >= 5 {
+        if group.straight {
+            return special_prism()
+        }
+        return special_burst()
+    }
+    if group.cells.len() == 4 {
+        if group.horizontal {
+            return special_beam_h()
+        }
+        return special_beam_v()
+    }
+    return special_none()
+}
+
+// Prefer the cell the player moved into, so the new gem lands where they aimed;
+// otherwise the lowest row-major cell keeps the choice deterministic.
+fn match_special_at(group: Run, focus: Int) -> Int {
+    if focus >= 0 && run_has(group, focus) {
+        return focus
+    }
+    var low = group.cells[0]
+    for index in group.cells {
+        if index < low {
+            low = index
+        }
+    }
+    return low
+}
+
+// ---------- legal moves ----------
+
+fn board_swap_indices(src: Board, a: Int, b: Int) -> Board {
+    if a < 0 || b < 0 || a >= src.cells.len() || b >= src.cells.len() {
+        return src
+    }
+    var out = src
+    var cells = out.cells
+    let held = cells[a]
+    cells[a] = cells[b]
+    cells[b] = held
+    out.cells = cells
+    return out
+}
+
+fn board_swap(b: Board, x0: Int, y0: Int, x1: Int, y1: Int) -> Board {
+    return board_swap_indices(b, board_index(b, x0, y0), board_index(b, x1, y1))
+}
+
+fn cells_adjacent(board: Board, a: Int, c: Int) -> Bool {
+    let ax = a % board.width
+    let ay = a / board.width
+    let bx = c % board.width
+    let by = c / board.width
+    let dx = ax - bx
+    let dy = ay - by
+    if dx < 0 {
+        if dx == -1 && dy == 0 {
+            return true
+        }
+    }
+    if dx == 1 && dy == 0 {
+        return true
+    }
+    if dx == 0 {
+        if dy == -1 || dy == 1 {
+            return true
+        }
+    }
+    return false
+}
+
+fn swap_legal(board: Board, a: Int, c: Int) -> Bool {
+    if !board_is_open_index(board, a) || !board_is_open_index(board, c) {
+        return false
+    }
+    return cells_adjacent(board, a, c)
+}
+
+// A swap is legal when it makes a match, or when it involves a prism or two
+// specials — those activate on their own and count as a move.
+fn swap_makes_move(board: Board, a: Int, c: Int) -> Bool {
+    if !swap_legal(board, a, c) {
+        return false
+    }
+    let ca = board.cells[a]
+    let cb = board.cells[c]
+    if gem_is_prism(ca) || gem_is_prism(cb) {
+        return true
+    }
+    if gem_special(ca) != 0 && gem_special(cb) != 0 {
+        return true
+    }
+    let swapped = board_swap_indices(board, a, c)
+    return match_any(swapped)
+}
+
+fn board_has_move(b: Board) -> Bool {
+    var y = 0
+    while y < b.height {
+        var x = 0
+        while x < b.width {
+            let index = board_index(b, x, y)
+            if board_is_open_index(b, index) && b.cells[index] != 0 {
+                if x + 1 < b.width {
+                    if swap_makes_move(b, index, board_index(b, x + 1, y)) {
+                        return true
+                    }
+                }
+                if y + 1 < b.height {
+                    if swap_makes_move(b, index, board_index(b, x, y + 1)) {
+                        return true
+                    }
+                }
+            }
+            x = x + 1
+        }
+        y = y + 1
+    }
+    return false
+}
+
+// First legal move as [a, b], or an empty list when the board is dead.
+fn board_hint(b: Board) -> List<Int> {
+    var y = 0
+    while y < b.height {
+        var x = 0
+        while x < b.width {
+            let index = board_index(b, x, y)
+            if board_is_open_index(b, index) && b.cells[index] != 0 {
+                if x + 1 < b.width {
+                    let right = board_index(b, x + 1, y)
+                    if swap_makes_move(b, index, right) {
+                        return [index, right]
+                    }
+                }
+                if y + 1 < b.height {
+                    let down = board_index(b, x, y + 1)
+                    if swap_makes_move(b, index, down) {
+                        return [index, down]
+                    }
+                }
+            }
+            x = x + 1
+        }
+        y = y + 1
+    }
+    return []
+}
+
+// ---------- clearing ----------
+
+struct ClearResult {
+    board: Board,
+    gems: Int,
+    crates: Int,
+    frost: Int,
+}
+
+fn mark_cell(b: Board, marks: List<Int>, index: Int) -> List<Int> {
+    if index < 0 || index >= marks.len() {
+        return marks
+    }
+    if !board_is_open_index(b, index) {
+        return marks
+    }
+    var out = marks
+    out[index] = 1
+    return out
+}
+
+fn mark_row(b: Board, marks: List<Int>, y: Int) -> List<Int> {
+    var out = marks
+    var x = 0
+    while x < b.width {
+        out = mark_cell(b, out, board_index(b, x, y))
+        x = x + 1
+    }
+    return out
+}
+
+fn mark_col(b: Board, marks: List<Int>, x: Int) -> List<Int> {
+    var out = marks
+    var y = 0
+    while y < b.height {
+        out = mark_cell(b, out, board_index(b, x, y))
+        y = y + 1
+    }
+    return out
+}
+
+fn mark_box(b: Board, marks: List<Int>, cx: Int, cy: Int, radius: Int) -> List<Int> {
+    var out = marks
+    var y = cy - radius
+    while y <= cy + radius {
+        var x = cx - radius
+        while x <= cx + radius {
+            out = mark_cell(b, out, board_index(b, x, y))
+            x = x + 1
+        }
+        y = y + 1
+    }
+    return out
+}
+
+fn mark_color(b: Board, marks: List<Int>, color: Int) -> List<Int> {
+    var out = marks
+    var i = 0
+    while i < b.cells.len() {
+        if gem_color(b.cells[i]) == color {
+            out = mark_cell(b, out, i)
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn mark_everything(b: Board, marks: List<Int>) -> List<Int> {
+    var out = marks
+    var i = 0
+    while i < b.cells.len() {
+        if b.cells[i] != 0 {
+            out = mark_cell(b, out, i)
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn board_most_common_color(b: Board) -> Int {
+    var counts = zeros(b.colors + 1)
+    for cell in b.cells {
+        let c = gem_color(cell)
+        if c >= 1 && c <= b.colors {
+            counts[c] = counts[c] + 1
+        }
+    }
+    var best = 1
+    var c = 2
+    while c <= b.colors {
+        if counts[c] > counts[best] {
+            best = c
+        }
+        c = c + 1
+    }
+    return best
+}
+
+// Cells one special destroys when it is caught in a clear. A prism that is
+// destroyed rather than swapped takes the board's most common colour with it,
+// which keeps the effect strong but deterministic.
+fn effect_cells(b: Board, index: Int) -> List<Int> {
+    var marks = zeros(b.cells.len())
+    let cell = b.cells[index]
+    let special = gem_special(cell)
+    let x = index % b.width
+    let y = index / b.width
+    if special == 1 {
+        return mark_row(b, marks, y)
+    }
+    if special == 2 {
+        return mark_col(b, marks, x)
+    }
+    if special == 3 {
+        return mark_box(b, marks, x, y, 1)
+    }
+    if special == 4 {
+        return mark_color(b, marks, board_most_common_color(b))
+    }
+    return marks
+}
+
+// Existing specials caught in a clear trigger exactly once, breadth-first, so a
+// chain cannot loop: `visited` is the guard, the queue is the order.
+fn expand_specials(b: Board, marks: List<Int>) -> List<Int> {
+    var out = marks
+    var visited: List<Int> = []
+    var queue: List<Int> = []
+    var i = 0
+    while i < out.len() {
+        if out[i] == 1 && gem_special(b.cells[i]) != 0 {
+            queue.push(i)
+        }
+        i = i + 1
+    }
+    var guard = 0
+    while queue.len() > 0 && guard < 512 {
+        guard = guard + 1
+        let index = queue[0]
+        var rest: List<Int> = []
+        var q = 1
+        while q < queue.len() {
+            rest.push(queue[q])
+            q = q + 1
+        }
+        queue = rest
+        if !list_has(visited, index) {
+            visited.push(index)
+            let effect = effect_cells(b, index)
+            var e = 0
+            while e < effect.len() {
+                if effect[e] == 1 {
+                    if out[e] == 0 {
+                        out = mark_cell(b, out, e)
+                        if gem_special(b.cells[e]) != 0 {
+                            queue.push(e)
+                        }
+                    }
+                }
+                e = e + 1
+            }
+        }
+    }
+    return out
+}
+
+// Applies the marks: a crate breaks, a frosted gem loses a layer, anything else
+// clears. Crates orthogonally next to a cleared gem take one hit too, which is
+// what "break adjacent crates" means.
+fn clear_marks(src: Board, marks: List<Int>) -> ClearResult {
+    var b = src
+    var cells = b.cells
+    var blocked = b.blocked
+    var frost = b.frost
+    var gems = 0
+    var crates = 0
+    var frost_hits = 0
+    var hit: List<Int> = zeros(b.cells.len())
+    var i = 0
+    while i < b.cells.len() {
+        if marks[i] == 1 {
+            if blocked[i] == 1 {
+                blocked[i] = 0
+                crates = crates + 1
+            } else if cells[i] != 0 {
+                if frost[i] > 0 {
+                    frost[i] = frost[i] - 1
+                    frost_hits = frost_hits + 1
+                } else {
+                    cells[i] = 0
+                    gems = gems + 1
+                    let x = i % b.width
+                    let y = i / b.width
+                    var d = 0
+                    while d < 4 {
+                        var nx = x
+                        var ny = y
+                        if d == 0 {
+                            nx = x - 1
+                        }
+                        if d == 1 {
+                            nx = x + 1
+                        }
+                        if d == 2 {
+                            ny = y - 1
+                        }
+                        if d == 3 {
+                            ny = y + 1
+                        }
+                        if board_inside(b, nx, ny) {
+                            let near = board_index(b, nx, ny)
+                            if blocked[near] == 1 && hit[near] == 0 {
+                                hit[near] = 1
+                                blocked[near] = 0
+                                crates = crates + 1
+                            }
+                        }
+                        d = d + 1
+                    }
+                }
+            }
+        }
+        i = i + 1
+    }
+    b.cells = cells
+    b.blocked = blocked
+    b.frost = frost
+    return ClearResult { board: b, gems: gems, crates: crates, frost: frost_hits }
+}
+
+struct SettleResult {
+    board: Board,
+    rng: Int,
+    falls: Int,
+    spawned: Int,
+}
+
+// Gravity per column segment. A hole or a crate is a wall, so a column is a
+// stack of independent segments; only the segment that reaches the top of the
+// board refills. Interior segments compact and stay empty, which is why the
+// level validator rejects a mask with a sealed segment that holds gems.
+fn settle(src: Board, rng: Int, colors: Int) -> SettleResult {
+    var b = src
+    var cells = b.cells
+    var state = rng
+    var falls = 0
+    var spawned = 0
+    var x = 0
+    while x < b.width {
+        var y = b.height - 1
+        while y >= 0 {
+            if !board_open(b, x, y) {
+                y = y - 1
+            } else {
+                var top = y
+                while top > 0 && board_open(b, x, top - 1) {
+                    top = top - 1
+                }
+                var write = y
+                var read = y
+                while read >= top {
+                    let index = board_index(b, x, read)
+                    let cell = cells[index]
+                    if cell != 0 {
+                        if write != read {
+                            cells[board_index(b, x, write)] = cell
+                            cells[index] = 0
+                            falls = falls + 1
+                        }
+                        write = write - 1
+                    }
+                    read = read - 1
+                }
+                if top == 0 {
+                    var r = write
+                    while r >= 0 {
+                        let draw = rng_below(state, colors)
+                        state = draw.state
+                        cells[board_index(b, x, r)] = gem(draw.value + 1, 0)
+                        spawned = spawned + 1
+                        r = r - 1
+                    }
+                }
+                y = top - 1
+            }
+        }
+        x = x + 1
+    }
+    b.cells = cells
+    return SettleResult { board: b, rng: state, falls: falls, spawned: spawned }
+}
+
+// ---------- shuffle ----------
+
+struct ShuffleResult {
+    board: Board,
+    rng: Int,
+    attempts: Int,
+}
+
+// Redistributes the gems that are already on the board. Specials move with
+// them, so a shuffle never destroys progress. If no arrangement has a move, the
+// board is regenerated from the same stream rather than left dead.
+fn board_shuffle(src: Board, rng: Int, colors: Int) -> ShuffleResult {
+    var b = src
+    var state = rng
+    var attempt = 0
+    while attempt < 30 {
+        var gems: List<Int> = []
+        var slots: List<Int> = []
+        var i = 0
+        while i < b.cells.len() {
+            if board_is_open_index(b, i) && b.cells[i] != 0 {
+                gems.push(b.cells[i])
+                slots.push(i)
+            }
+            i = i + 1
+        }
+        if gems.len() == 0 {
+            let gen = board_generate(b, state, colors)
+            return ShuffleResult { board: gen.board, rng: gen.rng, attempts: attempt + 1 }
+        }
+        let bag = rng_bag(state, gems.len())
+        state = bag.state
+        var cells = b.cells
+        var k = 0
+        while k < slots.len() {
+            cells[slots[k]] = gems[bag.order[k]]
+            k = k + 1
+        }
+        b.cells = cells
+        if !match_any(b) && board_has_move(b) {
+            return ShuffleResult { board: b, rng: state, attempts: attempt + 1 }
+        }
+        attempt = attempt + 1
+    }
+    let gen = board_generate(src, state, colors)
+    return ShuffleResult { board: gen.board, rng: gen.rng, attempts: attempt + 1 }
+}
+
+// ---------- events ----------
+
+struct GameEvent {
+    kind: Int,
+    x: Int,
+    y: Int,
+    value: Int,
+    depth: Int,
+}
+
+fn ev_swap() -> Int {
+    return 1
+}
+
+fn ev_reject() -> Int {
+    return 2
+}
+
+fn ev_clear() -> Int {
+    return 3
+}
+
+fn ev_create() -> Int {
+    return 4
+}
+
+fn ev_activate() -> Int {
+    return 5
+}
+
+fn ev_score() -> Int {
+    return 6
+}
+
+fn ev_stable() -> Int {
+    return 7
+}
+
+fn ev_over() -> Int {
+    return 8
+}
+
+fn ev_shuffle() -> Int {
+    return 9
+}
+
+fn ev_combo() -> Int {
+    return 10
+}
+
+fn ev_push(events: List<GameEvent>, e: GameEvent) -> List<GameEvent> {
+    var out = events
+    out.push(e)
+    if out.len() > 320 {
+        var trimmed: List<GameEvent> = []
+        var i = out.len() - 320
+        while i < out.len() {
+            trimmed.push(out[i])
+            i = i + 1
+        }
+        return trimmed
+    }
+    return out
+}
+
+// ---------- game ----------
+
+fn phase_stable() -> Int {
+    return 0
+}
+
+fn phase_resolving() -> Int {
+    return 1
+}
+
+fn phase_over() -> Int {
+    return 2
+}
+
+fn max_waves() -> Int {
+    return 64
+}
+
+// Storm charges are capped so a run cannot bank a board-wide nuke forever.
+fn max_power() -> Int {
+    return 3
+}
+
+struct Game {
+    board: Board,
+    rng: Int,
+    seed: Int,
+    score: Int,
+    moves_left: Int,
+    moves_spent: Int,
+    depth: Int,
+    best_combo: Int,
+    phase: Int,
+    cleared: Int,
+    specials_made: Int,
+    rejected: Int,
+    capped: Bool,
+    // Storm charges earned from specials, and the cells the last move cleared.
+    // The view animates exactly those, so a hit and a miss look different.
+    power: Int,
+    last_cleared: List<Int>,
+    events: List<GameEvent>,
+}
+
+fn game_new(seed: Int, width: Int, height: Int, colors: Int, moves: Int) -> Game {
+    let board = board_new(width, height, colors)
+    let generated = board_generate(board, rng_seed(seed), colors)
+    return Game {
+        board: generated.board,
+        rng: generated.rng,
+        seed: seed,
+        score: 0,
+        moves_left: moves,
+        moves_spent: 0,
+        depth: 0,
+        best_combo: 0,
+        phase: phase_stable(),
+        cleared: 0,
+        specials_made: 0,
+        rejected: 0,
+        capped: false,
+        power: 0,
+        last_cleared: [],
+        events: [],
+    }
+}
+
+fn game_new_board(board: Board, seed: Int, moves: Int) -> Game {
+    return Game {
+        board: board,
+        rng: rng_seed(seed),
+        seed: seed,
+        score: 0,
+        moves_left: moves,
+        moves_spent: 0,
+        depth: 0,
+        best_combo: 0,
+        phase: phase_stable(),
+        cleared: 0,
+        specials_made: 0,
+        rejected: 0,
+        capped: false,
+        power: 0,
+        last_cleared: [],
+        events: [],
+    }
+}
+
+fn game_spend_move(g: Game) -> Game {
+    var out = g
+    out.moves_spent = out.moves_spent + 1
+    if out.moves_left > 0 {
+        out.moves_left = out.moves_left - 1
+    }
+    return out
+}
+
+fn game_end(g: Game) -> Game {
+    var out = g
+    out.phase = phase_over()
+    out.events = ev_push(out.events, GameEvent { kind: ev_over(), x: 0, y: 0, value: out.score, depth: out.depth })
+    return out
+}
+
+// A run ends only after the wave that spent its last move has settled, so the
+// final cascade still scores before the over card appears.
+fn game_finish_move(g: Game) -> Game {
+    if g.moves_left > 0 {
+        return g
+    }
+    return game_end(g)
+}
+
+// One wave: decide the specials, clear everything else, then let gravity and
+// refill settle the board. Scoring happens here so a gem is scored once, in the
+// wave that removed it.
+fn game_apply_wave(src: Game, groups: List<Run>, depth: Int, focus: Int) -> Game {
+    var g = src
+    var b = g.board
+    var marks = zeros(b.cells.len())
+    var creation_at: List<Int> = []
+    var creation_kind: List<Int> = []
+    var creation_color: List<Int> = []
+    var creation_from: List<Int> = []
+
+    for group in groups {
+        let kind = match_special_for(group)
+        var at = -1
+        if kind != 0 {
+            at = match_special_at(group, focus)
+        }
+        let color = match_group_color(b, group)
+        for index in group.cells {
+            if index == at {
+                creation_at.push(index)
+                creation_kind.push(kind)
+                creation_color.push(color)
+                creation_from.push(group.cells[0])
+            } else {
+                marks = mark_cell(b, marks, index)
+            }
+        }
+    }
+
+    marks = expand_specials(b, marks)
+
+    // Count what is about to be cleared, then clear it.
+    var cleared_cells: List<Int> = []
+    var i = 0
+    while i < marks.len() {
+        if marks[i] == 1 {
+            cleared_cells.push(i)
+        }
+        i = i + 1
+    }
+    let cleared = clear_marks(b, marks)
+    b = cleared.board
+    var made = 0
+    var k = 0
+    while k < creation_at.len() {
+        b = board_set_index(b, creation_at[k], gem(creation_color[k], creation_kind[k]))
+        g.events = ev_push(g.events, GameEvent { kind: ev_create(), x: creation_at[k] % b.width, y: creation_at[k] / b.width, value: creation_kind[k], depth: depth })
+        made = made + 1
+        k = k + 1
+    }
+
+    for index in cleared_cells {
+        g.events = ev_push(g.events, GameEvent { kind: ev_clear(), x: index % b.width, y: index / b.width, value: b.cells[index], depth: depth })
+    }
+
+    let multiplier = min_int(depth, 5)
+    let gained = cleared.gems * 10 * multiplier + made * 25
+    g.score = g.score + gained
+    g.cleared = g.cleared + cleared.gems
+    g.specials_made = g.specials_made + made
+    g.events = ev_push(g.events, GameEvent { kind: ev_score(), x: 0, y: 0, value: gained, depth: depth })
+
+    let settled = settle(b, g.rng, b.colors)
+    g.board = settled.board
+    g.rng = settled.rng
+
+    // Every special made is one storm charge, so a good match buys a way out
+    // of a bad board instead of only points.
+    g.power = min_int(g.power + made, max_power())
+    var traced = g.last_cleared
+    for index in cleared_cells {
+        traced.push(index)
+    }
+    g.last_cleared = traced
+    return g
+}
+
+// Runs waves until the board is stable. `focus` is the destination cell of the
+// player's swap, used only for the first wave's special placement.
+fn game_cascade(src: Game, focus: Int, start_depth: Int) -> Game {
+    var g = src
+    var depth = start_depth
+    var waves = 0
+    var spot = focus
+    while waves < max_waves() {
+        let groups = match_groups(g.board)
+        if groups.len() == 0 {
+            break
+        }
+        depth = depth + 1
+        g = game_apply_wave(g, groups, depth, spot)
+        spot = -1
+        waves = waves + 1
+    }
+    if waves >= max_waves() {
+        g.capped = true
+    }
+    g.depth = depth
+    g.best_combo = max_int(g.best_combo, depth)
+    g.phase = phase_stable()
+    g.events = ev_push(g.events, GameEvent { kind: ev_stable(), x: 0, y: 0, value: depth, depth: depth })
+    return g
+}
+
+// Both cells are specials, or one is a prism: the pair activates without
+// needing a colour match. Every pair is symmetric in outcome; the destination
+// cell `b` anchors the rows, columns and boxes.
+fn game_combo(src: Game, a: Int, b: Int) -> Game {
+    var g = src
+    g.last_cleared = []
+    var board = g.board
+    var marks = zeros(board.cells.len())
+    let ca = board.cells[a]
+    let cb = board.cells[b]
+    let sa = gem_special(ca)
+    let sb = gem_special(cb)
+    let bx = b % board.width
+    let by = b / board.width
+    var kind = ev_combo()
+
+    if sa == 4 && sb == 4 {
+        marks = mark_everything(board, marks)
+        kind = ev_combo()
+    } else if sa == 4 || sb == 4 {
+        var other = b
+        if sa != 4 {
+            other = a
+        }
+        let partner = board.cells[other]
+        let color = gem_color(partner)
+        let special = gem_special(partner)
+        if special == 1 || special == 2 || special == 3 {
+            // Prism plus a beam or burst turns every gem of that colour into
+            // that special, then triggers them all.
+            var cells = board.cells
+            var i = 0
+            while i < cells.len() {
+                if gem_color(cells[i]) == color && gem_special(cells[i]) == 0 {
+                    cells[i] = gem(color, special)
+                }
+                i = i + 1
+            }
+            board.cells = cells
+        }
+        marks = mark_color(board, marks, color)
+        marks = mark_cell(board, marks, a)
+        marks = mark_cell(board, marks, b)
+    } else if (sa == 1 || sa == 2) && (sb == 1 || sb == 2) {
+        // Beam plus beam: a full cross through the destination.
+        marks = mark_row(board, marks, by)
+        marks = mark_col(board, marks, bx)
+    } else if (sa == 3 || sb == 3) && (sa != 3 || sb != 3) {
+        // Beam plus burst: three rows and three columns.
+        marks = mark_row(board, marks, by - 1)
+        marks = mark_row(board, marks, by)
+        marks = mark_row(board, marks, by + 1)
+        marks = mark_col(board, marks, bx - 1)
+        marks = mark_col(board, marks, bx)
+        marks = mark_col(board, marks, bx + 1)
+    } else {
+        // Burst plus burst: a 5x5 block.
+        marks = mark_box(board, marks, bx, by, 2)
+    }
+    marks = mark_cell(board, marks, a)
+    marks = mark_cell(board, marks, b)
+    marks = expand_specials(board, marks)
+
+    g.events = ev_push(g.events, GameEvent { kind: kind, x: bx, y: by, value: sa * 10 + sb, depth: 1 })
+    let cleared = clear_marks(board, marks)
+    g.board = cleared.board
+    let gained = cleared.gems * 10 + cleared.crates * 50
+    g.score = g.score + gained
+    g.cleared = g.cleared + cleared.gems
+    g.events = ev_push(g.events, GameEvent { kind: ev_score(), x: 0, y: 0, value: gained, depth: 1 })
+    let settled = settle(g.board, g.rng, g.board.colors)
+    g.board = settled.board
+    g.rng = settled.rng
+    g = game_spend_move(g)
+    return game_finish_move(game_cascade(g, -1, 1))
+}
+
+// The player's move. Rejected swaps cost nothing and leave the board exactly as
+// it was, so the view can animate the bounce without a second state to unwind.
+fn game_swap(src: Game, a: Int, b: Int) -> Game {
+    var g = src
+    if g.phase != phase_stable() {
+        return g
+    }
+    if !swap_legal(g.board, a, b) {
+        g.rejected = g.rejected + 1
+        g.events = ev_push(g.events, GameEvent { kind: ev_reject(), x: a % g.board.width, y: a / g.board.width, value: b, depth: 0 })
+        return g
+    }
+    let ca = g.board.cells[a]
+    let cb = g.board.cells[b]
+    if gem_is_prism(ca) || gem_is_prism(cb) {
+        return game_combo(g, a, b)
+    }
+    if gem_special(ca) != 0 && gem_special(cb) != 0 {
+        return game_combo(g, a, b)
+    }
+    let swapped = board_swap_indices(g.board, a, b)
+    if !match_any(swapped) {
+        g.rejected = g.rejected + 1
+        g.events = ev_push(g.events, GameEvent { kind: ev_reject(), x: a % g.board.width, y: a / g.board.width, value: b, depth: 0 })
+        return g
+    }
+    g.board = swapped
+    g.last_cleared = []
+    g.events = ev_push(g.events, GameEvent { kind: ev_swap(), x: a, y: b, value: 0, depth: 0 })
+    g = game_spend_move(g)
+    return game_finish_move(game_cascade(g, b, 0))
+}
+
+// Swaps by grid coordinates, the form the input layer has.
+fn game_swap_cells(g: Game, x0: Int, y0: Int, x1: Int, y1: Int) -> Game {
+    return game_swap(g, board_index(g.board, x0, y0), board_index(g.board, x1, y1))
+}
+
+fn game_shuffle(src: Game) -> Game {
+    var g = src
+    let shuffled = board_shuffle(g.board, g.rng, g.board.colors)
+    g.board = shuffled.board
+    g.rng = shuffled.rng
+    g.events = ev_push(g.events, GameEvent { kind: ev_shuffle(), x: 0, y: 0, value: shuffled.attempts, depth: 0 })
+    return g
+}
+
+fn game_with_power(g: Game, power: Int) -> Game {
+    var out = g
+    var value = power
+    if value < 0 {
+        value = 0
+    }
+    if value > max_power() {
+        value = max_power()
+    }
+    out.power = value
+    return out
+}
+
+// The one active power: a 3x3 strike the player aims, paid for with a storm
+// charge. It spends no move, so it is a way out of a bad board rather than a
+// free turn, and it still cascades like any other clear.
+fn game_power_strike(src: Game, index: Int) -> Game {
+    var g = src
+    if g.phase != phase_stable() || g.power <= 0 {
+        return g
+    }
+    if index < 0 || index >= g.board.cells.len() {
+        return g
+    }
+    if !board_is_open_index(g.board, index) {
+        return g
+    }
+    let b = g.board
+    var marks = zeros(b.cells.len())
+    let x = index % b.width
+    let y = index / b.width
+    marks = mark_box(b, marks, x, y, 1)
+    marks = expand_specials(b, marks)
+    var cleared_cells: List<Int> = []
+    var i = 0
+    while i < marks.len() {
+        if marks[i] == 1 {
+            cleared_cells.push(i)
+        }
+        i = i + 1
+    }
+    let cleared = clear_marks(b, marks)
+    g.board = cleared.board
+    g.power = g.power - 1
+    var traced: List<Int> = []
+    for cell in cleared_cells {
+        traced.push(cell)
+    }
+    g.last_cleared = traced
+    let gained = cleared.gems * 10 + cleared.crates * 50
+    g.score = g.score + gained
+    g.cleared = g.cleared + cleared.gems
+    g.events = ev_push(g.events, GameEvent { kind: ev_activate(), x: x, y: y, value: cleared.gems, depth: 1 })
+    g.events = ev_push(g.events, GameEvent { kind: ev_score(), x: 0, y: 0, value: gained, depth: 1 })
+    let settled = settle(g.board, g.rng, g.board.colors)
+    g.board = settled.board
+    g.rng = settled.rng
+    g = game_cascade(g, -1, 1)
+    return game_finish_move(g)
+}
+
+fn game_hint(g: Game) -> List<Int> {
+    return board_hint(g.board)
+}
+
+fn game_has_move(g: Game) -> Bool {
+    return board_has_move(g.board)
+}
+
+// A replay is a seed plus the index pairs the player swapped. Re-running it
+// must land on the same hash and score; the test suite asserts exactly that.
+fn game_replay(seed: Int, width: Int, height: Int, colors: Int, moves: Int, swaps: List<Int>) -> Game {
+    var g = game_new(seed, width, height, colors, moves)
+    var i = 0
+    while i + 1 < swaps.len() {
+        g = game_swap(g, swaps[i], swaps[i + 1])
+        i = i + 2
+    }
+    return g
+}

@@ -1,0 +1,2031 @@
+import std.io { println }
+import "../../../libraries/nova-gui/src/gui.nova" as gui
+import "../../../libraries/nova-engine/src/core.nova"
+import "../../../libraries/nova-engine/src/random.nova"
+import "rules.nova"
+
+// Gemstorm — the window.
+//
+// rules.nova owns every decision; this file owns the screens, the pointer, the
+// animation and the pixels. A click or an arrow key becomes one game_swap call,
+// and the view replays whatever board that call returned: cleared gems pop,
+// survivors slide, refills drop in from above. Nothing here decides a match.
+//
+// Headless entry points, used by tests/run.sh and the icon:
+//   NOVA_GEMSTORM_CHECK=1           print the rules self-check and exit
+//   NOVA_GEMSTORM_SIM=<moves>       play a hint-driven run and print its state
+//   NOVA_GEMSTORM_SCENARIO=<name>   draw one screen state and exit
+//   NOVA_GEMSTORM_SHOT=<path>       save that frame as a PNG
+//   NOVA_GEMSTORM_ICON=<path>       render the app icon
+
+// ---------- window and layout ----------
+
+fn window_w() -> Int {
+    return 1000
+}
+
+fn window_h() -> Int {
+    return 760
+}
+
+fn header_h() -> Int {
+    return 92
+}
+
+fn footer_y() -> Int {
+    return 716
+}
+
+fn board_cols() -> Int {
+    return 8
+}
+
+fn board_rows() -> Int {
+    return 8
+}
+
+fn gem_colours() -> Int {
+    return 6
+}
+
+fn run_moves() -> Int {
+    return 25
+}
+
+fn cell() -> Int {
+    return 60
+}
+
+fn board_px() -> Int {
+    return board_cols() * cell()
+}
+
+fn board_x() -> Int {
+    return 296
+}
+
+fn board_y() -> Int {
+    return 116
+}
+
+fn left_x() -> Int {
+    return 24
+}
+
+fn left_w() -> Int {
+    return 248
+}
+
+fn right_x() -> Int {
+    return 800
+}
+
+fn right_w() -> Int {
+    return 176
+}
+
+// Header chips, right aligned. The hit tests and the pixels read the same
+// numbers, so a chip can never drift away from the thing it looks like.
+fn chip_y() -> Int {
+    return 30
+}
+
+fn chip_h() -> Int {
+    return 32
+}
+
+fn pause_chip_x() -> Int {
+    return 780
+}
+
+fn pause_chip_w() -> Int {
+    return 92
+}
+
+fn sound_chip_x() -> Int {
+    return 880
+}
+
+fn sound_chip_w() -> Int {
+    return 96
+}
+
+// The storm button sits in the power card, beside its charge pips.
+fn strike_x() -> Int {
+    return left_x() + 96
+}
+
+fn strike_y() -> Int {
+    return 398
+}
+
+fn strike_w() -> Int {
+    return left_w() - 112
+}
+
+fn strike_h() -> Int {
+    return 32
+}
+
+// ---------- screens ----------
+
+fn screen_menu() -> Int {
+    return 0
+}
+
+fn screen_play() -> Int {
+    return 1
+}
+
+fn screen_pause() -> Int {
+    return 2
+}
+
+fn screen_over() -> Int {
+    return 3
+}
+
+fn screen_name(screen: Int) -> String {
+    if screen == screen_menu() {
+        return "menu"
+    }
+    if screen == screen_pause() {
+        return "pause"
+    }
+    if screen == screen_over() {
+        return "over"
+    }
+    return "play"
+}
+
+// ---------- palette ----------
+
+struct Skin {
+    bg: Int,
+    bg_top: Int,
+    panel: Int,
+    panel_high: Int,
+    frame: Int,
+    border: Int,
+    tile: Int,
+    text: Int,
+    muted: Int,
+    faint: Int,
+    accent: Int,
+    accent_soft: Int,
+    gold: Int,
+    hot: Int,
+    white: Int,
+    crate: Int,
+    crate_dark: Int,
+    frost: Int,
+}
+
+fn skin() -> Skin {
+    return Skin {
+        bg: gui.rgb(10, 12, 22),
+        bg_top: gui.rgb(20, 24, 44),
+        panel: gui.rgb(19, 23, 38),
+        panel_high: gui.rgb(28, 33, 52),
+        frame: gui.rgb(14, 17, 30),
+        border: gui.rgb(44, 51, 78),
+        tile: gui.rgb(24, 29, 46),
+        text: gui.rgb(232, 236, 246),
+        muted: gui.rgb(150, 160, 188),
+        faint: gui.rgb(96, 106, 132),
+        accent: gui.rgb(120, 220, 235),
+        accent_soft: gui.rgb(30, 82, 96),
+        gold: gui.rgb(255, 198, 75),
+        hot: gui.rgb(255, 92, 122),
+        white: gui.rgb(255, 255, 255),
+        crate: gui.rgb(150, 112, 72),
+        crate_dark: gui.rgb(102, 74, 46),
+        frost: gui.rgb(190, 226, 255),
+    }
+}
+
+// Six colours, six shapes: the shape carries the identity, so the board is
+// still readable for a player who cannot separate the hues.
+fn gem_rgb(colour: Int) -> Int {
+    if colour == 1 {
+        return gui.rgb(240, 86, 102)
+    }
+    if colour == 2 {
+        return gui.rgb(247, 178, 66)
+    }
+    if colour == 3 {
+        return gui.rgb(86, 208, 140)
+    }
+    if colour == 4 {
+        return gui.rgb(88, 146, 248)
+    }
+    if colour == 5 {
+        return gui.rgb(176, 122, 248)
+    }
+    return gui.rgb(228, 233, 246)
+}
+
+fn chain_label(value: Int) -> String {
+    if value <= 0 {
+        return "—"
+    }
+    return "x${value}"
+}
+
+fn moves_label(count: Int) -> String {
+    if count == 1 {
+        return "1 move"
+    }
+    return "${count} moves"
+}
+
+fn lerp_colour(a: Int, b: Int, t: Int) -> Int {
+    let p = gui.clamp(t, 0, 100)
+    let ar = a / 65536
+    let ag = (a / 256) % 256
+    let ab = a % 256
+    let br = b / 65536
+    let bg = (b / 256) % 256
+    let bb = b % 256
+    return gui.rgb(ar + (br - ar) * p / 100, ag + (bg - ag) * p / 100, ab + (bb - ab) * p / 100)
+}
+
+// ---------- motion ----------
+
+// The rules resolve a move instantly. The view replays that settle as one short
+// animation built from the board before and the board after, so a player can
+// see which gems fell where and which ones are new.
+fn anim_total() -> Int {
+    return 30
+}
+
+fn slide_delay() -> Int {
+    return 3
+}
+
+fn slide_len() -> Int {
+    return 18
+}
+
+fn pop_life() -> Int {
+    return 10
+}
+
+struct Motion {
+    value: Int,
+    col: Int,
+    from_row: Int,
+    to_row: Int,
+    delay: Int,
+}
+
+struct Pop {
+    value: Int,
+    col: Int,
+    row: Int,
+    crate: Bool,
+}
+
+struct Anim {
+    active: Bool,
+    ticks: Int,
+    motions: List<Motion>,
+    pops: List<Pop>,
+}
+
+// Sparks are stored in tenths of a point, so a particle can move less than one
+// pixel per tick without a float type.
+struct Particle {
+    x: Int,
+    y: Int,
+    vx: Int,
+    vy: Int,
+    ticks: Int,
+    life: Int,
+    colour: Int,
+    size: Int,
+}
+
+struct SparkStep {
+    particles: List<Particle>,
+    rng: Int,
+}
+
+fn float_life() -> Int {
+    return 52
+}
+
+struct FloatText {
+    x: Int,
+    y: Int,
+    value: Int,
+    ticks: Int,
+    life: Int,
+}
+
+// ---------- app state ----------
+
+struct App {
+    game: Game,
+    seed: Int,
+    screen: Int,
+    tick: Int,
+    quit: Bool,
+    sel: Int,
+    cursor: Int,
+    hover: Int,
+    hint_a: Int,
+    hint_b: Int,
+    hint_ticks: Int,
+    shake: Int,
+    flash: Int,
+    floats: List<FloatText>,
+    notice: String,
+    notice_ticks: Int,
+    muted: Bool,
+    gain: Int,
+    chain: Int,
+    power_mode: Bool,
+    fx_rng: Int,
+    anim: Anim,
+    particles: List<Particle>,
+}
+
+fn app_new(seed: Int) -> App {
+    return App {
+        game: game_new(seed, board_cols(), board_rows(), gem_colours(), run_moves()),
+        seed: seed,
+        screen: screen_menu(),
+        tick: 0,
+        quit: false,
+        sel: 0 - 1,
+        cursor: 27,
+        hover: 0 - 1,
+        hint_a: 0 - 1,
+        hint_b: 0 - 1,
+        hint_ticks: 0,
+        shake: 0,
+        flash: 0,
+        floats: [],
+        notice: "",
+        notice_ticks: 0,
+        muted: false,
+        gain: 0,
+        chain: 1,
+        power_mode: false,
+        fx_rng: rng_seed(seed + 977),
+        anim: Anim { active: false, ticks: 0, motions: [], pops: [] },
+        particles: [],
+    }
+}
+
+fn app_notice(src: App, text: String, ticks: Int) -> App {
+    var app = src
+    app.notice = text
+    app.notice_ticks = ticks
+    return app
+}
+
+fn app_new_run(src: App) -> App {
+    var app = src
+    app.seed = app.seed + 1
+    app.game = game_new(app.seed, board_cols(), board_rows(), gem_colours(), run_moves())
+    app.screen = screen_play()
+    app.sel = 0 - 1
+    app.cursor = 27
+    app.hover = 0 - 1
+    app.hint_a = 0 - 1
+    app.hint_b = 0 - 1
+    app.hint_ticks = 0
+    app.shake = 0
+    app.flash = 0
+    app.floats = []
+    app.gain = 0
+    app.chain = 1
+    app.power_mode = false
+    app.anim = Anim { active: false, ticks: 0, motions: [], pops: [] }
+    app.particles = []
+    return app_notice(app, "run ${app.seed} · ${run_moves()} moves", 130)
+}
+
+// ---------- cues ----------
+
+fn cue_select() -> Int {
+    return 1
+}
+
+fn cue_reject() -> Int {
+    return 2
+}
+
+fn cue_clear() -> Int {
+    return 3
+}
+
+fn cue_chain() -> Int {
+    return 4
+}
+
+fn cue_over() -> Int {
+    return 5
+}
+
+fn cue_ui() -> Int {
+    return 6
+}
+
+fn cue_strike() -> Int {
+    return 7
+}
+
+// The runtime's tone is synchronous, so every cue is short. A muted app is
+// silent, not silent-but-slower.
+fn app_cue(src: App, kind: Int) -> App {
+    if src.muted {
+        return src
+    }
+    if kind == cue_select() {
+        gui.sound(520, 22, 8)
+    } else if kind == cue_reject() {
+        gui.sound(150, 50, 9)
+    } else if kind == cue_clear() {
+        gui.sound(680, 35, 10)
+    } else if kind == cue_chain() {
+        gui.sound(920, 45, 10)
+    } else if kind == cue_over() {
+        gui.sound(210, 180, 10)
+    } else if kind == cue_strike() {
+        gui.sound(290, 90, 12)
+    } else {
+        gui.sound(440, 20, 7)
+    }
+    return src
+}
+
+// ---------- effects ----------
+
+fn push_float(list: List<FloatText>, index: Int, value: Int) -> List<FloatText> {
+    var out = list
+    if value <= 0 {
+        return out
+    }
+    out.push(FloatText {
+        x: board_x() + (index % board_cols()) * cell() + cell() / 2,
+        y: board_y() + (index / board_cols()) * cell(),
+        value: value,
+        ticks: float_life(),
+        life: float_life(),
+    })
+    if out.len() > 6 {
+        var trimmed: List<FloatText> = []
+        var i = out.len() - 6
+        while i < out.len() {
+            trimmed.push(out[i])
+            i = i + 1
+        }
+        return trimmed
+    }
+    return out
+}
+
+fn step_floats(list: List<FloatText>) -> List<FloatText> {
+    var out: List<FloatText> = []
+    for f in list {
+        if f.ticks > 1 {
+            out.push(FloatText { x: f.x, y: f.y, value: f.value, ticks: f.ticks - 1, life: f.life })
+        }
+    }
+    return out
+}
+
+fn shake_dx(app: App) -> Int {
+    if app.shake <= 0 {
+        return 0
+    }
+    if app.shake % 2 == 0 {
+        return 3
+    }
+    return 0 - 3
+}
+
+fn spawn_sparks(list: List<Particle>, col: Int, row: Int, colour: Int, rng: Int) -> SparkStep {
+    var out = list
+    var state = rng
+    let cx = board_x() + col * cell() + cell() / 2
+    let cy = board_y() + row * cell() + cell() / 2
+    var i = 0
+    while i < 4 {
+        let dx = rng_below(state, 25)
+        state = dx.state
+        let dy = rng_below(state, 32)
+        state = dy.state
+        let life = 24 + dx.value % 14
+        out.push(Particle {
+            x: cx * 10,
+            y: cy * 10,
+            vx: (dx.value - 12) * 11,
+            vy: 0 - (26 + dy.value),
+            ticks: life,
+            life: life,
+            colour: colour,
+            size: 3 + dx.value % 3,
+        })
+        i = i + 1
+    }
+    if out.len() > 300 {
+        var trimmed: List<Particle> = []
+        var start = out.len() - 300
+        while start < out.len() {
+            trimmed.push(out[start])
+            start = start + 1
+        }
+        return SparkStep { particles: trimmed, rng: state }
+    }
+    return SparkStep { particles: out, rng: state }
+}
+
+fn step_particles(list: List<Particle>) -> List<Particle> {
+    var out: List<Particle> = []
+    for p in list {
+        if p.ticks > 1 {
+            out.push(Particle {
+                x: p.x + p.vx,
+                y: p.y + p.vy,
+                vx: p.vx,
+                vy: p.vy + 12,
+                ticks: p.ticks - 1,
+                life: p.life,
+                colour: p.colour,
+                size: p.size,
+            })
+        }
+    }
+    return out
+}
+
+// Pairs every gem on the new board with the cell it held before. Survivors get
+// a real from/to row; refills start above the board, staggered per column.
+fn build_motions(before: Board, after: Board, cleared: List<Int>) -> List<Motion> {
+    var out: List<Motion> = []
+    var col = 0
+    while col < after.width {
+        var rows: List<Int> = []
+        var colours: List<Int> = []
+        var used: List<Int> = []
+        var y = before.height - 1
+        while y >= 0 {
+            let index = board_index(before, col, y)
+            if board_is_open_index(before, index) {
+                let cell = before.cells[index]
+                if cell != 0 && !list_has(cleared, index) {
+                    rows.push(y)
+                    colours.push(gem_color(cell))
+                    used.push(0)
+                }
+            }
+            y = y - 1
+        }
+        var spawned = 0
+        y = after.height - 1
+        while y >= 0 {
+            let index = board_index(after, col, y)
+            if board_is_open_index(after, index) {
+                let cell = after.cells[index]
+                if cell != 0 {
+                    let colour = gem_color(cell)
+                    var found = 0 - 1
+                    var i = 0
+                    while i < rows.len() {
+                        if used[i] == 0 && colours[i] == colour {
+                            found = i
+                            i = rows.len()
+                        } else {
+                            i = i + 1
+                        }
+                    }
+                    if found >= 0 {
+                        used[found] = 1
+                        out.push(Motion { value: cell, col: col, from_row: rows[found], to_row: y, delay: slide_delay() })
+                    } else {
+                        out.push(Motion {
+                            value: cell,
+                            col: col,
+                            from_row: 0 - 1 - spawned,
+                            to_row: y,
+                            delay: slide_delay() + spawned * 2,
+                        })
+                        spawned = spawned + 1
+                    }
+                }
+            }
+            y = y - 1
+        }
+        col = col + 1
+    }
+    return out
+}
+
+fn app_begin_anim(src: App, before: Game, after: Game) -> App {
+    var app = src
+    var pops: List<Pop> = []
+    var particles = app.particles
+    var rng = app.fx_rng
+    for index in after.last_cleared {
+        let col = index % before.board.width
+        let row = index / before.board.width
+        if before.board.blocked[index] == 1 {
+            pops.push(Pop { value: 0, col: col, row: row, crate: true })
+            let spark = spawn_sparks(particles, col, row, s_crate(), rng)
+            particles = spark.particles
+            rng = spark.rng
+        } else {
+            let cell = board_cell_at(before.board, index)
+            if cell != 0 {
+                pops.push(Pop { value: cell, col: col, row: row, crate: false })
+                let colour = gem_color(cell)
+                if colour > 0 {
+                    let spark = spawn_sparks(particles, col, row, gem_rgb(colour), rng)
+                    particles = spark.particles
+                    rng = spark.rng
+                }
+            }
+        }
+    }
+    app.particles = particles
+    app.fx_rng = rng
+    app.anim = Anim {
+        active: true,
+        ticks: 0,
+        motions: build_motions(before.board, after.board, after.last_cleared),
+        pops: pops,
+    }
+    return app
+}
+
+// The crate tone, kept here so spark colours do not need a Skin argument.
+fn s_crate() -> Int {
+    return gui.rgb(150, 112, 72)
+}
+
+// ---------- moves ----------
+
+fn cue_for_gain(gain: Int) -> Int {
+    if gain >= 100 {
+        return cue_chain()
+    }
+    return cue_clear()
+}
+
+// One player move goes through here, so the click path, the arrow-key path and
+// the hint path all get the same animation, effects and end-of-run handling.
+fn app_try_swap(src: App, a: Int, b: Int) -> App {
+    var app = src
+    if app.screen != screen_play() {
+        return app
+    }
+    if app.game.phase != phase_stable() {
+        return app
+    }
+    if app.anim.active {
+        return app
+    }
+    let before = app.game
+    let after = game_swap(before, a, b)
+    if after.rejected > before.rejected {
+        app.game = after
+        app.sel = 0 - 1
+        app.shake = 10
+        app = app_notice(app, "that pair makes no match", 90)
+        return app_cue(app, cue_reject())
+    }
+
+    app.game = after
+    app.sel = 0 - 1
+    app.cursor = b
+    app.hint_ticks = 0
+    app.hint_a = 0 - 1
+    app.hint_b = 0 - 1
+    app.power_mode = false
+    app.gain = after.score - before.score
+    app.chain = after.depth
+    if app.chain < 1 {
+        app.chain = 1
+    }
+    app.flash = 6
+    app.floats = push_float(app.floats, b, app.gain)
+    app = app_begin_anim(app, before, after)
+
+    if app.chain > 1 {
+        app = app_notice(app, "chain x${app.chain} · +${app.gain}", 90)
+        app = app_cue(app, cue_chain())
+    } else {
+        app = app_notice(app, "${after.cleared - before.cleared} gems · +${app.gain}", 80)
+        app = app_cue(app, cue_for_gain(app.gain))
+    }
+
+    if after.phase == phase_over() {
+        app.screen = screen_over()
+        app.notice = ""
+        app.notice_ticks = 0
+        return app_cue(app, cue_over())
+    }
+
+    // A board with no legal move would eat the rest of the run, so it is
+    // redistributed immediately — the rules' shuffle, not a view invention.
+    if !game_has_move(after) {
+        app.game = game_shuffle(after)
+        app = app_notice(app, "no moves left · board reshuffled", 130)
+    }
+    return app
+}
+
+fn app_hint(src: App) -> App {
+    var app = src
+    if app.screen != screen_play() {
+        return app
+    }
+    if app.game.phase != phase_stable() || app.anim.active {
+        return app
+    }
+    let hint = game_hint(app.game)
+    if hint.len() != 2 {
+        app.game = game_shuffle(app.game)
+        app.hint_ticks = 0
+        return app_notice(app, "no moves · board reshuffled", 130)
+    }
+    app.hint_a = hint[0]
+    app.hint_b = hint[1]
+    app.hint_ticks = 160
+    app = app_notice(app, "hint · swap the two glowing gems", 120)
+    return app_cue(app, cue_select())
+}
+
+fn app_toggle_power(src: App) -> App {
+    var app = src
+    if app.screen != screen_play() || app.anim.active {
+        return app
+    }
+    if app.game.power <= 0 {
+        app.power_mode = false
+        return app_notice(app, "no storm charge · make a special", 110)
+    }
+    app.power_mode = !app.power_mode
+    app.sel = 0 - 1
+    if app.power_mode {
+        return app_notice(app, "storm armed · click a gem to strike", 130)
+    }
+    return app_notice(app, "storm cancelled", 70)
+}
+
+// The aimed power-up. It spends a charge, not a move, and the view animates it
+// exactly like a match: the rules produced the cleared list.
+fn app_strike(src: App, index: Int) -> App {
+    var app = src
+    if app.game.power <= 0 {
+        app.power_mode = false
+        return app_notice(app, "no storm charge · make a special", 110)
+    }
+    if index < 0 || !board_is_open_index(app.game.board, index) {
+        return app
+    }
+    let before = app.game
+    let after = game_power_strike(before, index)
+    if after.power == before.power {
+        return app
+    }
+    app.game = after
+    app.power_mode = false
+    app.sel = 0 - 1
+    app.hint_ticks = 0
+    app.gain = after.score - before.score
+    app.chain = after.depth
+    if app.chain < 1 {
+        app.chain = 1
+    }
+    app.flash = 5
+    app.floats = push_float(app.floats, index, app.gain)
+    app = app_begin_anim(app, before, after)
+    app = app_notice(app, "storm strike · +${app.gain}", 90)
+    return app_cue(app, cue_strike())
+}
+
+fn app_cursor(src: App, dx: Int, dy: Int) -> App {
+    var app = src
+    let b = app.game.board
+    var x = app.cursor % b.width
+    var y = app.cursor / b.width
+    var nx = x + dx
+    var ny = y + dy
+    if nx < 0 {
+        nx = 0
+    }
+    if ny < 0 {
+        ny = 0
+    }
+    if nx >= b.width {
+        nx = b.width - 1
+    }
+    if ny >= b.height {
+        ny = b.height - 1
+    }
+    let index = board_index(b, nx, ny)
+    if !board_is_open_index(b, index) {
+        return app
+    }
+    if app.power_mode {
+        app.cursor = index
+        return app
+    }
+    // With a gem selected an arrow aims the swap, which is the whole game on a
+    // keyboard; without one it just walks the cursor.
+    if app.sel >= 0 {
+        if cells_adjacent(b, app.sel, index) {
+            let sel = app.sel
+            app.sel = 0 - 1
+            app.cursor = index
+            return app_try_swap(app, sel, index)
+        }
+        return app
+    }
+    app.cursor = index
+    return app
+}
+
+fn app_select(src: App) -> App {
+    var app = src
+    let b = app.game.board
+    if app.power_mode {
+        return app_strike(app, app.cursor)
+    }
+    if app.sel < 0 {
+        if board_is_open_index(b, app.cursor) {
+            app.sel = app.cursor
+            app = app_cue(app, cue_select())
+        }
+        return app
+    }
+    if app.sel == app.cursor {
+        app.sel = 0 - 1
+        return app
+    }
+    if cells_adjacent(b, app.sel, app.cursor) {
+        let sel = app.sel
+        app.sel = 0 - 1
+        return app_try_swap(app, sel, app.cursor)
+    }
+    app.sel = app.cursor
+    return app
+}
+
+// ---------- input ----------
+
+fn handle_key(src: App, code: Int, mods: Int) -> App {
+    var app = src
+    let command = mods % 2 == 1
+    if command && code == 113 {
+        app.quit = true
+        return app
+    }
+
+    if code == 109 {
+        app.muted = !app.muted
+        if app.muted {
+            return app_notice(app, "sound off", 70)
+        }
+        return app_cue(app_notice(app, "sound on", 70), cue_select())
+    }
+
+    if code == gui.key_escape() {
+        if app.screen == screen_menu() {
+            app.quit = true
+            return app
+        }
+        if app.screen == screen_pause() {
+            app.screen = screen_menu()
+            return app_cue(app, cue_ui())
+        }
+        if app.screen == screen_over() {
+            app.screen = screen_menu()
+            return app_cue(app, cue_ui())
+        }
+        if app.power_mode {
+            app.power_mode = false
+            return app_notice(app, "storm cancelled", 70)
+        }
+        app.screen = screen_pause()
+        app.sel = 0 - 1
+        return app_cue(app, cue_ui())
+    }
+
+    // A move in flight is a short animation of a decision already made: input
+    // waits for it rather than stacking another swap on a moving board.
+    if app.anim.active {
+        return app
+    }
+
+    if app.screen == screen_menu() {
+        if code == 32 || code == gui.key_enter() {
+            return app_cue(app_new_run(app), cue_ui())
+        }
+        return app
+    }
+
+    if app.screen == screen_pause() {
+        if code == 32 || code == 112 || code == gui.key_enter() {
+            app.screen = screen_play()
+            return app_cue(app, cue_ui())
+        }
+        if code == 114 {
+            return app_new_run(app)
+        }
+        return app
+    }
+
+    if app.screen == screen_over() {
+        if code == 32 || code == gui.key_enter() || code == 114 {
+            return app_new_run(app)
+        }
+        return app
+    }
+
+    if code == 104 {
+        return app_hint(app)
+    }
+    if code == 115 {
+        return app_toggle_power(app)
+    }
+    if code == 114 {
+        return app_new_run(app)
+    }
+    if code == 112 {
+        app.screen = screen_pause()
+        app.sel = 0 - 1
+        return app_cue(app, cue_ui())
+    }
+    if code == 32 || code == gui.key_enter() {
+        return app_select(app)
+    }
+    if code == gui.key_left() {
+        return app_cursor(app, 0 - 1, 0)
+    }
+    if code == gui.key_right() {
+        return app_cursor(app, 1, 0)
+    }
+    if code == gui.key_up() {
+        return app_cursor(app, 0, 0 - 1)
+    }
+    if code == gui.key_down() {
+        return app_cursor(app, 0, 1)
+    }
+    return app
+}
+
+fn board_index_at(x: Int, y: Int) -> Int {
+    if x < board_x() || y < board_y() {
+        return 0 - 1
+    }
+    if x >= board_x() + board_px() || y >= board_y() + board_px() {
+        return 0 - 1
+    }
+    let col = (x - board_x()) / cell()
+    let row = (y - board_y()) / cell()
+    return row * board_cols() + col
+}
+
+fn board_click(src: App, x: Int, y: Int) -> App {
+    var app = src
+    let index = board_index_at(x, y)
+    if index < 0 {
+        return app
+    }
+    if !board_is_open_index(app.game.board, index) {
+        return app
+    }
+    if app.power_mode {
+        return app_strike(app, index)
+    }
+    if app.anim.active {
+        return app
+    }
+    if app.sel < 0 {
+        app.sel = index
+        app.cursor = index
+        return app_cue(app, cue_select())
+    }
+    if app.sel == index {
+        app.sel = 0 - 1
+        return app
+    }
+    if cells_adjacent(app.game.board, app.sel, index) {
+        let sel = app.sel
+        app.sel = 0 - 1
+        return app_try_swap(app, sel, index)
+    }
+    app.sel = index
+    app.cursor = index
+    return app_cue(app, cue_select())
+}
+
+fn handle_mouse_move(src: App, x: Int, y: Int) -> App {
+    var app = src
+    app.hover = board_index_at(x, y)
+    return app
+}
+
+fn handle_mouse_down(src: App, x: Int, y: Int) -> App {
+    var app = src
+
+    if gui.inside(sound_chip_x(), chip_y(), sound_chip_w(), chip_h(), x, y) {
+        app.muted = !app.muted
+        if app.muted {
+            return app_notice(app, "sound off", 70)
+        }
+        return app_cue(app_notice(app, "sound on", 70), cue_select())
+    }
+
+    if app.anim.active {
+        return app
+    }
+
+    if app.screen == screen_play() || app.screen == screen_pause() {
+        if gui.inside(pause_chip_x(), chip_y(), pause_chip_w(), chip_h(), x, y) {
+            if app.screen == screen_pause() {
+                app.screen = screen_play()
+            } else {
+                app.screen = screen_pause()
+            }
+            app.sel = 0 - 1
+            return app_cue(app, cue_ui())
+        }
+    }
+
+    if app.screen == screen_menu() {
+        if gui.inside(menu_play_x(), menu_play_y(), menu_play_w(), menu_play_h(), x, y) {
+            return app_cue(app_new_run(app), cue_ui())
+        }
+        return app
+    }
+
+    if app.screen == screen_pause() {
+        if gui.inside(pause_resume_x(), pause_resume_y(), pause_button_w(), pause_button_h(), x, y) {
+            app.screen = screen_play()
+            return app_cue(app, cue_ui())
+        }
+        if gui.inside(pause_new_x(), pause_new_y(), pause_button_w(), pause_button_h(), x, y) {
+            return app_new_run(app)
+        }
+        return app
+    }
+
+    if app.screen == screen_over() {
+        if gui.inside(over_again_x(), over_again_y(), pause_button_w(), pause_button_h(), x, y) {
+            return app_new_run(app)
+        }
+        return app
+    }
+
+    if gui.inside(strike_x(), strike_y(), strike_w(), strike_h(), x, y) {
+        return app_toggle_power(app)
+    }
+    if gui.inside(left_x(), 460, left_w(), 40, x, y) {
+        return app_hint(app)
+    }
+    if gui.inside(left_x(), 512, left_w(), 40, x, y) {
+        return app_new_run(app)
+    }
+    return board_click(app, x, y)
+}
+
+// Printable keys arrive as composed text, not key events, so games must read
+// both or Space and the letter shortcuts would silently do nothing.
+fn handle(src: App, event: Event) -> App {
+    if event.kind == gui.event_text() {
+        let text = gui.typed_text()
+        if text.len() > 0 {
+            return handle_key(src, text.bytes()[0], 0)
+        }
+        return src
+    }
+    if event.kind == gui.event_key() {
+        return handle_key(src, event.code, event.mods)
+    }
+    if event.kind == gui.event_mouse_down() {
+        return handle_mouse_down(src, event.x, event.y)
+    }
+    if event.kind == gui.event_mouse_move() {
+        return handle_mouse_move(src, event.x, event.y)
+    }
+    if event.kind == gui.event_close() {
+        var app = src
+        app.quit = true
+        return app
+    }
+    return src
+}
+
+fn app_step(src: App) -> App {
+    var app = src
+    app.tick = app.tick + 1
+    if app.shake > 0 {
+        app.shake = app.shake - 1
+    }
+    if app.flash > 0 {
+        app.flash = app.flash - 1
+    }
+    if app.notice_ticks > 0 {
+        app.notice_ticks = app.notice_ticks - 1
+    }
+    if app.hint_ticks > 0 {
+        app.hint_ticks = app.hint_ticks - 1
+    }
+    if app.anim.active {
+        var anim = app.anim
+        anim.ticks = anim.ticks + 1
+        if anim.ticks >= anim_total() {
+            anim.active = false
+            anim.motions = []
+            anim.pops = []
+        }
+        app.anim = anim
+    }
+    app.floats = step_floats(app.floats)
+    app.particles = step_particles(app.particles)
+    return app
+}
+
+// ---------- drawing primitives ----------
+
+fn draw_backdrop(s: Skin) {
+    var i = 0
+    while i < 20 {
+        let y = i * window_h() / 20
+        gui.rect(0, y, window_w(), window_h() / 20 + 2, lerp_colour(s.bg_top, s.bg, i * 100 / 19))
+        i = i + 1
+    }
+}
+
+fn shade(alpha: Int, s: Skin) {
+    gui.rect_alpha(0, 0, window_w(), window_h(), s.bg, alpha)
+}
+
+fn card(x: Int, y: Int, w: Int, h: Int, s: Skin) {
+    gui.round_rect_alpha(x + 4, y + 8, w, h, 16, 0, 80)
+    gui.round_rect(x, y, w, h, 16, s.panel)
+    gui.stroke(x, y, w, h, s.border)
+}
+
+fn panel_card(x: Int, y: Int, w: Int, h: Int, s: Skin) {
+    gui.round_rect(x, y, w, h, 18, s.panel_high)
+    gui.stroke(x, y, w, h, s.border)
+}
+
+fn pill(x: Int, y: Int, w: Int, h: Int, label: String, fill: Int, ink: Int, size: Int) {
+    gui.round_rect(x, y, w, h, h / 2, fill)
+    let tw = gui.text_width(label, size)
+    gui.text_fmt(x + (w - tw) / 2, y + (h - size) / 2 - 1, label, size, ink, gui.font_sans(), gui.style_bold())
+}
+
+fn chip(x: Int, y: Int, w: Int, h: Int, label: String, s: Skin, active: Bool) {
+    if active {
+        gui.round_rect(x, y, w, h, 8, s.accent_soft)
+        gui.stroke(x, y, w, h, s.accent)
+    } else {
+        gui.round_rect(x, y, w, h, 8, s.panel_high)
+        gui.stroke(x, y, w, h, s.border)
+    }
+    var ink = s.muted
+    if active {
+        ink = s.accent
+    }
+    let tw = gui.text_width(label, 10)
+    gui.text(x + (w - tw) / 2, y + (h - 10) / 2 - 1, label, 10, ink)
+}
+
+fn cell_frame(x: Int, y: Int, size: Int, inset: Int, colour: Int) {
+    gui.rect(x + inset, y + inset, size - inset * 2, 2, colour)
+    gui.rect(x + inset, y + size - inset - 2, size - inset * 2, 2, colour)
+    gui.rect(x + inset, y + inset, 2, size - inset * 2, colour)
+    gui.rect(x + size - inset - 2, y + inset, 2, size - inset * 2, colour)
+}
+
+fn draw_diamond(cx: Int, cy: Int, radius: Int, colour: Int) {
+    gui.quad(cx, cy - radius, cx + radius, cy, cx, cy + radius, cx - radius, cy, colour)
+}
+
+// ---------- gems ----------
+
+fn draw_gem(x: Int, y: Int, size: Int, colour: Int, special: Int, s: Skin) {
+    let inset = size / 8
+    let gx = x + inset
+    let gy = y + inset
+    let gs = size - inset * 2
+    let cx = gx + gs / 2
+    let cy = gy + gs / 2
+
+    if special == special_prism() {
+        // A prism has no colour of its own: a white diamond ring around a bright
+        // core, so it never reads as a seventh gem.
+        draw_diamond(cx, cy, gs / 2, s.white)
+        draw_diamond(cx, cy, gs / 2 - gs / 6, s.tile)
+        draw_diamond(cx, cy, gs / 5, s.accent)
+        gui.line(cx - gs / 3, cy, cx + gs / 3, cy, s.accent)
+        return
+    }
+
+    let body = gem_rgb(colour)
+    if colour == 1 {
+        draw_diamond(cx, cy, gs / 2, body)
+        gui.round_rect_alpha(cx - gs / 8, gy + gs / 5, gs / 4, gs / 10, 2, s.white, 40)
+    } else if colour == 2 {
+        gui.round_rect(gx, gy, gs, gs, gs / 2, body)
+        gui.round_rect_alpha(gx + gs / 5, gy + gs / 8, gs / 3, gs / 6, 3, s.white, 46)
+    } else if colour == 3 {
+        gui.triangle(cx, gy, gx + gs, gy + gs, gx, gy + gs, body)
+        gui.round_rect_alpha(cx - gs / 8, gy + gs / 2, gs / 4, gs / 10, 2, s.white, 40)
+    } else if colour == 4 {
+        gui.round_rect(gx, gy, gs, gs, 7, body)
+        gui.round_rect(gx + gs / 3, gy + gs / 3, gs / 3, gs / 3, 3, s.tile)
+        gui.round_rect_alpha(gx + gs / 5, gy + gs / 8, gs / 3, gs / 6, 3, s.white, 46)
+    } else if colour == 5 {
+        gui.round_rect(gx, gy + gs / 4, gs, gs / 2, gs / 4, body)
+        gui.round_rect_alpha(gx + gs / 5, gy + gs / 3, gs / 3, gs / 8, 3, s.white, 46)
+    } else {
+        // A plus is the only concave shape, so pearl never reads as ruby.
+        gui.rect(cx - gs / 9, gy, gs * 2 / 9, gs, body)
+        gui.rect(gx, cy - gs / 9, gs, gs * 2 / 9, body)
+        gui.round_rect_alpha(cx - 3, gy + gs / 6, 6, gs / 8, 2, s.white, 40)
+    }
+
+    if special == special_beam_h() {
+        gui.rect(x + 9, cy - 1, size - 18, 2, s.bg_top)
+        gui.triangle(x + 9, cy - 5, x + 9, cy + 5, x + 3, cy, s.bg_top)
+        gui.triangle(x + size - 9, cy - 5, x + size - 9, cy + 5, x + size - 3, cy, s.bg_top)
+    } else if special == special_beam_v() {
+        gui.rect(cx - 1, y + 9, 2, size - 18, s.bg_top)
+        gui.triangle(cx - 5, y + 9, cx + 5, y + 9, cx, y + 3, s.bg_top)
+        gui.triangle(cx - 5, y + size - 9, cx + 5, y + size - 9, cx, y + size - 3, s.bg_top)
+    } else if special == special_burst() {
+        gui.triangle(cx, cy - 4, cx - 5, cy - 15, cx + 5, cy - 15, s.white)
+        gui.triangle(cx, cy + 4, cx - 5, cy + 15, cx + 5, cy + 15, s.white)
+        gui.triangle(cx - 4, cy, cx - 15, cy - 5, cx - 15, cy + 5, s.white)
+        gui.triangle(cx + 4, cy, cx + 15, cy - 5, cx + 15, cy + 5, s.white)
+        gui.round_rect(cx - 4, cy - 4, 8, 8, 3, s.white)
+    }
+}
+
+fn draw_crate(x: Int, y: Int, size: Int, s: Skin) {
+    gui.round_rect(x + 3, y + 3, size - 6, size - 6, 10, s.crate)
+    gui.stroke(x + 3, y + 3, size - 6, size - 6, s.crate_dark)
+    gui.line(x + 10, y + 10, x + size - 10, y + size - 10, s.crate_dark)
+    gui.line(x + size - 10, y + 10, x + 10, y + size - 10, s.crate_dark)
+    gui.rect(x + 8, y + size / 2 - 1, size - 16, 2, s.crate_dark)
+}
+
+fn draw_frost(x: Int, y: Int, size: Int, layers: Int, s: Skin) {
+    var alpha = 40 + layers * 16
+    if alpha > 84 {
+        alpha = 84
+    }
+    gui.round_rect_alpha(x + 3, y + 3, size - 6, size - 6, 10, s.frost, alpha)
+    gui.stroke(x + 4, y + 4, size - 8, size - 8, s.frost)
+    gui.line(x + 11, y + size - 14, x + size - 13, y + 12, s.white)
+    gui.line(x + size / 2, y + 10, x + size - 13, y + size / 2 + 8, s.white)
+}
+
+// ---------- board ----------
+
+fn draw_board(app: App, s: Skin) {
+    let b = app.game.board
+    let bx = board_x() + shake_dx(app)
+    let by = board_y()
+
+    gui.round_rect(bx - 10, by - 10, board_px() + 20, board_px() + 20, 22, s.frame)
+    gui.round_rect(bx - 4, by - 4, board_px() + 8, board_px() + 8, 18, s.border)
+
+    var i = 0
+    while i < b.cells.len() {
+        if b.mask[i] == 1 {
+            let x = bx + (i % b.width) * cell()
+            let y = by + (i / b.width) * cell()
+            gui.round_rect(x + 3, y + 3, cell() - 6, cell() - 6, 10, s.tile)
+            if b.blocked[i] == 1 {
+                draw_crate(x, y, cell(), s)
+            } else if !app.anim.active {
+                if gem_is_prism(b.cells[i]) {
+                    draw_gem(x, y, cell(), 0, special_prism(), s)
+                } else if b.cells[i] != 0 {
+                    draw_gem(x, y, cell(), gem_color(b.cells[i]), gem_special(b.cells[i]), s)
+                }
+            }
+            if frost_visible(app, i) {
+                draw_frost(x, y, cell(), b.frost[i], s)
+            }
+        }
+        i = i + 1
+    }
+
+    if app.anim.active {
+        draw_anim(app, s, bx, by)
+        return
+    }
+
+    if app.hint_ticks > 0 {
+        if app.hint_a >= 0 {
+            draw_hint_cell(app, s, bx, app.hint_a)
+        }
+        if app.hint_b >= 0 {
+            draw_hint_cell(app, s, bx, app.hint_b)
+        }
+    }
+
+    if app.hover >= 0 && board_is_open_index(b, app.hover) {
+        let x = bx + (app.hover % b.width) * cell()
+        let y = by + (app.hover / b.width) * cell()
+        gui.round_rect_alpha(x + 3, y + 3, cell() - 6, cell() - 6, 10, s.white, 16)
+    }
+
+    if app.power_mode {
+        var target = app.hover
+        if target < 0 {
+            target = app.cursor
+        }
+        if board_is_open_index(b, target) {
+            let x = bx + (target % b.width) * cell()
+            let y = by + (target / b.width) * cell()
+            gui.round_rect_alpha(x + 1, y + 1, cell() - 2, cell() - 2, 12, s.hot, 30)
+            cell_frame(x, y, cell(), 1, s.hot)
+            gui.line(x + cell() / 2, y + 10, x + cell() / 2, y + cell() - 10, s.hot)
+            gui.line(x + 10, y + cell() / 2, x + cell() - 10, y + cell() / 2, s.hot)
+        }
+        return
+    }
+
+    if app.screen == screen_play() {
+        let cx = bx + (app.cursor % b.width) * cell()
+        let cy = by + (app.cursor / b.width) * cell()
+        cell_frame(cx, cy, cell(), 4, s.muted)
+    }
+
+    if app.sel >= 0 && board_is_open_index(b, app.sel) {
+        let x = bx + (app.sel % b.width) * cell()
+        let y = by + (app.sel / b.width) * cell()
+        gui.round_rect_alpha(x + 1, y + 1, cell() - 2, cell() - 2, 12, s.accent, 24)
+        cell_frame(x, y, cell(), 1, s.accent)
+    }
+
+    if app.flash > 0 {
+        gui.round_rect_alpha(bx, by, board_px(), board_px(), 14, s.white, app.flash * 7)
+    }
+}
+
+// Frost survives a hit and stays on its cell, so it is drawn over the moving
+// gems rather than with them.
+fn frost_visible(app: App, index: Int) -> Bool {
+    return app.game.board.frost[index] > 0 && !app.anim.active
+}
+
+fn draw_hint_cell(app: App, s: Skin, bx: Int, index: Int) {
+    let b = app.game.board
+    let x = bx + (index % b.width) * cell()
+    let y = board_y() + (index / b.width) * cell()
+    cell_frame(x, y, cell(), 2, s.gold)
+}
+
+fn draw_anim(app: App, s: Skin, bx: Int, by: Int) {
+    let anim = app.anim
+    gui.clip(bx, by, board_px(), board_px())
+
+    // Cleared gems flash and shrink where they stood.
+    for pop in anim.pops {
+        if anim.ticks < pop_life() {
+            let scale = cell() - anim.ticks * cell() / pop_life()
+            if scale > 2 {
+                let ox = bx + pop.col * cell() + (cell() - scale) / 2
+                let oy = by + pop.row * cell() + (cell() - scale) / 2
+                if pop.crate {
+                    draw_crate(ox, oy, scale, s)
+                } else {
+                    draw_gem(ox, oy, scale, gem_color(pop.value), gem_special(pop.value), s)
+                }
+                gui.round_rect_alpha(ox, oy, scale, scale, 6, s.white, 90 - anim.ticks * 8)
+            }
+        }
+    }
+
+    // Everything else slides from the row it held to the row it now holds.
+    for m in anim.motions {
+        let age = anim.ticks - m.delay
+        var progress = 100
+        if age < 0 {
+            progress = 0
+        } else if age < slide_len() {
+            progress = age * 100 / slide_len()
+        }
+        let eased = 100 - (100 - progress) * (100 - progress) / 100
+        let row10 = m.from_row * 10 + (m.to_row - m.from_row) * eased / 10
+        let px = bx + m.col * cell()
+        let py = by + row10 * cell() / 10
+        draw_gem(px, py, cell(), gem_color(m.value), gem_special(m.value), s)
+    }
+    gui.clip_reset()
+}
+
+fn draw_floats(app: App, s: Skin) {
+    for f in app.floats {
+        let elapsed = f.life - f.ticks
+        let rise = elapsed * 34 / f.life
+        let label = "+${f.value}"
+        let x = f.x - gui.text_width(label, 13) / 2
+        let y = f.y - 8 - rise
+        gui.text_fmt(x, y, label, 13, lerp_colour(s.gold, s.bg, elapsed * 100 / f.life), gui.font_sans(), gui.style_bold())
+    }
+}
+
+fn draw_particles(app: App, s: Skin) {
+    for p in app.particles {
+        let age = p.life - p.ticks
+        gui.rect(p.x / 10, p.y / 10, p.size, p.size, lerp_colour(p.colour, s.bg, age * 100 / p.life))
+    }
+}
+
+// ---------- header ----------
+
+fn draw_header(app: App, s: Skin) {
+    gui.rect(0, 0, window_w(), header_h(), s.bg)
+    gui.line(0, header_h() - 1, window_w(), header_h() - 1, s.border)
+
+    // AppKit's traffic lights sit on this row; the brand starts at 92 so they
+    // never cover it.
+    draw_diamond(109, 30, 13, s.accent)
+    draw_diamond(109, 30, 7, s.bg)
+    draw_diamond(109, 30, 4, s.gold)
+    gui.text_fmt(132, 16, "GEMSTORM", 24, s.text, gui.font_sans(), gui.style_bold())
+    gui.text(134, 50, "match three · pure Nova · seed ${app.seed}", 11, s.faint)
+
+    var sound = "SOUND ON"
+    if app.muted {
+        sound = "MUTED"
+    }
+    chip(sound_chip_x(), chip_y(), sound_chip_w(), chip_h(), sound, s, app.muted)
+
+    if app.screen == screen_play() {
+        chip(pause_chip_x(), chip_y(), pause_chip_w(), chip_h(), "PAUSE", s, false)
+    }
+    if app.screen == screen_pause() {
+        chip(pause_chip_x(), chip_y(), pause_chip_w(), chip_h(), "RESUME", s, true)
+    }
+}
+
+// ---------- panels ----------
+
+fn stat_row(x: Int, y: Int, w: Int, label: String, value: String, s: Skin) {
+    gui.text(x, y, label, 10, s.faint)
+    gui.text(x + w - gui.text_width(value, 11), y - 1, value, 11, s.muted)
+}
+
+fn draw_left(app: App, s: Skin) {
+    card(left_x(), 116, left_w(), 80, s)
+    gui.text(left_x() + 16, 130, "SCORE", 10, s.faint)
+    gui.text_fmt(left_x() + 16, 142, "${app.game.score}", 30, s.text, gui.font_sans(), gui.style_bold())
+
+    card(left_x(), 208, left_w(), 80, s)
+    gui.text(left_x() + 16, 222, "MOVES LEFT", 10, s.faint)
+    gui.text_fmt(left_x() + 16, 234, "${app.game.moves_left}", 26, s.accent, gui.font_sans(), gui.style_bold())
+    let used = app.game.moves_spent
+    let total = used + app.game.moves_left
+    var filled = 0
+    if total > 0 {
+        filled = (left_w() - 32) * used / total
+    }
+    gui.round_rect(left_x() + 16, 272, left_w() - 32, 6, 3, s.frame)
+    if filled > 0 {
+        gui.round_rect(left_x() + 16, 272, filled, 6, 3, s.accent)
+    }
+
+    card(left_x(), 300, left_w(), 60, s)
+    gui.text(left_x() + 16, 314, "BEST CHAIN", 10, s.faint)
+    gui.text_fmt(left_x() + 16, 326, chain_label(app.game.best_combo), 20, s.gold, gui.font_sans(), gui.style_bold())
+    let played = "${used} played"
+    gui.text(left_x() + left_w() - 16 - gui.text_width(played, 10), 332, played, 10, s.faint)
+
+    card(left_x(), 368, left_w(), 80, s)
+    gui.text(left_x() + 16, 382, "POWER", 10, s.faint)
+    var pip = 0
+    while pip < max_power() {
+        let px = left_x() + 16 + pip * 22
+        if pip < app.game.power {
+            gui.round_rect(px, 404, 16, 16, 4, s.accent)
+        } else {
+            gui.round_rect(px, 404, 16, 16, 4, s.frame)
+            gui.stroke(px, 404, 16, 16, s.border)
+        }
+        pip = pip + 1
+    }
+    chip(strike_x(), strike_y(), strike_w(), strike_h(), "STRIKE · S", s, app.power_mode)
+
+    chip(left_x(), 460, left_w(), 40, "HINT · H", s, app.hint_ticks > 0)
+    chip(left_x(), 512, left_w(), 40, "NEW RUN · R", s, false)
+
+    card(left_x(), 566, left_w(), 134, s)
+    gui.text(left_x() + 16, 582, "THE RUN", 10, s.faint)
+    gui.text(left_x() + 16, 604, "25 moves. Match three or more.", 11, s.muted)
+    gui.text(left_x() + 16, 624, "Chains score up to x5.", 11, s.muted)
+    gui.text(left_x() + 16, 644, "Specials earn storm charges.", 11, s.muted)
+    gui.text(left_x() + 16, 664, "S strikes a 3×3 you aim.", 11, s.muted)
+}
+
+fn draw_right(app: App, s: Skin) {
+    card(right_x(), 116, right_w(), 208, s)
+    gui.text(right_x() + 16, 132, "RUN STATS", 10, s.faint)
+    stat_row(right_x() + 16, 158, right_w() - 32, "cleared", "${app.game.cleared}", s)
+    stat_row(right_x() + 16, 180, right_w() - 32, "specials", "${app.game.specials_made}", s)
+    stat_row(right_x() + 16, 202, right_w() - 32, "rejected", "${app.game.rejected}", s)
+    stat_row(right_x() + 16, 224, right_w() - 32, "chain", chain_label(app.game.best_combo), s)
+    stat_row(right_x() + 16, 246, right_w() - 32, "power", "${app.game.power}/${max_power()}", s)
+    gui.line(right_x() + 16, 272, right_x() + right_w() - 16, 272, s.border)
+    gui.text(right_x() + 16, 286, "seed ${app.seed}", 10, s.faint)
+    gui.text(right_x() + 16, 304, "${board_cols()}×${board_rows()} · ${gem_colours()} gems", 9, s.faint)
+
+    card(right_x(), 336, right_w(), 180, s)
+    gui.text(right_x() + 16, 352, "SPECIALS", 10, s.faint)
+    gui.text(right_x() + 16, 374, "BEAM", 10, s.accent)
+    gui.text(right_x() + 16, 388, "4 in a row · clears line", 9, s.muted)
+    gui.text(right_x() + 16, 408, "PRISM", 10, s.accent)
+    gui.text(right_x() + 16, 422, "5 straight · one colour", 9, s.muted)
+    gui.text(right_x() + 16, 442, "BURST", 10, s.accent)
+    gui.text(right_x() + 16, 456, "5 bent · blasts a box", 9, s.muted)
+    gui.text(right_x() + 16, 476, "COMBO", 10, s.accent)
+    gui.text(right_x() + 16, 490, "two specials · big clear", 9, s.muted)
+
+    card(right_x(), 528, right_w(), 160, s)
+    gui.text(right_x() + 16, 544, "TIPS", 10, s.faint)
+    gui.text(right_x() + 16, 566, "Click a gem, then", 10, s.muted)
+    gui.text(right_x() + 16, 584, "a neighbour to swap.", 10, s.muted)
+    gui.text(right_x() + 16, 608, "Arrows steer. Space", 10, s.muted)
+    gui.text(right_x() + 16, 626, "picks. H hints.", 10, s.muted)
+    gui.text(right_x() + 16, 650, "Specials earn charges.", 10, s.muted)
+    gui.text(right_x() + 16, 668, "S then click to strike.", 10, s.muted)
+}
+
+fn draw_status(app: App, s: Skin) {
+    if app.power_mode {
+        let w = gui.text_width("storm armed · click a gem · Esc cancels", 12) + 30
+        let x = board_x() + (board_px() - w) / 2
+        gui.round_rect(x, 612, w, 30, 15, s.hot)
+        gui.text(x + 15, 620, "storm armed · click a gem · Esc cancels", 12, s.bg)
+        return
+    }
+    if app.notice_ticks > 0 && app.notice.len() > 0 {
+        let w = gui.text_width(app.notice, 12) + 30
+        let x = board_x() + (board_px() - w) / 2
+        gui.round_rect(x, 612, w, 30, 15, s.panel_high)
+        gui.stroke(x, 612, w, 30, s.border)
+        gui.text(x + 15, 620, app.notice, 12, s.text)
+        return
+    }
+    var hint = "pick a gem · then a neighbour"
+    if app.screen == screen_pause() {
+        hint = "paused · Space resumes"
+    }
+    let w = gui.text_width(hint, 11)
+    gui.text(board_x() + (board_px() - w) / 2, 622, hint, 11, s.faint)
+}
+
+fn draw_footer(app: App, s: Skin) {
+    gui.text(left_x(), footer_y(), "GEMSTORM · rules in rules.nova", 10, s.faint)
+    let right = "H hints · S storm · Esc pauses · ⌘Q quits"
+    gui.text(right_x() + right_w() - gui.text_width(right, 10), footer_y(), right, 10, s.faint)
+}
+
+// ---------- menu ----------
+
+fn menu_play_x() -> Int {
+    return window_w() / 2 - 110
+}
+
+fn menu_play_y() -> Int {
+    return 238
+}
+
+fn menu_play_w() -> Int {
+    return 220
+}
+
+fn menu_play_h() -> Int {
+    return 54
+}
+
+fn draw_menu(app: App, s: Skin) {
+    let cx = window_w() / 2
+    // The board behind is real and dimmed; a solid hero panel keeps the title
+    // off it, so the menu reads at a glance instead of swimming in gems.
+    panel_card(300, 104, 400, 272, s)
+    let title = "GEMSTORM"
+    let tw = gui.text_fmt_width(title, 52, gui.font_sans(), gui.style_bold())
+    gui.text_fmt(cx - tw / 2, 132, title, 52, s.text, gui.font_sans(), gui.style_bold())
+    let sub = "match three · chain · clear"
+    gui.text(cx - gui.text_width(sub, 14) / 2, 198, sub, 14, s.muted)
+
+    pill(menu_play_x(), menu_play_y(), menu_play_w(), menu_play_h(), "PLAY", s.accent, s.bg, 20)
+    let go = "Space or click · ${run_moves()} moves · seed ${app.seed}"
+    gui.text(cx - gui.text_width(go, 11) / 2, 306, go, 11, s.faint)
+
+    panel_card(300, 396, 400, 212, s)
+    gui.text(320, 414, "CONTROLS", 10, s.faint)
+    gui.text(320, 440, "Click    pick & swap", 11, s.muted)
+    gui.text(320, 462, "← → ↑ ↓    steer", 11, s.muted)
+    gui.text(320, 484, "Space    pick / confirm", 11, s.muted)
+    gui.text(320, 506, "H    hint", 11, s.muted)
+    gui.text(320, 528, "S    storm strike", 11, s.muted)
+    gui.text(530, 440, "P    pause", 11, s.muted)
+    gui.text(530, 462, "M    sound", 11, s.muted)
+    gui.text(530, 484, "Esc    menu / quit", 11, s.muted)
+    gui.text(530, 506, "⌘Q    quit", 11, s.muted)
+
+    let foot = "no engine, no assets · six colours, six shapes"
+    gui.text(cx - gui.text_width(foot, 10) / 2, 640, foot, 10, s.faint)
+}
+
+// ---------- overlays ----------
+
+fn pause_button_w() -> Int {
+    return 220
+}
+
+fn pause_button_h() -> Int {
+    return 48
+}
+
+fn pause_card_x() -> Int {
+    return window_w() / 2 - 190
+}
+
+fn pause_resume_x() -> Int {
+    return pause_card_x() + 80
+}
+
+fn pause_resume_y() -> Int {
+    return 344
+}
+
+fn pause_new_x() -> Int {
+    return pause_card_x() + 80
+}
+
+fn pause_new_y() -> Int {
+    return 404
+}
+
+fn draw_pause(app: App, s: Skin) {
+    shade(180, s)
+    panel_card(pause_card_x(), 238, 380, 244, s)
+    let cx = window_w() / 2
+    let title = "PAUSED"
+    gui.text_fmt(cx - gui.text_fmt_width(title, 32, gui.font_sans(), gui.style_bold()) / 2, 262, title, 32, s.text, gui.font_sans(), gui.style_bold())
+    let info = "score ${app.game.score} · ${app.game.moves_left} moves left"
+    gui.text(cx - gui.text_width(info, 11) / 2, 310, info, 11, s.muted)
+
+    pill(pause_resume_x(), pause_resume_y(), pause_button_w(), pause_button_h(), "RESUME", s.accent, s.bg, 16)
+    pill(pause_new_x(), pause_new_y(), pause_button_w(), 42, "NEW RUN", s.panel_high, s.text, 13)
+    let key = "Space resumes · Esc menu"
+    gui.text(cx - gui.text_width(key, 10) / 2, 462, key, 10, s.faint)
+}
+
+fn over_again_x() -> Int {
+    return window_w() / 2 - 110
+}
+
+fn over_again_y() -> Int {
+    return 430
+}
+
+fn draw_over(app: App, s: Skin) {
+    shade(196, s)
+    panel_card(300, 196, 400, 320, s)
+    let cx = window_w() / 2
+    let title = "RUN OVER"
+    gui.text_fmt(cx - gui.text_fmt_width(title, 30, gui.font_sans(), gui.style_bold()) / 2, 218, title, 30, s.text, gui.font_sans(), gui.style_bold())
+
+    let score = "${app.game.score}"
+    gui.text_fmt(cx - gui.text_fmt_width(score, 48, gui.font_sans(), gui.style_bold()) / 2, 264, score, 48, s.gold, gui.font_sans(), gui.style_bold())
+    let detail = "${app.game.cleared} gems · best chain ${chain_label(app.game.best_combo)}"
+    gui.text(cx - gui.text_width(detail, 12) / 2, 324, detail, 12, s.muted)
+    let spent = "${moves_label(app.game.moves_spent)} · ${app.game.specials_made} specials made"
+    gui.text(cx - gui.text_width(spent, 11) / 2, 350, spent, 11, s.faint)
+
+    pill(over_again_x(), over_again_y(), pause_button_w(), 50, "PLAY AGAIN", s.accent, s.bg, 16)
+    let key = "Space plays again · Esc menu"
+    gui.text(cx - gui.text_width(key, 10) / 2, 500, key, 10, s.faint)
+}
+
+// ---------- frame ----------
+
+fn draw(app: App) {
+    let s = skin()
+    gui.clear(s.bg)
+    draw_backdrop(s)
+    if app.screen == screen_menu() {
+        draw_board(app, s)
+        shade(150, s)
+        draw_menu(app, s)
+        return
+    }
+    draw_header(app, s)
+    draw_board(app, s)
+    draw_particles(app, s)
+    draw_floats(app, s)
+    draw_left(app, s)
+    draw_right(app, s)
+    draw_status(app, s)
+    draw_footer(app, s)
+    if app.screen == screen_pause() {
+        draw_pause(app, s)
+    }
+    if app.screen == screen_over() {
+        draw_over(app, s)
+    }
+}
+
+// ---------- icon ----------
+
+fn draw_icon(size: Int) {
+    let s = skin()
+    gui.clear(s.bg)
+    var i = 0
+    while i < 20 {
+        gui.rect(0, i * size / 20, size, size / 20 + 1, lerp_colour(gui.rgb(24, 30, 52), s.bg, i * 100 / 19))
+        i = i + 1
+    }
+
+    let margin = size * 9 / 100
+    let slab = size - margin * 2
+    gui.round_rect_alpha(margin, margin + size / 40, slab, slab, size / 6, 0, 110)
+    gui.round_rect(margin, margin, slab, slab, size / 6, s.border)
+    gui.round_rect(margin + 3, margin + 3, slab - 6, slab - 6, size / 6 - 3, s.panel)
+
+    let gem = size * 22 / 100
+    let gap = size * 3 / 100
+    let grid = gem * 3 + gap * 2
+    let ox = (size - grid) / 2
+    let oy = (size - grid) / 2
+    var row = 0
+    while row < 3 {
+        var col = 0
+        while col < 3 {
+            let x = ox + col * (gem + gap)
+            let y = oy + row * (gem + gap)
+            gui.round_rect(x, y, gem, gem, gem / 5, s.tile)
+            let slot = row * 3 + col
+            if slot == 4 {
+                draw_gem(x, y, gem, 0, special_prism(), s)
+            } else {
+                draw_gem(x, y, gem, slot % 6 + 1, special_none(), s)
+            }
+            col = col + 1
+        }
+        row = row + 1
+    }
+}
+
+// ---------- headless entry points ----------
+
+fn parse_int(text: String) -> Int {
+    let chars = text.trim().chars()
+    if chars.len() == 0 {
+        return 0
+    }
+    var i = 0
+    var negative = false
+    if chars[0] == "-" {
+        negative = true
+        i = 1
+    }
+    var value = 0
+    while i < chars.len() {
+        let code = chars[i].bytes()[0]
+        if code < 48 || code > 57 {
+            return 0
+        }
+        value = value * 10 + (code - 48)
+        i = i + 1
+    }
+    if negative {
+        return 0 - value
+    }
+    return value
+}
+
+fn bool_text(value: Bool) -> String {
+    if value {
+        return "true"
+    }
+    return "false"
+}
+
+fn state_line(app: App) -> String {
+    let game = app.game
+    return "gemstorm: screen=${screen_name(app.screen)} seed=${app.seed} phase=${game.phase} score=${game.score} moves=${game.moves_left} spent=${game.moves_spent} cleared=${game.cleared} specials=${game.specials_made} combo=${game.best_combo} power=${game.power} rejected=${game.rejected} anim=${app.anim.ticks} hash=${board_hash(game.board)}"
+}
+
+// Hint-driven play, used for the soak and the determinism check: every move is
+// the rules' own first legal swap, so the hash covers matching, specials,
+// gravity and scoring rather than one lucky board.
+fn sim_run(seed: Int, moves: Int) -> Game {
+    var game = game_new(seed, board_cols(), board_rows(), gem_colours(), moves)
+    var guard = 0
+    while game.phase != phase_over() && guard < 4000 {
+        guard = guard + 1
+        if !game_has_move(game) {
+            game = game_shuffle(game)
+        }
+        let hint = game_hint(game)
+        if hint.len() != 2 {
+            break
+        }
+        let before = game.moves_spent
+        game = game_swap(game, hint[0], hint[1])
+        if game.moves_spent == before {
+            break
+        }
+    }
+    return game
+}
+
+fn scenario_app(name: String) -> App {
+    var app = app_new(20261127)
+    app.muted = true
+    if name == "menu" {
+        app.screen = screen_menu()
+        return app
+    }
+
+    app.screen = screen_play()
+    if name == "play" {
+        // A known sapphire at the corner so a pixel probe has a fixed target,
+        // plus a selection and a hint so the capture shows both markers.
+        var board = app.game.board
+        board = board_set(board, 0, 0, gem(4, 0))
+        var game = app.game
+        game.board = board
+        app.game = game
+        app.sel = board_index(app.game.board, 2, 3)
+        app.cursor = app.sel
+        app.hint_a = board_index(app.game.board, 4, 5)
+        app.hint_b = board_index(app.game.board, 5, 5)
+        app.hint_ticks = 160
+        return app_notice(app, "click a neighbouring gem to swap", 600)
+    }
+    if name == "specials" {
+        var board = app.game.board
+        board = board_set(board, 0, 0, gem(4, 0))
+        board = board_set(board, 1, 0, gem(4, special_beam_h()))
+        board = board_set(board, 2, 0, gem(3, special_beam_v()))
+        board = board_set(board, 3, 0, gem(2, special_burst()))
+        board = board_set(board, 4, 0, cell_prism())
+        board = board_set(board, 5, 0, gem(5, 0))
+        var blocked = board.blocked
+        let crate = board_index(board, 1, 2)
+        blocked[crate] = 1
+        var cells = board.cells
+        cells[crate] = 0
+        board.blocked = blocked
+        board.cells = cells
+        var frost = board.frost
+        frost[board_index(board, 2, 2)] = 2
+        board.frost = frost
+        var game = app.game
+        game.board = board
+        app.game = game
+        return app_notice(app, "beams, burst, prism, crate and frost", 600)
+    }
+    if name == "hint" {
+        app = app_hint(app)
+        return app
+    }
+    if name == "power" {
+        var game = game_with_power(app.game, 2)
+        app.game = game
+        app.power_mode = true
+        app.cursor = board_index(app.game.board, 4, 4)
+        app.hover = app.cursor
+        return app_notice(app, "storm armed · click a gem", 600)
+    }
+    if name == "slide" {
+        let hint = game_hint(app.game)
+        if hint.len() == 2 {
+            app = app_try_swap(app, hint[0], hint[1])
+        }
+        var i = 0
+        while i < 8 {
+            app = app_step(app)
+            i = i + 1
+        }
+        return app
+    }
+    if name == "over" {
+        app.game = game_new(app.seed, board_cols(), board_rows(), gem_colours(), 1)
+        app = app_hint(app)
+        let hint = game_hint(app.game)
+        if hint.len() == 2 {
+            app = app_try_swap(app, hint[0], hint[1])
+        }
+        // Let the final settle finish, so the capture shows the finished board
+        // behind the card rather than an empty one.
+        var i = 0
+        while i < anim_total() + 2 {
+            app = app_step(app)
+            i = i + 1
+        }
+        return app
+    }
+    return app
+}
+
+// ---------- entry point ----------
+
+fn main() {
+    if gui.env("NOVA_GEMSTORM_CHECK").len() > 0 {
+        let game = game_new(20261127, 8, 8, 6, 25)
+        println("gemstorm: seed=${game.seed} hash=${board_hash(game.board)} score=${game.score} moves=${game.moves_left} stable=${!match_any(game.board)}")
+        return
+    }
+
+    let icon_path = gui.env("NOVA_GEMSTORM_ICON")
+    if icon_path.len() > 0 {
+        if !gui.open("Gemstorm", 512, 512) {
+            println("gemstorm: could not open a window for the icon")
+            return
+        }
+        gui.begin()
+        draw_icon(gui.width())
+        gui.present()
+        let saved = gui.save_png(icon_path)
+        println("gemstorm: icon saved=${bool_text(saved)} path=${icon_path}")
+        gui.close()
+        return
+    }
+
+    let sim = gui.env("NOVA_GEMSTORM_SIM")
+    if sim.len() > 0 {
+        let seed = parse_int(gui.env("NOVA_GEMSTORM_SEED"))
+        let game = sim_run(seed, parse_int(sim))
+        println("gemstorm: sim seed=${seed} budget=${sim} spent=${game.moves_spent} score=${game.score} cleared=${game.cleared} specials=${game.specials_made} phase=${game.phase} hash=${board_hash(game.board)}")
+        return
+    }
+
+    let scenario = gui.env("NOVA_GEMSTORM_SCENARIO")
+    if scenario.len() > 0 {
+        var app = scenario_app(scenario)
+        let shot = gui.env("NOVA_GEMSTORM_SHOT")
+        if !gui.open("Gemstorm", window_w(), window_h()) {
+            println("gemstorm: could not open a window")
+            return
+        }
+        gui.begin()
+        draw(app)
+        gui.present()
+        var saved = false
+        if shot.len() > 0 {
+            saved = gui.save_png(shot)
+        }
+        println(state_line(app) + " scenario=${scenario} saved=${bool_text(saved)}")
+        gui.close()
+        return
+    }
+
+    let seed = parse_int(gui.env("NOVA_GEMSTORM_SEED"))
+    if !gui.open("Gemstorm", window_w(), window_h()) {
+        println("gemstorm: could not open a window")
+        return
+    }
+
+    var app = app_new(seed)
+    var clock = clock_new(60)
+    clock = clock_with_max_steps(clock, 5)
+    var last = gui.now()
+
+    while !app.quit && gui.is_open() {
+        var event = gui.next_event()
+        while event.kind != gui.event_none() {
+            app = handle(app, event)
+            event = gui.next_event()
+        }
+
+        let now = gui.now()
+        let tick = clock_advance(clock, (now - last) * 1000)
+        clock = tick.clock
+        last = now
+        var steps = 0
+        while steps < tick.steps {
+            app = app_step(app)
+            steps = steps + 1
+        }
+
+        gui.place_traffic_lights(14)
+        gui.begin()
+        draw(app)
+        gui.present()
+        gui.sleep(1)
+    }
+    gui.close()
+}

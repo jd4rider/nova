@@ -1,0 +1,546 @@
+import "../src/rules.nova"
+
+// Acceptance tests for the Gemstorm simulation. Run with `nova test` in
+// examples/gemstorm. Every board here is small and explicit so a failure names
+// the rule that broke rather than a random seed.
+
+fn same(actual: Int, expected: Int) {
+    if actual != expected {
+        panic("expected ${expected}, got ${actual}")
+    }
+}
+
+// Bool equality is not supported by this compiler build, so the check branches
+// on the value itself.
+fn same_bool(actual: Bool, expected: Bool) {
+    if actual {
+        if !expected {
+            panic("expected false, got true")
+        }
+    } else {
+        if expected {
+            panic("expected true, got false")
+        }
+    }
+}
+
+// A 5x5 board with one horizontal run of three on the top row and no other run.
+fn board_three() -> Board {
+    let cells = [
+        1, 1, 1, 2, 3,
+        2, 3, 4, 5, 6,
+        3, 4, 5, 6, 1,
+        4, 5, 6, 1, 2,
+        5, 6, 1, 2, 3,
+    ]
+    return board_from_colors(5, 5, 6, cells)
+}
+
+fn board_four() -> Board {
+    let cells = [
+        1, 1, 1, 1, 2,
+        2, 3, 4, 5, 6,
+        3, 4, 5, 6, 1,
+        4, 5, 6, 1, 2,
+        5, 6, 1, 2, 3,
+    ]
+    return board_from_colors(5, 5, 6, cells)
+}
+
+fn board_five() -> Board {
+    let cells = [
+        1, 1, 1, 1, 1,
+        2, 3, 4, 5, 6,
+        3, 4, 5, 6, 1,
+        4, 5, 6, 1, 2,
+        5, 6, 1, 2, 3,
+    ]
+    return board_from_colors(5, 5, 6, cells)
+}
+
+// An L: a horizontal three crossed by a vertical three sharing one cell.
+fn board_ell() -> Board {
+    let cells = [
+        1, 1, 1, 2, 3,
+        1, 2, 3, 4, 5,
+        1, 3, 4, 5, 6,
+        2, 4, 5, 6, 1,
+        3, 5, 6, 1, 2,
+    ]
+    return board_from_colors(5, 5, 6, cells)
+}
+
+// A prism is colourless, so the three 1s beside it still form the only group.
+fn board_prism_three() -> Board {
+    let cells = [
+        0, 1, 1, 1, 2,
+        2, 3, 4, 5, 6,
+        3, 4, 5, 6, 1,
+        4, 5, 6, 1, 2,
+        5, 6, 1, 2, 3,
+    ]
+    let board = board_from_colors(5, 5, 6, cells)
+    return board_set(board, 0, 0, cell_prism())
+}
+
+// Swapping (2,0) with (2,1) makes the top row 1 1 1. No other run exists.
+fn board_swap_ready() -> Board {
+    let cells = [
+        1, 1, 2,
+        2, 2, 1,
+        3, 3, 4,
+    ]
+    return board_from_colors(3, 3, 4, cells)
+}
+
+// A board with no run and no legal move: the canonical dead board.
+fn board_dead() -> Board {
+    let cells = [
+        1, 2, 3,
+        2, 3, 1,
+        3, 1, 2,
+    ]
+    return board_from_colors(3, 3, 3, cells)
+}
+
+// ---------- generation ----------
+
+@test
+fn generated_boards_are_stable_and_have_moves() {
+    var seed = 0
+    while seed < 24 {
+        let game = game_new(seed, 8, 8, 6, 20)
+        same_bool(match_any(game.board), false)
+        same_bool(board_has_move(game.board), true)
+        same(board_empty_count(game.board), 0)
+        same(board_gem_count(game.board), 64)
+        seed = seed + 1
+    }
+}
+
+@test
+fn generation_is_reproducible() {
+    let a = game_new(4242, 8, 8, 6, 20)
+    let b = game_new(4242, 8, 8, 6, 20)
+    let c = game_new(4243, 8, 8, 6, 20)
+    same(board_hash(a.board), board_hash(b.board))
+    assert(board_hash(a.board) != board_hash(c.board))
+}
+
+@test
+fn masked_board_keeps_holes_empty() {
+    let mask = [
+        1, 1, 1,
+        1, 0, 1,
+        1, 1, 1,
+    ]
+    let base = board_new_masked(3, 3, 4, mask)
+    let generated = board_generate(base, rng_seed(9), 4)
+    same(generated.board.cells[4], 0)
+    same(board_gem_count(generated.board), 8)
+    same_bool(match_any(generated.board), false)
+}
+
+// ---------- matching ----------
+
+@test
+fn a_three_clears_three_and_scores_thirty() {
+    let board = board_three()
+    let groups = match_groups(board)
+    same(groups.len(), 1)
+    same(groups[0].cells.len(), 3)
+    same(match_special_for(groups[0]), special_none())
+    let game = game_new_board(board, 3, 10)
+    let wave = game_apply_wave(game, groups, 1, -1)
+    same(wave.cleared, 3)
+    same(wave.score, 30)
+}
+
+@test
+fn a_four_makes_a_beam_in_the_run_direction() {
+    let board = board_four()
+    let groups = match_groups(board)
+    same(groups.len(), 1)
+    same(match_special_for(groups[0]), special_beam_h())
+    // The fourth cell is the focus, so the new gem lands where the player aimed.
+    let focus = groups[0].cells[3]
+    let wave = game_apply_wave(game_new_board(board, 3, 10), groups, 1, focus)
+    same(wave.cleared, 3)
+    same(wave.score, 55)
+    same(gem_special(wave.board.cells[focus]), special_beam_h())
+    same(gem_color(wave.board.cells[focus]), 1)
+}
+
+@test
+fn a_straight_five_makes_a_prism() {
+    let groups = match_groups(board_five())
+    same(groups.len(), 1)
+    same(match_special_for(groups[0]), special_prism())
+    same(gem_color(gem(1, special_prism())), 1)
+}
+
+@test
+fn a_bent_five_makes_a_burst() {
+    let groups = match_groups(board_ell())
+    same(groups.len(), 1)
+    same(groups[0].cells.len(), 5)
+    same_bool(groups[0].straight, false)
+    same(match_special_for(groups[0]), special_burst())
+}
+
+@test
+fn intersecting_runs_are_one_group() {
+    let board = board_ell()
+    var seen = 0
+    for group in match_groups(board) {
+        seen = seen + group.cells.len()
+    }
+    same(seen, 5)
+}
+
+@test
+fn a_prism_never_joins_a_colour_run() {
+    let groups = match_groups(board_prism_three())
+    same(groups.len(), 1)
+    same(groups[0].cells.len(), 3)
+}
+
+@test
+fn runs_break_on_holes_and_crates() {
+    let cells = [
+        1, 1, 1, 2, 3,
+        2, 3, 4, 5, 6,
+        3, 4, 5, 6, 1,
+        4, 5, 6, 1, 2,
+        5, 6, 1, 2, 3,
+    ]
+    var board = board_from_colors(5, 5, 6, cells)
+    var blocked = board.blocked
+    blocked[1] = 1
+    board.blocked = blocked
+    let groups = match_groups(board)
+    same(groups.len(), 0)
+}
+
+// ---------- swaps ----------
+
+@test
+fn a_diagonal_swap_is_rejected_for_free() {
+    let board = board_swap_ready()
+    let game = game_new_board(board, 1, 10)
+    let after = game_swap_cells(game, 0, 0, 1, 1)
+    same(after.rejected, 1)
+    same(after.moves_spent, 0)
+    same(board_hash(after.board), board_hash(board))
+}
+
+@test
+fn a_swap_without_a_match_is_rejected_for_free() {
+    let board = board_swap_ready()
+    let game = game_new_board(board, 1, 10)
+    // Two 1s side by side: swapping them changes nothing and makes no match.
+    let after = game_swap_cells(game, 0, 0, 1, 0)
+    same(after.rejected, 1)
+    same(after.moves_spent, 0)
+    same(board_hash(after.board), board_hash(board))
+}
+
+@test
+fn a_matching_swap_spends_one_move_and_stabilises() {
+    let game = game_new_board(board_swap_ready(), 7, 10)
+    let after = game_swap_cells(game, 2, 0, 2, 1)
+    same(after.moves_spent, 1)
+    same(after.moves_left, 9)
+    same(after.rejected, 0)
+    assert(after.score >= 30)
+    same_bool(match_any(after.board), false)
+    same(board_empty_count(after.board), 0)
+    same(after.phase, phase_stable())
+}
+
+@test
+fn the_last_move_ends_the_run_after_the_wave_settles() {
+    let game = game_new_board(board_swap_ready(), 7, 1)
+    let after = game_swap_cells(game, 2, 0, 2, 1)
+    same(after.moves_spent, 1)
+    same(after.moves_left, 0)
+    same(after.phase, phase_over())
+    same_bool(match_any(after.board), false)
+    var over_events = 0
+    for event in after.events {
+        if event.kind == ev_over() {
+            over_events = over_events + 1
+        }
+    }
+    same(over_events, 1)
+}
+
+@test
+fn a_full_board_stays_full_after_many_moves() {
+    var game = game_new(99, 8, 8, 6, 200)
+    var played = 0
+    var guard = 0
+    while played < 120 && guard < 400 {
+        guard = guard + 1
+        let hint = game_hint(game)
+        if hint.len() == 2 {
+            let before = game.moves_spent
+            game = game_swap(game, hint[0], hint[1])
+            if game.moves_spent > before {
+                played = played + 1
+            }
+            same_bool(match_any(game.board), false)
+            same(board_empty_count(game.board), 0)
+        } else {
+            game = game_shuffle(game)
+        }
+    }
+    same(played, 120)
+    same(board_gem_count(game.board), 64)
+}
+
+// ---------- determinism ----------
+
+@test
+fn the_same_seed_and_moves_replay_exactly() {
+    var game = game_new(2026, 8, 8, 6, 300)
+    var swaps: List<Int> = []
+    var played = 0
+    var guard = 0
+    while played < 40 && guard < 200 {
+        guard = guard + 1
+        let hint = game_hint(game)
+        if hint.len() == 2 {
+            swaps.push(hint[0])
+            swaps.push(hint[1])
+            let before = game.moves_spent
+            game = game_swap(game, hint[0], hint[1])
+            if game.moves_spent > before {
+                played = played + 1
+            }
+        } else {
+            game = game_shuffle(game)
+        }
+    }
+    let replay = game_replay(2026, 8, 8, 6, 300, swaps)
+    same(board_hash(replay.board), board_hash(game.board))
+    same(replay.score, game.score)
+    same(replay.moves_spent, game.moves_spent)
+    same(replay.cleared, game.cleared)
+}
+
+// ---------- specials ----------
+
+@test
+fn beam_plus_beam_clears_a_cross() {
+    var board = game_new(11, 8, 8, 6, 20).board
+    board = board_set(board, 1, 1, gem(1, special_beam_h()))
+    board = board_set(board, 2, 1, gem(2, special_beam_v()))
+    let game = game_new_board(board, 11, 20)
+    let after = game_swap_cells(game, 1, 1, 2, 1)
+    same(after.moves_spent, 1)
+    assert(after.cleared >= 15)
+    same_bool(match_any(after.board), false)
+    same(board_empty_count(after.board), 0)
+}
+
+@test
+fn burst_plus_burst_clears_a_five_by_five() {
+    var board = game_new(12, 8, 8, 6, 20).board
+    board = board_set(board, 3, 3, gem(1, special_burst()))
+    board = board_set(board, 4, 3, gem(2, special_burst()))
+    let game = game_new_board(board, 12, 20)
+    let after = game_swap_cells(game, 3, 3, 4, 3)
+    same(after.moves_spent, 1)
+    assert(after.cleared >= 25)
+    same_bool(match_any(after.board), false)
+}
+
+@test
+fn prism_plus_normal_clears_its_colour() {
+    var board = game_new(13, 8, 8, 6, 20).board
+    board = board_set(board, 0, 0, cell_prism())
+    board = board_set(board, 1, 0, gem(3, 0))
+    var colour = 0
+    for cell in board.cells {
+        if gem_color(cell) == 3 {
+            colour = colour + 1
+        }
+    }
+    let game = game_new_board(board, 13, 20)
+    let after = game_swap_cells(game, 0, 0, 1, 0)
+    same(after.moves_spent, 1)
+    assert(after.cleared >= colour)
+    same_bool(match_any(after.board), false)
+}
+
+@test
+fn prism_plus_prism_clears_the_board() {
+    var board = game_new(14, 8, 8, 6, 20).board
+    board = board_set(board, 0, 0, cell_prism())
+    board = board_set(board, 1, 0, cell_prism())
+    let game = game_new_board(board, 14, 20)
+    let after = game_swap_cells(game, 0, 0, 1, 0)
+    assert(after.cleared >= 64)
+    same(board_gem_count(after.board), 64)
+    same_bool(match_any(after.board), false)
+}
+
+@test
+fn a_special_caught_in_a_clear_triggers_once() {
+    // A beam inside a three clears its row in addition to the run, and the
+    // trigger set cannot visit it twice.
+    var cells = [
+        1, 2, 3, 4, 5,
+        2, 3, 4, 5, 6,
+        3, 4, 5, 6, 1,
+        4, 5, 6, 1, 2,
+        5, 6, 1, 2, 3,
+    ]
+    var board = board_from_colors(5, 5, 6, cells)
+    board = board_set(board, 2, 2, gem(1, special_beam_h()))
+    board = board_set(board, 0, 2, gem(1, 0))
+    board = board_set(board, 1, 2, gem(1, 0))
+    let groups = match_groups(board)
+    same(groups.len(), 1)
+    let wave = game_apply_wave(game_new_board(board, 3, 10), groups, 1, -1)
+    assert(wave.cleared >= 5)
+}
+
+@test
+fn a_special_earns_one_storm_charge() {
+    let board = board_four()
+    let groups = match_groups(board)
+    let wave = game_apply_wave(game_new_board(board, 3, 10), groups, 1, groups[0].cells[3])
+    same(wave.specials_made, 1)
+    same(wave.power, 1)
+}
+
+@test
+fn a_storm_strike_clears_a_box_without_spending_a_move() {
+    var game = game_new_board(board_swap_ready(), 5, 10)
+    game = game_with_power(game, 1)
+    let before = board_hash(game.board)
+    let after = game_power_strike(game, board_index(game.board, 1, 1))
+    same(after.power, 0)
+    same(after.moves_spent, 0)
+    same(after.moves_left, 10)
+    assert(after.cleared >= 9)
+    assert(board_hash(after.board) != before)
+    assert(after.last_cleared.len() >= 9)
+    same_bool(match_any(after.board), false)
+}
+
+@test
+fn a_storm_strike_without_a_charge_changes_nothing() {
+    let game = game_new_board(board_swap_ready(), 5, 10)
+    let after = game_power_strike(game, board_index(game.board, 1, 1))
+    same(board_hash(after.board), board_hash(game.board))
+    same(after.score, 0)
+    same(after.last_cleared.len(), 0)
+}
+
+@test
+fn storm_charges_stop_at_the_cap() {
+    let game = game_with_power(game_new_board(board_three(), 3, 10), 99)
+    same(game.power, max_power())
+}
+
+// ---------- obstacles ----------
+
+@test
+fn a_crate_breaks_when_a_neighbour_clears() {
+    var board = board_three()
+    var blocked = board.blocked
+    blocked[0] = 1
+    var cells = board.cells
+    cells[0] = 0
+    board.cells = cells
+    board.blocked = blocked
+    let groups = match_groups(board)
+    same(groups.len(), 0)
+    // Put the crate beside a run instead of inside it.
+    var other = board_three()
+    var block2 = other.blocked
+    block2[5] = 1
+    var cells2 = other.cells
+    cells2[5] = 0
+    other.cells = cells2
+    other.blocked = block2
+    let run = match_groups(other)
+    same(run.len(), 1)
+    let wave = game_apply_wave(game_new_board(other, 3, 10), run, 1, -1)
+    same(wave.board.blocked[5], 0)
+}
+
+@test
+fn frost_absorbs_one_clear() {
+    var board = board_three()
+    var frost = board.frost
+    frost[2] = 1
+    board.frost = frost
+    let groups = match_groups(board)
+    let wave = game_apply_wave(game_new_board(board, 3, 10), groups, 1, -1)
+    same(wave.cleared, 2)
+    same(wave.board.frost[2], 0)
+    assert(wave.board.cells[2] != 0)
+}
+
+@test
+fn gravity_falls_within_a_column() {
+    var board = board_new(3, 3, 4)
+    board = board_set(board, 0, 0, gem(1, 0))
+    board = board_set(board, 0, 1, gem(2, 0))
+    let settled = settle(board, rng_seed(1), 4)
+    same(settled.falls, 2)
+    same(gem_color(settled.board.cells[board_index(settled.board, 0, 2)]), 2)
+    same(gem_color(settled.board.cells[board_index(settled.board, 0, 1)]), 1)
+}
+
+@test
+fn a_hole_splits_a_column_and_only_the_top_segment_refills() {
+    let mask = [
+        1, 1, 1,
+        1, 0, 1,
+        1, 1, 1,
+    ]
+    var board = board_new_masked(3, 3, 4, mask)
+    board = board_set(board, 1, 0, gem(2, 0))
+    let settled = settle(board, rng_seed(1), 4)
+    // Column 1 above the hole is a one-cell segment: it refills in place.
+    assert(settled.board.cells[board_index(settled.board, 1, 0)] != 0)
+    // The cell under the hole is a separate segment and stays empty.
+    same(settled.board.cells[board_index(settled.board, 1, 2)], 0)
+}
+
+// ---------- dead boards and shuffle ----------
+
+@test
+fn a_dead_board_reports_no_move_and_shuffles_to_one() {
+    let board = board_dead()
+    same_bool(match_any(board), false)
+    same_bool(board_has_move(board), false)
+    same(game_hint(game_new_board(board, 1, 10)).len(), 0)
+    let game = game_shuffle(game_new_board(board, 1, 10))
+    same_bool(board_has_move(game.board), true)
+    same_bool(match_any(game.board), false)
+}
+
+@test
+fn the_constructive_fallback_has_a_move_and_no_match() {
+    let empty = board_new(8, 8, 6)
+    let forced = board_force_move(empty, 6)
+    same_bool(match_any(forced), false)
+    same_bool(board_has_move(forced), true)
+}
+
+@test
+fn a_hint_is_a_legal_swap_that_changes_the_board() {
+    let game = game_new(31, 8, 8, 6, 20)
+    let hint = game_hint(game)
+    same(hint.len(), 2)
+    assert(swap_legal(game.board, hint[0], hint[1]))
+    let after = game_swap(game, hint[0], hint[1])
+    same(after.moves_spent, 1)
+    assert(board_hash(after.board) != board_hash(game.board))
+}

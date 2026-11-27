@@ -1,0 +1,109 @@
+// Deterministic pseudo-random numbers for Nova Engine.
+//
+// Games, replays and soak tests all need randomness that repeats: the same
+// seed must produce the same sequence on every machine and every run. The Nova
+// runtime has no entropy source, so this module is a 31-bit linear congruential
+// generator held in a plain Int. Integer-only and wasm-safe, like the rest of
+// the engine core.
+//
+// The API is state-in / state-out rather than a mutable global. A Game value
+// owns its stream, so two simulations in one process cannot disturb each
+// other and a saved state is enough to resume exactly.
+//
+// `rng_seed(0)` is a valid seed; the generator maps it to a non-zero state.
+
+struct RngStep {
+    state: Int,
+    value: Int,
+}
+
+// A permutation of 0..size-1, used for seven-bag piece randomisers and for
+// shuffles that must not repeat a value inside one pass.
+struct RngBag {
+    state: Int,
+    order: List<Int>,
+}
+
+fn rng_modulus() -> Int {
+    return 2147483648
+}
+
+fn rng_multiplier() -> Int {
+    return 1103515245
+}
+
+fn rng_increment() -> Int {
+    return 12345
+}
+
+// Mixes a caller-chosen seed into the generator state. Seed 0 is valid.
+fn rng_seed(seed: Int) -> Int {
+    var s = seed % 2147483647
+    if s < 0 {
+        s = 0 - s
+    }
+    s = (s * rng_multiplier() + rng_increment()) % rng_modulus()
+    if s <= 0 {
+        return 1
+    }
+    return s
+}
+
+// One draw. `value` is in 0..32767; the low bits of an LCG are poorly
+// distributed, so the value comes from the high bits of the state.
+fn rng_step(state: Int) -> RngStep {
+    var s = state
+    if s <= 0 {
+        s = 1
+    }
+    s = (s * rng_multiplier() + rng_increment()) % rng_modulus()
+    return RngStep { state: s, value: (s / 65536) % 32768 }
+}
+
+// Uniform in 0..bound-1. A non-positive bound yields 0 and does not advance.
+fn rng_below(state: Int, bound: Int) -> RngStep {
+    if bound <= 0 {
+        return RngStep { state: state, value: 0 }
+    }
+    let drawn = rng_step(state)
+    return RngStep { state: drawn.state, value: drawn.value % bound }
+}
+
+// True with the given percent chance, 0..100.
+fn rng_chance(state: Int, percent: Int) -> RngStep {
+    if percent <= 0 {
+        return RngStep { state: state, value: 0 }
+    }
+    if percent >= 100 {
+        return RngStep { state: state, value: 1 }
+    }
+    let drawn = rng_below(state, 100)
+    var hit = 0
+    if drawn.value < percent {
+        hit = 1
+    }
+    return RngStep { state: drawn.state, value: hit }
+}
+
+// Fisher-Yates over 0..size-1. Every permutation is reachable; the caller
+// decides what each index means.
+fn rng_bag(state: Int, size: Int) -> RngBag {
+    var order: List<Int> = []
+    var i = 0
+    while i < size {
+        order.push(i)
+        i = i + 1
+    }
+    var s = state
+    var cursor = size - 1
+    while cursor > 0 {
+        let drawn = rng_below(s, cursor + 1)
+        s = drawn.state
+        let swap = drawn.value
+        let held = order[cursor]
+        order[cursor] = order[swap]
+        order[swap] = held
+        cursor = cursor - 1
+    }
+    return RngBag { state: s, order: order }
+}

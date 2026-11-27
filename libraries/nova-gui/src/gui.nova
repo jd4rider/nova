@@ -58,6 +58,8 @@ extern "C" fn nova_gui_rect_alpha(x: Int, y: Int, w: Int, h: Int, rgb: Int, alph
 extern "C" fn nova_gui_image(path: String, x: Int, y: Int, w: Int, h: Int) -> Int
 extern "C" fn nova_gui_round_rect(x: Int, y: Int, w: Int, h: Int, radius: Int, rgb: Int) -> Unit
 extern "C" fn nova_gui_round_rect_alpha(x: Int, y: Int, w: Int, h: Int, radius: Int, rgb: Int, alpha: Int) -> Unit
+extern "C" fn nova_gui_triangle(x0: Int, y0: Int, x1: Int, y1: Int, x2: Int, y2: Int, rgb: Int) -> Unit
+extern "C" fn nova_gui_triangle_alpha(x0: Int, y0: Int, x1: Int, y1: Int, x2: Int, y2: Int, rgb: Int, alpha: Int) -> Unit
 extern "C" fn nova_gui_stroke_rect(x: Int, y: Int, w: Int, h: Int, rgb: Int) -> Unit
 extern "C" fn nova_gui_line(x0: Int, y0: Int, x1: Int, y1: Int, rgb: Int) -> Unit
 extern "C" fn nova_gui_text(x: Int, y: Int, text: String, size: Int, rgb: Int, mono: Int) -> Unit
@@ -658,6 +660,23 @@ fn stroke(x: Int, y: Int, w: Int, h: Int, color: Int) {
 
 fn line(x0: Int, y0: Int, x1: Int, y1: Int, color: Int) {
     nova_gui_line(x0, y0, x1, y1, color)
+}
+
+// A filled triangle. Faceted art is a fan of these: a gem's crown, table and
+// pavilion are triangles, not stacked rectangles.
+fn triangle(x0: Int, y0: Int, x1: Int, y1: Int, x2: Int, y2: Int, color: Int) {
+    nova_gui_triangle(x0, y0, x1, y1, x2, y2, color)
+}
+
+fn triangle_alpha(x0: Int, y0: Int, x1: Int, y1: Int, x2: Int, y2: Int, color: Int, alpha: Int) {
+    nova_gui_triangle_alpha(x0, y0, x1, y1, x2, y2, color, alpha)
+}
+
+// A convex quad, drawn as two triangles. Corners go clockwise from the
+// top-left; a concave order leaves a visible seam.
+fn quad(x0: Int, y0: Int, x1: Int, y1: Int, x2: Int, y2: Int, x3: Int, y3: Int, color: Int) {
+    nova_gui_triangle(x0, y0, x1, y1, x2, y2, color)
+    nova_gui_triangle(x0, y0, x2, y2, x3, y3, color)
 }
 
 // Draws text with the system font, top-left anchored.
