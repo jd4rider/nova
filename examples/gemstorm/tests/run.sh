@@ -67,8 +67,8 @@ echo "$OUT" | grep -q "screen=play" || { echo "run: specials screen wrong" >&2; 
 OUT=$(capture power)
 echo "$OUT" | grep -q "power=2" || { echo "run: storm charges were not armed" >&2; exit 1; }
 
-# A gem held under the pointer must be in the drag state, with the gem lifted
-# off its cell and locked to the horizontal axis it was nudged along.
+# A gem held under the pointer must be in the drag state, sitting flat under
+# the pointer and locked to the horizontal axis it was nudged along.
 OUT=$(capture drag)
 echo "$OUT" | grep -q "drag=26" || { echo "run: drag capture did not hold a gem" >&2; exit 1; }
 echo "$OUT" | grep -q "axis=1" || { echo "run: drag capture was not axis-locked" >&2; exit 1; }
@@ -167,7 +167,7 @@ expect_pixel target/shots/specials.png "$(px 566)" "$(px 146)" 120 220 235 "pris
 # The core at (5,0): a gold heart on the 2x2 power-up.
 expect_pixel target/shots/specials.png "$(px 626)" "$(px 146)" 255 198 75 "core-heart"
 # The sapphire carried under the pointer: same gem, one cell along its row.
-expect_pixel target/shots/drag.png "$(px 444)" "$(px 310)" 88 146 248 "drag-ghost"
+expect_pixel target/shots/drag.png "$(px 444)" "$(px 322)" 88 146 248 "drag-ghost"
 
 IW=$(sips -g pixelWidth target/shots/icon.png | awk '/pixelWidth/ {print $2}')
 IH=$(sips -g pixelHeight target/shots/icon.png | awk '/pixelHeight/ {print $2}')

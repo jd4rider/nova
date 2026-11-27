@@ -522,40 +522,76 @@ fn shake_dx(app: App) -> Int {
     return 0 - 3
 }
 
+fn cap_particles(list: List<Particle>, limit: Int) -> List<Particle> {
+    if list.len() <= limit {
+        return list
+    }
+    var out: List<Particle> = []
+    var start = list.len() - limit
+    while start < list.len() {
+        out.push(list[start])
+        start = start + 1
+    }
+    return out
+}
+
+// A clear throws a wide shower: the gem's own colour plus white and gold
+// sparks, so a chain reads as brighter than a single match.
 fn spawn_sparks(list: List<Particle>, col: Int, row: Int, colour: Int, rng: Int) -> SparkStep {
     var out = list
     var state = rng
     let cx = board_x() + col * cell() + cell() / 2
     let cy = board_y() + row * cell() + cell() / 2
     var i = 0
-    while i < 4 {
-        let dx = rng_below(state, 25)
+    while i < 7 {
+        let dx = rng_below(state, 41)
         state = dx.state
-        let dy = rng_below(state, 32)
+        let dy = rng_below(state, 33)
         state = dy.state
-        let life = 24 + dx.value % 14
+        let life = 22 + dx.value % 20
+        var tint = colour
+        if i % 4 == 1 {
+            tint = gui.rgb(255, 255, 255)
+        }
+        if i % 5 == 2 {
+            tint = gui.rgb(255, 198, 75)
+        }
         out.push(Particle {
             x: cx * 10,
             y: cy * 10,
-            vx: (dx.value - 12) * 11,
-            vy: 0 - (26 + dy.value),
+            vx: (dx.value - 20) * 9,
+            vy: 0 - (22 + dy.value),
             ticks: life,
             life: life,
-            colour: colour,
-            size: 3 + dx.value % 3,
+            colour: tint,
+            size: 3 + dx.value % 4,
         })
         i = i + 1
     }
-    if out.len() > 300 {
-        var trimmed: List<Particle> = []
-        var start = out.len() - 300
-        while start < out.len() {
-            trimmed.push(out[start])
-            start = start + 1
-        }
-        return SparkStep { particles: trimmed, rng: state }
-    }
-    return SparkStep { particles: out, rng: state }
+    return SparkStep { particles: cap_particles(out, 600), rng: state }
+}
+
+// A held gem leaves a thin comet tail, so sliding it feels continuous instead
+// of a gem teleporting between cells.
+fn spawn_trail(list: List<Particle>, x: Int, y: Int, colour: Int, rng: Int) -> SparkStep {
+    var out = list
+    var state = rng
+    let dx = rng_below(state, 11)
+    state = dx.state
+    let dy = rng_below(state, 11)
+    state = dy.state
+    let life = 12 + dx.value % 12
+    out.push(Particle {
+        x: x * 10 + (dx.value - 5) * 7,
+        y: y * 10 + (dy.value - 5) * 7,
+        vx: 0 - (dx.value - 5) * 4,
+        vy: 0 - (6 + dy.value * 2),
+        ticks: life,
+        life: life,
+        colour: colour,
+        size: 2 + dx.value % 3,
+    })
+    return SparkStep { particles: cap_particles(out, 600), rng: state }
 }
 
 fn step_particles(list: List<Particle>) -> List<Particle> {
@@ -1208,6 +1244,8 @@ fn handle_mouse_drag(src: App, x: Int, y: Int) -> App {
         return app
     }
     let span = drag_span(app, axis, x, y)
+    let was_x = app.drag_x
+    let was_y = app.drag_y
     if axis == 1 {
         app.drag_x = drag_origin_x(app) + span
         app.drag_y = drag_origin_y(app)
@@ -1216,6 +1254,18 @@ fn handle_mouse_drag(src: App, x: Int, y: Int) -> App {
         app.drag_y = drag_origin_y(app) + span
     }
     app.hover = board_index_at(app.drag_x, app.drag_y)
+    if app.drag_x != was_x || app.drag_y != was_y {
+        let value = board_cell_at(app.game.board, app.drag)
+        var tint = gui.rgb(255, 255, 255)
+        if value != 0 {
+            if !gem_is_prism(value) {
+                tint = gem_rgb(gem_color(value))
+            }
+        }
+        let spark = spawn_trail(app.particles, app.drag_x, app.drag_y, tint, app.fx_rng)
+        app.particles = spark.particles
+        app.fx_rng = spark.rng
+    }
     let target = drag_drop_target(app, axis, x, y)
     if target < 0 {
         return app
@@ -1550,10 +1600,21 @@ fn draw_board(app: App, s: Skin) {
             if b.blocked[i] == 1 {
                 draw_crate(x, y, cell(), s)
             } else if !app.anim.active && app.drag != i && !drag_vacated(app, i) {
-                if gem_is_prism(b.cells[i]) {
+                let value = b.cells[i]
+                let special = gem_special(value)
+                if value != 0 && (special != special_none() || gem_is_prism(value)) {
+                    // Specials breathe a gold aura so they stand out from the
+                    // plain gems even in a busy board.
+                    let pulse = 20 + (app.tick * 3 + i * 11) % 26
+                    gui.round_rect_alpha(x + 3, y + 3, cell() - 6, cell() - 6, 10, s.gold, pulse)
+                }
+                if gem_is_prism(value) {
                     draw_gem(x, y, cell(), 0, special_prism(), s)
-                } else if b.cells[i] != 0 {
-                    draw_gem(x, y, cell(), gem_color(b.cells[i]), gem_special(b.cells[i]), s)
+                } else if value != 0 {
+                    draw_gem(x, y, cell(), gem_color(value), gem_special(value), s)
+                }
+                if value != 0 && (special != special_none() || gem_is_prism(value)) {
+                    draw_special_glint(app, s, x, y, i)
                 }
             }
             if frost_visible(app, i) {
@@ -1562,6 +1623,8 @@ fn draw_board(app: App, s: Skin) {
         }
         i = i + 1
     }
+
+    draw_twinkles(app, s, bx, by)
 
     if app.anim.active {
         draw_anim(app, s, bx, by)
@@ -1638,9 +1701,9 @@ fn frost_visible(app: App, index: Int) -> Bool {
     return app.game.board.frost[index] > 0 && !app.anim.active
 }
 
-// The gem under the pointer, lifted off the board, with a slot on every
-// neighbour it can be dropped on. The source cell keeps its tile but loses its
-// gem, so the drag reads as picking the gem up rather than copying it.
+// The gem under the pointer, flat on the board, with a slot on every neighbour
+// it can be dropped on. The source cell keeps its tile but loses its gem, so
+// the gem reads as sliding out of its cell rather than being lifted off it.
 fn draw_drag(app: App, s: Skin, bx: Int, by: Int) {
     if app.drag < 0 {
         return
@@ -1693,16 +1756,19 @@ fn draw_drag(app: App, s: Skin, bx: Int, by: Int) {
     }
 
     let value = board_cell_at(b, app.drag)
+    // No lift, no drop shadow and no white outline: the gem sits in the cell
+    // under the pointer like every other gem, so the drag is a slide along the
+    // board rather than a card picked up off it. A faint halo keeps it legible
+    // as it crosses the seams between tiles.
     let gx = app.drag_x - cell() / 2
-    let gy = app.drag_y - cell() / 2 - 6
+    let gy = app.drag_y - cell() / 2
     gui.clip(bx, by, board_px(), board_px())
-    gui.round_rect_alpha(gx + 6, gy + 12, cell(), cell(), 12, 0, 70)
+    gui.round_rect_alpha(gx + 1, gy + 1, cell() - 2, cell() - 2, 12, s.accent, 20)
     if gem_is_prism(value) {
         draw_gem(gx, gy, cell(), 0, special_prism(), s)
     } else if value != 0 {
         draw_gem(gx, gy, cell(), gem_color(value), gem_special(value), s)
     }
-    cell_frame(gx, gy, cell(), 2, s.white)
     gui.clip_reset()
 }
 
@@ -1763,11 +1829,75 @@ fn draw_floats(app: App, s: Skin) {
     }
 }
 
+// A single white glint orbits every special, so the board keeps moving even
+// while the player is thinking.
+fn draw_special_glint(app: App, s: Skin, x: Int, y: Int, index: Int) {
+    let step = (app.tick / 4 + index * 3) % 4
+    let inset = 12
+    var gx = x + cell() / 2
+    var gy = y + inset
+    if step == 1 {
+        gx = x + cell() - inset
+        gy = y + cell() / 2
+    } else if step == 2 {
+        gy = y + cell() - inset
+    } else if step == 3 {
+        gx = x + inset
+        gy = y + cell() / 2
+    }
+    gui.rect(gx - 1, gy - 1, 3, 3, s.white)
+    gui.rect_alpha(gx - 5, gy, 11, 1, s.white, 90)
+    gui.rect_alpha(gx, gy - 5, 1, 11, s.white, 90)
+}
+
+// Twinkles sit in the seams between tiles and fade in and out, which adds
+// glitter without ever covering a gem face.
+fn draw_twinkles(app: App, s: Skin, bx: Int, by: Int) {
+    gui.clip(bx, by, board_px(), board_px())
+    var i = 0
+    while i < 26 {
+        let phase = (app.tick / 2 + i * 23) % 120
+        var alpha = 0
+        if phase < 18 {
+            alpha = 12 + phase * 6
+        } else if phase < 34 {
+            alpha = 118 - (phase - 18) * 7
+        }
+        if alpha > 0 {
+            let col = i % board_cols()
+            let row = (i / board_cols()) % board_rows()
+            let ox = (i * 37 + 5) % 15 - 7
+            let oy = (i * 53 + 9) % 15 - 7
+            let x = bx + col * cell() + ox
+            let y = by + row * cell() + oy
+            gui.rect_alpha(x, y, 2, 2, s.white, alpha)
+            gui.rect_alpha(x - 3, y, 8, 1, s.white, alpha / 2)
+            gui.rect_alpha(x, y - 3, 1, 8, s.white, alpha / 2)
+        }
+        i = i + 1
+    }
+    gui.clip_reset()
+}
+
 fn draw_particles(app: App, s: Skin) {
+    // Sparks are board effects, so they stop at the frame instead of drifting
+    // over the score cards.
+    gui.clip(board_x(), board_y(), board_px(), board_px())
     for p in app.particles {
         let age = p.life - p.ticks
-        gui.rect(p.x / 10, p.y / 10, p.size, p.size, lerp_colour(p.colour, s.bg, age * 100 / p.life))
+        let colour = lerp_colour(p.colour, s.bg, age * 100 / p.life)
+        let px = p.x / 10
+        let py = p.y / 10
+        if p.size >= 4 {
+            // Bigger sparks are diamonds with a soft halo, so a clear leaves
+            // glints rather than plain squares.
+            gui.round_rect_alpha(px - p.size / 2, py - p.size / 2, p.size * 2, p.size * 2, p.size, colour, 55)
+            gui.quad(px, py - p.size, px + p.size, py, px, py + p.size, px - p.size, py, colour)
+        } else {
+            gui.rect(px, py, p.size, p.size, colour)
+        }
     }
+    gui.clip_reset()
 }
 
 // ---------- header ----------
