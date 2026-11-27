@@ -1001,6 +1001,41 @@ names the voice. The profile's settings file is checked to contain no `voice` or
 Audio is muted in this run; that the sample is audible, and that it uses the
 voice's real timbre, is not evidenced.
 
+## 0.9.1 — window buttons visible, whole chrome drags
+
+The 0.8.9 placement read the window height (800) while AppKit keeps the buttons
+in its own 32 pt `NSTitlebarView`, so the close button sat at y=770 — outside
+that view and off the window's top. That is why all three buttons vanished.
+The host now places the row from the titlebar view's own bounds, in whichever
+direction that view counts y, and pulls a row it cannot hold up so no button
+hangs off its edge.
+
+`browser/tests/traffic.sh` (15/15) reads:
+
+- horizontal: `traffic center_y=23 placed=23 close=13,2 host=NSTitlebarView
+  flipped=0 hostH=32 buttonH=14`;
+- vertical and rail: `center_y=29 placed=25 close=13,0`, the requested toolbar
+  centre pulled up because the titlebar view is 32 pt tall;
+- for each layout, the close frame satisfies `0 <= y` and `y + buttonH <=
+  hostH`, so the row is whole inside the titlebar;
+- the page still renders (`browser: state=ready`).
+
+The drag handle moved from the host to the app. The host keeps its automatic
+35 px strip for apps that do not opt in; the browser calls
+`gui.set_manual_drag(true)` and starts the move with `gui.begin_window_drag()`
+only when `chrome_background` says the press missed every control.
+`NOVA_BROWSER_DRAG_CHECK=1` prints one probe line per layout:
+
+- horizontal: `drag strip=1 tab=0 toolbar=1 button=0 address=0 page=0 header=1
+  empty=0`;
+- vertical: same with `empty=1` (the sidebar below its rows);
+- rail: `header=0` (that point is the collapse chevron) and `empty=1`.
+
+No mouse injection exists here, so what is evidenced is the hit test: which
+presses ask for a window move and which keep their click. A human dragging the
+window, and the buttons in real pixels, are not evidenced — AppKit draws them
+above the Nova view, so framebuffer snapshots still cannot show them.
+
 ## Not yet evidenced
 
 - hosted CI run of the browser address/lifecycle steps;

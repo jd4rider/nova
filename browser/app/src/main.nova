@@ -422,6 +422,91 @@ fn toolbar_y(vertical: Bool) -> Int {
     return 44
 }
 
+// A press on a toolbar control is not a window drag: the address field starts
+// editing and the buttons do their own job.
+fn toolbar_control_at(x: Int, y: Int, vertical: Bool) -> Bool {
+    let metrics = toolbar_metrics(vertical)
+    let by = toolbar_y(vertical) + 2
+    if gui.inside(metrics.address, toolbar_y(vertical), metrics.address_w, 34, x, y) {
+        return true
+    }
+    var xs: List<Int> = [metrics.back, metrics.forward, metrics.reload, metrics.voice, metrics.star, metrics.downloads, metrics.docs, metrics.layout]
+    for bx in xs {
+        if gui.inside(bx, by, 30, 30, x, y) {
+            return true
+        }
+    }
+    return false
+}
+
+// Empty chrome: the tab strip and toolbar between their controls, plus the
+// sidebar below its rows. Chrome starts a window move from a press here, which
+// is why the whole strip drags and not just a thin band at the top edge. The
+// AppKit window buttons sit above the Nova view, so their clicks never arrive.
+fn chrome_background(x: Int, y: Int, session: Session) -> Bool {
+    let count = session.tabs.len()
+    if session.vertical {
+        if y < chrome_height(true) {
+            return !toolbar_control_at(x, y, true)
+        }
+        if x > sidebar_span(session) {
+            return false
+        }
+        if session.rail {
+            if x >= rail_width() {
+                // The floating list covers the page, not the rail.
+                return false
+            }
+            var i = 0
+            while i < count {
+                let mark = rail_tab_box(i)
+                if gui.inside(mark.x, mark.y, mark.w, mark.h, x, y) {
+                    return false
+                }
+                i = i + 1
+            }
+            let plus = new_tab_box(session)
+            if gui.inside(plus.x, plus.y, plus.w, plus.h, x, y) {
+                return false
+            }
+            let toggle = collapse_box(session)
+            return !gui.inside(toggle.x, toggle.y, toggle.w, toggle.h, x, y)
+        }
+        var i = 0
+        while i < count {
+            let tx = tab_box_x(session, i)
+            if gui.inside(tx, tab_box_y(i, true), tab_box_w(count, true), tab_box_h(true), x, y) {
+                return false
+            }
+            i = i + 1
+        }
+        let plus = new_tab_box(session)
+        if gui.inside(plus.x, plus.y, plus.w, plus.h, x, y) {
+            return false
+        }
+        let toggle = collapse_box(session)
+        if gui.inside(toggle.x, toggle.y, toggle.w, toggle.h, x, y) {
+            return false
+        }
+        return true
+    }
+    if y >= page_top(session) {
+        return false
+    }
+    if y < 44 {
+        var i = 0
+        while i < count {
+            let tx = tab_box_x(session, i)
+            if gui.inside(tx, tab_box_y(i, false), tab_box_w(count, false), tab_box_h(false), x, y) {
+                return false
+            }
+            i = i + 1
+        }
+        return true
+    }
+    return !toolbar_control_at(x, y, false)
+}
+
 // The window buttons follow the row they belong to: the tab strip when tabs are
 // horizontal (tab centre), the toolbar when they are vertical (button centre).
 // The host moves the real AppKit buttons here rather than drawing copies.
@@ -4443,11 +4528,30 @@ fn settle(frames: Int) {
     }
 }
 
+// Headless evidence for the window drag handle: a press on empty chrome asks
+// the host to move the window, while a press on a tab or a toolbar control
+// stays with that control. The points come from the same geometry the click
+// handler uses, so a layout change cannot quietly shrink the handle.
+fn drag_check(session: Session) {
+    let vertical = session.vertical
+    let metrics = toolbar_metrics(vertical)
+    let row_y = toolbar_y(vertical) + 17
+    let tab_x = tab_box_x(session, 0) + 20
+    let tab_y = tab_box_y(0, vertical) + tab_box_h(vertical) / 2
+    // Sidebar header: above the first tab. In the rail that point is the
+    // collapse chevron, which owns its click.
+    let header_y = chrome_height(true) + 10
+    println("drag strip=${flag(chrome_background(60, 2, session))} tab=${flag(chrome_background(tab_x, tab_y, session))} toolbar=${flag(chrome_background(60, row_y, session))} button=${flag(chrome_background(90, row_y, session))} address=${flag(chrome_background(metrics.address + 20, row_y, session))} page=${flag(chrome_background(page_left(session) + 40, page_top(session) + 20, session))} header=${flag(chrome_background(20, header_y, session))} empty=${flag(chrome_background(20, gui.height() - 40, session))}")
+}
+
 fn auto_close(session: Session, theme: Chrome, address: Address, store: Store) {
     let handle = active_handle(session)
     // The loop normally places these every pass; a headless run never reaches
     // the loop, so the frame it saves needs the same placement first.
     gui.place_traffic_lights(traffic_center(session.vertical))
+    if gui.env("NOVA_BROWSER_DRAG_CHECK") == "1" {
+        drag_check(session)
+    }
     speech.use_engine(stored_engine(store))
     let final_state = engine.wait(handle, 8000)
     sync_visibility(session)
@@ -4839,6 +4943,10 @@ fn main() {
         println("browser: could not open a window")
         return
     }
+    // The browser hit-tests its own chrome, so every part of the tab strip and
+    // toolbar can move the window instead of a 35 px band, and a press on a tab
+    // stays a tab press.
+    gui.set_manual_drag(true)
 
     var theme = load_theme(store)
     gui.set_appearance(theme_is_light(resolved_theme_name(store)))
@@ -5267,6 +5375,11 @@ fn main() {
                 voice_bytes = 0
                 voice_fetch = true
                 notice = voice_model_start()
+            }
+            // A single click on empty chrome moves the window, the way Chrome
+            // lets the whole tab strip and toolbar be a drag handle.
+            if event.code == 1 && chrome_background(event.x, event.y, session) {
+                gui.begin_window_drag()
             }
             // A press on a tab arms a drag; the move threshold below decides
             // whether it was a click or a reorder.

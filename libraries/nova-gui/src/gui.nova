@@ -44,6 +44,8 @@ extern "C" fn nova_gui_is_open() -> Int
 extern "C" fn nova_gui_width() -> Int
 extern "C" fn nova_gui_height() -> Int
 extern "C" fn nova_gui_place_traffic_lights(center_y: Int) -> Unit
+extern "C" fn nova_gui_set_manual_drag(on: Int) -> Unit
+extern "C" fn nova_gui_begin_window_drag() -> Unit
 extern "C" fn nova_gui_native_view() -> Int
 extern "C" fn nova_gui_begin() -> Unit
 extern "C" fn nova_gui_clear(rgb: Int) -> Unit
@@ -435,6 +437,18 @@ fn place_traffic_lights(center_y: Int) {
 // Opaque NSView handle for trusted native adapters. Valid until close().
 fn native_view() -> Int {
     return nova_gui_native_view()
+}
+
+// Turn off the host's automatic top strip drag so the app can start a window
+// move from its own hit test, which covers all of the chrome and never steals
+// a press meant for a tab or a toolbar control.
+fn set_manual_drag(on: Bool) {
+    nova_gui_set_manual_drag(if on { 1 } else { 0 })
+}
+
+// Start moving the window from the press the app is handling.
+fn begin_window_drag() {
+    nova_gui_begin_window_drag()
 }
 
 fn set_title(title: String) {

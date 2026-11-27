@@ -113,6 +113,9 @@ static NSMutableString *nova_title = nil;
  * A view that draws its own controls cannot rely on AppKit to pick a cursor
  * from a hit-tested widget, so the app decides and this file applies it. */
 static int64_t nova_cursor_kind = 0;
+/* Apps that hit-test their own chrome set this and start window drags through
+ * nova_gui_begin_window_drag(), so the host does not grab their title strip. */
+static int64_t nova_manual_drag = 0;
 
 static NSCursor *nova_gui_cursor(int64_t kind) {
     switch (kind) {
@@ -545,10 +548,13 @@ nova_str nova_gui_marked_text(void) {
     nova_gui_trace("mouseDown point=%.0f,%.0f frame=%dx%d viewH=%.0f key=%d active=%d",
                    point.x, point.y, (int)nova_w, (int)nova_h, self.bounds.size.height,
                    (int)nova_window.isKeyWindow, (int)NSApp.isActive);
-    /* The window hides the system title bar and draws its own 35px strip, so
-     * dragging there has to be done by hand. The traffic lights own the top
-     * left corner and get their clicks from the window server, not from here. */
-    if (point.y < 35 && !(point.x < 76 && point.y < 28)) {
+    /* The window hides the system title bar and draws its own strip, so
+     * dragging there has to be done by hand. Apps that know which of their
+     * presses are background (the browser: the whole tab strip and toolbar)
+     * call nova_gui_begin_window_drag instead, so a press on a tab is never
+     * also a window drag. The traffic lights own the top left corner and get
+     * their clicks from the window server, not from here. */
+    if (!nova_manual_drag && point.y < 35 && !(point.x < 76 && point.y < 28)) {
         [nova_window performWindowDragWithEvent:event];
         return;
     }
@@ -1218,23 +1224,53 @@ int64_t nova_gui_width(void) {
     return nova_w;
 }
 
+/* Set by an app that hit-tests its own chrome. The host then leaves the title
+ * strip alone and drags only when the app asks with
+ * nova_gui_begin_window_drag(). */
+void nova_gui_set_manual_drag(int64_t on) {
+    nova_manual_drag = on ? 1 : 0;
+}
+
+/* Starts an interactive window move from the press the app is handling. The
+ * mouse-down event is still current, which is what AppKit requires; the call
+ * blocks until the drag ends, the same way the old title-strip code did. */
+void nova_gui_begin_window_drag(void) {
+    if (!nova_window) return;
+    NSEvent *event = [NSApp currentEvent];
+    if (!event) return;
+    [nova_window performWindowDragWithEvent:event];
+}
+
 /* The traffic lights stay AppKit's own buttons: the window server delivers their
  * clicks, VoiceOver names them, and the green button keeps its zoom menu. Nova
  * only moves them onto the row it is drawing, because a full-size content view
  * otherwise pins them to the top of the window while the tab strip and toolbar
- * move with the layout. center_y is in Nova's top-left coordinates. */
+ * move with the layout. center_y is in Nova's top-left coordinates.
+ *
+ * The buttons live in AppKit's titlebar view, not in the window frame and not
+ * in the content view. That view is 32 pt tall (not the window's height) and
+ * uses bottom-up coordinates, so the row is placed from its own bounds. Using
+ * the window height here put the buttons hundreds of points below the strip,
+ * which is why they disappeared. A row the titlebar cannot hold is pulled up
+ * so the three buttons stay whole instead of hanging off its bottom edge. */
 void nova_gui_place_traffic_lights(int64_t center_y) {
     if (!nova_window) return;
-    CGFloat height = nova_window.frame.size.height;
     CGFloat x = 20;
     NSWindowButton kinds[3] = { NSWindowCloseButton, NSWindowMiniaturizeButton, NSWindowZoomButton };
     int i = 0;
     while (i < 3) {
         NSButton *button = [nova_window standardWindowButton:kinds[i]];
         if (button) {
+            NSView *host = button.superview;
             NSRect frame = button.frame;
+            CGFloat host_height = host ? host.bounds.size.height : nova_window.frame.size.height;
+            CGFloat top = (CGFloat)center_y - frame.size.height / 2;
+            if (top < 0) top = 0;
+            if (host_height > frame.size.height && top > host_height - frame.size.height) {
+                top = host_height - frame.size.height;
+            }
             frame.origin.x = x - frame.size.width / 2;
-            frame.origin.y = height - (CGFloat)center_y - frame.size.height / 2;
+            frame.origin.y = (host && !host.isFlipped) ? (host_height - top - frame.size.height) : top;
             button.frame = frame;
         }
         x += 20;
@@ -1244,9 +1280,23 @@ void nova_gui_place_traffic_lights(int64_t center_y) {
     if (center_y != reported) {
         reported = center_y;
         NSButton *close = [nova_window standardWindowButton:NSWindowCloseButton];
-        nova_gui_trace("traffic center_y=%lld close=%.0f,%.0f", (long long)center_y,
+        NSView *host = close.superview;
+        const char *host_name = host ? NSStringFromClass([host class]).UTF8String : "none";
+        long long placed = -1;
+        if (close && host) {
+            CGFloat bottom = close.frame.origin.y;
+            CGFloat h = close.frame.size.height;
+            placed = (long long)lround(host.isFlipped ? (bottom + h / 2)
+                                                      : (host.bounds.size.height - bottom - h / 2));
+        }
+        nova_gui_trace("traffic center_y=%lld placed=%lld close=%.0f,%.0f host=%s flipped=%d hostH=%.0f buttonH=%.0f",
+                       (long long)center_y, placed,
                        close ? close.frame.origin.x : -1.0,
-                       close ? close.frame.origin.y : -1.0);
+                       close ? close.frame.origin.y : -1.0,
+                       host_name,
+                       host ? (int)host.isFlipped : -1,
+                       host ? host.bounds.size.height : -1.0,
+                       close ? close.frame.size.height : -1.0);
     }
 }
 

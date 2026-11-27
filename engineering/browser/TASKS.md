@@ -154,11 +154,20 @@ Each task needs a reproducible acceptance check before it is marked done.
   the address suggestion list uses it. The rail name panel still resizes the
   page instead of floating, which is fine but not the same mechanism.
 
-- **WB-03.007 — Window buttons on the layout row.** DONE in 0.8.9. The three
-  AppKit traffic lights are moved onto the tab strip's centre (horizontal tabs)
-  or the toolbar's centre (vertical tabs and the rail) every pass, because a
-  full-size content view pins them to the window edge. `browser/tests/traffic.sh`
-  reads both placements from the GUI trace.
+- **WB-03.007 — Window buttons on the layout row.** DONE in 0.8.9, corrected
+  in 0.9.1. The three AppKit traffic lights are moved onto the tab strip's
+  centre (horizontal tabs) or the toolbar's centre (vertical tabs and the rail)
+  every pass, because a full-size content view pins them to the window edge.
+  0.9.1 places them inside AppKit's 32 pt titlebar view instead of by the
+  window height, which had put all three off the strip; a row the bar cannot
+  hold is pulled up (vertical 29 → 25) so none hangs off it. `traffic.sh`
+  reads the row centre and asserts the close frame stays inside the titlebar.
+- **WB-03.008 — Chrome drag handle.** DONE in 0.9.1. `chrome_background`
+  decides from the layout geometry whether a press is empty chrome, and only
+  those presses start a window move (`gui.set_manual_drag` +
+  `gui.begin_window_drag`). The old host strip grabbed the top 35 px, which was
+  both small and in the way of the tabs. `NOVA_BROWSER_DRAG_CHECK` reports the
+  decision for eight probe points per layout in `traffic.sh`.
 
 ## Compiler / library blockers
 
