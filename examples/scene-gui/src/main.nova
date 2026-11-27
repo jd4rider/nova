@@ -3,15 +3,16 @@ import "../../../libraries/nova-gui/src/gui.nova" as gui
 import "../../../libraries/nova-engine/src/core.nova"
 import "../../../libraries/nova-engine/src/math.nova"
 import "../../../libraries/nova-engine/src/world.nova"
+import "../../../libraries/nova-render/src/metal.nova"
 
-// Nova Engine Studio, ENG-04.002.
+// Nova Engine Studio, ENG-04.002 + ENG-11.003.
 //
 // The shell follows ADR-ENG-009: hierarchy on the left, scene/game view with a
 // play/pause/step toolbar in the centre, inspector on the right, and a
 // project/console drawer along the bottom. Every panel reads the same World
-// value. The scene view is a real projection of that world, not a mock scene:
-// grid and wireframe boxes are built from entity transforms, and selection is
-// the same EntityId the hierarchy and inspector use.
+// value. The centre view is an offscreen Metal render of that world composited
+// into the Nova GUI bitmap; the grid and selected-player box are editor
+// overlays, and selection is the same EntityId the hierarchy and inspector use.
 
 fn window_w() -> Int {
     return 1440
@@ -139,6 +140,7 @@ struct App {
     drawer: Int,
     notice: String,
     quit: Bool,
+    metal: Int,
 }
 
 fn app_set_world(app: App, world: World) -> App {
@@ -150,6 +152,7 @@ fn app_set_world(app: App, world: World) -> App {
         drawer: app.drawer,
         notice: app.notice,
         quit: app.quit,
+        metal: app.metal,
     }
 }
 
@@ -162,6 +165,7 @@ fn app_set_selected(app: App, selected: EntityId) -> App {
         drawer: app.drawer,
         notice: app.notice,
         quit: app.quit,
+        metal: app.metal,
     }
 }
 
@@ -174,6 +178,7 @@ fn app_set_playing(app: App, playing: Bool) -> App {
         drawer: app.drawer,
         notice: app.notice,
         quit: app.quit,
+        metal: app.metal,
     }
 }
 
@@ -186,6 +191,7 @@ fn app_set_tab(app: App, tab: Int) -> App {
         drawer: app.drawer,
         notice: app.notice,
         quit: app.quit,
+        metal: app.metal,
     }
 }
 
@@ -198,6 +204,7 @@ fn app_set_drawer(app: App, drawer: Int) -> App {
         drawer: drawer,
         notice: app.notice,
         quit: app.quit,
+        metal: app.metal,
     }
 }
 
@@ -210,6 +217,20 @@ fn app_set_notice(app: App, notice: String) -> App {
         drawer: app.drawer,
         notice: notice,
         quit: app.quit,
+        metal: app.metal,
+    }
+}
+
+fn app_set_metal(app: App, metal: Int) -> App {
+    return App {
+        world: app.world,
+        selected: app.selected,
+        playing: app.playing,
+        tab: app.tab,
+        drawer: app.drawer,
+        notice: app.notice,
+        quit: app.quit,
+        metal: metal,
     }
 }
 
@@ -222,6 +243,7 @@ fn app_quit(app: App) -> App {
         drawer: app.drawer,
         notice: app.notice,
         quit: true,
+        metal: app.metal,
     }
 }
 
@@ -393,6 +415,74 @@ fn project_ok(point: Vec3) -> Bool {
     return point.z > 0 - 65536 && point.z < 65536
 }
 
+// ---------- Metal viewport ----------
+
+fn metal_add_mvp(handle: Int, mvp: Mat4) -> Int {
+    return metal_scene_add(handle,
+        mat4_get(mvp, 0, 0), mat4_get(mvp, 0, 1), mat4_get(mvp, 0, 2), mat4_get(mvp, 0, 3),
+        mat4_get(mvp, 1, 0), mat4_get(mvp, 1, 1), mat4_get(mvp, 1, 2), mat4_get(mvp, 1, 3),
+        mat4_get(mvp, 2, 0), mat4_get(mvp, 2, 1), mat4_get(mvp, 2, 2), mat4_get(mvp, 2, 3),
+        mat4_get(mvp, 3, 0), mat4_get(mvp, 3, 1), mat4_get(mvp, 3, 2), mat4_get(mvp, 3, 3))
+}
+
+// The Metal lab's lit mesh is 1.3 units wide. World scales are in metres, so
+// the model scale compensates for that mesh size instead of changing the
+// established lab geometry and its pixel baselines.
+fn metal_mesh_scale(scale: Vec3) -> Vec3 {
+    let unit = fx_ratio(10, 13)
+    return vec3(fx_mul(scale.x, unit), fx_mul(scale.y, unit), fx_mul(scale.z, unit))
+}
+
+fn metal_entity_mvp(world: World, id: EntityId, view: View3D) -> Mat4 {
+    let model = mat4_mul(mat4_translation(world_position(world, id)),
+        mat4_mul(mat4_rotation(world_rotation(world, id)),
+            mat4_scaling(metal_mesh_scale(world_scale(world, id)))))
+    return mat4_mul(view.vp, model)
+}
+
+fn draw_metal_scene(app: App, view: View3D) -> Bool {
+    if app.metal == 0 {
+        return false
+    }
+    metal_scene_clear(app.metal)
+    var scene_ok = true
+    var i = 0
+    while i < world_capacity(app.world) {
+        if app.world.pool.alive[i] {
+            let id = EntityId { index: i, generation: app.world.pool.generations[i] }
+            if metal_add_mvp(app.metal, metal_entity_mvp(app.world, id, view)) != 1 {
+                scene_ok = false
+            }
+        }
+        i = i + 1
+    }
+    if !scene_ok {
+        return false
+    }
+    let scale = gui.scale()
+    if metal_render_frame(app.metal, view.w * scale, view.h * scale) != 1 {
+        return false
+    }
+    return gui.metal_frame(view.x, view.y, view.w, view.h)
+}
+
+fn start_metal() -> Int {
+    let handle = metal_offscreen(centre_w(), view_h())
+    if handle == 0 {
+        println("scene-gui: metal unavailable: ${metal_last_error()}")
+        return 0
+    }
+    let checker = metal_texture_checker(handle)
+    let geometry = metal_geometry(handle, 2)
+    let light = metal_light(handle, 1, fx_ratio(9, 20), fx_ratio(17, 20), fx_ratio(11, 20))
+    if checker != 1 || geometry != 1 || light != 1 {
+        println("scene-gui: metal viewport setup failed: ${metal_last_error()}")
+        metal_shutdown(handle)
+        return 0
+    }
+    return handle
+}
+
 fn corner(world: World, id: EntityId, sx: Int, sy: Int, sz: Int) -> Vec3 {
     let scale = world_scale(world, id)
     var hx = scale.x / 2
@@ -494,7 +584,7 @@ fn draw_top(app: App, theme: gui.Theme) {
     gui.text(engine_x, 7, "Engine", 13, theme.accent)
     let items = "File    Edit    Assets    GameObject    Component    Window    Help"
     gui.text(engine_x + gui.text_width("Engine", 13) + 28, 8, items, 11, theme.muted)
-    let version = "0.2.0"
+    let version = "0.3.0"
     gui.text(window_w() - 18 - gui.text_width(version, 10), 9, version, 10, theme.faint)
     gui.line(0, menu_h() - 1, window_w(), menu_h() - 1, theme.border)
 
@@ -628,6 +718,19 @@ fn draw_cube(world: World, id: EntityId, view: View3D, colour: Int) {
     draw_cube_line(p3, p7, colour)
 }
 
+fn draw_scene_label(app: App, id: EntityId, view: View3D, theme: gui.Theme) {
+    let centre = project(view, world_position(app.world, id))
+    if project_ok(centre) && gui.inside(view.x, view.y, view.w, view.h, centre.x, centre.y) {
+        let name = entity_name(app.world, id)
+        let w = gui.text_width(name, 10) + 16
+        gui.round_rect(centre.x + 8, centre.y - 22, w, 19, 4, theme.selection)
+        gui.stroke(centre.x + 8, centre.y - 22, w, 19, theme.accent)
+        gui.text(centre.x + 16, centre.y - 18, name, 10, theme.fg_bright)
+        gui.stroke(centre.x - 10, centre.y - 10, 20, 20, theme.fg_bright)
+        gui.stroke(centre.x - 12, centre.y - 12, 24, 24, theme.accent)
+    }
+}
+
 fn draw_scene_entity(app: App, id: EntityId, view: View3D, theme: gui.Theme, editor: Bool) {
     let tag = world_tag(app.world, id)
     let selected = entity_eq(id, app.selected)
@@ -636,30 +739,20 @@ fn draw_scene_entity(app: App, id: EntityId, view: View3D, theme: gui.Theme, edi
         colour = theme.fg_bright
     }
     draw_cube(app.world, id, view, colour)
-
-    let centre = project(view, world_position(app.world, id))
-    if editor && project_ok(centre) && gui.inside(view.x, view.y, view.w, view.h, centre.x, centre.y) {
-        if selected {
-            let name = entity_name(app.world, id)
-            let w = gui.text_width(name, 10) + 16
-            gui.round_rect(centre.x + 8, centre.y - 22, w, 19, 4, theme.selection)
-            gui.stroke(centre.x + 8, centre.y - 22, w, 19, theme.accent)
-            gui.text(centre.x + 16, centre.y - 18, name, 10, theme.fg_bright)
-            gui.stroke(centre.x - 10, centre.y - 10, 20, 20, theme.fg_bright)
-            gui.stroke(centre.x - 12, centre.y - 12, 24, 24, theme.accent)
-        }
+    if editor && selected {
+        draw_scene_label(app, id, view, theme)
     }
 }
 
-fn draw_viewport(app: App, theme: gui.Theme) {
-    let x = centre_x()
-    let y = view_y()
-    let w = centre_w()
-    let h = view_h()
-    gui.rect(x, y, w, h, theme.bg)
-    gui.clip(x, y, w, h)
-    let view = make_view(x, y, w, h)
-    let editor = app.tab == 0
+fn draw_selected_overlay(app: App, view: View3D, theme: gui.Theme) {
+    if entity_is_none(app.selected) || !world_has(app.world, app.selected) {
+        return
+    }
+    draw_cube(app.world, app.selected, view, theme.fg_bright)
+    draw_scene_label(app, app.selected, view, theme)
+}
+
+fn draw_cpu_scene(app: App, view: View3D, theme: gui.Theme, editor: Bool) {
     if editor {
         draw_grid(view, theme)
     }
@@ -677,6 +770,26 @@ fn draw_viewport(app: App, theme: gui.Theme) {
             i = i + 1
         }
         pass = pass + 1
+    }
+}
+
+fn draw_viewport(app: App, theme: gui.Theme) {
+    let x = centre_x()
+    let y = view_y()
+    let w = centre_w()
+    let h = view_h()
+    gui.rect(x, y, w, h, theme.bg)
+    gui.clip(x, y, w, h)
+    let view = make_view(x, y, w, h)
+    let editor = app.tab == 0
+    let metal_drawn = draw_metal_scene(app, view)
+    if metal_drawn {
+        if editor {
+            draw_grid(view, theme)
+            draw_selected_overlay(app, view, theme)
+        }
+    } else {
+        draw_cpu_scene(app, view, theme, editor)
     }
     gui.clip_reset()
 
@@ -972,6 +1085,7 @@ fn main() {
         drawer: 1,
         notice: "",
         quit: false,
+        metal: 0,
     }
     app = app_set_selected(app, find_tag(app.world, 3))
 
@@ -983,6 +1097,7 @@ fn main() {
             app = handle_mouse_down(app, game_tab_x() + 16, body_y() + 8)
         }
         if gui.open("Nova Engine Studio", window_w(), window_h()) {
+            app = app_set_metal(app, start_metal())
             gui.begin()
             draw(app)
             gui.present()
@@ -991,7 +1106,14 @@ fn main() {
             if app.tab == 1 {
                 tab_label = "game"
             }
-            println("scene-gui: shell=captured saved=${saved} entities=${world_live_count(app.world)} selected=${app.selected.index}:${app.selected.generation} tab=${tab_label} drawer=console")
+            var viewport = "cpu"
+            if app.metal != 0 {
+                viewport = "metal"
+            }
+            println("scene-gui: shell=captured saved=${saved} entities=${world_live_count(app.world)} selected=${app.selected.index}:${app.selected.generation} tab=${tab_label} viewport=${viewport} drawer=console")
+            if app.metal != 0 {
+                metal_shutdown(app.metal)
+            }
             gui.close()
         }
         return
@@ -1001,6 +1123,9 @@ fn main() {
         println("scene-gui: could not open a window")
         return
     }
+    app = app_set_metal(app, start_metal())
+    let finite = gui.env("NOVA_SCENE_FRAMES").len() > 0
+    var frames = 0
     while !app.quit && gui.is_open() {
         var event = gui.next_event()
         while event.kind != gui.event_none() {
@@ -1013,7 +1138,19 @@ fn main() {
         gui.begin()
         draw(app)
         gui.present()
+        frames = frames + 1
+        if finite && frames >= 5 {
+            app = app_quit(app)
+        }
         gui.sleep(16)
+    }
+    var viewport = "cpu"
+    if app.metal != 0 {
+        viewport = "metal"
+    }
+    println("scene-gui: live=stopped frames=${frames} viewport=${viewport}")
+    if app.metal != 0 {
+        metal_shutdown(app.metal)
     }
     gui.close()
 }

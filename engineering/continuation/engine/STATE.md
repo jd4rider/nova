@@ -1,18 +1,19 @@
 # Nova Engine checkpoint
 
-Updated: 2026-11-26 (Float end-to-end)
+Updated: 2026-11-26 (Studio Metal viewport)
 Branch: `main`
 Master directive: owner-supplied 2026-11-26; tracked by `ROADMAP.md`.
 Working tree: uncommitted. Unrelated browser/GUI changes were present before
 this session and were not touched.
 
 Active milestone: **ENG-11 — 3D vertical slice**
-Active task: **ENG-11.003 — Studio 3D viewport**
+Active task: **ENG-04.003 — Inspector edits and undo**
 Status: **ENG-01 DONE** (measured soak); **ENG-02 DONE** (device host, textured
 quad, depth-tested cube, resize, capture, pixel checks and teardown verified);
 **ENG-04.002 DONE** (Unity-first shell over real `World` state); **ENG-11.001
 DONE** (lit textured cube); **ENG-11.002 DONE** (orbit/pan/zoom camera and
-physics-driven cube in the Metal lab).
+physics-driven cube in the Metal lab); **ENG-11.003 DONE** (offscreen Metal
+viewport composited into Studio, installed as 0.3.0).
 
 ## Verified this session
 
@@ -28,8 +29,8 @@ physics-driven cube in the Metal lab).
 | Metal lit cube | `sh examples/metal-lab/tests/lit.sh` | lit textured cube, 19 face/texture/light checks, both sizes, exit 0 |
 | Metal camera/physics | `sh examples/metal-lab/tests/physics.sh` | 2 camera poses, 2 simulation states, 11 checks, exit 0 |
 | Metal teardown | `sh examples/metal-lab/tests/shutdown.sh` | 5/5 open/draw/capture/close cycles clean |
-| Editor shell | `sh examples/scene-gui/tests/shell.sh` | 6 entities, selected `3:1`, Scene/Game captures, traffic-light trace, 12 panel checks, nested `save_png` path, exit 0 |
-| Studio install | `sh examples/scene-gui/install-macos.sh` | `/Applications/Nova Engine Studio.app` 0.2.0, signature verified |
+| Editor shell | `sh examples/scene-gui/tests/shell.sh` | 6 entities, selected `3:1`, Scene/Game captures, traffic-light trace, 15 pixel checks, 5-frame live loop, nested `save_png` path, exit 0 |
+| Studio install | `sh examples/scene-gui/install-macos.sh` | `/Applications/Nova Engine Studio.app` 0.3.0, signature verified |
 
 Physics output:
 
@@ -67,39 +68,42 @@ Studio installer. Replacing `bootstrap/nova` remains the BOOT-02 gate
 - `libraries/nova-game/src/physics.nova` — integer swept-AABB substrate, now
   also driving the Metal lab's 3D cube.
 - `libraries/nova-render/src/metal.nova` — the entire Metal FFI: Int handles,
-  Ints and strings, polled input slots, geometry/MVP/light scalars, no
-  callbacks.
-- `runtime/metal.m` — Objective-C Metal host: window, device/queue,
-  runtime-compiled shaders, lit textured cube, 48-byte vertex with normals,
-  Depth32Float, Q16.16 camera/light, AppKit mouse/scroll accumulation, PNG
-  decode, capture, resize, explicit idempotent shutdown.
+  Ints and strings, polled input slots, geometry/MVP/light scalars, a bounded
+  scene draw list and an offscreen frame entry, no callbacks.
+- `runtime/metal.m` — Objective-C Metal host: window or offscreen session,
+  device/queue, runtime-compiled shaders, lit textured cube, 48-byte vertex
+  with normals, Depth32Float, Q16.16 camera/light, a 64-entry MVP draw list,
+  AppKit mouse/scroll accumulation, PNG decode, capture, resize, explicit
+  idempotent shutdown and a shared BGRA frame for nova-gui.
 - `examples/metal-lab` — quad, colour cube, lit cube and physics-camera
   acceptances with captures and sampled pixels.
-- `examples/scene-gui` — Studio 0.2.0 Unity-first shell with a traffic-light-safe
-  title strip and real Scene/Game view states; capture test and signed installer.
+- `examples/scene-gui` — Studio 0.3.0 Unity-first shell with a traffic-light-safe
+  title strip, real Scene/Game view states and an offscreen Metal viewport
+  composited into the same GUI bitmap; capture test and signed installer.
 - `examples/engine-lab` — 27-test engine suite; `examples/engine-soak` — 10k
   measured run.
 
 ## Exact next action
 
-1. **ENG-11.003:** embed the Metal 3D view (or an offscreen 3D render) in the
-   Studio Scene tab, keeping the hierarchy/inspector/console live. Acceptance:
-   one Studio PNG showing the 3D viewport with real world state.
-2. Return to **ENG-04.003** (editable inspector fields and undo) and
-   **ENG-04.004** (dockable panels) before declaring ENG-04 complete.
+1. **ENG-04.003:** editable inspector transform fields with undo/redo over the
+   same `world_set_*` APIs; acceptance: edit, undo and redo mutate the same
+   World and appear in the next capture.
+2. **ENG-04.004:** persisted dockable panel sizes and visibility; acceptance:
+   restart restores the layout with live data.
 3. Keep `runtime/metal.m` to Int handles/scalars; no callback or event struct
-   should cross the ABI.
+   should cross the ABI. Studio's editor camera is fixed in this slice; wire
+   orbit/pan/zoom through GUI events before calling the viewport interactive.
 
 ## Limits
 
 - The shell window is fixed at 1440×900 points. There is no docking, resizable
   panel split, menu command handling or multi-window editor yet.
-- The shell's scene view is still a Q16.16 CPU projection drawn with Nova GUI,
-  not the Metal view. The orbit camera and physics cube are in the Metal lab;
-  ENG-11.003 is the embedding step.
+- Studio's Metal viewport uses a fixed Q16.16 editor camera. The orbit camera
+  and physics cube remain in the Metal lab; Studio does not poll the lab's
+  camera-input slots yet.
 - The Metal camera supports left-drag orbit, shift/right-drag pan and scroll
-  zoom in its live path. The acceptance test exercises two camera presets, not
-  synthesized AppKit mouse events.
+  zoom in its live lab path. The acceptance test exercises two camera presets,
+  not synthesized AppKit mouse events.
 - The physics field is a 2D X/Y plane at fixed Z; there is no 3D collision,
   rotation, contact manifold or character controller.
 - One directional light and one texture slot are implemented; no shadows,

@@ -43,6 +43,8 @@ extern "C" fn nova_gui_open(title: String, width: Int, height: Int) -> Int
 extern "C" fn nova_gui_is_open() -> Int
 extern "C" fn nova_gui_width() -> Int
 extern "C" fn nova_gui_height() -> Int
+extern "C" fn nova_gui_scale() -> Int
+extern "C" fn nova_gui_metal_frame(x: Int, y: Int, w: Int, h: Int) -> Int
 extern "C" fn nova_gui_place_traffic_lights(center_y: Int) -> Unit
 extern "C" fn nova_gui_set_manual_drag(on: Int) -> Unit
 extern "C" fn nova_gui_begin_window_drag() -> Unit
@@ -463,6 +465,17 @@ fn width() -> Int {
 
 fn height() -> Int {
     return nova_gui_height()
+}
+
+// Backing scale of the framebuffer (2 on a Retina display).
+fn scale() -> Int {
+    return nova_gui_scale()
+}
+
+// Composites the last nova-render frame at a top-left rect. Returns true when
+// a Metal frame was present; GUI-only programs simply get false.
+fn metal_frame(x: Int, y: Int, w: Int, h: Int) -> Bool {
+    return nova_gui_metal_frame(x, y, w, h) == 1
 }
 
 // Moves the three window buttons onto the row the app draws, given the row's

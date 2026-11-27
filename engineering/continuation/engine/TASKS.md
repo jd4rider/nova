@@ -113,11 +113,11 @@ reproducible acceptance check before it is marked done. Stable identifiers are
   The 1440×900 shell is driven by one six-entity `world.nova` value: hierarchy,
   selection, perspective grid/wireframe view, inspector fields, play/step and
   console all read it. Acceptance: `sh examples/scene-gui/tests/shell.sh`
-  captures 2880×1800 at 2x with `selected=3:1`, and 12 panel/selection pixel
+  captures 2880×1800 at 2x with `selected=3:1`, and 15 panel/selection pixel
   checks pass. The Game tab is reached through its real mouse-down hit test and
   gets its own active state, camera label and overlay-free view; the title strip
   places the traffic lights at y=14 and starts the brand at x=84. Installed as
-  Studio 0.2.0, ad-hoc signed.
+  Studio 0.2.0; 0.3.0 adds the Metal viewport (ENG-11.003).
 - **ENG-04.003 — Inspector edits and undo.** PLANNED. Editable transform
   fields with command history over `world_set_*`; acceptance: edit, undo and
   redo mutate the same World and are reflected in the next capture.
@@ -144,13 +144,21 @@ reproducible acceptance check before it is marked done. Stable identifiers are
   `body=204,148` to `111,170`, and 11 camera/motion probes pass. The interactive
   path is `NOVA_METAL_MODE=physics` with no `NOVA_METAL_SHOT` (drag orbits,
   shift/right-drag pans, scroll zooms).
-- **ENG-11.003 — Studio 3D viewport.** READY. Embed the Metal view or an
-  offscreen 3D render in the editor's Scene tab, so the Unity-first shell shows
-  the lit physics cube instead of the CPU wireframe preview. Acceptance: a
-  Studio PNG with the live 3D viewport plus the existing hierarchy/inspector.
+- **ENG-11.003 — Studio 3D viewport.** DONE. `runtime/metal.m` now has an
+  offscreen session, a bounded 64-entry MVP draw list, a built-in checker
+  texture and a shared BGRA frame. `runtime/gui.m` composites that frame into
+  the shell bitmap through a weak internal symbol, so `gui.save_png` includes
+  the viewport without a child window. Studio builds one Q16.16 MVP per live
+  entity, keeps the grid and selected-player box as Nova GUI overlays, and Game
+  suppresses those overlays while keeping the Metal scene. Acceptance:
+  `sh examples/scene-gui/tests/shell.sh` reports `viewport=metal`, passes 15
+  pixel checks including Metal clear/texture and grid/Game differences, and
+  completes a 5-frame live loop. Both captures are 2880×1800; installed as
+  Studio 0.3.0, signature verified.
 
 ## Next action
 
-ENG-11.003: embed the 3D viewport in Studio. Keep the current Metal lab camera
-and physics controls as the bounded acceptance surface until the editor view
-is real; then return to ENG-04.003 (inspector edits and undo).
+ENG-04.003: editable inspector transform fields and undo/redo over the same
+`world_set_*` APIs, reflected in the next capture. Then ENG-04.004 (dockable
+panels). Studio's editor camera is fixed; wiring orbit/pan/zoom through GUI
+events is a separate follow-up, not part of the 11.003 acceptance.

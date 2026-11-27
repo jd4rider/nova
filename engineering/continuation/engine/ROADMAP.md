@@ -20,7 +20,7 @@ never a session.
 | ENG-08 | NovaScript core | planned | parser/VM with diagnostics and tests |
 | ENG-09 | Visual scripting core | planned | graph compiles and runs headlessly |
 | ENG-10 | Mixed scripting | planned | three-mode acceptance scene |
-| ENG-11 | 3D vertical slice | partial | lit textured mesh, orbit camera and cube physics verified in the Metal lab; Studio 3D viewport next |
+| ENG-11 | 3D vertical slice | partial | lit textured mesh, orbit camera, cube physics and Studio's offscreen Metal viewport verified; editor camera controls and richer 3D content remain |
 | ENG-12 | Production editor workflows | planned | prefabs, browser, gizmos, play isolation |
 | ENG-13 | Animation/audio/UI | planned | real transitions, mixer, responsive UI |
 | ENG-14 | Advanced graphics | planned | PBR, shadows, particles, profiling |
@@ -45,13 +45,15 @@ never a session.
 - `libraries/nova-render` + `runtime/metal.m` — Metal session, textured quad,
   PNG texture load, depth-tested perspective cube, lit textured cube with
   per-face normals and one directional light, polled orbit/pan/zoom input,
-  physics-driven cube, resize and offscreen PNG capture; `examples/metal-lab`
-  is its acceptance.
-- `examples/scene-gui` — Nova Engine Studio 0.2.0: Unity-first shell over a real
+  physics-driven cube, resize, offscreen PNG capture, a bounded editor draw
+  list and a shared frame for GUI compositing; `examples/metal-lab` is its
+  acceptance.
+- `examples/scene-gui` — Nova Engine Studio 0.3.0: Unity-first shell over a real
   six-entity `world.nova` world, with hierarchy, Scene/Game tabs, live inspector,
-  play/pause/step and project/console drawer; installs with an icon.
+  play/pause/step, project/console drawer and an offscreen Metal viewport
+  composited into the same 2880×1800 capture; installs with an icon.
 - `libraries/nova-gui` — native macOS window, events, immediate-mode drawing,
-  PNG capture, accessibility bridge.
+  PNG capture, Metal-frame compositing and accessibility bridge.
 - Nova compiler — self-hosted, LLVM/Clang, macOS ARM64. Float is verified
   through codegen and `nova build`/sema, and module-qualified struct signatures
   have a fixture; stage-0 bootstrap still needs a gated refresh.
@@ -60,8 +62,10 @@ never a session.
 
 Vertical slices first. ENG-01 is closed with a measured soak and the 1k storage
 gate. ENG-02 proves the GPU path with a textured quad and a depth-tested
-perspective cube. ENG-04.002 now proves the Unity-first shell against real
-World state, ENG-11.001 proves lit texture and normals on Metal, and ENG-11.002
-proves a polled 3D camera with a physics-driven cube. Next is ENG-11.003, the
-same 3D view inside Studio. Inspector edits, undo and docking still belong to
-ENG-04. Editor panels must be built against real runtime APIs; no mock state.
+perspective cube. ENG-04.002 proves the Unity-first shell against real World
+state, ENG-11.001 proves lit texture and normals on Metal, ENG-11.002 proves a
+polled 3D camera with a physics-driven cube, and ENG-11.003 puts that Metal
+scene inside Studio's capture path. Next is ENG-04.003 (inspector edits and
+undo), then ENG-04.004 (docking). Studio's editor camera remains fixed until
+the GUI event path is wired to the existing camera slots. Editor panels must be
+built against real runtime APIs; no mock state.

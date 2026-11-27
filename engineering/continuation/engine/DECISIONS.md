@@ -135,6 +135,33 @@
   Every editor slice must be capturable as a PNG through Nova GUI for review.
 - Consequences: ENG-04 panels are designed against this layout before styling;
   if a feature cannot be wired to real state it is not shown yet.
-- Status note: Studio 0.2.0 implements this layout as a real shell over one
-  `World` value (ENG-04.002). Inspector editing, undo/redo and dockable panels
-  remain open before ENG-04 is complete.
+- Status note: Studio 0.3.0 implements this layout as a real shell over one
+  `World` value (ENG-04.002/ENG-11.003). Inspector editing, undo/redo and
+  dockable panels remain open before ENG-04 is complete.
+
+## ADR-ENG-010 — Studio composites an offscreen Metal frame
+- Status: accepted (ENG-11.003).
+- Context: `gui.save_png` captures nova-gui's CPU bitmap. A child `MTKView`
+  would appear in the window but not in that PNG, and the acceptance path needs
+  one capture containing both the viewport and the editor panels. Pointers and
+  callbacks still cannot cross the Nova FFI.
+- Decision: `runtime/metal.m` can create one offscreen session
+  (`nova_metal_offscreen`) with no window. Nova fills a bounded 64-entry
+  model-view-projection draw list through Int scalars
+  (`nova_metal_scene_clear/add`) and calls `nova_metal_render_frame`. The host
+  renders into a depth-tested BGRA texture, reads it back into a shared buffer
+  and exposes it only through an internal C accessor. `runtime/gui.m` weak-
+  imports that accessor and composites the frame into the same sRGB bitmap as
+  the chrome. Studio builds one Q16.16 MVP per live entity, uses the built-in
+  checker texture and directional light, then draws the grid and selected box
+  as Nova overlays. Game skips the overlays.
+- Alternatives: embed an `MTKView` child (rejected: absent from `save_png`, and
+  it would sit above the CPU overlays); write a PNG per frame and reload it
+  (rejected: needless I/O and decode cost); pass a pixel pointer through Nova
+  (rejected: the FFI has no pointer type).
+- Consequences: GUI-only programs still link without Metal because the
+  accessor is weak; the host remains one session; the draw list is capped at 64
+  and the frame is read back synchronously. There is no GPU timing, MSAA,
+  shadow or multi-viewport support yet. Studio's editor camera is fixed; its
+  orbit/pan/zoom path must be wired through GUI events before the viewport is
+  called interactive.

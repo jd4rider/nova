@@ -9,7 +9,7 @@ description: A native immediate-mode GUI written in Nova, with a CoreGraphics ra
 
 Three pieces, no external dependencies:
 
-- **`runtime/gui.m`** — the macOS host. It creates one `NSWindow`, owns a `CGBitmapContext` framebuffer, draws glyphs with CoreText, queues input events and writes PNGs for tests.
+- **`runtime/gui.m`** — the macOS host. It creates one `NSWindow`, owns a `CGBitmapContext` framebuffer, draws glyphs with CoreText, queues input events, composites an optional offscreen Metal frame and writes PNGs for tests.
 - **`libraries/nova-gui/src/gui.nova`** — the Nova API. `extern "C"` declarations plus a theme, an `Event` struct and geometry helpers.
 - **The compiler** — `nova-codegen-llvm` compiles and links the host only when a program's resolved externs mention `nova_gui_`, `nova_fs_`, `nova_process_` or `nova_env`, and links `Cocoa`, `CoreText`, `CoreGraphics` and `ImageIO`. A program that never touches the GUI does not pay for AppKit, and the WebAssembly target is untouched.
 
@@ -48,6 +48,12 @@ Everything is immediate mode: a frame is whatever the loop draws between `begin`
 - The backing bitmap is sized by the display's scale factor, so on a Retina screen the PNG above is 1280×640 for a 640×320 window and text stays sharp. Callers never pass a pixel ratio.
 - Colours are packed `0xRRGGBB` integers built by `gui.rgb(r, g, b)`. `gui.rect_alpha` adds a 0–255 alpha for overlay scrims.
 
+## Metal frame compositing
+
+A GUI app can pair nova-gui with `libraries/nova-render`: create an offscreen session with `metal_offscreen`, fill its bounded draw list, render at the backing scale and call `gui.metal_frame(x, y, w, h)`. The frame is composited into the same sRGB bitmap as the chrome, so `gui.save_png` includes it and the app's own grid or labels can be drawn on top.
+
+The handoff is an internal weak symbol, not a new Nova type: GUI-only programs still link without Metal, and no pointer or callback crosses the FFI. The UI itself remains CPU-rasterized; only the viewport comes from the GPU.
+
 ## API
 
 | Area | Calls |
@@ -58,7 +64,7 @@ Everything is immediate mode: a frame is whatever the loop draws between `begin`
 | Terminal | `term_start(cmd, dir)`, `term_poll()`, `term_running()`, `term_clear()` — a real PTY (libc `posix_openpt` + `fork`) read by a host thread, so a child program sees a terminal |
 | Terminal input | `term_send(code)` — write a byte (`13` Enter, `127` Backspace) to the running PTY |
 | Terminal pool | `pty_open(slot, cmd, dir, cols, rows)`, `pty_poll(slot)`, `pty_running(slot)`, `pty_write(slot, code)`, `pty_write_text(slot, text)`, `pty_resize(slot, cols, rows)`, `pty_status(slot)`, `pty_close(slot)` — up to eight ptys, each a real terminal with its own window size |
-| Frame | `begin()`, `clear(color)`, `present()`, `save_png(path)`, `sleep(ms)` |
+| Frame | `begin()`, `clear(color)`, `present()`, `save_png(path)`, `sleep(ms)`, `scale()`, `metal_frame(x, y, w, h)` |
 | Shapes | `rect`, `round_rect`, `stroke`, `line`, `rect_alpha` |
 | Text | `text` (system font), `mono` (monospaced), `text_fmt` (sans/serif/mono with bold/italic/underline bits), `text_width`, `text_fmt_width`, `mono_width`, `advance(size)`, `font_sans/font_serif/font_mono`, `style_bold/style_italic/style_underline` |
 | Mono font | `mono_font()`, `set_mono_font(family)`, `mono_fonts()` — the family defaults to an installed Nerd Font (`NOVA_MONO_FONT` overrides it), `mono_fonts()` lists every installed monospaced family, and setting one invalidates the host's glyph cache |
@@ -124,9 +130,9 @@ gui.save_png("dist/frame.png")
 ## Limits
 
 - **macOS only.** There is no X11, Wayland or Windows host yet; the build simply does not link the GUI on other targets.
-- **No GPU.** Every frame is rasterized on the CPU into a bitmap. That is fine for a workbench (`~120` text runs per frame) and wrong for animation-heavy apps.
+- **The UI is CPU-rasterized.** Every chrome frame is drawn on the CPU into a bitmap. An optional offscreen Metal frame can be composited for a viewport, but there is no general GPU UI path.
 - **IME is host-owned.** Marked text is exposed through `marked_text()` and committed through `insertText:`; there is no document text-range model, so a screen reader still sees a page label rather than editable ranges.
-- **No images, gradients, paths, rotation or multi-window support.** `rect`, `round_rect`, `stroke`, `line`, `text` and clipping are the vocabulary.
+- **No arbitrary images, gradients, paths, rotation or multi-window support.** `rect`, `round_rect`, `stroke`, `line`, `text` and clipping are the vocabulary; the one image path is the Metal viewport frame.
 - **No high-contrast or reduced-motion query.** The host can publish an accessibility tree of pushed elements, but it is not a document model.
 - **Text is measured per call.** There is no glyph-run cache; a frame with thousands of short runs will spend most of its time in CoreText.
 - The event queue holds 1024 events and drops the newest when full.

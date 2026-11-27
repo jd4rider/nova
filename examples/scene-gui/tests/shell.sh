@@ -1,8 +1,9 @@
 #!/bin/sh
-# ENG-04.002 acceptance: capture the Unity-first shell from real World state.
-# Asserts the shell regions are present, the selected hierarchy row is drawn,
-# the menu title clears the traffic lights, and Scene/Game render distinct
-# active tabs. Leaves target/engine-shell.png and engine-game.png for review.
+# ENG-04.002 / ENG-11.003 acceptance: capture the Unity-first shell from real
+# World state, with the Metal viewport composited into the same bitmap. Asserts
+# the shell regions, selected hierarchy row, traffic-light clearance, distinct
+# Scene/Game tabs, a real lit Metal frame, and a clean live loop. Leaves
+# target/engine-shell.png and engine-game.png for review.
 set -eu
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -24,13 +25,13 @@ TRACE=target/shell-traffic.log
 rm -f "$TRACE"
 OUT=$(NOVA_GUI_TRACE="$TRACE" NOVA_SCENE_SHOT="$SHOT" ./target/nova/scene-gui)
 echo "$OUT"
-echo "$OUT" | grep -q "shell=captured saved=true entities=6 selected=3:1 tab=scene"
+echo "$OUT" | grep -q "shell=captured saved=true entities=6 selected=3:1 tab=scene viewport=metal"
 grep -q "traffic center_y=14 placed=14" "$TRACE" || { echo "shell: traffic lights not placed at y=14" >&2; exit 1; }
 echo "shell: traffic lights placed at y=14"
 
 GAME_OUT=$(NOVA_SCENE_CLICK=game NOVA_SCENE_SHOT="$GAME" ./target/nova/scene-gui)
 echo "$GAME_OUT"
-echo "$GAME_OUT" | grep -q "shell=captured saved=true entities=6 selected=3:1 tab=game"
+echo "$GAME_OUT" | grep -q "shell=captured saved=true entities=6 selected=3:1 tab=game viewport=metal"
 
 # gui.save_png owns parent-directory creation; do not mkdir this path here.
 NESTED=target/nested/capture/shell.png
@@ -38,6 +39,7 @@ rm -rf target/nested
 NESTED_OUT=$(NOVA_SCENE_SHOT="$NESTED" ./target/nova/scene-gui)
 echo "$NESTED_OUT"
 echo "$NESTED_OUT" | grep -q "shell=captured saved=true"
+echo "$NESTED_OUT" | grep -q "viewport=metal"
 [ -f "$NESTED" ] || { echo "shell: save_png did not create $NESTED" >&2; exit 1; }
 echo "shell: save_png created nested capture without mkdir"
 rm -rf target/nested
@@ -80,12 +82,14 @@ expect_pixel() {
 }
 
 # Physical coordinates at 2x. Menu chrome, hierarchy surface, selected Player
-# row, scene background, inspector surface and project/console drawer.
+# row, Metal clear colour, grid overlay, textured ground, inspector and drawer.
 expect_pixel 1000 20 51 51 51 "menu-bar"
 expect_pixel 100 1100 37 37 38 "hierarchy-panel"
 expect_pixel 300 420 4 57 94 "selected-row"
-expect_pixel 700 350 30 30 30 "scene-background"
-expect_pixel 590 290 52 52 52 "scene-grid-line"
+expect_pixel 700 350 13 15 20 "metal-scene-background"
+expect_pixel 590 290 39 40 44 "scene-grid-line"
+expect_pixel 1000 900 138 0 0 "metal-red-texture"
+expect_pixel 1300 1000 0 138 0 "metal-green-texture"
 expect_pixel 2600 1100 37 37 38 "inspector-panel"
 expect_pixel 1000 1700 51 51 51 "drawer"
 
@@ -98,7 +102,15 @@ expect_pixel 532 150 37 37 38 "scene-tab-inactive-game"
 expect_pixel 820 150 30 30 30 "game-tab-active"
 
 # Game is a real runtime view, not Scene with a new label: the pixel that is a
-# grid line in Scene is plain viewport background in Game, while entities remain.
-expect_pixel 590 290 30 30 30 "game-no-editor-grid"
+# grid line in Scene is Metal background in Game, while the same Metal frame
+# and its textured geometry remain.
+expect_pixel 590 290 13 15 20 "game-no-editor-grid"
+expect_pixel 1000 900 138 0 0 "game-metal-red-texture"
 
-echo "shell: 12 panel checks passed"
+# The live path reuses the same frame targets for several frames; it must not
+# crash or lose the viewport after the capture path returns.
+LIVE=$(NOVA_SCENE_FRAMES=5 ./target/nova/scene-gui)
+echo "$LIVE"
+echo "$LIVE" | grep -q "live=stopped frames=5 viewport=metal"
+
+echo "shell: 15 panel checks passed"

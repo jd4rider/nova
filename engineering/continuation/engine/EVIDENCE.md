@@ -305,10 +305,11 @@ Visual review caught truncated fixed-point fields (`1.69`/`0.79` for
 whole part. No acceptance assertion covered that cosmetic value; the fix was
 re-captured and the same six checks passed.
 
-The shell's scene view is deliberately a Nova GUI Q16.16 projection, not the
-Metal window: one PNG can then include all editor panels. The Metal textured
-quad and depth-tested cube remain separate native acceptance paths. This is a
-preview boundary, not a second renderer claim.
+At 0.2.0 the shell's scene view was a Nova GUI Q16.16 projection, not Metal:
+one PNG included all editor panels while the Metal textured quad and
+perspective cube remained separate native acceptance paths. That preview
+boundary was replaced by ENG-11.003 below; the 0.2.0 captures are retained as
+history.
 
 ### Chrome and Game-tab fix
 
@@ -407,14 +408,71 @@ synthesize AppKit mouse events; it exercises the same camera state and capture
 path through two presets, while the event plumbing remains the interactive
 path. The resized capture shows the moved cube's four checker quadrants.
 
+## Studio Metal viewport (ENG-11.003)
+
+```
+$ sh examples/scene-gui/tests/shell.sh
+scene-gui: shell=captured saved=true entities=6 selected=3:1 tab=scene viewport=metal drawer=console
+shell: traffic lights placed at y=14
+scene-gui: shell=captured saved=true entities=6 selected=3:1 tab=game viewport=metal drawer=console
+shell: save_png created nested capture without mkdir
+shell: capture 2880x1800
+scene-gui: live=stopped frames=5 viewport=metal
+shell: 15 panel checks passed
+```
+
+The viewport is an offscreen Metal render of the same six-entity World,
+composited into nova-gui's sRGB bitmap. A child `MTKView` would show in the
+window but not in `gui.save_png`; this path keeps one framebuffer and one
+capture. `runtime/metal.m` gained an offscreen session, a bounded 64-entry MVP
+draw list, a built-in four-quadrant checker texture and a shared BGRA readback.
+`runtime/gui.m` gained `nova_gui_scale` and `nova_gui_metal_frame`; the latter
+weak-imports the internal Metal accessor, so GUI-only programs still link
+without Metal. Studio builds one Q16.16 MVP per live entity, uses the host's
+checker and directional light, then draws the grid and selected-player box as
+Nova overlays. Game hides those overlays but keeps the Metal scene.
+
+Stable probes at 2x: Metal clear `13,15,20`, red checker `138,0,0`, green
+checker `0,138,0`, Scene grid overlay `39,40,44`, and the same grid pixel in
+Game is Metal clear `13,15,20`. The test also checks the six hierarchy rows,
+selected Player row, inspector surface, drawer and both active-tab states.
+The 5-frame live run reuses the frame targets after the capture path and exits
+cleanly. The Metal lab regressions were rerun after the host change:
+`metal.sh`, `cube.sh`, `lit.sh`, `physics.sh` and `shutdown.sh` all exit 0;
+`lit` still passes 19 probes, `physics` 11, and shutdown 5/5 cycles.
+
+The installed bundle was rebuilt as 0.3.0:
+
+```
+$ sh examples/scene-gui/install-macos.sh
+Installed /Applications/Nova Engine Studio.app
+Version 0.3.0 · dev.nova.engine.studio · ad-hoc signed
+
+$ codesign --verify --strict "/Applications/Nova Engine Studio.app"   # clean
+$ plutil -extract CFBundleShortVersionString raw .../Info.plist
+0.3.0
+$ NOVA_SCENE_SHOT=dist/preview-installed-0.3.png \
+    "/Applications/Nova Engine Studio.app/Contents/MacOS/nova-engine-studio"
+scene-gui: shell=captured saved=true entities=6 selected=3:1 tab=scene viewport=metal drawer=console
+$ NOVA_SCENE_FRAMES=5 .../nova-engine-studio
+scene-gui: live=stopped frames=5 viewport=metal
+```
+
+The Scene capture shows the lit checker ground, all six entities, the Player
+selection box and label, hierarchy, inspector and console. The Game capture
+shows the same Metal scene without the grid, selection box or label. Both are
+2880×1800. The editor camera is fixed; orbit/pan/zoom remain in the Metal lab
+and are not wired to Studio yet. There is no GPU timing, MSAA, shadow,
+multi-light or multi-viewport support.
+
 ## Not measured
 
 - No frame-time breakdown, allocation count or throughput profile inside the
   soak; only whole-process wall clock.
 - No GPU timing, MSAA, mipmaps, alpha blending, shadows, multiple lights or
   asset pipeline yet. One Depth32Float attachment and one texture slot.
-- The camera is orbit/pan/zoom around a target, not a full editor viewport;
-  Studio still uses its CPU wireframe preview. Mouse events are not synthesized
-  by the acceptance test.
+- The camera is orbit/pan/zoom around a target in the Metal lab. Studio uses a
+  fixed editor camera and does not poll those input slots yet. Its mouse events
+  are not synthesized by the acceptance test.
 - Float is codegen- and full-build-verified on macOS arm64; wasm float has no
   measurement yet.

@@ -6,17 +6,24 @@
 // polls `metal_poll`, draws, and shuts down explicitly.
 //
 // A session handle is 0 on failure. Call `metal_last_error` for the reason.
+// Studio uses `metal_offscreen` plus the bounded scene draw list; the GUI host
+// composites `metal_render_frame` into its own bitmap.
 
 extern "C" fn nova_metal_init(title: String, width: Int, height: Int) -> Int
+extern "C" fn nova_metal_offscreen(width: Int, height: Int) -> Int
 extern "C" fn nova_metal_poll(handle: Int) -> Int
 extern "C" fn nova_metal_draw(handle: Int, red: Int, green: Int, blue: Int) -> Int
 extern "C" fn nova_metal_resize(handle: Int, width: Int, height: Int) -> Int
 extern "C" fn nova_metal_texture(handle: Int, path: String) -> Int
+extern "C" fn nova_metal_texture_checker(handle: Int) -> Int
 extern "C" fn nova_metal_geometry(handle: Int, kind: Int) -> Int
 extern "C" fn nova_metal_light(handle: Int, enabled: Int, x: Int, y: Int, z: Int) -> Int
 extern "C" fn nova_metal_input(handle: Int, slot: Int) -> Int
 extern "C" fn nova_metal_input_reset(handle: Int) -> Unit
 extern "C" fn nova_metal_mvp(handle: Int, m00: Int, m01: Int, m02: Int, m03: Int, m10: Int, m11: Int, m12: Int, m13: Int, m20: Int, m21: Int, m22: Int, m23: Int, m30: Int, m31: Int, m32: Int, m33: Int) -> Int
+extern "C" fn nova_metal_scene_clear(handle: Int) -> Unit
+extern "C" fn nova_metal_scene_add(handle: Int, m00: Int, m01: Int, m02: Int, m03: Int, m10: Int, m11: Int, m12: Int, m13: Int, m20: Int, m21: Int, m22: Int, m23: Int, m30: Int, m31: Int, m32: Int, m33: Int) -> Int
+extern "C" fn nova_metal_render_frame(handle: Int, width: Int, height: Int) -> Int
 extern "C" fn nova_metal_capture(handle: Int, path: String) -> Int
 extern "C" fn nova_metal_env(name: String) -> String
 extern "C" fn nova_metal_last_error() -> String
@@ -24,6 +31,12 @@ extern "C" fn nova_metal_shutdown(handle: Int) -> Unit
 
 fn metal_init(title: String, width: Int, height: Int) -> Int {
     return nova_metal_init(title, width, height)
+}
+
+// Creates a GPU session without a window. The GUI host composites the frame
+// returned by metal_render_frame into its own bitmap.
+fn metal_offscreen(width: Int, height: Int) -> Int {
+    return nova_metal_offscreen(width, height)
 }
 
 // 1 while the window is open, 0 after it is closed.
@@ -45,6 +58,12 @@ fn metal_resize(handle: Int, width: Int, height: Int) -> Int {
 // active until then, so the draw path never depends on load order.
 fn metal_texture(handle: Int, path: String) -> Int {
     return nova_metal_texture(handle, path)
+}
+
+// Installs the host's built-in four-quadrant texture, so an installed app does
+// not depend on the launch directory for its lit cube.
+fn metal_texture_checker(handle: Int) -> Int {
+    return nova_metal_texture_checker(handle)
 }
 
 // Selects the built-in quad (0), colour cube (1) or textured lit cube (2);
@@ -73,6 +92,21 @@ fn metal_input_reset(handle: Int) {
 // Sets model-view-projection from 16 row-major Q16.16 cells; 1 on success.
 fn metal_mvp(handle: Int, m00: Int, m01: Int, m02: Int, m03: Int, m10: Int, m11: Int, m12: Int, m13: Int, m20: Int, m21: Int, m22: Int, m23: Int, m30: Int, m31: Int, m32: Int, m33: Int) -> Int {
     return nova_metal_mvp(handle, m00, m01, m02, m03, m10, m11, m12, m13, m20, m21, m22, m23, m30, m31, m32, m33)
+}
+
+// Clears the bounded draw list used by the editor viewport.
+fn metal_scene_clear(handle: Int) {
+    nova_metal_scene_clear(handle)
+}
+
+// Adds one model-view-projection to the editor draw list.
+fn metal_scene_add(handle: Int, m00: Int, m01: Int, m02: Int, m03: Int, m10: Int, m11: Int, m12: Int, m13: Int, m20: Int, m21: Int, m22: Int, m23: Int, m30: Int, m31: Int, m32: Int, m33: Int) -> Int {
+    return nova_metal_scene_add(handle, m00, m01, m02, m03, m10, m11, m12, m13, m20, m21, m22, m23, m30, m31, m32, m33)
+}
+
+// Renders the draw list into the shared frame consumed by gui.metal_frame.
+fn metal_render_frame(handle: Int, width: Int, height: Int) -> Int {
+    return nova_metal_render_frame(handle, width, height)
 }
 
 // Writes a PNG from an offscreen render of the same frame. 1 on success.

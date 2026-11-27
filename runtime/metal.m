@@ -5,10 +5,11 @@
  * The FFI has no structs or pointers, so the boundary is Int handles, Ints,
  * strings and a polled running flag. There are no callbacks.
  *
- * This first slice owns exactly one session. `nova_metal_init` returns handle 1
- * or 0; every other entry validates the handle. A per-window handle table is
- * only needed once the editor can open more than one viewport, and is recorded
- * as future work rather than pretended here.
+ * The host owns exactly one session. `nova_metal_init` returns handle 1 or 0;
+ * every other entry validates the handle. `nova_metal_offscreen` creates the
+ * same resources without a window, and a bounded draw list renders into a
+ * shared BGRA frame for nova-gui. A per-window handle table is only needed once
+ * the editor can show multiple live viewports, and remains future work.
  *
  * The build compiles this file only when a program references nova_metal_
  * symbols (see examples/nova-tool/src/main.nova), so non-render programs never
@@ -33,7 +34,17 @@ typedef struct {
     int64_t len;
 } nova_str;
 
+/* Internal C view of the latest offscreen frame. GUI hosts read this through a
+ * weak symbol; no pointer is ever exposed to Nova. */
+typedef struct {
+    const uint8_t *pixels;
+    int64_t width;
+    int64_t height;
+    int64_t stride;
+} NovaMetalFrameView;
+
 #define NOVA_METAL_SESSION 1
+#define NOVA_METAL_SCENE_MAX 64
 
 static char nova_metal_error[1024];
 static id<MTLDevice> nova_device = nil;
@@ -60,6 +71,20 @@ static NSWindow *nova_window = nil;
 static MTKView *nova_view = nil;
 static int nova_running = 0;
 static int nova_ready = 0;
+static int nova_offscreen = 0;
+/* A bounded draw list lets the editor render several world entities with one
+ * pipeline. Each entry is a row-major MVP already transposed for Metal. */
+static int nova_scene_count = 0;
+static float nova_scene_mvp[NOVA_METAL_SCENE_MAX][16];
+/* Latest offscreen frame, composited by nova-gui. The readback buffer owns the
+ * pixels; Nova only sees the GUI call and still passes Ints and strings. */
+static id<MTLTexture> nova_frame_color = nil;
+static id<MTLTexture> nova_frame_depth = nil;
+static id<MTLBuffer> nova_frame_readback = nil;
+static const uint8_t *nova_frame_pixels = NULL;
+static int64_t nova_frame_width = 0;
+static int64_t nova_frame_height = 0;
+static int64_t nova_frame_stride = 0;
 /* Accumulated camera input. Nova polls these deltas and clears them after a
  * frame; no event callback crosses the FFI. */
 static int64_t nova_input_orbit_dx = 0;
@@ -195,6 +220,34 @@ static int nova_metal_vertex_count(void) {
     return NOVA_METAL_QUAD_VERTICES;
 }
 
+/* Shared by the MTKView and offscreen paths. The editor fills a draw list; the
+ * Metal lab leaves it empty and keeps its single stored MVP. */
+static void nova_metal_encode_draws(id<MTLRenderCommandEncoder> encoder) {
+    [encoder setRenderPipelineState:nova_pipeline];
+    [encoder setDepthStencilState:nova_depth_state];
+    [encoder setVertexBuffer:nova_metal_vertex_buffer() offset:0 atIndex:0];
+    [encoder setFragmentTexture:nova_texture atIndex:0];
+    [encoder setFragmentBytes:nova_light length:sizeof(nova_light) atIndex:0];
+    if (nova_scene_count > 0) {
+        int index = 0;
+        while (index < nova_scene_count) {
+            [encoder setVertexBytes:nova_scene_mvp[index]
+                             length:sizeof(nova_scene_mvp[index])
+                            atIndex:1];
+            [encoder drawPrimitives:MTLPrimitiveTypeTriangle
+                        vertexStart:0
+                        vertexCount:nova_metal_vertex_count()];
+            index++;
+        }
+        return;
+    }
+    if (nova_offscreen) return;
+    [encoder setVertexBytes:nova_mvp length:sizeof(nova_mvp) atIndex:1];
+    [encoder drawPrimitives:MTLPrimitiveTypeTriangle
+                vertexStart:0
+                vertexCount:nova_metal_vertex_count()];
+}
+
 @implementation NovaMetalRenderer
 
 /* MTKView owns drawable acquisition and presentation. Doing that by hand
@@ -206,13 +259,7 @@ static int nova_metal_vertex_count(void) {
     if (!pass || !drawable) return;
     id<MTLCommandBuffer> buffer = [nova_queue commandBuffer];
     id<MTLRenderCommandEncoder> encoder = [buffer renderCommandEncoderWithDescriptor:pass];
-    [encoder setRenderPipelineState:nova_pipeline];
-    [encoder setDepthStencilState:nova_depth_state];
-    [encoder setVertexBuffer:nova_metal_vertex_buffer() offset:0 atIndex:0];
-    [encoder setVertexBytes:nova_mvp length:sizeof(nova_mvp) atIndex:1];
-    [encoder setFragmentTexture:nova_texture atIndex:0];
-    [encoder setFragmentBytes:nova_light length:sizeof(nova_light) atIndex:0];
-    [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:nova_metal_vertex_count()];
+    nova_metal_encode_draws(encoder);
     [encoder endEncoding];
     [buffer presentDrawable:drawable];
     [buffer commit];
@@ -306,13 +353,7 @@ static void nova_metal_render_pass(MTLRenderPassDescriptor *pass, int draw_trian
     id<MTLCommandBuffer> buffer = [nova_queue commandBuffer];
     id<MTLRenderCommandEncoder> encoder = [buffer renderCommandEncoderWithDescriptor:pass];
     if (draw_triangle) {
-        [encoder setRenderPipelineState:nova_pipeline];
-        [encoder setDepthStencilState:nova_depth_state];
-        [encoder setVertexBuffer:nova_metal_vertex_buffer() offset:0 atIndex:0];
-        [encoder setVertexBytes:nova_mvp length:sizeof(nova_mvp) atIndex:1];
-        [encoder setFragmentTexture:nova_texture atIndex:0];
-        [encoder setFragmentBytes:nova_light length:sizeof(nova_light) atIndex:0];
-        [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:nova_metal_vertex_count()];
+        nova_metal_encode_draws(encoder);
     }
     [encoder endEncoding];
     [buffer commit];
@@ -405,6 +446,49 @@ int64_t nova_metal_texture(int64_t handle, nova_str path) {
     }
 }
 
+/* A four-quadrant checker built into the host, so Studio does not depend on a
+ * working directory or a bundled asset to show a lit textured cube. The same
+ * colour values as assets/checker.png keep the lab and Studio visually
+ * comparable. */
+int64_t nova_metal_texture_checker(int64_t handle) {
+    if (handle != NOVA_METAL_SESSION || !nova_ready || !nova_device) return 0;
+    @autoreleasepool {
+        const NSUInteger size = 64;
+        uint32_t pixels[64 * 64];
+        NSUInteger y = 0;
+        while (y < size) {
+            NSUInteger x = 0;
+            while (x < size) {
+                uint32_t colour = 0xFFA50000u; /* red */
+                if (x >= size / 2 && y < size / 2) colour = 0xFF00A500u; /* green */
+                if (x < size / 2 && y >= size / 2) colour = 0xFF0000A5u; /* blue */
+                if (x >= size / 2 && y >= size / 2) colour = 0xFFA5A500u; /* yellow */
+                pixels[y * size + x] = colour;
+                x++;
+            }
+            y++;
+        }
+        MTLTextureDescriptor *descriptor =
+            [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+                                                               width:size
+                                                              height:size
+                                                           mipmapped:NO];
+        descriptor.usage = MTLTextureUsageShaderRead;
+        descriptor.storageMode = MTLStorageModeShared;
+        id<MTLTexture> texture = [nova_device newTextureWithDescriptor:descriptor];
+        if (!texture) {
+            nova_metal_fail(@"could not create the checker texture");
+            return 0;
+        }
+        [texture replaceRegion:MTLRegionMake2D(0, 0, size, size)
+                   mipmapLevel:0
+                     withBytes:pixels
+                   bytesPerRow:size * 4];
+        nova_texture = texture;
+    }
+    return 1;
+}
+
 /* Selects the quad (0), colour cube (1) or textured lit cube (2). All three
  * buffers exist from init, so the switch is one Int and cannot fail after
  * validating the handle. */
@@ -445,6 +529,19 @@ int64_t nova_metal_light(int64_t handle, int64_t enabled, int64_t x, int64_t y, 
 /* Accepts the 16 row-major Q16.16 cells of model-view-projection. They are
  * transposed into Metal's column-major float4x4, so the shader's `mvp * p`
  * matches math.nova's row-major matrix product. */
+static void nova_metal_store_mvp(float *destination, const int64_t cells[16]) {
+    int row = 0;
+    while (row < 4) {
+        int column = 0;
+        while (column < 4) {
+            destination[column * 4 + row] =
+                (float)((double)cells[row * 4 + column] / 65536.0);
+            column++;
+        }
+        row++;
+    }
+}
+
 int64_t nova_metal_mvp(int64_t handle,
                        int64_t m00, int64_t m01, int64_t m02, int64_t m03,
                        int64_t m10, int64_t m11, int64_t m12, int64_t m13,
@@ -457,15 +554,35 @@ int64_t nova_metal_mvp(int64_t handle,
         m20, m21, m22, m23,
         m30, m31, m32, m33,
     };
-    int row = 0;
-    while (row < 4) {
-        int column = 0;
-        while (column < 4) {
-            nova_mvp[column * 4 + row] = (float)((double)cells[row * 4 + column] / 65536.0);
-            column++;
-        }
-        row++;
+    nova_metal_store_mvp(nova_mvp, cells);
+    return 1;
+}
+
+/* Bounded draw list for the editor. Each call stores one model-view-projection
+ * matrix; the host performs no scene traversal and receives no pointers. */
+void nova_metal_scene_clear(int64_t handle) {
+    if (handle != NOVA_METAL_SESSION || !nova_ready) return;
+    nova_scene_count = 0;
+}
+
+int64_t nova_metal_scene_add(int64_t handle,
+                             int64_t m00, int64_t m01, int64_t m02, int64_t m03,
+                             int64_t m10, int64_t m11, int64_t m12, int64_t m13,
+                             int64_t m20, int64_t m21, int64_t m22, int64_t m23,
+                             int64_t m30, int64_t m31, int64_t m32, int64_t m33) {
+    if (handle != NOVA_METAL_SESSION || !nova_ready) return 0;
+    if (nova_scene_count >= NOVA_METAL_SCENE_MAX) {
+        nova_metal_fail(@"scene draw list is full");
+        return 0;
     }
+    int64_t cells[16] = {
+        m00, m01, m02, m03,
+        m10, m11, m12, m13,
+        m20, m21, m22, m23,
+        m30, m31, m32, m33,
+    };
+    nova_metal_store_mvp(nova_scene_mvp[nova_scene_count], cells);
+    nova_scene_count++;
     return 1;
 }
 
@@ -501,45 +618,6 @@ int64_t nova_metal_init(nova_str title, int64_t width, int64_t height) {
             nova_metal_fail(@"could not create a command queue");
             return 0;
         }
-
-        NSApplication *app = [NSApplication sharedApplication];
-        [app setActivationPolicy:NSApplicationActivationPolicyRegular];
-        [app finishLaunching];
-        nova_metal_build_menu();
-
-        NSString *window_title = title.ptr && title.len > 0
-            ? [[NSString alloc] initWithBytes:title.ptr length:(NSUInteger)title.len encoding:NSUTF8StringEncoding]
-            : @"Nova Metal Lab";
-        NSRect frame = NSMakeRect(0, 0, (CGFloat)width, (CGFloat)height);
-        NSWindowStyleMask style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
-                                  NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
-        nova_window = [[NSWindow alloc] initWithContentRect:frame
-                                                  styleMask:style
-                                                    backing:NSBackingStoreBuffered
-                                                      defer:NO];
-        if (!nova_window) {
-            nova_metal_fail(@"could not create a window");
-            return 0;
-        }
-        nova_window.title = window_title ? window_title : @"Nova Metal Lab";
-        [nova_window setRestorable:NO];
-        nova_window.backgroundColor = [NSColor colorWithCalibratedRed:0.05 green:0.06 blue:0.08 alpha:1.0];
-
-        nova_view = [[NovaMetalView alloc] initWithFrame:frame device:nova_device];
-        nova_view.colorPixelFormat = MTLPixelFormatBGRA8Unorm;
-        nova_view.depthStencilPixelFormat = MTLPixelFormatDepth32Float;
-        nova_view.clearColor = MTLClearColorMake(0.05, 0.06, 0.08, 1.0);
-        nova_view.clearDepth = 1.0;
-        nova_view.autoResizeDrawable = YES;
-        nova_view.paused = YES;
-        nova_view.enableSetNeedsDisplay = NO;
-        nova_view.framebufferOnly = YES;
-        nova_renderer = [[NovaMetalRenderer alloc] init];
-        nova_view.delegate = nova_renderer;
-        nova_window.contentView = nova_view;
-        nova_delegate = [[NovaMetalDelegate alloc] init];
-        nova_window.delegate = nova_delegate;
-        [app setDelegate:nova_delegate];
 
         if (!nova_metal_build_pipeline()) {
             return 0;
@@ -691,6 +769,51 @@ int64_t nova_metal_init(nova_str title, int64_t width, int64_t height) {
                           withBytes:&white
                         bytesPerRow:4];
 
+        if (nova_offscreen) {
+            nova_running = 0;
+            nova_ready = 1;
+            return NOVA_METAL_SESSION;
+        }
+
+        NSApplication *app = [NSApplication sharedApplication];
+        [app setActivationPolicy:NSApplicationActivationPolicyRegular];
+        [app finishLaunching];
+        nova_metal_build_menu();
+
+        NSString *window_title = title.ptr && title.len > 0
+            ? [[NSString alloc] initWithBytes:title.ptr length:(NSUInteger)title.len encoding:NSUTF8StringEncoding]
+            : @"Nova Metal Lab";
+        NSRect frame = NSMakeRect(0, 0, (CGFloat)width, (CGFloat)height);
+        NSWindowStyleMask style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+                                  NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
+        nova_window = [[NSWindow alloc] initWithContentRect:frame
+                                                  styleMask:style
+                                                    backing:NSBackingStoreBuffered
+                                                      defer:NO];
+        if (!nova_window) {
+            nova_metal_fail(@"could not create a window");
+            return 0;
+        }
+        nova_window.title = window_title ? window_title : @"Nova Metal Lab";
+        [nova_window setRestorable:NO];
+        nova_window.backgroundColor = [NSColor colorWithCalibratedRed:0.05 green:0.06 blue:0.08 alpha:1.0];
+
+        nova_view = [[NovaMetalView alloc] initWithFrame:frame device:nova_device];
+        nova_view.colorPixelFormat = MTLPixelFormatBGRA8Unorm;
+        nova_view.depthStencilPixelFormat = MTLPixelFormatDepth32Float;
+        nova_view.clearColor = MTLClearColorMake(0.05, 0.06, 0.08, 1.0);
+        nova_view.clearDepth = 1.0;
+        nova_view.autoResizeDrawable = YES;
+        nova_view.paused = YES;
+        nova_view.enableSetNeedsDisplay = NO;
+        nova_view.framebufferOnly = YES;
+        nova_renderer = [[NovaMetalRenderer alloc] init];
+        nova_view.delegate = nova_renderer;
+        nova_window.contentView = nova_view;
+        nova_delegate = [[NovaMetalDelegate alloc] init];
+        nova_window.delegate = nova_delegate;
+        [app setDelegate:nova_delegate];
+
         [nova_window center];
         [nova_window makeKeyAndOrderFront:nil];
         [nova_window makeFirstResponder:nova_view];
@@ -699,6 +822,18 @@ int64_t nova_metal_init(nova_str title, int64_t width, int64_t height) {
         nova_ready = 1;
         return NOVA_METAL_SESSION;
     }
+}
+
+/* Creates the same device, pipeline, geometry and fallback texture as the lab,
+ * but no NSWindow and no MTKView. The GUI host composites the resulting frame
+ * into its own bitmap, which keeps one event loop and one save_png path. */
+int64_t nova_metal_offscreen(int64_t width, int64_t height) {
+    if (width < 64) width = 64;
+    if (height < 64) height = 64;
+    nova_offscreen = 1;
+    int64_t handle = nova_metal_init((nova_str){"", 0}, width, height);
+    if (handle == 0) nova_offscreen = 0;
+    return handle;
 }
 
 /* Drains AppKit events without blocking and reports whether the window is
@@ -891,6 +1026,110 @@ int64_t nova_metal_capture(int64_t handle, nova_str path) {
     return 1;
 }
 
+static int nova_metal_ensure_frame_targets(int64_t width, int64_t height) {
+    size_t bytes_per_row = (size_t)(((width * 4 + 255) / 256) * 256);
+    if (nova_frame_color && nova_frame_depth && nova_frame_readback &&
+        nova_frame_width == width && nova_frame_height == height) {
+        return 1;
+    }
+    nova_frame_pixels = NULL;
+    nova_frame_color = nil;
+    nova_frame_depth = nil;
+    nova_frame_readback = nil;
+    nova_frame_width = 0;
+    nova_frame_height = 0;
+    nova_frame_stride = 0;
+
+    MTLTextureDescriptor *colour_descriptor =
+        [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+                                                           width:(NSUInteger)width
+                                                          height:(NSUInteger)height
+                                                       mipmapped:NO];
+    colour_descriptor.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+    colour_descriptor.storageMode = MTLStorageModePrivate;
+    nova_frame_color = [nova_device newTextureWithDescriptor:colour_descriptor];
+    if (!nova_frame_color) {
+        nova_metal_fail(@"could not create the viewport colour texture");
+        return 0;
+    }
+
+    MTLTextureDescriptor *depth_descriptor =
+        [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float
+                                                           width:(NSUInteger)width
+                                                          height:(NSUInteger)height
+                                                       mipmapped:NO];
+    depth_descriptor.usage = MTLTextureUsageRenderTarget;
+    depth_descriptor.storageMode = MTLStorageModePrivate;
+    nova_frame_depth = [nova_device newTextureWithDescriptor:depth_descriptor];
+    if (!nova_frame_depth) {
+        nova_metal_fail(@"could not create the viewport depth texture");
+        return 0;
+    }
+
+    nova_frame_readback = [nova_device newBufferWithLength:bytes_per_row * (size_t)height
+                                                   options:MTLResourceStorageModeShared];
+    if (!nova_frame_readback) {
+        nova_metal_fail(@"could not create the viewport readback buffer");
+        return 0;
+    }
+    nova_frame_width = width;
+    nova_frame_height = height;
+    nova_frame_stride = (int64_t)bytes_per_row;
+    return 1;
+}
+
+/* Renders the current draw list into the shared viewport frame. The GUI host
+ * composites it in the same pass as the rest of the shell, so save_png sees the
+ * real Metal pixels without a second window or a GPU capture API. */
+int64_t nova_metal_render_frame(int64_t handle, int64_t width, int64_t height) {
+    if (handle != NOVA_METAL_SESSION || !nova_ready || !nova_device) return 0;
+    if (width < 1 || height < 1 || width > 8192 || height > 8192) {
+        nova_metal_fail(@"viewport size is unsupported");
+        return 0;
+    }
+    @autoreleasepool {
+        if (!nova_metal_ensure_frame_targets(width, height)) return 0;
+
+        MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
+        pass.colorAttachments[0].texture = nova_frame_color;
+        pass.colorAttachments[0].loadAction = MTLLoadActionClear;
+        pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+        pass.colorAttachments[0].clearColor = MTLClearColorMake(0.05, 0.06, 0.08, 1.0);
+        pass.depthAttachment.texture = nova_frame_depth;
+        pass.depthAttachment.loadAction = MTLLoadActionClear;
+        pass.depthAttachment.storeAction = MTLStoreActionDontCare;
+        pass.depthAttachment.clearDepth = 1.0;
+        nova_metal_render_pass(pass, 1);
+
+        id<MTLCommandBuffer> buffer = [nova_queue commandBuffer];
+        id<MTLBlitCommandEncoder> blit = [buffer blitCommandEncoder];
+        [blit copyFromTexture:nova_frame_color
+                  sourceSlice:0
+                  sourceLevel:0
+                 sourceOrigin:MTLOriginMake(0, 0, 0)
+                   sourceSize:MTLSizeMake((NSUInteger)width, (NSUInteger)height, 1)
+                     toBuffer:nova_frame_readback
+            destinationOffset:0
+       destinationBytesPerRow:(NSUInteger)nova_frame_stride
+     destinationBytesPerImage:(NSUInteger)(nova_frame_stride * height)];
+        [blit endEncoding];
+        [buffer commit];
+        [buffer waitUntilCompleted];
+        nova_frame_pixels = (const uint8_t *)nova_frame_readback.contents;
+    }
+    return 1;
+}
+
+/* Internal C accessor for nova-gui. This never appears in the Nova ABI. */
+int64_t nova_metal_frame_view(NovaMetalFrameView *out) {
+    if (!out || !nova_frame_pixels || nova_frame_width <= 0 || nova_frame_height <= 0) return 0;
+    out->pixels = nova_frame_pixels;
+    out->width = nova_frame_width;
+    out->height = nova_frame_height;
+    out->stride = nova_frame_stride;
+    return 1;
+}
+
 nova_str nova_metal_env(nova_str name) {
     if (!name.ptr || name.len <= 0) return nova_metal_copy("");
     char key[256];
@@ -909,7 +1148,15 @@ void nova_metal_shutdown(int64_t handle) {
     if (handle != NOVA_METAL_SESSION) return;
     nova_running = 0;
     nova_ready = 0;
+    nova_scene_count = 0;
+    nova_frame_pixels = NULL;
+    nova_frame_width = 0;
+    nova_frame_height = 0;
+    nova_frame_stride = 0;
     @autoreleasepool {
+        nova_frame_readback = nil;
+        nova_frame_depth = nil;
+        nova_frame_color = nil;
         nova_view.delegate = nil;
         nova_window.delegate = nil;
         /* Closing a programmatically created window can release it outside
@@ -928,5 +1175,6 @@ void nova_metal_shutdown(int64_t handle) {
         nova_queue = nil;
         nova_device = nil;
     }
+    nova_offscreen = 0;
     nova_metal_error[0] = '\0';
 }

@@ -45,6 +45,32 @@ typedef struct {
     int64_t len;
 } nova_str;
 
+/* Internal Metal-to-GUI handoff. nova-metal remains optional for GUI-only apps,
+ * so this is a weak import: if the program never referenced @nova_metal_ the
+ * symbol stays null and metal_frame simply reports that no frame exists. */
+typedef struct {
+    const uint8_t *pixels;
+    int64_t width;
+    int64_t height;
+    int64_t stride;
+} NovaMetalFrameView;
+
+extern int64_t nova_metal_frame_view(NovaMetalFrameView *out) __attribute__((weak_import));
+
+/* runtime/metal.m is linked only when the app asks for Metal. Without that
+ * object the weak_import reference above is still an undefined symbol to ld64,
+ * so this weak fallback keeps every GUI build linking; a linked metal.m's
+ * strong definition wins instead. */
+__attribute__((weak)) int64_t nova_metal_frame_view(NovaMetalFrameView *out) {
+    if (out) {
+        out->pixels = NULL;
+        out->width = 0;
+        out->height = 0;
+        out->stride = 0;
+    }
+    return 0;
+}
+
 /* Input events. Printable keys report their Unicode scalar (32..0x10FFFF);
  * everything else uses these codes, which match nova-tui where they overlap. */
 #define NOVA_GUI_NONE 0
@@ -791,6 +817,11 @@ static void nova_gui_build_menu(void) {
     [app addItemWithTitle:[NSString stringWithFormat:@"About %@", app_name]
                   action:@selector(orderFrontStandardAboutPanel:)
            keyEquivalent:@""];
+    /* nil target: the respondable chain reaches the app delegate, which owns
+     * the LaunchServices call. Selecting it twice is harmless. */
+    [app addItemWithTitle:[NSString stringWithFormat:@"Make %@ the Default Browser", app_name]
+                  action:@selector(novaMakeDefaultBrowser:)
+           keyEquivalent:@""];
     [app addItem:[NSMenuItem separatorItem]];
     nova_gui_menu_item(app, @"Settings…", @",", command, NOVA_MOD_COMMAND, ',');
     [app addItem:[NSMenuItem separatorItem]];
@@ -1407,6 +1438,47 @@ void nova_gui_set_cursor(int64_t kind) {
 
 int64_t nova_gui_height(void) {
     return nova_h;
+}
+
+/* Backing scale of the GUI bitmap. The 3D viewport renders at this size so its
+ * pixels are native-resolution instead of being upscaled by the shell. */
+int64_t nova_gui_scale(void) {
+    return nova_scale;
+}
+
+/* Composites the latest offscreen Metal frame into the shell bitmap. The
+ * caller has already clipped to the viewport and drawn its background. */
+int64_t nova_gui_metal_frame(int64_t x, int64_t y, int64_t w, int64_t h) {
+    if (!nova_ctx || w <= 0 || h <= 0) return 0;
+    if (!nova_metal_frame_view) return 0;
+    NovaMetalFrameView frame = {0};
+    if (!nova_metal_frame_view(&frame)) return 0;
+    if (!frame.pixels || frame.width <= 0 || frame.height <= 0 || frame.stride <= 0) return 0;
+
+    CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    CGDataProviderRef provider = CGDataProviderCreateWithData(
+        NULL, frame.pixels, (size_t)(frame.stride * frame.height), NULL);
+    CGImageRef image = (space && provider)
+        ? CGImageCreate((size_t)frame.width, (size_t)frame.height, 8, 32,
+                        (size_t)frame.stride, space,
+                        kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little,
+                        provider, NULL, false, kCGRenderingIntentDefault)
+        : NULL;
+    if (!image) {
+        if (provider) CGDataProviderRelease(provider);
+        if (space) CGColorSpaceRelease(space);
+        return 0;
+    }
+    CGContextSaveGState(nova_ctx);
+    CGContextTranslateCTM(nova_ctx, (CGFloat)x, (CGFloat)(y + h));
+    CGContextScaleCTM(nova_ctx, 1.0, -1.0);
+    CGContextSetInterpolationQuality(nova_ctx, kCGInterpolationLow);
+    CGContextDrawImage(nova_ctx, CGRectMake(0, 0, (CGFloat)w, (CGFloat)h), image);
+    CGContextRestoreGState(nova_ctx);
+    CGImageRelease(image);
+    CGDataProviderRelease(provider);
+    CGColorSpaceRelease(space);
+    return 1;
 }
 
 void nova_gui_begin(void) {
@@ -2900,6 +2972,7 @@ nova_str nova_pty_poll(int64_t slot) {
         }
     }
     pthread_mutex_unlock(&term->lock);
+    if (len > 0) nova_gui_trace("pty read slot=%lld len=%zu", (long long)slot, len);
     if (!copy) return nova_gui_empty();
     nova_str result = {copy, (int64_t)len};
     return result;
@@ -2936,6 +3009,7 @@ int64_t nova_pty_write_text(int64_t slot, nova_str text) {
     pthread_mutex_unlock(&term->lock);
     if (master < 0) return 0;
     ssize_t wrote = write(master, text.ptr, (size_t)text.len);
+    nova_gui_trace("pty write slot=%lld len=%lld wrote=%lld", (long long)slot, (long long)text.len, (long long)wrote);
     return wrote == text.len ? 1 : 0;
 }
 

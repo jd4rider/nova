@@ -43,8 +43,9 @@
   scene/game views; keep the Int-handle ABI while adding it.
 - **Metal host requires the stage-1 compiler.** The checked-in bootstrap does
   not know `@nova_metal_`; build `examples/nova-tool` first (ENG-X.003).
-- **No depth, MSAA, GPU timing, texture loading or asset pipeline yet.** The
-  triangle proves the device path only.
+- **No MSAA, GPU timing, shadows, multiple lights or asset pipeline yet.**
+  Depth32Float, one texture slot, one directional light and one offscreen
+  editor viewport are implemented; the viewport uses a fixed camera.
 - **No asset database, importer, UUID store or scene serialization.** ENG-03 is
   greenfield.
 

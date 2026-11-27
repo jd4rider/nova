@@ -1,37 +1,38 @@
 ---
 title: Nova Engine Studio
-description: A native Unity-first editor shell written in Nova, with real World state, Scene and Game views, and a signed macOS app.
+description: A native Unity-first editor shell written in Nova, with real World state, Scene and Game views, an offscreen Metal viewport, and a signed macOS app.
 ---
 
 export const base = import.meta.env.BASE_URL
 
-**Status: phase-0 vertical slice, macOS arm64.** Nova Engine Studio is the native editor shell for Nova Engine. It is not a Unity wrapper, an Electron app or a mock layout: hierarchy, Scene/Game views, inspector and console all read the same live `World` value.
+**Status: phase-0 vertical slice, macOS arm64.** Nova Engine Studio is the native editor shell for Nova Engine. It is not a Unity wrapper, an Electron app or a mock layout: hierarchy, Scene/Game views, inspector and console all read the same live `World` value. The centre viewport is an offscreen Metal render composited into the same Nova GUI bitmap as the editor chrome.
 
 Every panel is drawn by [nova-gui](../../libraries/gui/) from Nova code. The project is the first editor-facing slice of the engine, not a finished product.
 
 <img
   src={`${base}engine/engine-scene.png`}
-  alt="Nova Engine Studio Scene tab with hierarchy, wireframe scene, inspector and console"
+  alt="Nova Engine Studio Scene tab with a lit Metal viewport, hierarchy, inspector and console"
   style="width:100%;border:1px solid var(--sl-color-hairline);border-radius:10px;margin:14px 0 6px"
 />
 <p style="font-size:13px;color:var(--sl-color-gray-3);margin:0 0 28px">
-  Scene tab: six live entities, selected Player <code>3:1</code>, hierarchy, inspector and console. Captured from the signed app at 2880×1800 and shown at 1440×900.
+  Scene tab: six live entities rendered by Metal, selected Player <code>3:1</code>, hierarchy, inspector and console. Captured from the signed 0.3.0 app at 2880×1800 and shown at 1440×900.
 </p>
 
 ## What is real
 
 - **One World.** The hierarchy lists live entity slots and their generation handles. Selection, inspector fields, play/pause/step and the console all read the same `world.nova` value.
-- **Two view states.** Scene draws the perspective grid, wireframes, selection colour and entity labels. Game hides the editor grid, selection overlay and labels while keeping the same entities.
+- **A Metal viewport.** The Scene/Game centre is an offscreen Metal render, not a CPU wireframe. Studio builds one Q16.16 model-view-projection matrix per live entity and submits a bounded draw list to `runtime/metal.m`; the host renders depth-tested lit checker meshes with one directional light. The frame is read back at the display's backing scale and composited into the same sRGB bitmap as the panels, so `gui.save_png` captures the viewport and the editor together. It is an offscreen render, not an embedded `MTKView`.
+- **Two view states.** Scene draws the perspective grid, selected-player box and entity label over the Metal frame. Game hides those editor overlays while keeping the same six entities and Metal scene.
 - **Real time controls.** `Space` plays or pauses, `S` advances one fixed 1/60 s tick, `Tab` cycles live entities, `Delete` despawns the selection, and `R` resets the demo world.
 - **A native shell.** The installer produces `Nova Engine Studio.app` with an icon and an ad-hoc signature. There is no web view, Electron or JavaScript runtime.
 
 <img
   src={`${base}engine/engine-game.png`}
-  alt="Nova Engine Studio Game tab with no editor grid or selection overlay"
+  alt="Nova Engine Studio Game tab with the Metal scene and no editor grid or selection overlay"
   style="width:100%;border:1px solid var(--sl-color-hairline);border-radius:10px;margin:14px 0 6px"
 />
 <p style="font-size:13px;color:var(--sl-color-gray-3);margin:0 0 28px">
-  Game tab: the same six entities with editor overlays hidden, a separate active-tab state and the Game camera toolbar label.
+  Game tab: the same six entities and Metal frame with editor overlays hidden, a separate active-tab state and the Game camera toolbar label.
 </p>
 
 ## Run it
@@ -63,21 +64,23 @@ cd examples/scene-gui
 sh tests/shell.sh
 ```
 
-The test captures both tabs at 2880×1800, checks the traffic-light row through `NOVA_GUI_TRACE`, enters Game through the same mouse-down hit test as the window, and samples 12 pixels: panel surfaces, both active-tab states, the selected hierarchy row, a Scene grid line that becomes plain background in Game, and the drawer. Both PNGs are left in `target/` for review.
+The test captures both tabs at 2880×1800, checks the traffic-light row through `NOVA_GUI_TRACE`, enters Game through the same mouse-down hit test as the window, and samples 15 pixels: panel surfaces, both active-tab states, the selected hierarchy row, the Metal clear colour, two checker-texture colours, a Scene grid overlay that becomes Metal background in Game, and the drawer. It also runs five live frames through `NOVA_SCENE_FRAMES` and requires `live=stopped frames=5 viewport=metal`. Both PNGs are left in `target/` for review.
 
 The title strip calls `gui.place_traffic_lights(14)` and reserves 84 points on the left, so AppKit's close/minimize/zoom buttons do not overlap the title or menu. AppKit's own event delivery is still a manual check; the capture test verifies the handler below it.
 
 ## Honest gaps
 
-- **The viewport is a CPU preview.** It projects Q16.16 transforms through `mat4_perspective` and `mat4_look_at` into Nova GUI lines. The lit Metal cube lives in `examples/metal-lab`; embedding it in Studio is the next slice.
+- **The editor camera is fixed.** Studio renders the Metal scene from one Q16.16 perspective camera. Orbit, pan and zoom are verified in `examples/metal-lab`, but Studio does not poll those camera-input slots yet.
 - **The inspector is read-only.** Add Component reports that no component types are registered yet. There is no undo or redo.
 - **Game is a view state, not a build.** It does not simulate a separate runtime camera, package a player or handle input as a game.
 - **No save/load or docking.** The six-entity demo world is created in code each launch.
-- **macOS arm64 only.** The host uses AppKit, CoreGraphics and CoreText, with Metal support in the separate engine lab.
+- **No GPU timing or advanced renderer.** The viewport has one directional light, one texture slot, no MSAA, shadows, normal mapping, mipmaps or asset pipeline.
+- **macOS arm64 only.** The host uses AppKit, CoreGraphics, CoreText and Metal.
 
 ## Source
 
-- [`examples/scene-gui`](https://github.com/jd4rider/nova/tree/main/examples/scene-gui) — shell, tests and installer
+- [`examples/scene-gui`](https://github.com/jd4rider/nova/tree/main/examples/scene-gui) — shell, Metal viewport, tests and installer
 - [`libraries/nova-engine`](https://github.com/jd4rider/nova/tree/main/libraries/nova-engine) — Q16.16 math, generational handles, fixed tick and World storage
+- [`libraries/nova-render`](https://github.com/jd4rider/nova/tree/main/libraries/nova-render) — Metal FFI, offscreen frame and scene draw list
 - [`examples/metal-lab`](https://github.com/jd4rider/nova/tree/main/examples/metal-lab) — native Metal cube, camera and physics acceptance
 - [`engineering/continuation/engine`](https://github.com/jd4rider/nova/tree/main/engineering/continuation/engine) — task ledger, evidence and session notes
