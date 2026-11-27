@@ -89,11 +89,11 @@ reproducible acceptance check before it is marked done. Stable identifiers are
   parameter/field/return/enum-payload types are stored unqualified.
   Acceptance: `scene-gui` builds; codegen suite 255/0. The browser can now
   migrate off primitive accessors, but has not done so yet.
-- **ENG-X.002 — Float codegen evidence.** DONE at codegen.
+- **ENG-X.002 — Float codegen and full-build evidence.** DONE.
   `examples/nova-tool/tests/codegen-float.nova`: Float parameters, literals,
-  var, assignment, `fadd`, `fmul`, `fdiv`, `fcmp`; compiled and executed with
-  exit 7. Full codegen suite 255/0. Still unverified: Float through
-  `nova build`/sema and wasm float behaviour.
+  var, assignment, `fadd`, `fmul`, `fdiv`, `fcmp`. The full codegen suite is
+  255/0, and `cli.sh` now builds the same source through `nova build`, links it
+  and runs it with exit 7 (35/0). Wasm float behaviour remains unmeasured.
 - **ENG-X.003 — Refresh stage-0 bootstrap.** BLOCKED on BOOT-02. The checked-in
   `bootstrap/nova` predates the codegen fixes. Acceptance: self-build IR
   equality plus the full suite, then replace the binary.

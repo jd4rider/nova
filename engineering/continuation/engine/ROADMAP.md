@@ -52,9 +52,9 @@ never a session.
   play/pause/step and project/console drawer; installs with an icon.
 - `libraries/nova-gui` — native macOS window, events, immediate-mode drawing,
   PNG capture, accessibility bridge.
-- Nova compiler — self-hosted, LLVM/Clang, macOS ARM64. Float codegen and
-  module-qualified struct signatures now have fixtures; stage-0 bootstrap
-  still needs a gated refresh.
+- Nova compiler — self-hosted, LLVM/Clang, macOS ARM64. Float is verified
+  through codegen and `nova build`/sema, and module-qualified struct signatures
+  have a fixture; stage-0 bootstrap still needs a gated refresh.
 
 ## Ordering rule
 

@@ -1,6 +1,6 @@
 # Nova Engine checkpoint
 
-Updated: 2026-11-26 (Studio shell UI fix)
+Updated: 2026-11-26 (Float end-to-end)
 Branch: `main`
 Master directive: owner-supplied 2026-11-26; tracked by `ROADMAP.md`.
 Working tree: uncommitted. Unrelated browser/GUI changes were present before
@@ -22,6 +22,7 @@ physics-driven cube in the Metal lab).
 | Physics/scene suite | `sh examples/physics-lab/tests/physics.sh` | 22 passed, 0 failed |
 | Soak | `sh examples/engine-soak/tests/soak.sh` | 10k × 10k, hash `6639442`, 8.80–9.61 s |
 | Codegen suite | `sh examples/nova-tool/tests/codegen.sh` | 255 passed, 0 failed |
+| Float end-to-end | `sh examples/nova-tool/tests/cli.sh` | 35 passed, 0 failed; `codegen-float` builds through `nova build` and exits 7 |
 | Metal lab | `sh examples/metal-lab/tests/metal.sh` | 3 frames, textured quad, two PNGs, 6 pixel checks, exit 0 |
 | Metal cube | `sh examples/metal-lab/tests/cube.sh` | depth-tested cube, 10 face/background checks, both sizes, exit 0 |
 | Metal lit cube | `sh examples/metal-lab/tests/lit.sh` | lit textured cube, 19 face/texture/light checks, both sizes, exit 0 |
@@ -108,5 +109,7 @@ Studio installer. Replacing `bootstrap/nova` remains the BOOT-02 gate
 - The C vertex layout is packed to 48 bytes to match
   `packed_float3/packed_float2/packed_float4/packed_float3`; changing the shader
   struct alignment without changing the buffer silently corrupts the frame.
-- Float is verified at codegen only; engine simulation stays Q16.16.
-- `gui.save_png` still needs its target directory to exist.
+- Float is verified at codegen and through `nova build`/sema on macOS arm64;
+  wasm float is unmeasured and engine simulation stays Q16.16.
+- AppKit event delivery remains a manual check; tests drive the same handlers,
+  not the window server.

@@ -5,10 +5,9 @@
 - Context: deterministic replay on native and wasm, and at the time no passing
   Float codegen fixture.
 - Decision: simulation math stays integer Q16.16 (`fx_scale() == 65536`).
-  Float is now verified at the codegen level (`codegen-float` fixture) and may
-  be used at renderer, tooling and asset boundaries once Float through
-  `nova build`/sema is verified. Do not move the fixed step or collision
-  pipeline to Float.
+  Float is now verified through codegen and full `nova build`/sema on macOS
+  arm64 (`codegen-float` and `cli.sh`) and may be used at renderer, tooling and
+  asset boundaries. Do not move the fixed step or collision pipeline to Float.
 - Alternatives: Float simulation (still rejected: determinism and wasm float
   behaviour are unmeasured); fixed point only forever (rejected: needless
   precision loss at the GPU boundary).

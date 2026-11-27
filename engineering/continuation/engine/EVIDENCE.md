@@ -71,8 +71,17 @@ $ sh examples/nova-tool/tests/codegen.sh
 passed 255, failed 0
 ```
 
-This proves codegen lowering only. Float through `nova build`/sema and wasm is
-not verified, and engine simulation remains Q16.16 (ADR-ENG-001).
+This began as codegen evidence only. The CLI suite now builds the same fixture
+through the full parser → sema → LLVM → Clang path:
+
+```
+$ sh examples/nova-tool/tests/cli.sh
+passed 35, failed 0
+```
+
+The produced binary exits 7, so Float is verified through `nova build`/sema on
+macOS arm64. Wasm float behaviour is still unmeasured, and engine simulation
+remains Q16.16 (ADR-ENG-001).
 
 ## Qualified imported struct types / scene-gui
 
@@ -407,4 +416,5 @@ path. The resized capture shows the moved cube's four checker quadrants.
 - The camera is orbit/pan/zoom around a target, not a full editor viewport;
   Studio still uses its CPU wireframe preview. Mouse events are not synthesized
   by the acceptance test.
-- Float remains codegen-only evidence; no wasm float measurement.
+- Float is codegen- and full-build-verified on macOS arm64; wasm float has no
+  measurement yet.

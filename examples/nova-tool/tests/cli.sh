@@ -108,6 +108,21 @@ else
     no "generic build produced no executable"
 fi
 
+# Float must survive parser, sema, LLVM and link, not only emit-ir.
+if "$tool" build "$root/examples/nova-tool/tests/codegen-float.nova" "$tmp/float-e2e" >"$tmp/float.out" 2>&1; then
+    ok
+else
+    no "Float end-to-end build failed"
+    cat "$tmp/float.out"
+fi
+if [ -x "$tmp/float-e2e" ]; then
+    code=0
+    "$tmp/float-e2e" || code=$?
+    [ "$code" -eq 7 ] && ok || no "Float end-to-end exit (got $code, expected 7)"
+else
+    no "Float end-to-end build produced no executable"
+fi
+
 cat > "$tmp/closures.nova" <<'NOVA'
 fn apply(f: fn(Int) -> Int, value: Int) -> Int {
     return f(value)

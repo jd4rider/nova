@@ -9,7 +9,7 @@ export interface Feature {
 
 export const features: Feature[] = [
   { area: 'Lexer, parser, spans and recovery', status: 'tested', note: 'UTF-8 identifiers, interpolation, error recovery', evidence: 'parser.sh 54/54' },
-  { area: 'Type checker and native codegen', status: 'tested', note: 'Scalars, strings, lists, structs, Option/Result and match for the supported subset', evidence: 'codegen.sh 248/248; diff.sh 18/18' },
+  { area: 'Type checker and native codegen', status: 'tested', note: 'Scalars including end-to-end Float, strings, lists, structs, Option/Result and match for the supported subset', evidence: 'codegen.sh 255/255; cli.sh 35/35 builds Float and exits 7; diff.sh 18/18' },
   { area: 'Checked arithmetic and bounds', status: 'tested', note: 'Overflow and index failures abort with source locations', evidence: 'codegen.sh overflow, bounds and native cases' },
   { area: 'CLI, formatter, project manifest', status: 'tested', note: 'new/init/run/build/check/fmt/doctor/lsp/tree, nova test/repl and nova box', evidence: 'cli.sh 33/33; toolchain.sh 126/126' },
   { area: 'Language server', status: 'implemented', note: 'Diagnostics, completion, hover, definition, symbols, formatting', evidence: 'lsp.sh diagnostics, completion, hover, definition, symbols and formatting' },

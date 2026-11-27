@@ -10,6 +10,9 @@
 - **Codegen Float.** Fixed 2026-11-26: `Float` maps to `double`; literals,
   parameters, `let`/`var`, assignment, `fadd/fsub/fmul/fdiv/frem` and
   `fcmp` are lowered. `codegen-float.nova` compiles and exits 7; suite 255/0.
+- **Float above codegen.** Verified 2026-11-26: `cli.sh` builds
+  `codegen-float.nova` through `nova build`/sema, links it and runs it with exit
+  7; CLI suite 35/0. Wasm float remains unmeasured.
 - **`min`/`max` builtin collision.** `gui.min(a, b)` was claimed by the
   `List.min()` builtin. The builtin now applies only with zero arguments and a
   list receiver, so typed user helpers resolve normally.
@@ -25,9 +28,6 @@
   script and scene-gui checks use the freshly built compiler. Replacing
   `bootstrap/nova` requires the BOOT-02 gate (self-build IR equality plus every
   suite), so it was not done as part of a feature change.
-- **Float is unverified above codegen.** No evidence that `nova build`/sema and
-  the test runner accept Float arithmetic, and no wasm measurement. Simulation
-  stays fixed point until that exists.
 - **No generic structs or methods.** Component storage cannot be a generic
   sparse set; it is concrete per component. This shapes `world.nova` and will
   shape scripting component storage.
