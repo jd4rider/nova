@@ -110,6 +110,7 @@ struct App {
     theme_name: String,
     paper: Int,
     layout: wl.Layout,
+    layout_cache: wl.LayoutCache,
     layout_dirty: Bool,
     words: Int,
     chars: Int,
@@ -409,7 +410,8 @@ fn wr_start() -> App {
     var sessions: List<Session> = []
     sessions.push(wr_session(doc, "", false, rec.rec_path("demo")))
     let theme_name = wr_theme_name(gui.env("NOVA_WRITER_THEME"))
-    let layout = wl.wl_layout(doc, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
+    let cache = wl.wl_cache_build(doc, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
+    let layout = wl.wl_layout_cached(cache)
     var app = App {
         sessions: sessions,
         active: 0,
@@ -417,6 +419,7 @@ fn wr_start() -> App {
         theme_name: theme_name,
         paper: 0,
         layout: layout,
+        layout_cache: cache,
         layout_dirty: false,
         words: wd.wd_word_count(doc),
         chars: wd.wd_char_count(doc),
@@ -443,7 +446,9 @@ fn wr_relayout(app: App) -> App {
         return app
     }
     let s = app.sessions[app.active]
-    app.layout = wl.wl_layout(s.doc, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
+    let cache = wl.wl_cache_update(app.layout_cache, s.doc, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
+    app.layout_cache = cache
+    app.layout = wl.wl_layout_cached(cache)
     app.words = wd.wd_word_count(s.doc)
     app.chars = wd.wd_char_count(s.doc)
     app.layout_dirty = false
@@ -1853,7 +1858,8 @@ fn wr_draw_pages(app: App, w: Int, h: Int) {
         comp_off = off
         comp_len = tx.tx_count(marked)
         doc = wd.wd_insert(base, para, off, marked)
-        layout = wl.wl_layout(doc, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
+        let temp_cache = wl.wl_cache_update(app.layout_cache, doc, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
+        layout = wl.wl_layout_cached(temp_cache)
     }
     let pages = layout.pages
     var first_page = 0

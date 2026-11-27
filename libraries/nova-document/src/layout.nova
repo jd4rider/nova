@@ -42,6 +42,24 @@ struct Layout {
     margin: Int,
 }
 
+// A paragraph's measured lines, kept independently of page position so an
+// unchanged paragraph can be reused after an edit elsewhere.
+struct ParaLayout {
+    id: Int,
+    para: wd.Paragraph,
+    lines: List<LineBox>,
+}
+
+struct LayoutCache {
+    doc_id: Int,
+    page_w: Int,
+    page_h: Int,
+    margin: Int,
+    paras: List<ParaLayout>,
+    measured: Int,
+    reused: Int,
+}
+
 struct EmitResult {
     lines: List<LineBox>,
     page: Int,
@@ -414,6 +432,135 @@ fn wl_wrap(doc: wd.Document, index: Int, page: Int, y: Int, page_w: Int, page_h:
         y = e.y
     }
     return WrapResult { lines: lines, page: page, y: y }
+}
+
+fn wl_runs_same(a: List<wd.Run>, b: List<wd.Run>) -> Bool {
+    if a.len() != b.len() {
+        return false
+    }
+    var i = 0
+    while i < a.len() {
+        if a[i].start != b[i].start || a[i].end != b[i].end || a[i].style != b[i].style {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+fn wl_para_same(a: wd.Paragraph, b: wd.Paragraph) -> Bool {
+    return a.id == b.id && a.kind == b.kind && a.align == b.align && a.dir == b.dir &&
+        a.text == b.text && wl_runs_same(a.runs, b.runs)
+}
+
+fn wl_cache_find(paras: List<ParaLayout>, p: wd.Paragraph) -> Int {
+    var i = 0
+    while i < paras.len() {
+        if paras[i].id == p.id {
+            return i
+        }
+        i = i + 1
+    }
+    return 0 - 1
+}
+
+fn wl_cache_empty() -> LayoutCache {
+    var paras: List<ParaLayout> = []
+    return LayoutCache {
+        doc_id: 0, page_w: 0, page_h: 0, margin: 0,
+        paras: paras, measured: 0, reused: 0,
+    }
+}
+
+// Measure one paragraph with an effectively unbounded page height. The lines
+// keep their relative y positions; wl_layout_cached places them on pages.
+fn wl_measure_para(doc: wd.Document, index: Int, page_w: Int, margin: Int) -> ParaLayout {
+    let p = doc.paragraphs[index]
+    let r = wl_wrap(doc, index, 0, 0, page_w, 1000000000, margin)
+    return ParaLayout { id: p.id, para: p, lines: r.lines }
+}
+
+// Reuse measured paragraphs whose id and content are unchanged. A split or
+// merge changes the surviving paragraph and adds/removes one, so only those
+// paragraphs are measured again.
+fn wl_cache_update(cache: LayoutCache, doc: wd.Document, page_w: Int, page_h: Int, margin: Int) -> LayoutCache {
+    var base = cache
+    if base.doc_id != doc.doc_id || base.page_w != page_w || base.page_h != page_h || base.margin != margin {
+        base = wl_cache_empty()
+        base.doc_id = doc.doc_id
+        base.page_w = page_w
+        base.page_h = page_h
+        base.margin = margin
+    }
+    var out: List<ParaLayout> = []
+    var measured = 0
+    var reused = 0
+    var i = 0
+    while i < doc.paragraphs.len() {
+        let p = doc.paragraphs[i]
+        let found = wl_cache_find(base.paras, p)
+        if found >= 0 && wl_para_same(base.paras[found].para, p) {
+            out.push(base.paras[found])
+            reused = reused + 1
+        } else {
+            out.push(wl_measure_para(doc, i, page_w, margin))
+            measured = measured + 1
+        }
+        i = i + 1
+    }
+    return LayoutCache {
+        doc_id: doc.doc_id, page_w: page_w, page_h: page_h, margin: margin,
+        paras: out, measured: measured, reused: reused,
+    }
+}
+
+fn wl_cache_build(doc: wd.Document, page_w: Int, page_h: Int, margin: Int) -> LayoutCache {
+    return wl_cache_update(wl_cache_empty(), doc, page_w, page_h, margin)
+}
+
+// Paginate cached paragraphs. This copies lines and assigns page/y positions;
+// it does not reshape any text.
+fn wl_layout_cached(cache: LayoutCache) -> Layout {
+    var lines: List<LineBox> = []
+    var page = 0
+    var y = cache.margin
+    var i = 0
+    while i < cache.paras.len() {
+        let pl = cache.paras[i]
+        let p = pl.para
+        let size = wl_size(p.kind)
+        let lh = wl_line_h(size)
+        y = y + wl_before(p.kind)
+        if y + lh > cache.page_h - cache.margin {
+            page = page + 1
+            y = cache.margin
+        }
+        if wd.wd_is_heading(p.kind) && y + lh * 2 > cache.page_h - cache.margin {
+            page = page + 1
+            y = cache.margin
+        }
+        var k = 0
+        while k < pl.lines.len() {
+            var line = pl.lines[k]
+            line.para = i
+            let e = wl_emit(lines, page, y, cache.page_h, cache.margin, line)
+            lines = e.lines
+            page = e.page
+            y = e.y
+            k = k + 1
+        }
+        y = y + wl_after(p.kind)
+        i = i + 1
+    }
+    if lines.len() == 0 {
+        var no_runs: List<LineRun> = []
+        lines.push(LineBox {
+            para: 0, start: 0, end: 0, page: 0,
+            x: cache.margin, y: cache.margin, w: 0, size: 11, style: 0, family: 2,
+            text: "", prefix: "", indent: 0, dir: wd.wd_dir_ltr(), runs: no_runs,
+        })
+    }
+    return Layout { lines: lines, pages: page + 1, page_w: cache.page_w, page_h: cache.page_h, margin: cache.margin }
 }
 
 fn wl_layout(doc: wd.Document, page_w: Int, page_h: Int, margin: Int) -> Layout {

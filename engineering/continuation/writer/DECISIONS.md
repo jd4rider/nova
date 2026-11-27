@@ -246,8 +246,8 @@ without leaving text behind.
 
 - The document model never sees uncommitted text, and undo snapshots are not
   polluted by composition updates.
-- Composition reflows inline but costs a temporary full layout while active;
-  this is acceptable for ordinary documents and measurable later.
+- Composition reflows inline from the same paragraph cache, so unchanged
+  paragraphs are not reshaped while the preedit changes.
 - A cancelled composition leaves no recovery or document artifact.
 
 ## DEC-WRI-011 — Inline runs are non-overlapping grapheme ranges
@@ -311,3 +311,38 @@ correctly.
   positions are approximate and remain a future refinement.
 - CJK text wraps at grapheme boundaries; full UAX #14 kinsoku and hyphenation
   are not implemented.
+
+## DEC-WRI-012 — Layout reuses measured paragraphs by stable ID
+
+Status: accepted.
+
+### Context
+
+Every edit used to run the full wrapping and pagination pass, reshaping every
+paragraph through CoreText even when only one paragraph changed. The document
+already has stable paragraph IDs, so unchanged measurements can be reused.
+
+### Decision
+
+- `LayoutCache` stores one `ParaLayout` per paragraph: its stable ID, a copy of
+the paragraph, and measured line boxes with relative y positions.
+- `wl_cache_update` matches paragraphs by ID and content (kind, alignment,
+  direction, text and runs). A changed paragraph is measured again; unchanged
+  paragraphs are reused. A split measures the changed left paragraph and the
+  new right paragraph; a merge measures only the joined paragraph.
+- `wl_layout_cached` performs a cheap pagination pass over cached lines,
+  assigning page and y positions without reshaping text. A geometry change
+  invalidates the whole cache.
+- The cache exposes `measured` and `reused` counters for tests and benchmarks.
+- The app keeps one cache, updates it before drawing, and uses a temporary
+  update for IME preedit text.
+
+### Consequences
+
+- On an 80-paragraph fixture, 10 one-paragraph edits took 56ms incremental vs
+  2,265ms full (10 full relayouts took 2,499ms; unchanged updates took 30ms).
+  The cached layout matched the full layout line-for-line in the core suite.
+- Pagination still copies every line box on each pass; only text shaping and
+  wrapping are avoided. The cache is in memory and is not persisted.
+- A future incremental paginator can keep page objects stable and repaint only
+  visible pages without changing the cache API.

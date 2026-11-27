@@ -30,6 +30,7 @@ The installer builds, renders the icon, ad-hoc signs and copies `/Applications/N
 
 - **A real document model.** A versioned `Document` holds paragraphs with stable IDs, grapheme offsets, alignment, auto/LTR/RTL direction and non-overlapping inline run ranges. Insert, delete, split, merge and style changes are validated operations; edits return a new document.
 - **Measured typography.** CoreText shapes and measures styled runs with per-glyph fallback; Nova decides where a line breaks and where a page ends. Paragraph direction drives alignment and caret geometry, and CJK text wraps without overflowing. Pages are A4 with one-inch margins, a ruler, zoom and visible-page virtualization.
+- **Incremental layout.** A paragraph-level cache reuses measured lines by stable ID and content, so an edit reshapes only the changed paragraph before repaginating. A local 80-paragraph benchmark measured a one-paragraph edit at 56ms vs 2,265ms for a full relayout across 10 iterations.
 - **Grapheme-aware editing.** The caret and deletion stop on extended grapheme clusters: combining marks, skin tones, flags and joined emoji families are never split by one keypress.
 - **Selection, clipboard and undo.** Click/drag and Shift+arrows select; copy/cut/paste use the system clipboard; undo/redo restore bounded snapshots. The app stores serialized snapshots; the compiler now supports a `List<Document>` field, so it can switch later without changing behavior.
 - **Styles and outline.** Title, Heading 1, Heading 2, Body, Quote and List have real metrics. The sidebar applies them and lists headings.
@@ -45,7 +46,7 @@ writer/src/main.nova                 native app: tabs, ribbon, pages, input
 libraries/nova-document/src/
   text.nova                          grapheme segmentation and text edits
   document.nova                      versioned paragraphs, stable IDs, runs, undo
-  layout.nova                        wrapping, bidi alignment, pagination, hit-testing
+  layout.nova                        wrapping, paragraph cache, pagination, hit-testing
   store.nova                         .novadoc checksum and atomic save
   recovery.nova                      epoch-named autosave snapshots
 runtime/gui.m + libraries/nova-gui   AppKit window, CoreText, files, clipboard
@@ -56,7 +57,7 @@ The app is immediate mode: draw the frame, pump the platform queue, handle one e
 ## Tests
 
 ```sh
-sh writer/tests/core.sh       # 147 headless assertions
+sh writer/tests/core.sh       # 156 headless assertions
 sh writer/tests/recovery.sh   # two-process crash recovery
 sh writer/tests/ime.sh        # 14 IME commit/cancel assertions
 sh writer/tests/smoke.sh      # real window + PNG snapshot
@@ -74,7 +75,7 @@ The IME test drives the same `NSTextInputClient` entry points AppKit uses (`setM
 - No recovery prompt or discard command; startup restores every valid recovery file.
 - No accessibility text ranges; the page has a label, not a screen-reader document model.
 - Mixed-direction caret positions inside one line are approximate; CJK breaks are grapheme-based, not full UAX #14, and there is no hyphenation.
-- One window, at most six visible tabs, and a full relayout on every edit.
+- One window and at most six visible tabs. Layout avoids reshaping unchanged paragraphs but still copies every line box during pagination; the cache is memory-only.
 - Autosave rewrites the whole document every four seconds; there is no external-change detection or encryption.
 
 These are tracked in `engineering/continuation/writer/BLOCKERS.md`, not hidden behind placeholder controls. Every visible command in the app executes real behavior; features that do not work yet are absent.

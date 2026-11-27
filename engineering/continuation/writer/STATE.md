@@ -1,7 +1,8 @@
 # Nova Writer — current state
 
-Updated: 2026-11-26
-Branch: `main` (Writer landed; v4 inline runs are the current slice).
+Updated: 2026-11-27
+Branch: `main` (Writer landed; v4 inline runs and incremental layout are the
+current slice).
 Installed app: `/Applications/Nova Writer.app` — version 0.1.0,
 `dev.nova.writer.native`, ad-hoc signed.
 
@@ -21,7 +22,8 @@ It is not a mock and not a browser canvas.
 - **Layout** (`layout.nova`): CoreText-measured word wrapping over styled
   segments, hard breaks for long tokens and CJK runs, auto/LTR/RTL paragraph
   alignment, direction-aware caret geometry, A4 pagination with one-inch
-  margins and grapheme hit-testing.
+  margins, grapheme hit-testing and a paragraph-level cache that reshapes only
+  changed or new paragraphs before repaginating.
 - **Store** (`store.nova`): temp write → verify → atomic rename; checksum
   validation rejects corruption, unknown records and garbage.
 - **Recovery** (`recovery.nova`): atomic `.novadoc` autosave snapshots under
@@ -37,14 +39,14 @@ It is not a mock and not a browser canvas.
   hooks.
 - **Packaging** (`writer/scripts/install-macos.sh`): builds, renders the icon,
   creates and signs `Nova Writer.app`, installs to `/Applications`.
-- **Tests**: `writer/tests/core.sh` (147 assertions, headless),
+- **Tests**: `writer/tests/core.sh` (156 assertions, headless),
   `writer/tests/recovery.sh` (two-process crash recovery),
   `writer/tests/ime.sh` (14 IME composition assertions) and
   `writer/tests/smoke.sh` (real window + PNG snapshot).
 
 ## Evidence (latest run)
 
-- Core: `failures=0`, 147 PASS, exit 0.
+- Core: `failures=0`, 156 PASS, exit 0.
 - Crash recovery: `PASS recovery survives a process exit`; a second process
   loaded `Crash Report` / `Unsaved work survives a crash.` from the file the
   first process left behind.
@@ -64,6 +66,10 @@ It is not a mock and not a browser canvas.
 - Inline runs: bold and italic ranges survive save/reopen, toggle off, combine,
   and shift correctly through insert, delete, split and merge. Layout emits
   styled line segments and the bold range has measurable width.
+- Incremental layout: the cache reports `measured=1, reused=79` after a
+  one-paragraph edit in an 80-paragraph fixture; cached output matches full
+  layout. Ten iterations took 2,265ms full vs 56ms incremental (2,499ms vs
+  30ms when nothing changed) on this host.
 - Typography: mixed Latin/Hebrew/Arabic/CJK/emoji measures through CoreText;
   auto direction detects Hebrew, explicit LTR overrides it, an RTL paragraph
   is right-aligned with a right-to-left caret, and a CJK paragraph wraps with
@@ -97,20 +103,21 @@ It is not a mock and not a browser canvas.
 - Autosave rewrites the whole document every 4 seconds; no incremental save,
   external-change detection or encryption. Recovery files are local plain
   `.novadoc` under Application Support.
-- Full relayout on every edit.
+- Layout reuses measured paragraphs but still copies every line box during
+  pagination; the cache is in memory only.
 - Tab bar shows at most six tabs; no overflow control.
 - GUI typing/selection/clipboard are wired but not automated; only launch and
   rendering are machine-verified.
 
 ## Active slice
 
-**WRI-05.005 — incremental layout** is next. WRI-06.003 landed:
-`.novadoc` v4 stores inline run ranges, v1/v2/v3 files migrate, Bold/Italic
-apply to selections or the next typed text, and layout measures and draws
-styled segments.
+**WRI-07.004 — native save panel** is next (host work). WRI-05.005 landed:
+`layout.nova` caches measured paragraphs by stable ID and content, the app
+reuses unchanged lines after every edit, and an 80-paragraph benchmark measured
+a one-paragraph update at 56ms versus 2,265ms for a full relayout.
 
-After that: WRI-07.004 save panel (host work), WRI-07.005 recovery
-prompt/discard, WRI-06.002 list numbering.
+After that: WRI-07.005 recovery prompt/discard, WRI-06.002 list numbering,
+WRI-05.002 sections/columns.
 
 ## Working-tree state
 

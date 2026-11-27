@@ -29,7 +29,7 @@ Stable IDs are permanent. Statuses are evidence-based. See `EVIDENCE.md`.
 - **WRI-01.003 — Command routing and shortcuts: VERIFIED.** Every visible
   command executes real document behavior; unsupported commands are absent.
 - **WRI-01.004 — Headless test target: VERIFIED.** `writer/tests/core.sh`
-  runs 147 assertions without a window and exits non-zero on failure.
+  runs 156 assertions without a window and exits non-zero on failure.
 
 ## WRI-02 — Document core
 
@@ -87,7 +87,13 @@ Stable IDs are permanent. Statuses are evidence-based. See `EVIDENCE.md`.
   grapheme offset; caret and selection rectangles come from layout boxes.
 - **WRI-05.004 — Zoom and scroll: VERIFIED.** Discrete zoom, visible-page
   virtualization, wheel scrolling and PageUp/PageDown.
-- **WRI-05.005 — Incremental layout: TODO.** Full relayout per edit.
+- **WRI-05.005 — Incremental layout: VERIFIED.** `layout.nova` caches each
+  paragraph's measured lines by stable ID and content. An edit remeasures only
+  the changed paragraph (or the two paragraphs involved in a split/merge), then
+  repaginates cached line boxes. The core suite checks cache/full-layout
+  equivalence, reuse counts and geometry invalidation. An 80-paragraph,
+  10-iteration benchmark measured a one-paragraph edit at 56ms vs 2,265ms for
+  a full relayout (`measured=1, reused=79`).
 
 ## WRI-06 — Styles and formatting
 
@@ -141,8 +147,9 @@ Stable IDs are permanent. Statuses are evidence-based. See `EVIDENCE.md`.
 
 Recovery save/load, a two-process crash, app startup restore, the first
 autosave write, IME marked-text commit/cancel, mixed-script fallback, bidi
-caret geometry, CJK wrapping and inline run propagation are machine-tested.
-Interactive typing, selection, clipboard, zoom, theme, native file panels, the
-sidebar direction control, the Bold/Italic buttons, the 4-second autosave
-cadence over a long session, and recovery cleanup after save are wired but not
-automated. Do not mark them VERIFIED until an automated GUI test exists.
+caret geometry, CJK wrapping, inline run propagation and incremental layout
+cache counts/timing are machine-tested. Interactive typing, selection,
+clipboard, zoom, theme, native file panels, the sidebar direction control, the
+Bold/Italic buttons, the 4-second autosave cadence over a long session, and
+recovery cleanup after save are wired but not automated. Do not mark them
+VERIFIED until an automated GUI test exists.

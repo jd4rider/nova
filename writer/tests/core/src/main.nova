@@ -25,6 +25,36 @@ fn long_paragraph() -> String {
         "CoreText reports each advance; Nova decides where the line ends and where the page breaks."
 }
 
+fn bench_doc() -> wd.Document {
+    var d = wd.wd_insert(wd.wd_empty(), 0, 0, long_paragraph())
+    var i = 1
+    while i < 80 {
+        d = wd.wd_append(d)
+        d = wd.wd_insert(d, i, 0, long_paragraph())
+        i = i + 1
+    }
+    return d
+}
+
+fn layouts_match(a: wl.Layout, b: wl.Layout) -> Bool {
+    if a.pages != b.pages || a.lines.len() != b.lines.len() {
+        return false
+    }
+    var i = 0
+    while i < a.lines.len() {
+        let x = a.lines[i]
+        let y = b.lines[i]
+        if x.para != y.para || x.start != y.start || x.end != y.end || x.page != y.page ||
+            x.x != y.x || x.y != y.y || x.w != y.w || x.size != y.size ||
+            x.style != y.style || x.family != y.family || x.text != y.text ||
+            x.prefix != y.prefix || x.indent != y.indent || x.dir != y.dir {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
 // Regression: an imported struct inside a generic used to truncate to `Doc>`
 // in codegen. This field also exercises index assignment through a struct.
 struct DocStack {
@@ -301,6 +331,35 @@ fn main() -> Int {
     failures = failures + check("long document paginates", many_layout.pages > 1)
     failures = failures + check("long document keeps every line on a page", many_layout.lines[many_layout.lines.len() - 1].page >= 1)
 
+    // ---------- incremental layout cache ----------
+    var cache_doc = wd.wd_insert(wd.wd_empty(), 0, 0, long_paragraph())
+    cache_doc = wd.wd_append(cache_doc)
+    cache_doc = wd.wd_insert(cache_doc, 1, 0, "Second paragraph")
+    cache_doc = wd.wd_append(cache_doc)
+    cache_doc = wd.wd_insert(cache_doc, 2, 0, long_paragraph())
+    let cold = wl.wl_cache_build(cache_doc, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
+    failures = failures + check("cold cache measures every paragraph", cold.measured == 3 && cold.reused == 0)
+    let cold_layout = wl.wl_layout_cached(cold)
+    let full_layout = wl.wl_layout(cache_doc, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
+    failures = failures + check("cached layout matches full layout", layouts_match(cold_layout, full_layout))
+    let warm = wl.wl_cache_update(cold, cache_doc, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
+    failures = failures + check("unchanged update reuses every paragraph", warm.measured == 0 && warm.reused == 3)
+    let edited_cache_doc = wd.wd_insert(cache_doc, 1, 6, " edited")
+    let warm_edit = wl.wl_cache_update(warm, edited_cache_doc, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
+    failures = failures + check("one paragraph edit measures one paragraph", warm_edit.measured == 1 && warm_edit.reused == 2)
+    let warm_edit_layout = wl.wl_layout_cached(warm_edit)
+    let full_edit_layout = wl.wl_layout(edited_cache_doc, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
+    failures = failures + check("incremental edit layout matches full layout", layouts_match(warm_edit_layout, full_edit_layout))
+    failures = failures + check("incremental edit keeps preceding lines", warm_edit_layout.lines[0].text == cold_layout.lines[0].text)
+    let split_cache_doc = wd.wd_split(edited_cache_doc, 1, 6)
+    let split_cache = wl.wl_cache_update(warm_edit, split_cache_doc, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
+    failures = failures + check("split measures only changed and new paragraphs", split_cache.measured == 2 && split_cache.reused == 2)
+    let merge_cache_doc = wd.wd_merge(split_cache_doc, 1)
+    let merge_cache = wl.wl_cache_update(split_cache, merge_cache_doc, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
+    failures = failures + check("merge measures only the joined paragraph", merge_cache.measured == 1 && merge_cache.reused == 2)
+    let resized = wl.wl_cache_update(merge_cache, merge_cache_doc, wl.wl_a4_w() - 50, wl.wl_a4_h(), wl.wl_margin())
+    failures = failures + check("geometry change remeasures all paragraphs", resized.measured == 3 && resized.reused == 0)
+
     // ---------- fallback, bidi and CJK fixtures ----------
     let mixed = "English · עברית · العربية · 日本語 · 中文 · 한국어 · 🇺🇸"
     failures = failures + check("mixed-script text measures", gui.text_fmt_width(mixed, 11, 2, 0) > gui.text_fmt_width("English", 11, 2, 0))
@@ -388,6 +447,57 @@ fn main() -> Int {
     gui.write(bad_rec, "garbage")
     failures = failures + check("corrupt recovery is rejected", !rec.rec_load(bad_rec).ok)
     rec.rec_remove(bad_rec)
+
+    if gui.env("NOVA_WRITER_LAYOUT_BENCH") == "1" {
+        let bd = bench_doc()
+        let warm = wl.wl_cache_build(bd, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
+        var sink = 0
+        let cold_start = gui.now()
+        var n = 0
+        while n < 10 {
+            let full = wl.wl_layout(bd, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
+            sink = sink + full.pages
+            n = n + 1
+        }
+        let cold_ms = gui.now() - cold_start
+        let warm_start = gui.now()
+        n = 0
+        while n < 10 {
+            let c = wl.wl_cache_update(warm, bd, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
+            let l = wl.wl_layout_cached(c)
+            sink = sink + l.pages
+            n = n + 1
+        }
+        let warm_ms = gui.now() - warm_start
+        let again = wl.wl_cache_update(warm, bd, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
+        let edit = wd.wd_insert(bd, 40, 0, "X")
+        let edit_full_start = gui.now()
+        n = 0
+        while n < 10 {
+            let full = wl.wl_layout(edit, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
+            sink = sink + full.pages
+            n = n + 1
+        }
+        let edit_full_ms = gui.now() - edit_full_start
+        let edit_start = gui.now()
+        n = 0
+        while n < 10 {
+            let c = wl.wl_cache_update(warm, edit, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
+            let l = wl.wl_layout_cached(c)
+            sink = sink + l.pages
+            n = n + 1
+        }
+        let edit_ms = gui.now() - edit_start
+        let edit_again = wl.wl_cache_update(warm, edit, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
+        println("bench layout paragraphs=80 iterations=10 full_ms=" + cold_ms.to_string() +
+            " incremental_ms=" + warm_ms.to_string() +
+            " measured=" + again.measured.to_string() + " reused=" + again.reused.to_string() +
+            " edit_full_ms=" + edit_full_ms.to_string() +
+            " edit_incremental_ms=" + edit_ms.to_string() +
+            " edit_measured=" + edit_again.measured.to_string() +
+            " edit_reused=" + edit_again.reused.to_string() +
+            " sink=" + sink.to_string())
+    }
 
     println("failures=${failures}")
     return failures

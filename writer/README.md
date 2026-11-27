@@ -8,7 +8,8 @@ that wraps AppKit/CoreText, which the directive permits as a native OS service.
 ## Status
 
 Version 0.1.0 — real document model, measured typography with mixed-script
-fallback, bidi paragraph direction and inline bold/italic, paginated A4 pages,
+fallback, bidi paragraph direction, inline bold/italic and incremental
+layout, paginated A4 pages,
 editing, selection, IME composition, undo/redo, save/open, autosave, crash
 recovery, zoom, themes and an installable app. DOCX/ODT/PDF, tables, images,
 headers and character styles are not implemented yet. See
@@ -20,7 +21,7 @@ headers and character styles are not implemented yet. See
 # Compiler (if not already built)
 (cd examples/nova-tool && ../../bootstrap/nova build)
 
-# Headless core: 147 assertions
+# Headless core: 156 assertions
 sh writer/tests/core.sh
 
 # Two-process crash recovery
@@ -101,7 +102,9 @@ automated test drives the same `NSTextInputClient` entry points with
 Shift extends the selection. Click and drag selects; Shift-click extends from
 the caret.
 
-## Native format`.novadoc` v4 is a deterministic UTF-8 container: magic header, version,
+## Native format
+
+`.novadoc` v4 is a deterministic UTF-8 container: magic header, version,
 title, language, next paragraph ID, tab-separated paragraph records (ID, kind,
 alignment, direction, escaped text), inline run records and a 31-based
 polynomial body checksum. Version 1 migrates with language `en` and auto
@@ -118,7 +121,7 @@ loader dispatches on the header.
   `store.nova`, `recovery.nova`. GUI-independent and reusable by future Nova
   Office apps.
 - `writer/src/main.nova` — the application.
-- `writer/tests/core.sh` — headless acceptance (147 assertions).
+- `writer/tests/core.sh` — headless acceptance (156 assertions).
 - `writer/tests/recovery.sh` — crash recovery across two processes.
 - `writer/tests/ime.sh` — IME commit and Escape cancellation (14 assertions).
 - `writer/tests/smoke.sh` — native window launch/render.
@@ -131,6 +134,7 @@ sections, character styles, list numbering, comments, revisions, or
 accessibility text ranges. Save As has no native save panel; a new document
 uses the folder picker and a unique name. Autosave rewrites the whole document
 every four seconds, with no external-change detection or encryption, and
-recovery auto-restores without a prompt or discard command. The editor
-relayouts the full document on every edit. These are tracked in
+recovery auto-restores without a prompt or discard command. Unchanged
+paragraphs keep their measured lines; only edited or new paragraphs are
+reshaped, though pagination still copies line boxes. These are tracked in
 `engineering/continuation/writer/BLOCKERS.md`, not hidden.

@@ -1,6 +1,6 @@
 # Nova Writer evidence
 
-All results below were produced on this host on 2026-11-26 (macOS, Apple
+All results below were produced on this host on 2026-11-27 (macOS, Apple
 Silicon). Commands are reproducible from the repository root.
 
 ## 1. Headless core acceptance
@@ -9,7 +9,7 @@ Silicon). Commands are reproducible from the repository root.
 sh writer/tests/core.sh
 ```
 
-Result: exit 0; 147 `PASS` lines; final line `failures=0`.
+Result: exit 0; 156 `PASS` lines; final line `failures=0`.
 
 Covers: grapheme segmentation (combining marks, skin tones, flags, ZWJ),
 insert/delete, escaping, word count, find, document validation, stable IDs,
@@ -18,9 +18,9 @@ undo/redo and the 100-entry bound, `.novadoc` v4 serialize/parse, checksum,
 v1/v2/v3-to-v4 migration, missing-field and unknown-version rejection, inline
 run toggle/save/edit propagation, measured layout, line-width bound, caret
 geometry, hit-testing, long-word and CJK hard breaks, RTL alignment and caret
-direction, mixed-script fallback measurement, multi-page pagination, atomic
-save, reopen, corrupt-file rejection, and recovery
-save/load/list/newest/remove/reject.
+direction, mixed-script fallback measurement, multi-page pagination,
+incremental layout cache reuse/equivalence, atomic save, reopen, corrupt-file
+rejection, and recovery save/load/list/newest/remove/reject.
 
 ## 2. Host compile
 
@@ -230,13 +230,37 @@ styled segment and the bold range has measurable width. The app renders the
 demo sentence “Inline **bold** and *italic* runs are real.” in the refreshed
 snapshot.
 
+## 15. Incremental layout cache
+
+```sh
+sh writer/tests/core.sh
+NOVA_WRITER_LAYOUT_BENCH=1 sh writer/tests/core.sh
+```
+
+The cache starts cold with `measured=3, reused=0`, matches the full layout
+line-for-line, reuses all three paragraphs when nothing changed, and reports
+`measured=1, reused=2` after editing one paragraph. The incremental result
+still matches a full relayout. Split reports `measured=2, reused=2`; merge
+reports `measured=1, reused=2`; changing the page width remeasures all three.
+
+Benchmark on this host, 80 long paragraphs, 10 iterations:
+
+```
+full_ms=2499 incremental_ms=30 measured=0 reused=80
+edit_full_ms=2265 edit_incremental_ms=56 edit_measured=1 edit_reused=79
+```
+
+The benchmark is opt-in via `NOVA_WRITER_LAYOUT_BENCH=1`; normal acceptance
+stays fast.
+
 ## Verified vs not verified
 
 Verified by machine: document model and edits, grapheme boundaries, undo/redo
 invariants, serialization/checksum, v1/v2/v3-to-v4 migration, inline run
 toggle/save/edit propagation, atomic store, layout measurement and pagination,
-hit-testing, mixed-script fallback, auto/LTR/RTL paragraph direction, RTL caret
-geometry, CJK wrapping, recovery save/load/list/remove, a two-process crash,
+incremental cache reuse/equivalence and timing, hit-testing, mixed-script
+fallback, auto/LTR/RTL paragraph direction, RTL caret geometry, CJK wrapping,
+recovery save/load/list/remove, a two-process crash,
 app startup restore, the first autosave write, IME marked-text composition and
 Escape cancellation through the host probe, native window launch and rendering,
 bundle signing and installation.

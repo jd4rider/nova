@@ -29,7 +29,6 @@ clang, CoreText and the native GUI.
 | No string slice/insert | editing rebuilds paragraphs from graphemes | DEC-WRI-001 |
 | No accessibility text ranges | screen readers see a document label, not ranges | WRI-03.005 |
 | One window, at most six visible tabs | no multi-window or tab overflow | WRI-01.002 |
-| No incremental layout | every edit relayouts the document | WRI-05.005 |
 | No automated GUI input harness | typing/selection/clipboard are not machine-verified | WRI-01 test harness |
 | No generic structs / `dyn Trait` | flat paragraph model, static dispatch | compiler parity work |
 
@@ -37,7 +36,7 @@ clang, CoreText and the native GUI.
 
 - **No font family/weight API.** Styled CoreText runs and measured advances
   were added (DEC-WRI-004), so serif body, bold, italic and underline are real.
-- **No native test target.** A headless core binary with 147 assertions exists.
+- **No native test target.** A headless core binary with 156 assertions exists.
 - **No installable bundle.** `/Applications/Nova Writer.app` builds, signs and
   launches.
 - **No autosave or crash recovery.** `recovery.nova`, a two-process crash test
@@ -50,13 +49,17 @@ clang, CoreText and the native GUI.
   mixed-script fallback and CJK wrapping.
 - **No inline formatting.** `.novadoc` v4 stores bold/italic run ranges;
   insert/delete/split/merge preserve them and the core suite covers them.
+- **No incremental layout.** `layout.nova` caches measured paragraphs by ID and
+  content; only changed/new paragraphs are reshaped. An 80-paragraph benchmark
+  measured a one-paragraph edit at 56ms vs 2,265ms full.
 
 ## Known correctness limits
 
 - Snapshot undo is bounded at 100 transactions and is memory-heavy for very
   large documents; the app reparses on undo.
 - Pagination is single-column A4 with fixed margins; sections, columns,
-  headers/footers and footnotes are not implemented.
+  headers/footers and footnotes are not implemented. The layout cache avoids
+  reshaping unchanged paragraphs but still copies every line box per pass.
 - CoreText shapes bidi runs, but caret and selection geometry use one
   paragraph direction; mixed-direction caret positions inside a line are
   approximate. Inline runs are painted as separate CoreText segments, so
