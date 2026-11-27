@@ -1525,6 +1525,27 @@ void nova_gui_rect_alpha(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb
     CGColorRelease(color);
 }
 
+/* Draws an image file (PNG, JPEG, ICO) into the top-left rectangle. The
+ * context counts y downwards, so the image is flipped locally. */
+int64_t nova_gui_image(nova_str path, int64_t x, int64_t y, int64_t w, int64_t h) {
+    if (!nova_ctx || w <= 0 || h <= 0 || !path.ptr || path.len <= 0) return 0;
+    NSString *file = [[NSString alloc] initWithBytes:path.ptr
+                                              length:(NSUInteger)path.len
+                                            encoding:NSUTF8StringEncoding];
+    if (!file) return 0;
+    NSImage *image = [[NSImage alloc] initWithContentsOfFile:file];
+    if (!image) return 0;
+    CGImageRef cg = [image CGImageForProposedRect:NULL context:nil hints:nil];
+    if (!cg) return 0;
+    CGContextSaveGState(nova_ctx);
+    CGContextTranslateCTM(nova_ctx, (CGFloat)x, (CGFloat)(y + h));
+    CGContextScaleCTM(nova_ctx, 1.0, -1.0);
+    CGContextSetInterpolationQuality(nova_ctx, kCGInterpolationHigh);
+    CGContextDrawImage(nova_ctx, CGRectMake(0, 0, (CGFloat)w, (CGFloat)h), cg);
+    CGContextRestoreGState(nova_ctx);
+    return 1;
+}
+
 void nova_gui_round_rect(int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius, int64_t rgb) {
     if (!nova_ctx || w <= 0 || h <= 0) return;
     CGFloat r = (CGFloat)(radius > 0 ? radius : 0);
