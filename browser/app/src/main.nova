@@ -128,11 +128,17 @@ struct Toolbar {
     label: Int,
 }
 
+// `reader` is the reader panel delta: 1 opens it, -1 closes it, 0 leaves it.
+// `fetch` starts the voice-model download (0 or 1). Keeping the deltas here
+// means the loop owns the panel state without threading it through every
+// action constructor.
 struct ClickAction {
     session: Session,
     address: Address,
     store: Store,
     notice: Notice,
+    reader: Int,
+    fetch: Int,
 }
 
 struct KeyAction {
@@ -141,6 +147,7 @@ struct KeyAction {
     store: Store,
     notice: Notice,
     close: Bool,
+    reader: Int,
 }
 
 struct Imported {
@@ -2073,8 +2080,10 @@ fn draw_rail(session: Session, theme: Chrome, fx: Fx, open: Bool) {
     if !open {
         return
     }
-    // The page gives the panel its width back while it is open, so the names
-    // are not hidden under the WebView. Leaving the rail closes it.
+    // The panel floats over the page instead of reclaiming its width, so
+    // crossing the rail no longer reflows the document. It is registered as an
+    // overlay: the host paints it above the WebView and presses in the panel
+    // column come back through the normal event queue.
     gui.rect(0, chrome_height(true), panel, gui.height() - chrome_height(true), theme.panel)
     gui.line(panel, chrome_height(true), panel, gui.height(), theme.border_strong)
     gui.mono(14, 71, "TABS", 9, theme.faint)
@@ -2103,6 +2112,7 @@ fn draw_rail(session: Session, theme: Chrome, fx: Fx, open: Bool) {
     gui.round_rect(nb.x, nb.y, nb.w, nb.h, 7, blend(theme.panel, theme.elevated, nb_heat))
     draw_plus(nb.x + 16, nb.y + nb.h / 2, blend(theme.muted, theme.fg_bright, nb_heat))
     gui.text(nb.x + 28, nb.y + 8, "New Tab", 11, blend(theme.muted, theme.fg_bright, nb_heat))
+    gui.overlay(0, chrome_height(true), panel, gui.height() - chrome_height(true), true)
 }
 
 fn draw_address(handle: Int, theme: Chrome, address: Address, session: Session, fx: Fx, search: String) {
@@ -2521,7 +2531,7 @@ fn tooltip_text(target: Int) -> String {
         return "Bookmark (Cmd+D)"
     }
     if target == 14 {
-        return "Listen to this page (Cmd+Shift+L)"
+        return "Read aloud · pause, speed, voice (Cmd+Shift+L)"
     }
     if target == 6 {
         return "Nova docs"
@@ -2590,7 +2600,13 @@ fn draw_toolbar(handle: Int, theme: Chrome, address: Address, session: Session, 
 
     draw_address(handle, theme, address, session, fx, store.search)
 
-    draw_icon_button(metrics.voice, y + 2, 14, theme, slot(fx, 10), true, speech.speaking())
+    // The speaker turns into the same wheel the panel draws while Kokoro is
+    // synthesizing, so a shortcut read still shows it is working.
+    if speech.synthesizing() {
+        draw_reader_spinner(metrics.voice + 15, y + 17, theme.orange)
+    } else {
+        draw_icon_button(metrics.voice, y + 2, 14, theme, slot(fx, 10), true, speech.speaking())
+    }
 
     let live = engine.page_url(handle)
     let bookmarked = library.has_bookmark(store.bookmarks, live)
@@ -2935,7 +2951,46 @@ fn ax_suggestions(address: Address, session: Session, suggestions: List<String>)
     }
 }
 
-fn draw_chrome(handle: Int, theme: Chrome, address: Address, session: Session, suggestions: List<String>, fx: Fx, notice: Notice, store: Store, hover: Int, downloads: Downloads, tooltip: Tooltip, rail_open: Bool) {
+// The reader panel is drawn chrome too, so its controls are pushed as elements
+// while it is open. Closed, it publishes nothing and the toolbar's count stands.
+fn ax_reader(store: Store, open: Bool) {
+    if !open {
+        return
+    }
+    let panel = reader_panel_box(store)
+    gui.ax_label(panel.x + 8, panel.y + 6, panel.w - 16, 18, "Read aloud")
+    if speech.synthesizing() {
+        gui.ax_label(panel.x + 8, panel.y + 24, panel.w - 16, 18, "Synthesizing with Kokoro, ${speech.synth_elapsed_ms() / 1000} seconds so far")
+    } else if speech.synth_phase() == 4 {
+        gui.ax_label(panel.x + 8, panel.y + 24, panel.w - 16, 18, "Kokoro synthesis failed: " + speech.synth_detail())
+    }
+    let primary = reader_primary_box(store)
+    let label = if speech.speaking() { "Pause reading" } else if speech.paused() { "Resume reading" } else { "Read this page" }
+    gui.ax_button(primary.x, primary.y, primary.w, primary.h, label)
+    let stop = reader_stop_box(store)
+    gui.ax_button(stop.x, stop.y, stop.w, stop.h, "Stop reading")
+    let slower = reader_slower_box(store)
+    gui.ax_button(slower.x, slower.y, slower.w, slower.h, "Slower")
+    let faster = reader_faster_box(store)
+    gui.ax_button(faster.x, faster.y, faster.w, faster.h, "Faster")
+    let voices = reader_voices()
+    var i = 0
+    while i < voices.len() {
+        let box = reader_voice_box(store, i)
+        gui.ax_button(box.x, box.y, box.w, box.h, "Voice " + library.field(voices[i], 1))
+        i = i + 1
+    }
+    if reader_kokoro_row() {
+        let box = reader_kokoro_box(store)
+        gui.ax_button(box.x, box.y, box.w, box.h, if speech.kokoro_usable() { "Kokoro voice" } else { "Kokoro needs a synthesizer" })
+    }
+    if reader_download_row() {
+        let box = reader_model_box(store)
+        gui.ax_button(box.x, box.y, box.w, box.h, "Download voice model")
+    }
+}
+
+fn draw_chrome(handle: Int, theme: Chrome, address: Address, session: Session, suggestions: List<String>, fx: Fx, notice: Notice, store: Store, hover: Int, downloads: Downloads, tooltip: Tooltip, rail_open: Bool, reader_open: Bool, fetching: Bool, received: Int) {
     gui.clear(theme.bg_hard)
     gui.overlay_begin()
     draw_tabs(session, theme, fx, rail_open)
@@ -2949,9 +3004,11 @@ fn draw_chrome(handle: Int, theme: Chrome, address: Address, session: Session, s
     }
     draw_downloads(theme, store, downloads, fx)
     draw_suggestions(theme, address, session, suggestions, fx)
+    draw_reader_panel(theme, store, reader_open, fetching, received, hover)
     draw_notice(theme, session, notice)
     draw_tooltip(theme, tooltip)
     ax_chrome(handle, session, address, suggestions, downloads, store)
+    ax_reader(store, reader_open)
 }
 
 // ---------- input ----------
@@ -2975,8 +3032,50 @@ fn cursor_for(handle: Int, hover: Int) -> Int {
     return gui.cursor_arrow()
 }
 
-fn hover_target(x: Int, y: Int, session: Session, address: Address, suggestions: List<String>, downloads: Downloads, shelf_open: Bool) -> Int {
+fn hover_target(x: Int, y: Int, session: Session, address: Address, suggestions: List<String>, downloads: Downloads, shelf_open: Bool, store: Store, reader_open: Bool) -> Int {
     let vertical = session.vertical
+    if reader_open {
+        let panel = reader_panel_box(store)
+        if gui.inside(panel.x, panel.y, panel.w, panel.h, x, y) {
+            let primary = reader_primary_box(store)
+            if gui.inside(primary.x, primary.y, primary.w, primary.h, x, y) {
+                return 160
+            }
+            let stop = reader_stop_box(store)
+            if gui.inside(stop.x, stop.y, stop.w, stop.h, x, y) {
+                return 163
+            }
+            let slower = reader_slower_box(store)
+            if gui.inside(slower.x, slower.y, slower.w, slower.h, x, y) {
+                return 161
+            }
+            let faster = reader_faster_box(store)
+            if gui.inside(faster.x, faster.y, faster.w, faster.h, x, y) {
+                return 162
+            }
+            var i = 0
+            while i < reader_voices().len() {
+                let box = reader_voice_box(store, i)
+                if gui.inside(box.x, box.y, box.w, box.h, x, y) {
+                    return 170 + i
+                }
+                i = i + 1
+            }
+            if reader_kokoro_row() {
+                let box = reader_kokoro_box(store)
+                if gui.inside(box.x, box.y, box.w, box.h, x, y) {
+                    return 178
+                }
+            }
+            if reader_download_row() {
+                let box = reader_model_box(store)
+                if gui.inside(box.x, box.y, box.w, box.h, x, y) {
+                    return 164
+                }
+            }
+            return 0 - 1
+        }
+    }
     if address.editing && suggestions.len() > 0 {
         let metrics = toolbar_metrics(vertical)
         let top = suggestion_top(vertical)
@@ -3134,6 +3233,19 @@ fn click_action(session: Session, address: Address, store: Store, notice: Notice
         address: address,
         store: store,
         notice: notice,
+        reader: 0,
+        fetch: 0,
+    }
+}
+
+fn click_reader(session: Session, address: Address, store: Store, notice: Notice, reader: Int, fetch: Int) -> ClickAction {
+    return ClickAction {
+        session: session,
+        address: address,
+        store: store,
+        notice: notice,
+        reader: reader,
+        fetch: fetch,
     }
 }
 
@@ -3162,9 +3274,74 @@ fn open_new_tab(session: Session, store: Store, notice: Notice) -> ClickAction {
     return click_action(next, address_begin(""), store, notice)
 }
 
-fn handle_click(handle: Int, x: Int, y: Int, clicks: Int, current: Address, session: Session, suggestions: List<String>, store: Store, downloads: Downloads) -> ClickAction {
+fn handle_click(handle: Int, x: Int, y: Int, clicks: Int, current: Address, session: Session, suggestions: List<String>, store: Store, downloads: Downloads, reader_open: Bool) -> ClickAction {
     let count = session.tabs.len()
     let notice = Notice { text: "", until: 0 }
+
+    // The reader panel floats above the page, so its rows take presses before
+    // anything behind them.
+    if reader_open {
+        let panel = reader_panel_box(store)
+        if gui.inside(panel.x, panel.y, panel.w, panel.h, x, y) {
+            let primary = reader_primary_box(store)
+            if gui.inside(primary.x, primary.y, primary.w, primary.h, x, y) {
+                return click_reader(session, current, store, reader_toggle(handle, store), 1, 0)
+            }
+            let stop = reader_stop_box(store)
+            if gui.inside(stop.x, stop.y, stop.w, stop.h, x, y) {
+                speech.stop_reading()
+                return click_reader(session, current, store, Notice { text: "Reading stopped", until: gui.now() + 1800 }, 1, 0)
+            }
+            let slower = reader_slower_box(store)
+            if gui.inside(slower.x, slower.y, slower.w, slower.h, x, y) {
+                return click_reader(session, current, store, set_rate(store, stored_rate(store) - 25), 1, 0)
+            }
+            let faster = reader_faster_box(store)
+            if gui.inside(faster.x, faster.y, faster.w, faster.h, x, y) {
+                return click_reader(session, current, store, set_rate(store, stored_rate(store) + 25), 1, 0)
+            }
+            let voices = reader_voices()
+            var vi = 0
+            while vi < voices.len() {
+                let box = reader_voice_box(store, vi)
+                if gui.inside(box.x, box.y, box.w, box.h, x, y) {
+                    let row = voices[vi]
+                    let quality = library.field(row, 3)
+                    let tag = if quality == "2" { " · premium" } else if quality == "1" { " · enhanced" } else { "" }
+                    save_setting(store, "voice", library.field(row, 0))
+                    save_setting(store, "engine", "system")
+                    speech.use_engine("system")
+                    return click_reader(session, current, store, Notice {
+                        text: "Voice: " + library.field(row, 1) + tag + " · next reading",
+                        until: gui.now() + 3200,
+                    }, 1, 0)
+                }
+                vi = vi + 1
+            }
+            if reader_kokoro_row() {
+                let box = reader_kokoro_box(store)
+                if gui.inside(box.x, box.y, box.w, box.h, x, y) {
+                    if speech.kokoro_usable() {
+                        return click_reader(session, current, store, choose_engine(store, "kokoro"), 1, 0)
+                    }
+                    return click_reader(session, current, store, Notice {
+                        text: "Kokoro needs a synthesizer command · install kokoro-tts or set NOVA_KOKORO_CMD",
+                        until: gui.now() + 5600,
+                    }, 1, 0)
+                }
+            }
+            if reader_download_row() {
+                let box = reader_model_box(store)
+                if gui.inside(box.x, box.y, box.w, box.h, x, y) {
+                    if gui.term_running() {
+                        return click_action(session, current, store, notice)
+                    }
+                    return click_reader(session, current, store, notice, 1, 1)
+                }
+            }
+            return click_action(session, current, store, notice)
+        }
+    }
 
     // Failure panel owns the page area while it is visible.
     if engine.page_state(handle) == 3 {
@@ -3424,7 +3601,9 @@ fn handle_click(handle: Int, x: Int, y: Int, clicks: Int, current: Address, sess
         return click_action(session, next_address, store, notice)
     }
     if gui.inside(metrics.voice, by, 30, 30, x, y) {
-        return click_action(session, next_address, store, toggle_listen(handle, store))
+        // The speaker is the reader's door: it opens the panel, whose first row
+        // reads or pauses. Cmd+Shift+L still reads immediately.
+        return click_reader(session, next_address, store, notice, if reader_open { 0 - 1 } else { 1 }, 0)
     }
     if gui.inside(metrics.star, by, 30, 30, x, y) {
         let toggled = toggle_bookmark(handle, store)
@@ -3458,6 +3637,18 @@ fn key_action(session: Session, address: Address, store: Store, notice: Notice, 
         store: store,
         notice: notice,
         close: close,
+        reader: 0,
+    }
+}
+
+fn key_reader(session: Session, address: Address, store: Store, notice: Notice, reader: Int, close: Bool) -> KeyAction {
+    return KeyAction {
+        session: session,
+        address: address,
+        store: store,
+        notice: notice,
+        close: close,
+        reader: reader,
     }
 }
 
@@ -3483,6 +3674,35 @@ fn stored_voice(store: Store) -> String {
         return ""
     }
     return library.setting_value(gui.read(store.settings_path), "voice")
+}
+
+// Which engine reads: the system voices by default, Kokoro only when the user
+// picked it and it can actually run. The environment override exists so a test
+// can exercise either engine without clicking.
+fn stored_engine(store: Store) -> String {
+    let forced = gui.env("NOVA_BROWSER_ENGINE").trim()
+    if forced.len() > 0 {
+        return forced
+    }
+    if store.settings_path.len() == 0 {
+        return "system"
+    }
+    if library.setting_value(gui.read(store.settings_path), "engine") == "kokoro" {
+        return "kokoro"
+    }
+    return "system"
+}
+
+fn choose_engine(store: Store, engine: String) -> Notice {
+    save_setting(store, "engine", engine)
+    speech.use_engine(engine)
+    if engine == "kokoro" {
+        return Notice {
+            text: "Voice: Kokoro · synthesizing can take a while",
+            until: gui.now() + 3600,
+        }
+    }
+    return Notice { text: "Voice: the built-in macOS voices", until: gui.now() + 2600 }
 }
 
 fn english_voices() -> List<String> {
@@ -3516,12 +3736,30 @@ fn toggle_listen(handle: Int, store: Store) -> Notice {
     if text.len() == 0 {
         return Notice { text: "Nothing to read on this page", until: gui.now() + 2400 }
     }
+    let chosen = stored_engine(store)
+    speech.use_engine(chosen)
+    var fallback = ""
+    if chosen == "kokoro" && !speech.kokoro_usable() {
+        // Say why instead of quietly reading in a different voice. The panel
+        // row is where Kokoro gets set up; this is the shortcut path.
+        fallback = speech.voice_note()
+        speech.use_engine("system")
+    }
     var id = stored_voice(store)
     if id.len() == 0 {
         id = speech.default_voice()
     }
-    if !speech.say(text, id, 50) {
+    if !speech.say(text, id, stored_rate(store)) {
         return Notice { text: "Could not start reading", until: gui.now() + 2400 }
+    }
+    if fallback.len() > 0 {
+        return Notice { text: fallback + " · reading with " + voice_label(id), until: gui.now() + 5600 }
+    }
+    if chosen == "kokoro" {
+        return Notice {
+            text: "Synthesizing with Kokoro · this can take a while",
+            until: gui.now() + 4200,
+        }
     }
     let note = speech.voice_note()
     if note.len() > 0 {
@@ -3554,7 +3792,408 @@ fn cycle_voice(store: Store) -> Notice {
     }
 }
 
-fn handle_key(handle: Int, code: Int, mods: Int, current: Address, session: Session, suggestions: List<String>, store: Store) -> KeyAction {
+// Speed is stored as a percentage of the system default, the same unit the host
+// takes. Absent or out of range means the calm 50% default.
+fn stored_rate(store: Store) -> Int {
+    if store.settings_path.len() == 0 {
+        return 50
+    }
+    let rate = library.number_of(library.setting_value(gui.read(store.settings_path), "voice_rate"))
+    if rate < 25 {
+        return 50
+    }
+    if rate > 200 {
+        return 200
+    }
+    return rate
+}
+
+fn set_rate(store: Store, rate: Int) -> Notice {
+    var value = rate
+    if value < 25 {
+        value = 25
+    }
+    if value > 200 {
+        value = 200
+    }
+    save_setting(store, "voice_rate", "${value}")
+    return Notice { text: "Reading speed: ${value}% · next reading", until: gui.now() + 2400 }
+}
+
+// The panel lists at most eight English voices: enough to compare, small enough
+// that it never needs a scrollbar over the page.
+fn reader_voices() -> List<String> {
+    var rows: List<String> = []
+    for row in english_voices() {
+        if rows.len() < 8 {
+            rows.push(row)
+        }
+    }
+    return rows
+}
+
+// Panel geometry reads a native count instead of the row list: every row box
+// asks for the panel box, so enumerating voices here re-ran the list per row.
+fn reader_voice_slots() -> Int {
+    let count = speech.voice_english_count()
+    if count > 8 {
+        return 8
+    }
+    return count
+}
+
+// A Kokoro row joins the list once its model is installed; the download row
+// appears while it is missing and a build asks for it. Keeping these as
+// geometry helpers means the painter, hit test and accessibility all agree.
+fn reader_kokoro_row() -> Bool {
+    return speech.kokoro_ready()
+}
+
+fn reader_download_row() -> Bool {
+    return speech.kokoro_wanted() && !speech.kokoro_ready()
+}
+
+fn reader_voice_total() -> Int {
+    if reader_kokoro_row() {
+        return reader_voice_slots() + 1
+    }
+    return reader_voice_slots()
+}
+
+fn reader_panel_box(store: Store) -> Box {
+    var height = 124 + reader_voice_total() * 24
+    if reader_download_row() {
+        height = height + 24
+    }
+    let metrics = toolbar_metrics(false)
+    var x = metrics.voice - 18
+    if x + 300 > gui.width() - 8 {
+        x = gui.width() - 308
+    }
+    if x < 8 {
+        x = 8
+    }
+    return Box { x: x, y: suggestion_top(false), w: 300, h: height }
+}
+
+fn reader_primary_box(store: Store) -> Box {
+    let panel = reader_panel_box(store)
+    return Box { x: panel.x + 8, y: panel.y + 26, w: panel.w - 84, h: 28 }
+}
+
+fn reader_stop_box(store: Store) -> Box {
+    let panel = reader_panel_box(store)
+    return Box { x: panel.x + panel.w - 68, y: panel.y + 26, w: 60, h: 28 }
+}
+
+fn reader_slower_box(store: Store) -> Box {
+    let panel = reader_panel_box(store)
+    return Box { x: panel.x + panel.w - 92, y: panel.y + 60, w: 26, h: 24 }
+}
+
+fn reader_faster_box(store: Store) -> Box {
+    let panel = reader_panel_box(store)
+    return Box { x: panel.x + panel.w - 34, y: panel.y + 60, w: 26, h: 24 }
+}
+
+fn reader_voice_box(store: Store, index: Int) -> Box {
+    let panel = reader_panel_box(store)
+    return Box { x: panel.x + 8, y: panel.y + 108 + index * 24, w: panel.w - 16, h: 22 }
+}
+
+fn reader_kokoro_box(store: Store) -> Box {
+    return reader_voice_box(store, reader_voice_slots())
+}
+
+fn reader_model_box(store: Store) -> Box {
+    let panel = reader_panel_box(store)
+    return Box { x: panel.x + 8, y: panel.y + 112 + reader_voice_total() * 24, w: panel.w - 16, h: 24 }
+}
+
+// A wheel, not a fake percentage: eight dots chase each other while the
+// synthesizer runs, and the elapsed time beside them is the host's clock.
+fn reader_spinner_dx(i: Int) -> Int {
+    if i == 0 {
+        return 7
+    }
+    if i == 1 {
+        return 5
+    }
+    if i == 2 {
+        return 0
+    }
+    if i == 3 {
+        return 0 - 5
+    }
+    if i == 4 {
+        return 0 - 7
+    }
+    if i == 5 {
+        return 0 - 5
+    }
+    if i == 6 {
+        return 0
+    }
+    return 5
+}
+
+fn reader_spinner_dy(i: Int) -> Int {
+    if i == 0 {
+        return 0
+    }
+    if i == 1 {
+        return 5
+    }
+    if i == 2 {
+        return 7
+    }
+    if i == 3 {
+        return 5
+    }
+    if i == 4 {
+        return 0
+    }
+    if i == 5 {
+        return 0 - 5
+    }
+    if i == 6 {
+        return 0 - 7
+    }
+    return 0 - 5
+}
+
+fn draw_reader_spinner(cx: Int, cy: Int, color: Int) {
+    let tick = (gui.now() / 90) % 8
+    var i = 0
+    while i < 8 {
+        let lead = (tick - i + 8) % 8
+        var alpha = 0
+        if lead == 0 {
+            alpha = 255
+        } else if lead == 1 {
+            alpha = 150
+        } else if lead == 2 {
+            alpha = 60
+        }
+        if alpha > 0 {
+            gui.round_rect_alpha(cx + reader_spinner_dx(i) - 1, cy + reader_spinner_dy(i) - 1, 3, 3, 1, color, alpha)
+        }
+        i = i + 1
+    }
+}
+
+fn draw_reader_panel(theme: Chrome, store: Store, open: Bool, fetching: Bool, received: Int, hover: Int) {
+    if !open {
+        return
+    }
+    let panel = reader_panel_box(store)
+    let voices = reader_voices()
+    let rate = stored_rate(store)
+    let current = stored_voice(store)
+    let primary = reader_primary_box(store)
+    let stop = reader_stop_box(store)
+    let slower = reader_slower_box(store)
+    let faster = reader_faster_box(store)
+
+    gui.rect_alpha(panel.x - 4, panel.y - 4, panel.w + 8, panel.h + 8, 0, 90)
+    gui.round_rect(panel.x, panel.y, panel.w, panel.h, 10, theme.elevated)
+    gui.stroke(panel.x, panel.y, panel.w, panel.h, theme.border_strong)
+    gui.text(panel.x + 12, panel.y + 8, "Read aloud", 12, theme.fg_bright)
+    // The header carries one state word, and the synthesizer's own clock when
+    // it is the one working. No progress percentage: the host cannot know how
+    // long a model will take, so it reports loading, synthesizing, playing.
+    let phase = speech.synth_phase()
+    if phase == 1 {
+        let ms = speech.synth_elapsed_ms()
+        let stamp = "SYNTHESIZING ${ms / 1000}.${(ms % 1000) / 100}s"
+        let width = gui.mono_width(stamp, 9)
+        draw_reader_spinner(panel.x + panel.w - 18 - width, panel.y + 14, theme.orange)
+        gui.mono(panel.x + panel.w - 12 - width, panel.y + 10, stamp, 9, theme.orange)
+        let track = panel.w - 24
+        let seg = track / 3
+        let travel = (gui.now() / 9) % 120
+        gui.rect_alpha(panel.x + 12, panel.y + 24, track, 2, theme.orange, 60)
+        gui.round_rect(panel.x + 12 + (track - seg) * travel / 120, panel.y + 24, seg, 2, 1, theme.orange)
+    } else if phase == 3 {
+        let word = "KOKORO"
+        gui.mono(panel.x + panel.w - 12 - gui.mono_width(word, 9), panel.y + 10, word, 9, theme.orange)
+    } else if phase == 4 {
+        let word = "FAILED"
+        gui.mono(panel.x + panel.w - 12 - gui.mono_width(word, 9), panel.y + 10, word, 9, theme.red)
+    } else if speech.speaking() || speech.paused() {
+        let word = if speech.paused() { "PAUSED" } else { "SPEAKING" }
+        gui.mono(panel.x + panel.w - 12 - gui.mono_width(word, 9), panel.y + 10, word, 9, theme.orange)
+    }
+
+    let primary_heat = if hover == 160 { 1000 } else { 0 }
+    gui.round_rect(primary.x, primary.y, primary.w, primary.h, 7, blend(theme.bg_hard, theme.selection, primary_heat))
+    let label = if speech.speaking() { "Pause" } else if speech.paused() { "Resume" } else { "Read this page" }
+    gui.text(primary.x + 10, primary.y + 7, label, 12, theme.fg_bright)
+
+    let stop_heat = if hover == 163 { 1000 } else { 0 }
+    gui.round_rect(stop.x, stop.y, stop.w, stop.h, 7, blend(theme.bg_hard, theme.red, stop_heat / 2))
+    gui.text(stop.x + 13, stop.y + 7, "Stop", 12, theme.fg)
+
+    gui.text(panel.x + 12, panel.y + 64, "Speed", 11, theme.muted)
+    gui.mono(panel.x + panel.w - 64, panel.y + 65, "${rate}%", 10, theme.fg_bright)
+    let slow_heat = if hover == 161 { 1000 } else { 0 }
+    gui.round_rect(slower.x, slower.y, slower.w, slower.h, 6, blend(theme.bg_hard, theme.selection, slow_heat))
+    gui.text(slower.x + 9, slower.y + 4, "−", 12, theme.fg_bright)
+    let fast_heat = if hover == 162 { 1000 } else { 0 }
+    gui.round_rect(faster.x, faster.y, faster.w, faster.h, 6, blend(theme.bg_hard, theme.selection, fast_heat))
+    gui.text(faster.x + 9, faster.y + 4, "+", 12, theme.fg_bright)
+
+    gui.mono(panel.x + 12, panel.y + 92, "VOICE", 9, theme.faint)
+    var i = 0
+    while i < voices.len() {
+        let row = voices[i]
+        let box = reader_voice_box(store, i)
+        let id = library.field(row, 0)
+        let quality = library.field(row, 3)
+        let selected = id == current || (current.len() == 0 && i == 0)
+        let heat = if hover == 170 + i { 700 } else { 0 }
+        if selected || heat > 0 {
+            gui.round_rect(box.x, box.y, box.w, box.h, 6, blend(theme.elevated, theme.selection, if selected { 900 } else { heat }))
+        }
+        gui.clip(box.x + 6, box.y + 2, box.w - 74, box.h - 4)
+        gui.text(box.x + 8, box.y + 4, library.field(row, 1), 11, if selected { theme.fg_bright } else { theme.fg })
+        gui.clip_reset()
+        let tag = if quality == "2" { "premium" } else if quality == "1" { "enhanced" } else { "" }
+        if tag.len() > 0 {
+            gui.mono(box.x + box.w - 62, box.y + 6, tag, 8, theme.muted)
+        }
+        if selected {
+            gui.text(box.x + box.w - 20, box.y + 4, "✓", 11, theme.orange)
+        }
+        i = i + 1
+    }
+
+    // Kokoro is a choice, not a default: built-in voices stay selected unless
+    // someone asks. Without a synthesizer command the row says so instead of
+    // offering a voice that would fail after a long wait.
+    if reader_kokoro_row() {
+        let box = reader_kokoro_box(store)
+        let usable = speech.kokoro_usable()
+        let selected = stored_engine(store) == "kokoro"
+        let heat = if hover == 178 { 700 } else { 0 }
+        if selected || heat > 0 {
+            gui.round_rect(box.x, box.y, box.w, box.h, 6, blend(theme.elevated, theme.selection, if selected { 900 } else { heat }))
+        }
+        gui.clip(box.x + 6, box.y + 2, box.w - 78, box.h - 4)
+        gui.text(box.x + 8, box.y + 4, if usable { "Kokoro · 82M" } else { "Kokoro · needs a synthesizer" }, 11, if selected { theme.fg_bright } else if usable { theme.fg } else { theme.muted })
+        gui.clip_reset()
+        gui.mono(box.x + box.w - 58, box.y + 6, if usable { "neural" } else { "setup" }, 8, theme.muted)
+        if selected {
+            gui.text(box.x + box.w - 20, box.y + 4, "✓", 11, theme.orange)
+        }
+    }
+
+    if reader_download_row() {
+        let box = reader_model_box(store)
+        let heat = if hover == 164 { 700 } else { 0 }
+        gui.round_rect(box.x, box.y, box.w, box.h, 6, blend(theme.elevated, theme.selection, heat))
+        var text = "Download voice model · 86 MB"
+        var ink = theme.fg
+        if fetching {
+            var percent = received * 100 / voice_model_expected()
+            if percent > 99 {
+                percent = 99
+            }
+            text = "Downloading voice model · ${percent}%"
+            ink = theme.orange
+        }
+        gui.text(box.x + 8, box.y + 5, text, 10, ink)
+    }
+
+    // The panel hangs below the toolbar over the page, so it has to be copied
+    // above the WebView; its rows also take the presses the page would get.
+    gui.overlay(panel.x - 4, panel.y - 4, panel.w + 8, panel.h + 8, true)
+}
+
+// ---------- voice model ----------
+// Kokoro needs two things: a model file and an inference runtime. This build
+// can fetch the model into the profile (the prerequisite), and reports honestly
+// that the runtime is still missing rather than pretending to synthesize.
+
+fn voice_model_dir() -> String {
+    return profile_root() + "/kokoro"
+}
+
+fn voice_model_path() -> String {
+    return voice_model_dir() + "/model.onnx"
+}
+
+fn voice_model_part() -> String {
+    return voice_model_dir() + "/model.onnx.part"
+}
+
+fn voice_model_url() -> String {
+    let override = gui.env("NOVA_KOKORO_URL").trim()
+    if override.len() > 0 {
+        return override
+    }
+    return "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_quantized.onnx"
+}
+
+fn voice_model_expected() -> Int {
+    return 92000000
+}
+
+fn voice_model_min_bytes() -> Int {
+    let own = library.number_of(gui.env("NOVA_KOKORO_MIN_BYTES"))
+    if own > 0 {
+        return own
+    }
+    return 50000000
+}
+
+fn file_bytes(path: String) -> Int {
+    let text = gui.run("stat -f%z '" + path + "' 2>/dev/null", profile_root()).trim()
+    return library.number_of(text)
+}
+
+fn voice_model_start() -> Notice {
+    gui.mkdir(voice_model_dir())
+    let command = "curl -fsSL --retry 2 -o '" + voice_model_part() + "' '" + voice_model_url() + "'"
+    if !gui.term_start(command, voice_model_dir()) {
+        return Notice { text: "Could not start the voice download", until: gui.now() + 2600 }
+    }
+    return Notice { text: "Downloading the voice model", until: gui.now() + 2400 }
+}
+
+// Called once curl exits. The size check is the integrity boundary: a partial
+// or error page never becomes model.onnx, and a failed fetch leaves nothing
+// behind that a later run could mistake for an installed model.
+fn voice_model_finish() -> Notice {
+    let part = voice_model_part()
+    let bytes = file_bytes(part)
+    if bytes < voice_model_min_bytes() {
+        gui.run("rm -f '" + part + "'", profile_root())
+        return Notice { text: "Voice model download failed", until: gui.now() + 4000 }
+    }
+    gui.run("mv -f '" + part + "' '" + voice_model_path() + "'", profile_root())
+    return Notice {
+        text: "Voice model installed · the neural runtime is still not bundled",
+        until: gui.now() + 5200,
+    }
+}
+
+fn reader_toggle(handle: Int, store: Store) -> Notice {
+    if !speech.voice_available() {
+        return Notice { text: "Speech is not available on this system", until: gui.now() + 2600 }
+    }
+    if speech.speaking() {
+        speech.pause_reading()
+        return Notice { text: "Reading paused", until: gui.now() + 1800 }
+    }
+    if speech.paused() {
+        speech.resume_reading()
+        return Notice { text: "Reading resumed", until: gui.now() + 1800 }
+    }
+    return toggle_listen(handle, store)
+}
+
+fn handle_key(handle: Int, code: Int, mods: Int, current: Address, session: Session, suggestions: List<String>, store: Store, reader_open: Bool) -> KeyAction {
     let command = mods % 2 == 1
     let shift = (mods / 2) % 2 == 1
     let option = (mods / 4) % 2 == 1
@@ -3585,7 +4224,19 @@ fn handle_key(handle: Int, code: Int, mods: Int, current: Address, session: Sess
         }, false)
     }
     if command && shift && code == 37 {
-        return key_action(session, current, store, toggle_listen(handle, store), false)
+        // Reads or stops, and keeps the panel in view either way.
+        return key_reader(session, current, store, toggle_listen(handle, store), 1, false)
+    }
+    if command && shift && code == 32 {
+        if speech.paused() {
+            speech.resume_reading()
+            return key_reader(session, current, store, Notice { text: "Reading resumed", until: gui.now() + 1800 }, 1, false)
+        }
+        if speech.speaking() {
+            speech.pause_reading()
+            return key_reader(session, current, store, Notice { text: "Reading paused", until: gui.now() + 1800 }, 1, false)
+        }
+        return key_reader(session, current, store, toggle_listen(handle, store), 1, false)
     }
     if command && shift && code == 9 {
         return key_action(session, current, store, cycle_voice(store), false)
@@ -3717,6 +4368,10 @@ fn handle_key(handle: Int, code: Int, mods: Int, current: Address, session: Sess
         return key_action(session, current, store, notice_idle(), false)
     }
     if code == gui.key_escape() {
+        if reader_open {
+            // Escape dismisses the reader panel before it closes the window.
+            return key_reader(session, current, store, notice_idle(), 0 - 1, false)
+        }
         return key_action(session, current, store, notice_idle(), true)
     }
     return key_action(session, current, store, notice_idle(), false)
@@ -3735,17 +4390,56 @@ fn settle(frames: Int) {
 
 fn auto_close(session: Session, theme: Chrome, address: Address, store: Store) {
     let handle = active_handle(session)
+    speech.use_engine(stored_engine(store))
     let final_state = engine.wait(handle, 8000)
     sync_visibility(session)
     let merged = library.merge(store.bookmarks, store.visits)
     let suggestions = if address.editing { with_search_row(library.suggest(merged, address.text, sug_rows()), address.text, store.search) } else { library.empty() }
     let rail_open = session.rail && gui.env("NOVA_BROWSER_RAIL_OPEN") == "1"
+    var panel_open = gui.env("NOVA_BROWSER_READER_PANEL") == "1"
     if gui.env("NOVA_BROWSER_READER") == "1" {
         let notice = toggle_listen(active_handle(session), store)
-        println("reader: chars=${engine.body_text(active_handle(session)).len()} backend=${speech.voice_backend()} voice=${stored_voice(store)} speaking=${flag(speech.speaking())} notice=${notice.text}")
+        println("reader: chars=${engine.body_text(active_handle(session)).len()} backend=${speech.voice_backend()} voice=${stored_voice(store)} rate=${stored_rate(store)} speaking=${flag(speech.speaking())} notice=${notice.text}")
+    }
+    // Headless form of a Kokoro reading: wait for the job to finish and report
+    // every phase it passed through, so a test can see loading, synthesizing
+    // and the failure detail without ears.
+    if gui.env("NOVA_BROWSER_SYNTH_WAIT") == "1" {
+        var waited = 0
+        var last = 0 - 1
+        var done = false
+        while !done && waited < 20000 {
+            let phase = speech.synth_phase()
+            if phase != last {
+                println("synth: phase=${phase} elapsed=${speech.synth_elapsed_ms()} backend=${speech.voice_backend()} detail=${speech.synth_detail()}")
+                last = phase
+            }
+            if phase == 0 || phase == 4 || phase == 5 {
+                done = true
+            }
+            gui.pump()
+            gui.sleep(40)
+            waited = waited + 40
+        }
+        println("synth: end backend=${speech.voice_backend()} note=${speech.voice_note()}")
+    }
+    // Headless form of the panel's download row: fetch, verify the size, and
+    // report what the host sees. The URL is overridable so tests use a local
+    // file instead of the network.
+    if gui.env("NOVA_BROWSER_VOICE_FETCH") == "1" {
+        let started = voice_model_start()
+        gui.sleep(120)
+        var waited = 0
+        while gui.term_running() && waited < 60000 {
+            gui.pump()
+            gui.sleep(25)
+            waited = waited + 25
+        }
+        let result = voice_model_finish()
+        println("voice: start=${started.text} bytes=${file_bytes(voice_model_path())} ready=${flag(speech.kokoro_ready())} path=${voice_model_path()} note=${result.text}")
     }
     gui.begin()
-    draw_chrome(handle, theme, address, session, suggestions, fx_new(), notice_idle(), store, 0 - 1, downloads_view(store), Tooltip { text: "", x: 0, y: 0 }, rail_open)
+    draw_chrome(handle, theme, address, session, suggestions, fx_new(), notice_idle(), store, 0 - 1, downloads_view(store), Tooltip { text: "", x: 0, y: 0 }, rail_open, panel_open, false, 0)
     gui.present()
     settle(24)
     let target = gui.env("NOVA_BROWSER_SNAPSHOT")
@@ -4014,7 +4708,7 @@ fn bench_run(session: Session, theme: Chrome, address: Address, store: Store) {
         let started = gui.now()
         let suggestions = library.suggest(merged, address.text, sug_rows())
         gui.begin()
-        draw_chrome(active_handle(session), theme, address, session, suggestions, fx, notice_idle(), store, 3, downloads_view(store), Tooltip { text: "", x: 0, y: 0 }, false)
+        draw_chrome(active_handle(session), theme, address, session, suggestions, fx, notice_idle(), store, 3, downloads_view(store), Tooltip { text: "", x: 0, y: 0 }, false, false, false, 0)
         gui.present()
         let spent = gui.now() - started
         total = total + spent
@@ -4164,6 +4858,16 @@ fn main() {
     var drawn_shelf = 0 - 1
     var drawn_rail_open = 0 - 1
     var drawn_speaking = 0 - 1
+    var drawn_paused = 0 - 1
+    var drawn_reader = 0 - 1
+    var drawn_fetch = 0 - 1
+    var drawn_synth = 0 - 1
+    var voice_engine = ""
+    var drawn_voice_bytes = 0 - 1
+    var drawn_ready = 0 - 1
+    var reader_open = gui.env("NOVA_BROWSER_READER_PANEL") == "1"
+    var voice_fetch = false
+    var voice_bytes = 0
     var last_titles = 0
     var last_signature = ""
     var drawn_theme = store.theme
@@ -4186,10 +4890,17 @@ fn main() {
         let width = gui.width()
         let height = gui.height()
         let handle = active_handle(session)
+        // The saved engine is applied here, so a settings change or a shortcut
+        // reaches the host before the next reading without per-frame churn.
+        let sound = stored_engine(store)
+        if sound != voice_engine {
+            speech.use_engine(sound)
+            voice_engine = sound
+        }
 
-        // Hovering the collapsed rail widens it for names, so the page gives
-        // that width back while it is open; the chrome draws under the page
-        // view and would otherwise hide the list.
+        // Hovering the collapsed rail opens its name panel above the page. The
+        // page keeps its width now: the panel is an overlay, so crossing the
+        // rail no longer reflows the document.
         var rail_hover = false
         if have_pointer && session.vertical && session.rail {
             rail_hover = pointer_x < rail_panel_width() && pointer_y >= chrome_height(true)
@@ -4198,10 +4909,7 @@ fn main() {
         if session.rail && gui.env("NOVA_BROWSER_RAIL_OPEN") == "1" {
             rail_hover = true
         }
-        var left = page_left(session)
-        if rail_hover {
-            left = rail_panel_width() + 1
-        }
+        let left = page_left(session)
         let top = page_top(session)
         var page_w = width - left
         var page_h = height - top
@@ -4280,12 +4988,17 @@ fn main() {
             if gui.env("NOVA_BROWSER_TRACE").len() > 0 {
                 println("browser: shortcut code=${code} mods=${mods}")
             }
-            let action = handle_key(handle, code, mods, address, session, suggestions, store)
+            let action = handle_key(handle, code, mods, address, session, suggestions, store, reader_open)
             session = action.session
             address = action.address
             store = action.store
             if action.notice.text.len() > 0 {
                 notice = action.notice
+            }
+            if action.reader == 1 {
+                reader_open = true
+            } else if action.reader == 0 - 1 {
+                reader_open = false
             }
             if action.close {
                 running = false
@@ -4337,8 +5050,23 @@ fn main() {
             store.downloads_open = true
         }
 
+        // The voice model is fetched by curl in a pty slot, so the window keeps
+        // painting; every pass samples the .part file for the progress label.
+        if voice_fetch {
+            if gui.term_running() {
+                let got = file_bytes(voice_model_part())
+                if got != voice_bytes {
+                    voice_bytes = got
+                }
+            } else {
+                voice_fetch = false
+                voice_bytes = 0
+                notice = voice_model_finish()
+            }
+        }
+
         if have_pointer {
-            hover = hover_target(pointer_x, pointer_y, session, address, suggestions, downloads, store.downloads_open)
+            hover = hover_target(pointer_x, pointer_y, session, address, suggestions, downloads, store.downloads_open, store, reader_open)
         } else {
             hover = 0 - 1
         }
@@ -4358,20 +5086,31 @@ fn main() {
         let tip_visible = tooltip.text.len() > 0
         let progress = engine.page_progress(handle)
 
+        // The synthesizer's state drives the frame loop: while it works, the
+        // panel animates its wheel and the elapsed time keeps counting.
+        let synth_phase = speech.synth_phase()
+        let synth_active = synth_phase > 0 && synth_phase < 4
+        if synth_phase != drawn_synth && gui.env("NOVA_BROWSER_SYNTH_TRACE") == "1" {
+            println("synth: phase=${synth_phase} elapsed=${speech.synth_elapsed_ms()} backend=${speech.voice_backend()} detail=${speech.synth_detail()}")
+        }
+
         let dirty = state != drawn_state || live != drawn_url || progress != drawn_progress ||
                     download_sig != drawn_downloads || hover != drawn_hover ||
                     flag(address.editing) != drawn_editing || address.text != drawn_text ||
                     address.cursor != drawn_cursor || address.highlight != drawn_highlight ||
                     store.bookmarks.len() != drawn_bookmarks || flag(store.downloads_open) != drawn_shelf ||
                     flag(session.vertical) != drawn_vertical || flag(rail_hover) != drawn_rail_open ||
-                    flag(speech.speaking()) != drawn_speaking ||
+                    flag(speech.speaking()) != drawn_speaking || flag(speech.paused()) != drawn_paused ||
+                    flag(reader_open) != drawn_reader || flag(voice_fetch) != drawn_fetch ||
+                    flag(synth_active) == 1 || synth_phase != drawn_synth ||
+                    voice_bytes != drawn_voice_bytes || flag(speech.kokoro_ready()) != drawn_ready ||
                     notice.text.len() > 0 || drawn_notice == 1 ||
                     fx_busy(fx) || flag(tip_visible) != drawn_tooltip || drag_started
 
         if dirty {
             fx = fx_step(fx, hover, address.editing)
             gui.begin()
-            draw_chrome(handle, theme, address, session, suggestions, fx, notice, store, hover, downloads, tooltip, rail_hover)
+            draw_chrome(handle, theme, address, session, suggestions, fx, notice, store, hover, downloads, tooltip, rail_hover, reader_open, voice_fetch, voice_bytes)
             if drag_started && !session.vertical {
                 let slot = tab_slot_at(session, pointer_x)
                 gui.round_rect(tab_box_x(session, slot), 8, 2, 30, 1, theme.orange)
@@ -4394,6 +5133,12 @@ fn main() {
             drawn_shelf = flag(store.downloads_open)
             drawn_rail_open = flag(rail_hover)
             drawn_speaking = flag(speech.speaking())
+            drawn_paused = flag(speech.paused())
+            drawn_reader = flag(reader_open)
+            drawn_fetch = flag(voice_fetch)
+            drawn_synth = synth_phase
+            drawn_voice_bytes = voice_bytes
+            drawn_ready = flag(speech.kokoro_ready())
         }
 
         let event = gui.next_event()
@@ -4413,12 +5158,30 @@ fn main() {
                     gui.tab_menu(session.tabs.len())
                 }
             } else {
-            let click = handle_click(handle, event.x, event.y, event.code, address, session, suggestions, store, downloads)
+            // A press outside the reader panel dismisses it, the way a popover
+            // behaves, before the press reaches whatever is behind it.
+            if reader_open {
+                let panel = reader_panel_box(store)
+                if !gui.inside(panel.x, panel.y, panel.w, panel.h, event.x, event.y) {
+                    reader_open = false
+                }
+            }
+            let click = handle_click(handle, event.x, event.y, event.code, address, session, suggestions, store, downloads, reader_open)
             session = click.session
             address = click.address
             store = click.store
             if click.notice.text.len() > 0 {
                 notice = click.notice
+            }
+            if click.reader == 1 {
+                reader_open = true
+            } else if click.reader == 0 - 1 {
+                reader_open = false
+            }
+            if click.fetch == 1 {
+                voice_bytes = 0
+                voice_fetch = true
+                notice = voice_model_start()
             }
             // A press on a tab arms a drag; the move threshold below decides
             // whether it was a click or a reorder.
@@ -4456,12 +5219,17 @@ fn main() {
                 }
             }
         } else if event.kind == gui.event_key() {
-            let action = handle_key(handle, event.code, event.mods, address, session, suggestions, store)
+            let action = handle_key(handle, event.code, event.mods, address, session, suggestions, store, reader_open)
             session = action.session
             address = action.address
             store = action.store
             if action.notice.text.len() > 0 {
                 notice = action.notice
+            }
+            if action.reader == 1 {
+                reader_open = true
+            } else if action.reader == 0 - 1 {
+                reader_open = false
             }
             if action.close {
                 running = false
@@ -4478,7 +5246,9 @@ fn main() {
         gui.pump()
         // Input already waiting: napping here is what made hover trail the
         // pointer, so only truly idle passes sleep.
-        if event.kind == gui.event_none() {
+        if synth_active {
+            gui.sleep(33)
+        } else if event.kind == gui.event_none() {
             if dirty {
                 gui.sleep(6)
             } else {

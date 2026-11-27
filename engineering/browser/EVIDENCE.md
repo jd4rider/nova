@@ -914,6 +914,60 @@ to 11/13/14), address 0 failures, tabs, IME, history, downloads PASS, bench
 `frames=120 avg=7ms worst=176ms fx_step_2000=4ms` after the change, and the app
 installed as 0.8.6 ad-hoc signed.
 
+## 0.8.7 — reader controls, floating rail, model fetch
+
+Reader: `browser/tests/reader.sh` starts the fixture with `NOVA_BROWSER_READER=1`
+and `NOVA_SPEECH_SILENT=1`, and reads `chars=948 backend=system voice=
+rate=50 speaking=1`. That is WebKit's text, the configured default rate, and the
+host in its speaking state; audio is muted and unverified.
+
+Panel: the same run with `NOVA_BROWSER_READER_PANEL=1` saves a frame and the GUI
+trace reports `overlay rects=1 top=1`, so the panel is registered above the page
+view rather than under it. `ax_reader` pushes its rows as elements only while it
+is open, which keeps the toolbar's accessibility count at 11 when closed.
+
+Rail: `NOVA_BROWSER_LAYOUT=rail NOVA_BROWSER_RAIL_OPEN=1` still reports
+`overlay rects=1 top=1`, and the page view now keeps `page_left` width instead
+of shrinking to `rail_panel_width()` while the pointer is on the rail.
+
+Voice model: a `file://` stub with `NOVA_KOKORO_MIN_BYTES=16` installed to
+`<profile>/kokoro/model.onnx` (`bytes=38 ready=1`), and a second run with the
+model present still printed `backend=system` with the note `Kokoro model
+present, neural runtime not bundled`. A 4-byte stub was rejected, printed
+`Voice model download failed`, and left no `model.onnx`. None of this is neural
+synthesis: no ONNX runtime is linked.
+
+Performance note: enumerating voices re-sorted every installed voice per lookup,
+which made the panel take seconds per frame (a 20 s run produced no frame). The
+host now caches the sorted list and exposes `nova_speech_english_count`, so the
+reader, panel and install runs each finish in about 1.1–1.3 s. `backend` was
+changed to always report `system` because a downloaded model is not an engine.
+
+## 0.8.8 — Kokoro as a choice, with its own clock
+
+Engine: the reader defaults to the system voices; `settings.tsv engine=kokoro`
+(or `NOVA_BROWSER_ENGINE=kokoro` in tests) selects the neural one. The panel row
+appears only once the model is installed, and says `needs a synthesizer` until
+the host finds a command.
+
+Job: `runtime/speech.m` stages the page text beside the model, runs
+`<command> <text-file> <out.wav>` as an `NSTask`, and reports phases from the
+process itself: 1 synthesizing, 3 playing (`afplay`), 4 failed with the
+command's last output line, 5 synthesized but muted. `backend` is `kokoro` only
+during 1–3, and pause sends SIGSTOP/SIGCONT to the synthesizer or the player.
+
+Verified headlessly with stub commands in `browser/tests/reader.sh`. With a model
+but no command, the fallback prints `Kokoro needs a synthesizer command
+(install kokoro-tts or set NOVA_KOKORO_CMD) · reading with Albert`. A slow stub
+reports `phase=1` and `backend=kokoro`, then `phase=5` and `synth: end
+backend=system`. A stub that exits 3 reports `phase=4` with its own
+`no such voice` text. The panel's mid-synthesis frame is
+`/tmp/nova-kokoro-panel.png`, registered as `overlay rects=1 top=1`.
+
+This does not evidence real Kokoro audio: no `kokoro-tts`/`kokoro-cli` is
+installed (Python has an `onnxruntime`, but no Kokoro runner uses it here), and
+the stub writes silence.
+
 ## Not yet evidenced
 
 - hosted CI run of the browser address/lifecycle steps;

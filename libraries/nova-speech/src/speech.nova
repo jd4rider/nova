@@ -14,6 +14,7 @@ extern "C" fn nova_speech_voice_id(index: Int) -> String
 extern "C" fn nova_speech_voice_name(index: Int) -> String
 extern "C" fn nova_speech_voice_language(index: Int) -> String
 extern "C" fn nova_speech_voice_quality(index: Int) -> Int
+extern "C" fn nova_speech_english_count() -> Int
 extern "C" fn nova_speech_default_voice() -> String
 extern "C" fn nova_speech_speak(text: String, voice_id: String, rate: Int) -> Int
 extern "C" fn nova_speech_stop() -> Unit
@@ -25,6 +26,12 @@ extern "C" fn nova_speech_backend() -> String
 extern "C" fn nova_speech_kokoro_ready() -> Int
 extern "C" fn nova_speech_kokoro_wanted() -> Int
 extern "C" fn nova_speech_note() -> String
+extern "C" fn nova_speech_set_engine(engine: String) -> Unit
+extern "C" fn nova_speech_kokoro_usable() -> Int
+extern "C" fn nova_speech_kokoro_runner_name() -> String
+extern "C" fn nova_speech_synth_phase() -> Int
+extern "C" fn nova_speech_synth_elapsed_ms() -> Int
+extern "C" fn nova_speech_synth_detail() -> String
 
 // Names are prefixed where a plain verb would collide with an engine verb
 // (`stop`, `speak`) in a program that imports both modules.
@@ -42,6 +49,11 @@ fn voice_rows() -> List<String> {
         i = i + 1
     }
     return rows
+}
+
+// How many English voices are installed, without building the row list.
+fn voice_english_count() -> Int {
+    return nova_speech_english_count()
 }
 
 fn default_voice() -> String {
@@ -74,7 +86,8 @@ fn paused() -> Bool {
     return nova_speech_paused() == 1
 }
 
-// "system" or "kokoro".
+// The engine actually speaking: "system" in this build, even when a Kokoro
+// model has been downloaded, because no neural runtime is linked in.
 fn voice_backend() -> String {
     return nova_speech_backend()
 }
@@ -91,4 +104,37 @@ fn kokoro_wanted() -> Bool {
 // Why the requested voice is not in use, or "".
 fn voice_note() -> String {
     return nova_speech_note()
+}
+
+// "system" or "kokoro". The choice lives in settings.tsv and is applied here
+// before speaking; it never changes what `say` does behind the caller's back.
+fn use_engine(engine: String) {
+    nova_speech_set_engine(engine)
+}
+
+// A model alone cannot synthesize: this also needs a synthesizer command.
+fn kokoro_usable() -> Bool {
+    return nova_speech_kokoro_usable() == 1
+}
+
+fn kokoro_runner() -> String {
+    return nova_speech_kokoro_runner_name()
+}
+
+// 0 idle, 1 synthesizing, 3 playing, 4 failed, 5 ready but muted
+// (NOVA_SPEECH_SILENT, used by the headless tests).
+fn synth_phase() -> Int {
+    return nova_speech_synth_phase()
+}
+
+fn synth_elapsed_ms() -> Int {
+    return nova_speech_synth_elapsed_ms()
+}
+
+fn synth_detail() -> String {
+    return nova_speech_synth_detail()
+}
+
+fn synthesizing() -> Bool {
+    return nova_speech_synth_phase() == 1
 }

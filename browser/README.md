@@ -100,6 +100,7 @@ blinking caret, and the loading bar follows WebKit's own estimate.
 | Cmd+Shift+E | tabs: top → sidebar → rail → top |
 | Cmd+Shift+L | read the page aloud, or stop reading |
 | Cmd+Shift+V | choose the next reader voice |
+| Cmd+Shift+Space | pause or resume reading |
 | Cmd+Shift+S | cycle search provider (same order as the field's chip) |
 | Cmd+Shift+P | cycle theme (Gruvbox → Midnight → Light → Solarized → Nova Dark) |
 | Cmd+T / Cmd+W / Cmd+Shift+T | new / close / restore tab |
@@ -155,19 +156,40 @@ the same from the keyboard. The text is the page's own `innerText` from WebKit,
 so it reads what a reader mode would: article text without the navigation
 around it. Click again to stop.
 
-The voice is a system voice, so it works offline and needs no download. Fresh
-profiles pick the best installed English voice; Cmd+Shift+V cycles the English
-voices macOS has, including the enhanced and premium ones from System Settings,
-and the choice is saved as `voice` in `settings.tsv`. The reader runs at half
-the system default rate.
+The speaker button opens the reader panel: read / pause / resume, stop a step
+slower or faster, and pick a voice from the installed English ones. The panel
+hangs over the page, which is why it is painted above the WebView rather than
+under it. Escape or a click elsewhere dismisses it; Cmd+Shift+L starts or stops
+reading without the panel, and Cmd+Shift+Space pauses and resumes.
 
-A neural voice (Kokoro) is a fat build, not a slim one: it needs a model and an
-inference runtime, roughly 90 MB, plus audio output. Neither is bundled here, so
-this build reports `backend=system`. `NOVA_BROWSER_FAT=1` or
-`NOVA_BROWSER_VOICE=kokoro` asks for the neural voice; when its model is absent
-the app says so in the notice instead of silently using a different voice.
-`NOVA_KOKORO_MODEL` points at a model outside the bundle. The split exists so a
-future fat build can add the model without making every download carry it.
+The voice is a system voice, so it works offline and needs no download. Fresh
+profiles pick the best installed English voice, and the choice is saved as
+`voice` in `settings.tsv`; speed is saved as `voice_rate` (25–200% of the system
+rate, default 50%). Speed and voice changes apply to the next reading rather
+than restarting the current one mid-sentence.
+
+A neural voice (Kokoro) needs a model and an inference runtime. Start with
+`NOVA_BROWSER_VOICE=kokoro` (or `NOVA_BROWSER_FAT=1`) and the panel gains a
+"Download voice model" row: it fetches the quantized model into
+`<profile>/kokoro/model.onnx` through curl, checks the size, and installs it
+only if the download is complete. `NOVA_KOKORO_URL` overrides the source for a
+local mirror or a test; `NOVA_KOKORO_MIN_BYTES` overrides the size floor.
+
+The model alone cannot speak. Kokoro runs through a synthesizer command: the
+browser looks for `kokoro-tts` or `kokoro-cli` on the usual paths, or uses
+`NOVA_KOKORO_CMD`. The contract is `<command> <text-file> <out.wav>`, with the
+model path in `NOVA_KOKORO_MODEL`, so a short wrapper around whatever you
+installed is enough. Synthesis is slow, so it runs as a child process: the
+panel shows a wheel, a moving bar and the elapsed seconds while it works, and
+the speaker button shows the same wheel when the panel is closed. The phases
+come from the process itself, not a timer, and pause suspends the synthesizer
+or the player rather than pretending to stop it.
+
+Built-in voices stay the default. Kokoro joins the voice list once its model is
+installed, marked `needs a synthesizer` until a command is found; choosing it
+when it cannot run says why and reads with the system voice instead of failing
+silently. `backend` reports `kokoro` only while its job is actually producing
+audio, and a failed command shows its own error text.
 
 ## History, bookmarks and Google import
 

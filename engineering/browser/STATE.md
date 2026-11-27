@@ -3,7 +3,7 @@
 Updated: 2026-11-26
 Branch: `main`
 Last known good compiler checkpoint: `cfa00e3` (before browser work)
-Browser: **0.8.6 installed at `/Applications/Nova Browser.app`**
+Browser: **0.8.8 installed at `/Applications/Nova Browser.app`**
 Browser working tree: uncommitted; see `git status`
 Active gate: G0 WebKit; G1 WebCore not started
 Active task: **WB-04.002 — downloads** (0.7.5 persisted completed downloads;
@@ -279,6 +279,34 @@ Active task: **WB-04.002 — downloads** (0.7.5 persisted completed downloads;
   - The field border is now a one-point rounded ring drawn under the fill;
     `stroke_rect` has no radius, and its square outline was the box around the
     pill. The engine chip uses the same ring.
+
+- **0.8.8 — Kokoro is a choice, with a real wheel**
+  - The reader stays on system voices by default. Kokoro joins the voice list
+    once its model is installed and a synthesizer command is found; the pick is
+    saved as `engine` in `settings.tsv`.
+  - The host runs Kokoro as a child process (`<cmd> <text> <wav>`, model path in
+    the environment) and reports synthesizing / playing / failed from the
+    process itself. The panel and the speaker button show a wheel, a moving bar
+    and the elapsed seconds; a failure shows the command's own error text.
+  - Pause suspends the running child (SIGSTOP/SIGCONT), so it is a real pause.
+    Choosing Kokoro without a command says why and reads with the system voice.
+
+- **0.8.7 — reader controls, floating rail, voice-model fetch**
+  - The speaker opens a reader panel above the page: read/pause/resume, stop,
+    speed in 25% steps (persisted as `voice_rate`, default 50), and the
+    installed English voices with quality tags. Escape or an outside click
+    closes it; Cmd+Shift+Space pauses and resumes.
+  - The rail's name panel no longer takes width from the page. It is an
+    overlay, so crossing the rail does not reflow the document, and presses in
+    the panel column come back through the event queue.
+  - The panel's download row fetches the Kokoro model with curl in a pty slot,
+    samples the `.part` file for progress, verifies the size, and only then
+    promotes it to `<profile>/kokoro/model.onnx`. A short or failed fetch leaves
+    nothing behind.
+  - `backend` stays `system` even with the model installed: the neural runtime
+    is not linked, and the notice says so. Voice enumeration is cached and
+    threaded through a native English count after the uncached re-sort made the
+    panel take seconds per frame.
 
 - **0.8.6 — reading aloud, chrome above the page**
   - A speaker button and Cmd+Shift+L read the page with a system voice;

@@ -7,8 +7,10 @@ Each task needs a reproducible acceptance check before it is marked done.
 
 - **WB-00.001 — Audit.** DONE. Evidence: `AUDIT.md`; all 11 compiler suites;
   bridge/GUI compile; address 25/0; lifecycle 25/0.
-- **WB-01.001 — Engine contract.** PARTIAL. Primitive accessors are used because
-  imported qualified struct signatures remain unsupported (`BROWSER-COMP-01`).
+- **WB-01.001 — Engine contract.** PARTIAL. Primitive accessors are still used,
+  but the compiler blocker is fixed (2026-11-26): qualified imported struct
+  signatures resolve and `scene-gui` builds. Migrating the contract to typed
+  structs is ready work.
 - **WB-02.001 — Native view handoff.** DONE.
 - **WB-02.002 — WKWebView creation/destruction.** DONE.
 - **WB-02.003 — Navigation state.** DONE for local fixtures.
@@ -123,14 +125,26 @@ Each task needs a reproducible acceptance check before it is marked done.
 
 ## Reading aloud
 
-- **WB-05.001 — Page reading with a system voice.** DONE in 0.8.6. The browser
-  extracts `document.body.innerText` and `runtime/speech.m` speaks it through
-  AVSpeechSynthesizer; Cmd+Shift+L toggles, Cmd+Shift+V cycles installed
-  English voices, `settings.tsv voice` persists the pick. Verified by state
-  (`speaking=1`, chars from the fixture), not by listening.
-- **WB-05.002 — Kokoro neural voice.** PLANNED, fat build. Needs the model plus
-  an ONNX runtime in the bundle (~90 MB) and an audio path; `NOVA_BROWSER_FAT`
-  and the `backend`/`note` reporting are in place, nothing synthesizes yet.
+- **WB-05.001 — Page reading with a system voice.** DONE. The browser extracts
+  `document.body.innerText` and `runtime/speech.m` speaks it through
+  AVSpeechSynthesizer. The speaker opens a panel with read/pause/resume, stop,
+  speed and voice rows; Cmd+Shift+L toggles, Cmd+Shift+Space pauses, and
+  Cmd+Shift+V cycles voices. `settings.tsv` keeps `voice` and `voice_rate`.
+  Verified by state (`speaking=1`, chars, rate), not by listening.
+- **WB-05.002 — Kokoro neural voice.** DONE as a command engine. The model is
+  downloaded and size-verified into the profile, and the host runs
+  `<NOVA_KOKORO_CMD> <text-file> <out.wav>`, plays the result with afplay, and
+  reports real phases. No Kokoro command is installed on this machine, so the
+  tests use a stub; a real Kokoro install still has to be heard to be believed.
+- **WB-05.003 — Reader panel above the page.** DONE in 0.8.7. Panel geometry is
+  computed from a native English-voice count (the row list is cached in the
+  host) and registered with `gui.overlay`; a downloaded model does not change
+  the reported backend.
+- **WB-05.004 — Engine choice and synthesis feedback.** DONE in 0.8.8. Built-in
+  voices are the default, Kokoro is a saved choice (`engine`), and the panel
+  shows a wheel, a moving bar and elapsed seconds while the job runs. Without a
+  synthesizer command, choosing Kokoro names the problem and keeps the system
+  voice.
 - **WB-03.006 — Chrome above the page view.** DONE in 0.8.6. `gui.overlay`
   registers rectangles the host paints above the WebView and makes clickable;
   the address suggestion list uses it. The rail name panel still resizes the
