@@ -148,10 +148,16 @@ reproducible acceptance check before it is marked done. Stable identifiers are  
   to `1.20, 2.60, 1.20`, creates entity `7:1`, duplicates, deletes, toggles
   snap/grid, opens GameObject and Window menus, and checks drag undo. Installed
   as Studio 0.6.0.
-- **ENG-04.005 — Editor camera controls.** READY. Wire the existing
-  orbit/pan/zoom input slots to Studio's Scene camera through GUI events; keep
-  the Game Camera entity independent. Acceptance: synthesized drags change
-  Scene framing and leave Game unchanged.
+- **ENG-04.005 — Editor camera controls.** DONE. Scene keeps an editor-only
+  `CameraState { eye, target, fov }` in `ToolState`, separate from the World.
+  Right-drag orbits, Shift+right-drag pans, Option+left-drag orbits and scroll
+  zooms; all input goes through the same GUI mouse/scroll handlers as a live
+  window. The default eye/target are unchanged, so earlier pixel probes still
+  pass. Game remains the tag-6 Game Camera entity and ignores Scene camera
+  input. Acceptance: `sh examples/scene-gui/tests/shell.sh` synthesizes orbit
+  `80,-20`, pan `40,10` and zoom `120`; Scene eye/target/distance and crops
+  change, while the same orbit in Game leaves the Game crop byte-identical.
+  Installed as Studio 0.7.0.
 
 ## ENG-11 — 3D vertical slice
 
@@ -187,7 +193,7 @@ reproducible acceptance check before it is marked done. Stable identifiers are  
 - **ENG-11.004 — Studio Game Camera view.** DONE. The demo world adds a tag-6
   Game Camera at `(0, 2.60, 7.50)` with a -12° pitch. Game derives eye,
   forward and up from its World position/rotation, hides the camera entity and
-  editor overlays, and leaves Scene on the fixed editor view. Moving the
+  editor overlays, and leaves Scene on the editor camera. Moving the
   camera through the inspector changes Game without a runtime camera API.
   Acceptance: the shell test compares Scene and Game crops, then selects the
   camera, edits Position to `(0, 2.20, 4.00)` and requires the Game crop to
@@ -195,7 +201,7 @@ reproducible acceptance check before it is marked done. Stable identifiers are  
 
 ## Next action
 
-ENG-04.005: wire Studio's Scene orbit/pan/zoom through GUI events. Then add
-gizmo handles, local/world space and multi-select/grouped undo on top of the
-working drag tools. Scene save/load and free panel docking remain later editor
+Add gizmo handles, local/world space and multi-select/grouped undo on top of
+the working drag tools. Then add focus-selected, camera presets and keyboard fly
+to the Scene camera. Scene save/load and free panel docking remain later editor
 work.

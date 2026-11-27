@@ -638,6 +638,65 @@ c0a5f44586eac6d4c8292b58cdb896b29e92200e0e5efa23c20129fb0a7cbf9d  engine-layout.
 565574b4b0b16706310da3fd46347bcc4294e872d4c454566045459d9ee50d14  engine-add.png
 ```
 
+## Scene camera orbit/pan/zoom (ENG-04.005)
+
+```
+$ sh examples/scene-gui/tests/shell.sh
+...
+scene-gui: shell=captured ... camera=8.90, 2.99, 5.19 target=0.00, 0.50, 0.00 camera_distance=10.59 ...
+scene-gui: shell=captured ... camera=6.18, 3.95, 7.89 target=0.18, 0.45, -0.11 camera_distance=10.59 ...
+scene-gui: shell=captured ... camera=5.64, 3.79, 7.52 target=0.00, 0.50, 0.00 camera_distance=9.96 ...
+scene-gui: shell=captured ... camera=6.00, 4.00, 8.00 target=0.00, 0.50, 0.00 camera_distance=10.59 ...
+shell: Scene orbit/pan/zoom changed framing; Game ignored camera input
+shell: 13 panel checks, toolbar/menu/drag, Scene camera, Game camera and layout checks passed
+```
+
+`CameraState { eye, target, fov }` lives in the editor `ToolState`, separate
+from the World. Right-drag orbits, Shift+right-drag pans, Option+left-drag
+orbits for trackpads, and scroll zooms. The handlers are the same
+`handle_mouse_down_button`, `handle_drag`, `handle_mouse_up` and `handle_scroll`
+path a live window uses. Orbit rotates the eye offset around the target; pan
+moves eye and target together in the camera plane; zoom clamps the distance to
+2.5–40 m. The default eye `(6, 4, 8)` and target `(0, 0.50, 0)` are unchanged,
+so the existing pixel probes and base crop still pass.
+
+Orbit `80,-20` moves the eye to `8.90, 2.99, 5.19`; pan `40,10` moves the
+target to `0.18, 0.45, -0.11`; scroll `120` shortens the distance to `9.96 m`.
+Each Scene crop differs from the base. The same orbit in Game reports the
+unchanged `camera=6.00, 4.00, 8.00` and its Game crop is byte-identical to the
+base Game crop, proving Scene camera input cannot move the tag-6 Game Camera.
+
+The first build of this slice failed with `in camera_test: unknown function
+handle_scroll`; the test hook was calling a wrapper that had not been written.
+Adding the wrapper and routing `event_scroll` through it fixed the build. No
+runtime, Metal or GUI-host change was needed.
+
+Installed as 0.7.0:
+
+```
+$ sh examples/scene-gui/install-macos.sh
+Installed /Applications/Nova Engine Studio.app
+Version 0.7.0 · dev.nova.engine.studio · ad-hoc signed
+
+$ codesign --verify --strict "/Applications/Nova Engine Studio.app"   # clean
+$ plutil -extract CFBundleShortVersionString raw .../Info.plist
+0.7.0
+```
+
+All eight installed captures are byte-identical to the local acceptance
+captures:
+
+```
+4a5f6ef957f3e2207ddc8c1e0978583c35f4fe8b6b94a01cd30be41cb14460a1  engine-scene.png
+814d46708ae5c9c233c7ec363bb781a7830d88cc4290d602444cee4659434bd4  engine-game.png
+7fd488ae1a7d4f21b90e6f879c1b92b59566efe774fd681ac2c442d74de34475  engine-edit.png
+28177c32693e3cbffb0d824171a973914ab916e4aebb0f8ec6e003a1283ba21c  engine-layout.png
+13cfc83b657a26b1ca732339decaf6c7a5b6996ab0104c8df54ae9177b54b564  engine-toolbar.png
+68bf3c03fbb1c6b4ea672339b110c7deb15e38d7be667a23b260a50058ef22ed  engine-add.png
+56f3a733bd1848e7263f9b7a5da40dd981a16d61c7365fe0d206f20d695d0f88  engine-camera.png
+76448254ee37a7802d9c8752618da49394888e8b213fadaee2ef4089a8a55c7b  engine-camera-zoom.png
+```
+
 ## Not measured
 
 - No frame-time breakdown, allocation count or throughput profile inside the
@@ -649,11 +708,9 @@ c0a5f44586eac6d4c8292b58cdb896b29e92200e0e5efa23c20129fb0a7cbf9d  engine-layout.
 - Transform tools are drag-only: no gizmo handles, local/world toggle,
   multi-select or grouped undo. Menus are minimal; no keyboard navigation or
   context menus.
-- Scene uses a fixed editor camera. Game uses the tag-6 Game Camera entity's
-  World transform, but neither view polls the Metal lab's orbit/pan/zoom slots
-  yet. The shell test drives toolbar/menu rectangles, layout splitter/chip
-  handlers, inspector text and drag coordinates, not synthesized AppKit mouse
-  events.
+- Scene camera controls are mouse-only; there is no focus-selected, preset,
+  keyboard fly or persisted camera. Game still has no runtime input. The shell
+  test drives the same handlers, not AppKit's window server.
 - Panel layout persists sizes and visibility for three fixed regions; there is
   no free docking, floating/reordered panel or multi-window editor.
 - The toolbar is drawn by nova-gui and hit-tested in Nova, not a native

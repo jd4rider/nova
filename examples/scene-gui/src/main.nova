@@ -23,7 +23,7 @@ fn window_h() -> Int {
 }
 
 fn app_version() -> String {
-    return "0.6.0"
+    return "0.7.0"
 }
 
 fn menu_h() -> Int {
@@ -251,6 +251,23 @@ struct View3D {
     vp: Mat4,
 }
 
+// Editor-only Scene camera. Eye and target are Q16.16 metres. The Game tab
+// still renders through the tag-6 World entity; changing this camera never
+// touches the World or the Game Camera.
+struct CameraState {
+    eye: Vec3,
+    target: Vec3,
+    fov: Int,
+}
+
+fn default_camera() -> CameraState {
+    return CameraState {
+        eye: vec3(fx(6), fx(4), fx(8)),
+        target: vec3(0, fx_ratio(1, 2), 0),
+        fov: radians(42),
+    }
+}
+
 // Editor-only command history. The runtime World never stores undo state;
 // every command replays through the same world_set_* mutators.
 struct EditValues {
@@ -292,6 +309,10 @@ struct ToolState {
     drag_entity: EntityId,
     drag_field: Int,
     drag_before: EditValues,
+    camera: CameraState,
+    cam_drag: Int,
+    cam_x: Int,
+    cam_y: Int,
 }
 
 fn default_tool() -> ToolState {
@@ -306,6 +327,10 @@ fn default_tool() -> ToolState {
         drag_entity: entity_none(),
         drag_field: 0 - 1,
         drag_before: EditValues { w: 0, x: 0, y: 0, z: 0 },
+        camera: default_camera(),
+        cam_drag: 0,
+        cam_x: 0,
+        cam_y: 0,
     }
 }
 
@@ -746,6 +771,150 @@ fn tool_toggle_grid(app: App) -> App {
         notice = "Grid shown · 1 m"
     }
     return app_set_notice(app_set_tool(app, tool), notice)
+}
+
+// ---------- scene camera ----------
+
+fn camera_clamp_offset(offset: Vec3) -> Vec3 {
+    let distance = v3_len(offset)
+    if distance == 0 {
+        return offset
+    }
+    let max_y = fx_mul(distance, fx_ratio(98, 100))
+    let min_y = 0 - fx_mul(distance, fx_ratio(1, 10))
+    let y = fx_clamp(offset.y, min_y, max_y)
+    if y == offset.y {
+        return offset
+    }
+    let horizontal = fx_sqrt(fx_max(0, fx_mul(distance, distance) - fx_mul(y, y)))
+    let old_horizontal = fx_sqrt(fx_max(0, fx_mul(offset.x, offset.x) + fx_mul(offset.z, offset.z)))
+    if old_horizontal == 0 {
+        return vec3(0, y, 0)
+    }
+    let scale = fx_div(horizontal, old_horizontal)
+    return vec3(fx_mul(offset.x, scale), y, fx_mul(offset.z, scale))
+}
+
+// Orbit around the target with the same feel as the Metal lab, but keep the
+// exact default eye/target pair so existing Studio captures do not move.
+fn camera_orbit(camera: CameraState, dx: Int, dy: Int) -> CameraState {
+    let turn = fx_ratio(5, 1000)
+    let offset = v3_sub(camera.eye, camera.target)
+    let yaw = quat_axis_angle(vec3(0, fx(1), 0), fx_mul(fx(dx), turn))
+    let yawed = quat_rotate_vec3(yaw, offset)
+    let forward = v3_normalize(v3_neg(yawed))
+    let right = v3_normalize(v3_cross(forward, vec3(0, fx(1), 0)))
+    let pitch = quat_axis_angle(right, fx_mul(fx(0 - dy), turn))
+    let rotated = camera_clamp_offset(quat_rotate_vec3(pitch, yawed))
+    return CameraState { eye: v3_add(camera.target, rotated), target: camera.target, fov: camera.fov }
+}
+
+// Pan moves eye and target together in the camera's screen plane. Scaling by
+// distance keeps the same drag speed close up and far away.
+fn camera_pan(camera: CameraState, dx: Int, dy: Int) -> CameraState {
+    let offset = v3_sub(camera.eye, camera.target)
+    let distance = v3_len(offset)
+    let forward = v3_normalize(v3_neg(offset))
+    let right = v3_normalize(v3_cross(forward, vec3(0, fx(1), 0)))
+    let up = v3_cross(right, forward)
+    let per_pixel = fx_mul(distance, fx_ratio(1, 2000))
+    let move = v3_sub(v3_scale(right, fx_mul(fx(dx), per_pixel)), v3_scale(up, fx_mul(fx(dy), per_pixel)))
+    return CameraState { eye: v3_add(camera.eye, move), target: v3_add(camera.target, move), fov: camera.fov }
+}
+
+fn camera_zoom(camera: CameraState, scroll: Int) -> CameraState {
+    if scroll == 0 {
+        return camera
+    }
+    let offset = v3_sub(camera.eye, camera.target)
+    let distance = v3_len(offset)
+    let factor = fx_clamp(fx(1) - fx_ratio(scroll, 2000), fx_ratio(1, 4), fx(2))
+    let next_distance = fx_clamp(fx_mul(distance, factor), fx_ratio(5, 2), fx(40))
+    let direction = v3_normalize(offset)
+    return CameraState {
+        eye: v3_add(camera.target, v3_scale(direction, next_distance)),
+        target: camera.target,
+        fov: camera.fov,
+    }
+}
+
+fn camera_drag_mode(tab: Int, button: Int, mods: Int) -> Int {
+    if tab != 0 {
+        return 0
+    }
+    let shift = (mods / 2) % 2 == 1
+    let option = (mods / 4) % 2 == 1
+    if button == 2 {
+        if shift {
+            return 2
+        }
+        return 1
+    }
+    if option {
+        if shift {
+            return 2
+        }
+        return 1
+    }
+    return 0
+}
+
+fn camera_begin_drag(app: App, x: Int, y: Int, button: Int, mods: Int) -> App {
+    let mode = camera_drag_mode(app.tab, button, mods)
+    if mode == 0 {
+        return app
+    }
+    var tool = app.tool
+    tool.cam_drag = mode
+    tool.cam_x = x
+    tool.cam_y = y
+    var notice = "Orbit camera · drag · scroll zooms"
+    if mode == 2 {
+        notice = "Pan camera · drag · scroll zooms"
+    }
+    return app_set_notice(app_set_tool(app, tool), notice)
+}
+
+fn camera_update_drag(app: App, x: Int, y: Int) -> App {
+    if app.tool.cam_drag == 0 {
+        return app
+    }
+    let dx = x - app.tool.cam_x
+    let dy = y - app.tool.cam_y
+    if dx == 0 && dy == 0 {
+        return app
+    }
+    var tool = app.tool
+    if tool.cam_drag == 2 {
+        tool.camera = camera_pan(tool.camera, dx, dy)
+    } else {
+        tool.camera = camera_orbit(tool.camera, dx, dy)
+    }
+    tool.cam_x = x
+    tool.cam_y = y
+    return app_set_tool(app, tool)
+}
+
+fn camera_finish_drag(app: App) -> App {
+    if app.tool.cam_drag == 0 {
+        return app
+    }
+    var tool = app.tool
+    tool.cam_drag = 0
+    return app_set_notice(app_set_tool(app, tool), "Scene camera · RMB orbit · ⇧RMB pan · scroll zoom")
+}
+
+fn camera_scroll(app: App, x: Int, y: Int, delta: Int) -> App {
+    if app.tab != 0 || delta == 0 {
+        return app
+    }
+    if x < centre_x(app.panels) || x >= centre_x(app.panels) + centre_w(app.panels) || y < view_y() || y >= view_y() + view_h(app.panels) {
+        return app
+    }
+    var tool = app.tool
+    tool.camera = camera_zoom(tool.camera, delta)
+    let distance = v3_len(v3_sub(tool.camera.eye, tool.camera.target))
+    return app_set_notice(app_set_tool(app, tool), "Scene camera · ${fixed2(distance)} m")
 }
 
 fn tool_begin_drag(app: App, x: Int, y: Int) -> App {
@@ -1474,13 +1643,10 @@ fn tag_colour(tag: Int, theme: gui.Theme) -> Int {
 
 // ---------- projection ----------
 
-fn make_view(x: Int, y: Int, w: Int, h: Int) -> View3D {
-    let eye = vec3(fx(6), fx(4), fx(8))
-    let target = vec3(0, fx_ratio(1, 2), 0)
+fn make_view(camera: CameraState, x: Int, y: Int, w: Int, h: Int) -> View3D {
     let up = vec3(0, 65536, 0)
-    let view = mat4_look_at(eye, target, up)
-    let fov = fx_mul(fx(42), fx_div(fx_pi(), fx(180)))
-    let projection = mat4_perspective(fov, fx_ratio(w, h), fx_ratio(1, 10), fx(60))
+    let view = mat4_look_at(camera.eye, camera.target, up)
+    let projection = mat4_perspective(camera.fov, fx_ratio(w, h), fx_ratio(1, 10), fx(60))
     return View3D { x: x, y: y, w: w, h: h, vp: mat4_mul(projection, view) }
 }
 
@@ -1490,7 +1656,7 @@ fn make_view(x: Int, y: Int, w: Int, h: Int) -> View3D {
 fn make_game_view(app: App, x: Int, y: Int, w: Int, h: Int) -> View3D {
     let camera = find_tag(app.world, 6)
     if entity_is_none(camera) || !world_has(app.world, camera) {
-        return make_view(x, y, w, h)
+        return make_view(app.tool.camera, x, y, w, h)
     }
     let eye = world_position(app.world, camera)
     let rotation = world_rotation(app.world, camera)
@@ -1507,7 +1673,7 @@ fn view_for(app: App, x: Int, y: Int, w: Int, h: Int) -> View3D {
     if app.tab == 1 {
         return make_game_view(app, x, y, w, h)
     }
-    return make_view(x, y, w, h)
+    return make_view(app.tool.camera, x, y, w, h)
 }
 
 fn project(view: View3D, point: Vec3) -> Vec3 {
@@ -2212,6 +2378,8 @@ fn draw_viewport(app: App, theme: gui.Theme) {
     gui.text(x + w - 14 - gui.text_width(projection, 10), y + 12, projection, 10, theme.faint)
     if !editor {
         gui.text(x + 14, y + h - 24, "Game view · Game Camera · editor overlays hidden", 10, theme.faint)
+    } else {
+        gui.text(x + 14, y + h - 24, "RMB orbit · ⇧RMB pan · scroll zoom", 10, theme.faint)
     }
 }
 
@@ -2785,7 +2953,40 @@ fn drag_test(app: App, spec: String) -> App {
     return tool_finish_drag(next)
 }
 
+// Test hook for the real right-button camera path: right-drag orbits,
+// shift-right-drag pans, and scroll zooms. It starts at the viewport centre
+// and uses the same handlers as a live window.
+fn camera_test(app: App, spec: String) -> App {
+    let parts = spec.split(":")
+    if parts.len() != 2 {
+        return app
+    }
+    let kind = parts[0].trim()
+    let args = parts[1].split(",")
+    let x = centre_x(app.panels) + centre_w(app.panels) / 2
+    let y = view_y() + view_h(app.panels) / 2
+    if kind == "zoom" && args.len() >= 1 {
+        return handle_scroll(app, x, y, parse_int(args[0]))
+    }
+    if args.len() < 2 {
+        return app
+    }
+    let dx = parse_int(args[0])
+    let dy = parse_int(args[1])
+    var mods = 0
+    if kind == "pan" {
+        mods = 2
+    }
+    var next = handle_mouse_down_button(app, x, y, 2, mods)
+    next = handle_drag(next, x + dx, y + dy)
+    return handle_mouse_up(next, x + dx, y + dy)
+}
+
 fn handle_mouse_down(app: App, x: Int, y: Int) -> App {
+    return handle_mouse_down_button(app, x, y, 1, 0)
+}
+
+fn handle_mouse_down_button(app: App, x: Int, y: Int, button: Int, mods: Int) -> App {
     var app = app
     if app.edit_field >= 0 && !edit_hit(app, x, y) {
         app = edit_commit(app)
@@ -2892,6 +3093,10 @@ fn handle_mouse_down(app: App, x: Int, y: Int) -> App {
         }
     }
     if x >= centre_x(app.panels) && x < centre_x(app.panels) + centre_w(app.panels) && y >= view_y() && y < view_y() + view_h(app.panels) {
+        let camera_mode = camera_drag_mode(app.tab, button, mods)
+        if camera_mode > 0 {
+            return camera_begin_drag(app, x, y, button, mods)
+        }
         let picked = scene_pick(app, x, y)
         if app.tool.mode == 0 {
             return app_set_selected(app, picked)
@@ -2902,6 +3107,30 @@ fn handle_mouse_down(app: App, x: Int, y: Int) -> App {
         return tool_begin_drag(app, x, y)
     }
     return app
+}
+
+fn handle_drag(app: App, x: Int, y: Int) -> App {
+    if app.tool.cam_drag != 0 {
+        return camera_update_drag(app, x, y)
+    }
+    if app.tool.drag {
+        return tool_update_drag(app, x, y)
+    }
+    return panel_drag_update(app, x, y)
+}
+
+fn handle_mouse_up(app: App, x: Int, y: Int) -> App {
+    if app.tool.cam_drag != 0 {
+        return camera_finish_drag(app)
+    }
+    if app.tool.drag {
+        return tool_finish_drag(app)
+    }
+    return panel_drag_finish(app)
+}
+
+fn handle_scroll(app: App, x: Int, y: Int, delta: Int) -> App {
+    return camera_scroll(app, x, y, delta)
 }
 
 fn handle(app: App, event: gui.Event) -> App {
@@ -2915,19 +3144,16 @@ fn handle(app: App, event: gui.Event) -> App {
         return app_quit(app)
     }
     if event.kind == gui.event_mouse_down() {
-        return handle_mouse_down(app, event.x, event.y)
+        return handle_mouse_down_button(app, event.x, event.y, event.code, event.mods)
     }
     if event.kind == gui.event_drag() {
-        if app.tool.drag {
-            return tool_update_drag(app, event.x, event.y)
-        }
-        return panel_drag_update(app, event.x, event.y)
+        return handle_drag(app, event.x, event.y)
     }
     if event.kind == gui.event_mouse_up() {
-        if app.tool.drag {
-            return tool_finish_drag(app)
-        }
-        return panel_drag_finish(app)
+        return handle_mouse_up(app, event.x, event.y)
+    }
+    if event.kind == gui.event_scroll() {
+        return handle_scroll(app, event.x, event.y, event.delta)
     }
     return app
 }
@@ -2996,6 +3222,10 @@ fn main() {
         if drag_spec.len() > 0 {
             app = drag_test(app, drag_spec)
         }
+        let camera_spec = gui.env("NOVA_SCENE_CAMERA")
+        if camera_spec.len() > 0 {
+            app = camera_test(app, camera_spec)
+        }
         if gui.env("NOVA_SCENE_UNDO_AFTER") == "1" {
             app = handle_mouse_down(app, undo_x(app.panels) + 10, history_button_y() + 8)
         }
@@ -3016,7 +3246,10 @@ fn main() {
             let position = world_position(app.world, app.selected)
             let rotation = world_rotation(app.world, app.selected)
             let scale = world_scale(app.world, app.selected)
-            println("scene-gui: shell=captured saved=${saved} entities=${world_live_count(app.world)} selected=${app.selected.index}:${app.selected.generation} tab=${tab_label} viewport=${viewport} drawer=console history=${app.history_at}/${app.history.len()} position=${fixed2(position.x)}, ${fixed2(position.y)}, ${fixed2(position.z)} rotation=${fixed2(rotation.w)}, ${fixed2(rotation.x)}, ${fixed2(rotation.y)}, ${fixed2(rotation.z)} scale=${fixed2(scale.x)}, ${fixed2(scale.y)}, ${fixed2(scale.z)} layout=${app.panels.left},${app.panels.right},${app.panels.drawer} h=${bool_value(app.panels.hierarchy)} i=${bool_value(app.panels.inspector)} d=${bool_value(app.panels.drawer_open)} tool=${tool_mode_name(app.tool.mode)} snap=${bool_value(app.tool.snap)} grid=${bool_value(app.tool.grid)} playing=${bool_value(app.playing)} step=${world_step(app.world)} menu=${app.tool.menu}")
+            let camera_eye = app.tool.camera.eye
+            let camera_target = app.tool.camera.target
+            let camera_distance = v3_len(v3_sub(camera_eye, camera_target))
+            println("scene-gui: shell=captured saved=${saved} entities=${world_live_count(app.world)} selected=${app.selected.index}:${app.selected.generation} tab=${tab_label} viewport=${viewport} drawer=console history=${app.history_at}/${app.history.len()} position=${fixed2(position.x)}, ${fixed2(position.y)}, ${fixed2(position.z)} rotation=${fixed2(rotation.w)}, ${fixed2(rotation.x)}, ${fixed2(rotation.y)}, ${fixed2(rotation.z)} scale=${fixed2(scale.x)}, ${fixed2(scale.y)}, ${fixed2(scale.z)} camera=${fixed2(camera_eye.x)}, ${fixed2(camera_eye.y)}, ${fixed2(camera_eye.z)} target=${fixed2(camera_target.x)}, ${fixed2(camera_target.y)}, ${fixed2(camera_target.z)} camera_distance=${fixed2(camera_distance)} layout=${app.panels.left},${app.panels.right},${app.panels.drawer} h=${bool_value(app.panels.hierarchy)} i=${bool_value(app.panels.inspector)} d=${bool_value(app.panels.drawer_open)} tool=${tool_mode_name(app.tool.mode)} snap=${bool_value(app.tool.snap)} grid=${bool_value(app.tool.grid)} playing=${bool_value(app.playing)} step=${world_step(app.world)} menu=${app.tool.menu}")
             if app.metal != 0 {
                 metal_shutdown(app.metal)
             }

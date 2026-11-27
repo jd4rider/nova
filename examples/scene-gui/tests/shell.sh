@@ -41,12 +41,17 @@ SNAP=target/editor-snap.png
 GRID_OFF=target/editor-grid-off.png
 MENU_CUBE=target/editor-menu-cube.png
 MENU_WINDOW=target/editor-menu-window.png
+CAM_ORBIT=target/editor-camera-orbit.png
+CAM_PAN=target/editor-camera-pan.png
+CAM_ZOOM=target/editor-camera-zoom.png
+CAM_GAME=target/editor-camera-game.png
 LAYOUT_CHANGE=target/engine-layout-change.png
 LAYOUT_RESTORED=target/engine-layout-restored.png
 TRACE=target/shell-traffic.log
 LAYOUT=target/layout.txt
 LAYOUT_PERSIST=target/layout-persist.txt
-rm -f "$TRACE" "$LAYOUT" "$LAYOUT_PERSIST"
+CAM_LAYOUT=target/camera-layout.txt
+rm -f "$TRACE" "$LAYOUT" "$LAYOUT_PERSIST" "$CAM_LAYOUT"
 OUT=$(NOVA_SCENE_LAYOUT="$LAYOUT" NOVA_GUI_TRACE="$TRACE" NOVA_SCENE_SHOT="$SHOT" ./target/nova/scene-gui)
 echo "$OUT"
 echo "$OUT" | grep -q "shell=captured saved=true entities=7 selected=3:1 tab=scene viewport=metal"
@@ -226,6 +231,34 @@ crop_view "$GRID_OFF" target/grid-off-view
 if cmp -s target/base-view.bmp target/grid-off-view.bmp; then echo "shell: Grid toggle did not change the viewport" >&2; exit 1; fi
 echo "shell: toolbar, menu, drag and grid checks passed"
 
+# Scene camera controls use the right-button path. Orbit and pan synthesize a
+# press, drag and release through the same handlers as a live window; zoom uses
+# the scroll handler. Game must ignore all three because it renders through its
+# own World camera entity.
+ORBIT_OUT=$(NOVA_SCENE_LAYOUT="$CAM_LAYOUT" NOVA_SCENE_CAMERA="orbit:80,-20" NOVA_SCENE_SHOT="$CAM_ORBIT" ./target/nova/scene-gui)
+echo "$ORBIT_OUT"
+echo "$ORBIT_OUT" | grep -q "camera=8.90, 2.99, 5.19"
+PAN_OUT=$(NOVA_SCENE_LAYOUT="$CAM_LAYOUT" NOVA_SCENE_CAMERA="pan:40,10" NOVA_SCENE_SHOT="$CAM_PAN" ./target/nova/scene-gui)
+echo "$PAN_OUT"
+echo "$PAN_OUT" | grep -q "target=0.18, 0.45, -0.11"
+ZOOM_OUT=$(NOVA_SCENE_LAYOUT="$CAM_LAYOUT" NOVA_SCENE_CAMERA="zoom:120" NOVA_SCENE_SHOT="$CAM_ZOOM" ./target/nova/scene-gui)
+echo "$ZOOM_OUT"
+echo "$ZOOM_OUT" | grep -q "camera_distance=9.96"
+
+crop_view "$CAM_ORBIT" target/camera-orbit-view
+crop_view "$CAM_PAN" target/camera-pan-view
+crop_view "$CAM_ZOOM" target/camera-zoom-view
+if cmp -s target/base-view.bmp target/camera-orbit-view.bmp; then echo "shell: orbit did not change the Scene view" >&2; exit 1; fi
+if cmp -s target/base-view.bmp target/camera-pan-view.bmp; then echo "shell: pan did not change the Scene view" >&2; exit 1; fi
+if cmp -s target/base-view.bmp target/camera-zoom-view.bmp; then echo "shell: zoom did not change the Scene view" >&2; exit 1; fi
+
+GAME_CAMERA_OUT=$(NOVA_SCENE_LAYOUT="$CAM_LAYOUT" NOVA_SCENE_CLICK=game NOVA_SCENE_CAMERA="orbit:80,-20" NOVA_SCENE_SHOT="$CAM_GAME" ./target/nova/scene-gui)
+echo "$GAME_CAMERA_OUT"
+echo "$GAME_CAMERA_OUT" | grep -q "camera=6.00, 4.00, 8.00"
+crop_view "$CAM_GAME" target/camera-game-view
+cmp -s target/game-view.bmp target/camera-game-view.bmp || { echo "shell: Scene camera input changed the Game view" >&2; exit 1; }
+echo "shell: Scene orbit/pan/zoom changed framing; Game ignored camera input"
+
 # Layout changes use the real splitter hit test and visibility chips, then a
 # second process loads the same file. The full capture must match, proving the
 # panels, sizes and World data all survived the restart.
@@ -248,4 +281,4 @@ LIVE=$(NOVA_SCENE_LAYOUT="$LAYOUT" NOVA_SCENE_FRAMES=5 ./target/nova/scene-gui)
 echo "$LIVE"
 echo "$LIVE" | grep -q "live=stopped frames=5 viewport=metal"
 
-echo "shell: 13 panel checks, toolbar/menu/drag, Game camera and layout checks passed"
+echo "shell: 13 panel checks, toolbar/menu/drag, Scene camera, Game camera and layout checks passed"

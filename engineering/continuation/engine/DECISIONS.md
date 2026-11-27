@@ -136,11 +136,12 @@
   Every editor slice must be capturable as a PNG through Nova GUI for review.
 - Consequences: ENG-04 panels are designed against this layout before styling;
   if a feature cannot be wired to real state it is not shown yet.
-- Status note: Studio 0.6.0 implements this layout as a real shell over one
-  `World` value (ENG-04.002/ENG-04.003/ENG-04.004/ENG-04.006/ENG-11.003/
-  ENG-11.004). Editable transforms, undo/redo, persisted panel sizes/visibility,
-  working toolbar/menus and viewport drag tools are verified; free docking,
-  gizmos and editor camera controls remain open before ENG-04 is complete.
+- Status note: Studio 0.7.0 implements this layout as a real shell over one
+  `World` value (ENG-04.002/ENG-04.003/ENG-04.004/ENG-04.005/ENG-04.006/
+  ENG-11.003/ENG-11.004). Editable transforms, undo/redo, persisted panel
+  sizes/visibility, working toolbar/menus, viewport drag tools and Scene camera
+  orbit/pan/zoom are verified; free docking, gizmos and multi-select remain
+  open before ENG-04 is complete.
 
 ## ADR-ENG-010 — Studio composites an offscreen Metal frame
 - Status: accepted (ENG-11.003).
@@ -165,9 +166,9 @@
 - Consequences: GUI-only programs still link without Metal because the
   accessor is weak; the host remains one session; the draw list is capped at 64
   and the frame is read back synchronously. There is no GPU timing, MSAA,
-  shadow or multi-viewport support yet. Studio's Scene camera is fixed; Game
-  uses the tag-6 Game Camera entity. Scene orbit/pan/zoom still needs wiring
-  through GUI events before the viewport is called interactive.
+  shadow or multi-viewport support yet. Studio's Scene camera now orbits,
+  pans and zooms through GUI events; Game uses the tag-6 Game Camera entity
+  and ignores Scene camera input. Gizmo handles remain absent.
 
 ## ADR-ENG-011 — Inspector edits are editor commands over World setters
 - Status: accepted (ENG-04.003).
