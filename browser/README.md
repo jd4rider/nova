@@ -214,13 +214,14 @@ theme.tsv       optional role overrides, one key<TAB>#rrggbb per line
 Set `NOVA_BROWSER_NO_HISTORY=1` to keep a session out of history entirely; the
 file is then neither read nor written. Nothing is synced off the machine.
 
-Cmd+Shift+I imports bookmarks from every detected Chromium-family profile —
-Chrome, Chromium, Brave, Edge, Arc and Vivaldi all save the same
-`Bookmarks` JSON — and reports how many were added. The same import runs
-headlessly:
+Cmd+Shift+I imports from every detected Chromium-family profile — Chrome,
+Chromium, Brave, Edge, Arc and Vivaldi all save the same `Bookmarks` JSON and
+the same `History`/`Preferences` files — and reports what was added. The same
+import runs headlessly:
 
 ```sh
 browser/target/nova/nova-browser --import                 # detected Chrome profiles
+browser/target/nova/nova-browser --import path/to/Default  # one profile folder
 browser/target/nova/nova-browser --import path/to/Bookmarks
 browser/target/nova/nova-browser --import path/to/export.html
 ```
@@ -228,9 +229,25 @@ browser/target/nova/nova-browser --import path/to/export.html
 Both Chrome's JSON `Bookmarks` file and a Netscape bookmark export (Google
 Takeout, Chrome/Firefox/Safari "Export bookmarks") are understood. Only
 `http`/`https` entries are imported; `chrome://` and `javascript:` bookmarks are
-skipped. Import is idempotent, so running it twice adds nothing. Chrome's
-history lives in a SQLite database and is not imported; visits accumulate from
-the first launch of Nova Browser.
+skipped. Import is idempotent, so running it twice adds nothing.
+
+A profile folder also brings over the parts of Chrome that map onto Nova:
+
+- **History.** The newest 400 `http(s)` pages from Chrome's SQLite `History`
+  database become visits, so autocomplete starts with the sites you actually
+  use. The database is read through `sqlite3 -json` from an immutable snapshot,
+  so a running Chrome is neither blocked nor disturbed. A URL Nova already has
+  a visit for is skipped, which keeps a second import from duplicating rows.
+  Frequency is not transferred: each imported page counts once, and the store's
+  existing 400-visit bound still applies.
+- **Search engine.** The default provider in `Preferences` is applied when it is
+  Google, DuckDuckGo or Brave; any other engine leaves Nova's current choice
+  alone and is not reported as imported.
+- **Bookmarks.** Bookmark bar and Other bookmarks, as above.
+
+Not imported: Chrome's startup pages, homepage, extensions, passwords, cookies,
+site permissions, open tabs, download history or themes. Passwords in particular
+stay in Chrome's Keychain-backed store; Nova reads no credential database.
 
 ## Downloads
 

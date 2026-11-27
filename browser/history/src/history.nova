@@ -590,6 +590,79 @@ fn import_html(text: String) -> List<String> {
     return dedupe_bookmarks(out)
 }
 
+// ---------- Chrome profile import ----------
+
+// One visit per URL from `sqlite3 -json` output, which is an array of
+// {url, title} objects. Chrome's own order (newest first) is kept, duplicates
+// collapse to their first row and only http(s) pages become visits; the shell
+// skips pages the store already knows, so importing twice adds nothing.
+fn import_chrome_history(text: String, limit: Int) -> List<String> {
+    let doc = json.js_parse(text)
+    if doc.error.len() > 0 || doc.nodes.len() == 0 {
+        return []
+    }
+    let root = doc.nodes.len() - 1
+    if json.js_kind(doc, root) != 4 {
+        return []
+    }
+    var out: List<String> = []
+    var keys: List<String> = []
+    var i = 0
+    while i < json.js_len(doc, root) && out.len() < limit {
+        let row = json.js_at(doc, root, i)
+        let url = json.js_str(doc, json.js_get(doc, row, "url")).trim()
+        let k = key(url)
+        if allowed_url(url) && k.len() > 0 && !seen_key(keys, k) {
+            keys.push(k)
+            out.push(record("visit", url, json.js_str(doc, json.js_get(doc, row, "title")).trim()))
+        }
+        i = i + 1
+    }
+    return out
+}
+
+// Chrome's engine names are free text. Only an engine Nova can use comes back;
+// anything else leaves the reader's current choice alone instead of pretending
+// a Yahoo or Ecosia profile switched Nova over.
+fn chrome_search_engine(short_name: String, keyword: String) -> String {
+    let name = (short_name + " " + keyword).lower()
+    if name.contains("duckduckgo") {
+        return "duckduckgo"
+    }
+    if name.contains("brave") {
+        return "brave"
+    }
+    if name.contains("google") {
+        return "google"
+    }
+    return ""
+}
+
+// The search engine out of a Chrome `Preferences` file. Since Chrome 90 the
+// provider sits under default_search_provider_data.template_url_data; older
+// profiles nest it one level up, so both shapes are read.
+fn import_chrome_preferences(text: String) -> String {
+    let doc = json.js_parse(text)
+    if doc.error.len() > 0 || doc.nodes.len() == 0 {
+        return ""
+    }
+    let root = doc.nodes.len() - 1
+    var node = json.js_get(doc, root, "default_search_provider_data")
+    if node < 0 || json.js_kind(doc, node) != 5 {
+        node = json.js_get(doc, root, "default_search_provider")
+    }
+    if node < 0 || json.js_kind(doc, node) != 5 {
+        return ""
+    }
+    let template = json.js_get(doc, node, "template_url_data")
+    var source = node
+    if template >= 0 && json.js_kind(doc, template) == 5 {
+        source = template
+    }
+    return chrome_search_engine(json.js_str(doc, json.js_get(doc, source, "short_name")),
+                                json.js_str(doc, json.js_get(doc, source, "keyword")))
+}
+
 // ---------- settings, session and download text ----------
 
 // Decimal digits from a small text field. Stops at the first non-digit, so a

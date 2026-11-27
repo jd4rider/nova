@@ -3,7 +3,7 @@
 Updated: 2026-11-26
 Branch: `main`
 Last known good compiler checkpoint: `cfa00e3` (before browser work)
-Browser: **0.9.1 installed at `/Applications/Nova Browser.app`**
+Browser: **0.9.2 installed at `/Applications/Nova Browser.app`**
 Browser working tree: uncommitted; see `git status`
 Active gate: G0 WebKit; G1 WebCore not started
 Active task: **WB-04.002 — downloads** (0.7.5 persisted completed downloads;
@@ -279,6 +279,18 @@ Active task: **WB-04.002 — downloads** (0.7.5 persisted completed downloads;
   - The field border is now a one-point rounded ring drawn under the fill;
     `stroke_rect` has no radius, and its square outline was the box around the
     pill. The engine chip uses the same ring.
+
+- **0.9.2 — Chrome profile import: history and the search engine**
+  - `--import` and Cmd+Shift+I now take a whole Chromium profile, not just its
+    bookmarks: the newest 400 http(s) pages from Chrome's SQLite `History`
+    become visits (read through `sqlite3 -json` from an immutable snapshot, so
+    a running Chrome is undisturbed), and the default engine in `Preferences`
+    is applied when it is Google, DuckDuckGo or Brave.
+  - A second import adds nothing: pages Nova already has a visit for are
+    skipped, so autocomplete does not fill with duplicates. Frequency is not
+    transferred — each imported page counts once inside the existing 400-visit
+    bound. Startup pages, extensions, passwords, cookies and open tabs are not
+    imported and the docs say so.
 
 - **0.9.1 — window buttons back on the strip, whole chrome drags**
   - The three traffic lights had been placed from the window's height while

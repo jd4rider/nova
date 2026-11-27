@@ -155,6 +155,22 @@ struct Imported {
     message: String,
 }
 
+// Everything one Chromium profile can hand over. `search` is empty when the
+// profile's engine is not one Nova has.
+struct ProfileImport {
+    profiles: Int,
+    bookmarks: List<String>,
+    history: List<String>,
+    search: String,
+}
+
+struct ImportSummary {
+    store: Store,
+    bookmarks: Int,
+    history: Int,
+    search: String,
+}
+
 fn gruvbox_theme() -> Chrome {
     let theme = gui.gruvbox()
     return Chrome {
@@ -1794,26 +1810,92 @@ fn import_roots() -> List<String> {
     ]
 }
 
-fn chrome_profile_paths() -> List<String> {
-    var paths: List<String> = []
-    for root in import_roots() {
-        let base = gui.env("HOME") + "/Library/Application Support/" + root
-        if gui.is_dir(base) {
-            let listing = gui.list(base)
-            for line in listing.split("\n") {
-                if line.starts_with("d\t") {
-                    let parts = line.split("\t")
-                    if parts.len() > 1 {
-                        let candidate = base + "/" + parts[1] + "/Bookmarks"
-                        if gui.exists(candidate) {
-                            paths.push(candidate)
-                        }
-                    }
+// A Chromium profile directory holds at least one of the files an import can
+// use, which is how "Default", "Profile 1" and the like are told apart from
+// cache and extension folders.
+fn is_profile_dir(dir: String) -> Bool {
+    return gui.exists(dir + "/Bookmarks") || gui.exists(dir + "/History") || gui.exists(dir + "/Preferences")
+}
+
+// The profile folders under one browser's user-data root. Arc keeps them one
+// level deeper, under "User Data", which is why the root itself is listed.
+fn profile_dirs_in(base: String) -> List<String> {
+    var dirs: List<String> = []
+    if !gui.is_dir(base) {
+        return dirs
+    }
+    let listing = gui.list(base)
+    for line in listing.split("\n") {
+        if line.starts_with("d\t") {
+            let parts = line.split("\t")
+            if parts.len() > 1 {
+                let dir = base + "/" + parts[1]
+                if is_profile_dir(dir) {
+                    dirs.push(dir)
                 }
             }
         }
     }
-    return paths
+    return dirs
+}
+
+fn chrome_profile_dirs() -> List<String> {
+    var dirs: List<String> = []
+    for root in import_roots() {
+        let base = gui.env("HOME") + "/Library/Application Support/" + root
+        if gui.is_dir(base) {
+            for dir in profile_dirs_in(base) {
+                dirs.push(dir)
+            }
+        }
+    }
+    return dirs
+}
+
+// Chrome keeps history in SQLite. `sqlite3 -json` hands over URLs and titles
+// without a bespoke SQLite reader; `immutable=1` opens a snapshot, so a running
+// Chrome neither blocks the read nor fails it with a lock. If sqlite3 is not on
+// PATH the command fails and no history is imported -- the bookmarks and the
+// search engine still are.
+fn import_history(path: String) -> List<String> {
+    let query = "select url, coalesce(title, '') from urls where url like 'http%' order by last_visit_time desc limit 400"
+    let command = "sqlite3 -readonly -json 'file:" + path + "?immutable=1' \"" + query + "\""
+    let dump = gui.run(command, "/")
+    if gui.exit_status() != 0 {
+        return []
+    }
+    return library.import_chrome_history(dump, 400)
+}
+
+fn import_profile(dir: String) -> ProfileImport {
+    var marks: List<String> = []
+    if gui.exists(dir + "/Bookmarks") {
+        marks = import_file(dir + "/Bookmarks")
+    }
+    var history: List<String> = []
+    if gui.exists(dir + "/History") {
+        history = import_history(dir + "/History")
+    }
+    var search = ""
+    if gui.exists(dir + "/Preferences") {
+        search = library.import_chrome_preferences(gui.read(dir + "/Preferences"))
+    }
+    return ProfileImport { profiles: 1, bookmarks: marks, history: history, search: search }
+}
+
+fn empty_profile_import() -> ProfileImport {
+    var bookmarks: List<String> = []
+    var history: List<String> = []
+    return ProfileImport { profiles: 0, bookmarks: bookmarks, history: history, search: "" }
+}
+
+fn profile_import_merge(first: ProfileImport, more: ProfileImport) -> ProfileImport {
+    return ProfileImport {
+        profiles: first.profiles + more.profiles,
+        bookmarks: library.merge(first.bookmarks, more.bookmarks),
+        history: library.merge(first.history, more.history),
+        search: if first.search.len() > 0 { first.search } else { more.search },
+    }
 }
 
 fn import_file(path: String) -> List<String> {
@@ -1870,19 +1952,71 @@ fn apply_import(store: Store, found: List<String>) -> Store {
     return next
 }
 
+// Adds the imported bookmarks, one visit per history page Nova does not already
+// know, and the search engine. Visits are not added twice, so a second run is a
+// no-op, and a page already opened in Nova keeps its own title and count.
+fn apply_profile_import(store: Store, found: ProfileImport) -> ImportSummary {
+    var next = store
+    let before = library.bookmark_count(next.bookmarks)
+    next = apply_import(next, found.bookmarks)
+    let added_marks = library.bookmark_count(next.bookmarks) - before
+    var added_history = 0
+    if next.history_path.len() > 0 {
+        var i = 0
+        while i < found.history.len() {
+            let url = library.field(found.history[i], 1)
+            if library.visits_for(next.visits, library.key(url)) == 0 {
+                next.visits = library.add_visit(next.visits, url, library.field(found.history[i], 2))
+                next.dirty_visits = true
+                added_history = added_history + 1
+            }
+            i = i + 1
+        }
+    }
+    var applied = ""
+    if found.search.len() > 0 {
+        if found.search != next.search {
+            save_setting(next, "search", found.search)
+            next.search = found.search
+        }
+        applied = found.search
+    }
+    return ImportSummary { store: next, bookmarks: added_marks, history: added_history, search: applied }
+}
+
 fn import_from_google(store: Store) -> Imported {
-    let paths = chrome_profile_paths()
-    if paths.len() == 0 {
+    let dirs = chrome_profile_dirs()
+    if dirs.len() == 0 {
         return Imported { store: store, message: "No Google Chrome profile found" }
     }
-    let found = import_files(paths)
-    let before = library.bookmark_count(store.bookmarks)
-    let next = apply_import(store, found)
-    let added = library.bookmark_count(next.bookmarks) - before
-    if added == 0 {
-        return Imported { store: next, message: "Bookmarks already up to date" }
+    var found = empty_profile_import()
+    for dir in dirs {
+        found = profile_import_merge(found, import_profile(dir))
     }
-    return Imported { store: next, message: "Imported ${added} bookmarks" }
+    let summary = apply_profile_import(store, found)
+    if summary.bookmarks == 0 && summary.history == 0 && summary.search.len() == 0 {
+        return Imported { store: summary.store, message: "Bookmarks and history already up to date" }
+    }
+    var parts: List<String> = []
+    if summary.bookmarks > 0 {
+        parts.push("${summary.bookmarks} bookmarks")
+    }
+    if summary.history > 0 {
+        parts.push("${summary.history} history pages")
+    }
+    if summary.search.len() > 0 {
+        parts.push("search " + summary.search)
+    }
+    var text = ""
+    var i = 0
+    while i < parts.len() {
+        if i > 0 {
+            text = text + " · "
+        }
+        text = text + parts[i]
+        i = i + 1
+    }
+    return Imported { store: summary.store, message: "Imported " + text }
 }
 
 // ---------- drawing ----------
@@ -4644,21 +4778,38 @@ fn auto_close(session: Session, theme: Chrome, address: Address, store: Store) {
     println("browser: state=${state_word(final_state)} title=${title} snapshot=${saved} ui=${ui_saved} tabs=${session.tabs.len()} layout=${layout_word}")
 }
 
+// `--import` with no path scans every Chromium-family profile Nova knows how to
+// find. A path may be a profile folder (bookmarks, history, preferences), a
+// user-data root holding several profiles, or a single bookmarks file/export.
 fn run_cli_import(argument: String) -> Bool {
-    var paths: List<String> = []
-    if argument.len() > 0 {
-        paths.push(argument)
+    var profiles: List<String> = []
+    var files: List<String> = []
+    if argument.len() == 0 {
+        profiles = chrome_profile_dirs()
+    } else if gui.is_dir(argument) {
+        if is_profile_dir(argument) {
+            profiles.push(argument)
+        } else {
+            let nested = profile_dirs_in(argument)
+            if nested.len() > 0 {
+                profiles = nested
+            } else {
+                files.push(argument)
+            }
+        }
     } else {
-        paths = chrome_profile_paths()
+        files.push(argument)
     }
     let store = load_store()
-    let found = import_files(paths)
-    let before = library.bookmark_count(store.bookmarks)
-    let next = apply_import(store, found)
-    let after = library.bookmark_count(next.bookmarks)
-    let saved = save_store(next)
-    println("import: files=${paths.len()} found=${found.len()} new=${after - before} bookmarks=${after} path=${saved.bookmarks_path}")
-    return after > 0
+    var found = empty_profile_import()
+    for dir in profiles {
+        found = profile_import_merge(found, import_profile(dir))
+    }
+    found.bookmarks = library.merge(found.bookmarks, import_files(files))
+    let summary = apply_profile_import(store, found)
+    let saved = save_store(summary.store)
+    println("import: files=${profiles.len() + files.len()} found=${found.bookmarks.len()} new=${summary.bookmarks} bookmarks=${library.bookmark_count(saved.bookmarks)} history=${summary.history} search=${summary.search} path=${saved.bookmarks_path}")
+    return summary.bookmarks > 0 || summary.history > 0
 }
 
 fn mark_active_url(session: Session, url: String) -> Session {

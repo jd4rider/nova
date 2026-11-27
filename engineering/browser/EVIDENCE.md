@@ -1036,6 +1036,39 @@ presses ask for a window move and which keep their click. A human dragging the
 window, and the buttons in real pixels, are not evidenced — AppKit draws them
 above the Nova view, so framebuffer snapshots still cannot show them.
 
+## 0.9.2 — Chrome profile import: history and search
+
+The import now reads a whole profile folder instead of only its `Bookmarks`
+file. The format is not assumed: this machine's Chrome store was inspected
+read-only (key presence and table schema only, no page contents) and
+`Preferences` contains `default_search_provider_data`, while `History` has
+`urls(url, title, visit_count, typed_count, last_visit_time, hidden)` filled by
+Chrome itself. The fixture in `browser/tests/history.sh` uses that schema.
+
+History is read with `sqlite3 -json 'file:<profile>/History?immutable=1'`, so a
+running Chrome is not blocked and its locks are not a failure, and the newest
+400 `http(s)` rows become one visit each. The search engine is applied only when
+`short_name`/`keyword` maps to Google, DuckDuckGo or Brave.
+
+Evidence from `browser/tests/history.sh` (exit 0):
+
+- the library suite prints `failures=0`, including `history import count`,
+  `history skips chrome scheme`, `history import limit`, `chrome search
+  duckduckgo`, `chrome search older shape` and `chrome search unknown engine`;
+- importing the fixture profile prints `import: files=1 found=2 new=2
+  bookmarks=2 history=2 search=duckduckgo`;
+- `history.tsv` holds exactly two `visit` lines and `settings.tsv` holds
+  `search=duckduckgo`;
+- the second run prints `new=0 bookmarks=2 history=0 search=duckduckgo`, so the
+  import is idempotent for history as well as bookmarks.
+
+Not evidenced: an import from this user's real Chrome profile (only the format
+was checked above; no page data was read), Chrome running while the import
+happens on a real profile, and behaviour when `sqlite3` is absent (the code
+reports no history and still imports bookmarks and the engine). Visit frequency
+is intentionally not transferred, so a Chrome-frequent page does not outrank a
+Nova-frequent one.
+
 ## Not yet evidenced
 
 - hosted CI run of the browser address/lifecycle steps;

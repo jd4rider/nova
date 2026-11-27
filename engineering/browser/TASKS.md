@@ -68,7 +68,19 @@ Each task needs a reproducible acceptance check before it is marked done.
   per-profile discovery, Cmd+Shift+I, `--import`, idempotent temp-profile test.
   0.8.5 discovers Chromium, Brave, Edge, Arc and Vivaldi profiles too, since all
   save the same `Bookmarks` JSON; Firefox/Safari come through the HTML export.
-  No history import from any browser (SQLite/WebKit stores).
+  0.9.2 extends the same profile scan to history and the default search engine
+  under WB-04.007.
+- **WB-04.007 — Chrome profile import: history and settings.** DONE in 0.9.2.
+  `--import` with no path scans every detected Chromium profile; a path may be
+  one profile folder, a user-data root or a single bookmarks file. History
+  comes from SQLite through `sqlite3 -json` on an immutable snapshot (newest
+  400 http(s) pages, one visit each, pages Nova already knows are skipped), and
+  the `Preferences` default engine is applied only when it maps to Google,
+  DuckDuckGo or Brave. Evidence: `browser/tests/history.sh` imports a fixture
+  profile with a real SQLite `History` database and requires
+  `history=2 search=duckduckgo` plus two visit lines, then `history=0` on the
+  second run. Not imported: startup pages, homepage, passwords, cookies, open
+  tabs, extensions, download history, themes.
 - **WB-04.002 — Downloads.** DONE. `WKDownloadDelegate` registry, attachment/
   MIME response policy, Nova shelf with cancel/reveal, `--download`, loopback
   test writing a real file. 0.7.3 adds pause/resume: clicking a running row

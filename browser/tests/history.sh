@@ -23,7 +23,9 @@ grep -q '^failures=0$' /tmp/nova-browser-history.txt
 echo "--- google import (app CLI, temp profile) ---"
 (cd "$ROOT/browser" && "$TOOL" build >/dev/null)
 PROFILE=$(mktemp -d /tmp/nova-browser-profile.XXXXXX)
-trap 'rm -rf "$PROFILE"' EXIT
+CHROME=$(mktemp -d /tmp/nova-chrome-profile.XXXXXX)
+SETTINGS_PROFILE=$(mktemp -d /tmp/nova-browser-profile.XXXXXX)
+trap 'rm -rf "$PROFILE" "$CHROME" "$SETTINGS_PROFILE"' EXIT
 OUT=$(cd "$ROOT" && NOVA_BROWSER_PROFILE="$PROFILE" \
     "$ROOT/browser/target/nova/nova-browser" --import "$HERE/fixtures/chrome-bookmarks.json" 2>&1)
 echo "$OUT"
@@ -41,3 +43,35 @@ OUT3=$(cd "$ROOT" && NOVA_BROWSER_PROFILE="$PROFILE" \
     "$ROOT/browser/target/nova/nova-browser" --import "$HERE/fixtures/bookmarks-export.html" 2>&1)
 echo "$OUT3"
 echo "$OUT3" | grep -q 'found=1 new=1 bookmarks=3'
+
+echo "--- chrome profile (bookmarks, history, search) ---"
+# A real Chrome profile shape: the JSON bookmarks file, a Preferences file with
+# the default search engine, and a SQLite History database. sqlite3 ships with
+# macOS, which is where this profile format exists.
+mkdir -p "$CHROME/Default"
+cp "$HERE/fixtures/chrome-bookmarks.json" "$CHROME/Default/Bookmarks"
+cat > "$CHROME/Default/Preferences" <<'JSON'
+{"default_search_provider_data":{"template_url_data":{"short_name":"DuckDuckGo","keyword":"duckduckgo.com"}}}
+JSON
+sqlite3 "$CHROME/Default/History" <<'SQL'
+create table urls (id integer primary key, url text, title text, visit_count integer default 0,
+                   typed_count integer default 0, last_visit_time integer not null, hidden integer default 0);
+insert into urls (url, title, visit_count, last_visit_time) values
+  ('https://example.com/one', 'One', 3, 3),
+  ('https://example.com/two', 'Two', 1, 2),
+  ('chrome://settings', 'Settings', 9, 1);
+SQL
+OUT4=$(cd "$ROOT" && NOVA_BROWSER_PROFILE="$SETTINGS_PROFILE" \
+    "$ROOT/browser/target/nova/nova-browser" --import "$CHROME/Default" 2>&1)
+echo "$OUT4"
+echo "$OUT4" | grep -q 'files=1 found=2 new=2 bookmarks=2 history=2 search=duckduckgo'
+[ -s "$SETTINGS_PROFILE/history.tsv" ] || { echo "history: imported visits missing" >&2; exit 1; }
+grep -q '^visit' "$SETTINGS_PROFILE/history.tsv"
+grep -q '^search=duckduckgo$' "$SETTINGS_PROFILE/settings.tsv"
+[ "$(grep -c '^visit' "$SETTINGS_PROFILE/history.tsv")" = "2" ] || { echo "history: expected two visits" >&2; exit 1; }
+
+# The same profile again adds no bookmarks and no visits.
+OUT5=$(cd "$ROOT" && NOVA_BROWSER_PROFILE="$SETTINGS_PROFILE" \
+    "$ROOT/browser/target/nova/nova-browser" --import "$CHROME/Default" 2>&1)
+echo "$OUT5"
+echo "$OUT5" | grep -q 'new=0 bookmarks=2 history=0 search=duckduckgo'
