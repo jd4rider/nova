@@ -19,10 +19,12 @@ defects it found are repaired and the app is installed.
     decode them, so ESC was arriving as literal `u{1b}`.
   - Replaced `graphemes()` with `chars()` (the codegen has no `graphemes`
     method); cells are scalar-based today.
-  - `tm_code_of` now returns the true code for every ASCII byte and decodes
-    UTF-8 scalars. BEL had decoded as 0, so `ESC]0;title BEL` never closed the
-    OSC; the next `ESC[K` lost its bracket and painted a literal `K` after the
-    prompt. Non-ASCII prompt glyphs were dropped for the same reason.
+  - Added `char_code(String) -> Int` to the language (runtime, codegen and
+    sema) as the inverse of `char_string`. `tm_code_of` now uses it instead of
+    hand-decoding UTF-8 bytes. BEL had decoded as 0, so `ESC]0;title BEL` never
+    closed the OSC; the next `ESC[K` lost its bracket and painted a literal
+    `K` after the prompt. Non-ASCII prompt glyphs were dropped for the same
+    reason.
   - `tm_feed` holds a trailing incomplete UTF-8 scalar or CSI/OSC sequence in
     a pending register and parses it with the next pty read. Every feed ends
     at a clean parser boundary, so a read split or resize cannot strand
@@ -47,6 +49,11 @@ defects it found are repaired and the app is installed.
   - Plain keys arrive through AppKit's input context as `event_text`, not key
     codes. The app now routes that composed UTF-8 to the active pty, or to the
     palette/search field, so ordinary typing and IME commits work.
+  - The event loop drains input before drawing and coalesces a burst into one
+    frame. A timestamped `NOVA_GUI_TRACE` run recorded nine keys → nine pty
+    writes in the same millisecond and the first frame ~14 ms later; Enter echo
+    was also ~14 ms. The later ~195 ms burst is oh-my-posh rebuilding its
+    prompt, not terminal input.
 - `libraries/nova-term/src/term.nova`
   - Cell runs now draw at fixed cell x positions, with bold/italic/underline
     styles, dim blending and a solid inverse cursor; wide glyphs fall back to
@@ -60,7 +67,9 @@ defects it found are repaired and the app is installed.
     variables are dropped. `NOVA_PTY_TRACE=<path>` records raw pty reads.
 - `examples/nova-term/install-macos.sh`, `packaging/icon.html`, `VERSION`
   - Uses the current Nova tool, renders an icon, writes a full Info.plist,
-    ad-hoc signs and installs to `/Applications`.
+    ad-hoc signs and installs to `/Applications`. The headless Chrome render
+    uses a private `--user-data-dir`, so a concurrent installer or preview
+    cannot make the icon step fail.
 - `examples/nova-tool/tests/codegen-list-field-write.nova`,
   `tests/codegen.sh`
   - Pin the aggregate index-write path.
@@ -81,11 +90,15 @@ defects it found are repaired and the app is installed.
   `touch /tmp/nova-typed-ok` plus Return; the file appeared. This exercises the
   real keyDown → input context → `event_text` → pty path that scripted tests
   bypass.
+- `NOVA_GUI_TRACE` steady-state frame cost: draw 8–9 ms, present 2–3 ms. The
+  first frame is 33 ms draw + 29 ms present (font/cache warmup). Nine queued
+  keys produced nine pty writes in one millisecond and one frame ~14 ms later.
 - Live prompt capture with `NOVA_PTY_TRACE` ends in
   `U+E0B0 ESC[0m OSC 0;nova-term BEL space ESC[K`; the parsed row ends at
   U+E0B0 with the cursor in the following cell and no stray `K`.
-- `sh examples/nova-tool/tests/codegen.sh` → passed 258, failed 0, including
-  the new field index-write fixture (exit 9).
+- `sh examples/nova-tool/tests/codegen.sh` → passed 259, failed 0, including
+  the field index-write fixture (exit 9) and the `char_code` round-trip in
+  `codegen-builtins.nova` (exit 5).
 - `sh examples/nova-tool/tests/sema-ast.sh` → passed 39, failed 0.
 - `sh examples/nova-tool/tests/diff-errors.sh` → 27 fixtures matched, 0
   mismatched.
@@ -107,7 +120,11 @@ defects it found are repaired and the app is installed.
 - Scripted tests cover the parser and one real shell, not interactive vim,
   tmux, SSH or job control.
 - The installed bundle is ad-hoc signed, not Developer ID signed/notarized.
-- No performance numbers have been recorded; do not claim any.
+- Rendering is CoreGraphics/CoreText into a CPU bitmap; there is no Metal or
+  GPU path. Steady-state frames are 8–9 ms draw + 2–3 ms present, and input
+  is coalesced, but a GPU glyph atlas is future work.
+- No sustained-output, memory-endurance or long-session latency numbers have
+  been recorded; do not claim them.
 
 ## Next exact action
 

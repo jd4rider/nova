@@ -41,9 +41,13 @@ echo "--- icon ---"
     echo "install: set CHROME_BIN to a Chromium-compatible browser" >&2
     exit 1
 }
+# A private profile keeps this render independent of any other headless Chrome
+# (another app installer, a preview server) that is already running.
+PROFILE=$(mktemp -d "${TMPDIR:-/tmp}/nova-term-icon.XXXXXX")
+trap 'rm -rf "$PROFILE"' EXIT
 "$CHROME" --headless=new --disable-gpu --hide-scrollbars \
     --default-background-color=00000000 --force-device-scale-factor=1 \
-    --virtual-time-budget=1000 \
+    --virtual-time-budget=1000 --user-data-dir="$PROFILE" \
     --screenshot="$HERE/dist/icon.png" --window-size=1024,1024 \
     "file://$HERE/packaging/icon.html" >/dev/null 2>&1
 [ -s "$HERE/dist/icon.png" ] || { echo "install: icon render failed" >&2; exit 1; }

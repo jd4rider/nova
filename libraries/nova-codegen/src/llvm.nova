@@ -3172,6 +3172,7 @@ fn cg_compile(source: String) -> CgResult {
     out = out + "declare %nova.string @nova_i64_to_string(i64)\n"
     out = out + "declare %nova.string @nova_bool_to_string(i32)\n"
     out = out + "declare %nova.string @nova_char_to_string(i32)\n"
+    out = out + "declare i64 @nova_char_code(%nova.string)\n"
     out = out + "declare %nova.string @nova_json_string(%nova.string, %nova.string)\n"
     out = out + "declare %nova.string @nova_http_get(%nova.string)\n"
     out = out + "declare void @nova_string_chars(%nova.string, ptr)\n"
@@ -6232,6 +6233,21 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
             let temp = temp_result.1
             work = cg_line(work, "  " + temp + " = call %nova.string @nova_char_to_string(i32 " + narrow + ")")
             return cg_val_typed(work, temp, "%nova.string")
+        }
+        if name == "char_code" {
+            if got != 1 {
+                return cg_val(cg_error(state, "char_code expects one argument"), "0")
+            }
+            let value = cg_expr2(ast, state, a_child(ast, node, 1))
+            var work = value.state
+            if value.ty != "%nova.string" {
+                return cg_val(cg_error(work, "char_code expects String"), "0")
+            }
+            let temp_result = cg_temp(work)
+            work = temp_result.0
+            let temp = temp_result.1
+            work = cg_line(work, "  " + temp + " = call i64 @nova_char_code(%nova.string " + value.value + ")")
+            return cg_val_typed(work, temp, "i64")
         }
         if name == "http_get" {
             if got != 1 {

@@ -17,7 +17,7 @@ Stable IDs. A parent is not VERIFIED until its acceptance gate passes.
   rejected writes through struct fields and every `var cells = t.cells` copy
   was discarded, so ANSI output never reached the grid. `cg_index_assign`
   now writes through aggregate list handles; the core uses direct field
-  writes. Evidence: `term-ui.sh` 15/0, `codegen.sh` 258/0.
+  writes. Evidence: `term-ui.sh` 25/0, `codegen.sh` 259/0.
 - TERM-00.005 — Sema agrees with codegen on imported types and field writes:
   **VERIFIED**. `nova check` reports no errors on the terminal project;
   sema-ast 39/0 and diff-errors 27/27 unchanged.
@@ -89,13 +89,16 @@ Stable IDs. A parent is not VERIFIED until its acceptance gate passes.
 
 - TERM-06.001 — Correct grid frame: **PARTIAL**. Verified by scripted cell and
   colour assertions plus captured frames. Runs draw at fixed cell positions;
-  bold/italic/underline/dim and a solid inverse cursor are rendered. No visual
-  golden comparison yet.
+  bold/italic/underline/dim and a solid inverse cursor are rendered. Input is
+  drained before the frame and coalesced. No GPU path and no visual golden
+  comparison yet.
 - TERM-06.003 — Idle redraw: **VERIFIED** for the app loop. The frame is drawn
   only when bytes, input, resize or selection change it; the idle loop pumps
   and sleeps instead of repainting. No CPU measurement recorded yet.
-- TERM-06.002 — Performance baseline: **TODO**. No recorded startup, idle CPU,
-  latency or sustained-output numbers.
+- TERM-06.002 — Performance baseline: **PARTIAL**. Recorded steady-state
+  draw 8–9 ms, present 2–3 ms, and ~14 ms from a nine-key burst to the first
+  frame. Idle CPU, sustained output, memory endurance and long sessions remain
+  unmeasured.
 
 ## TERM-07 — TUI compatibility
 

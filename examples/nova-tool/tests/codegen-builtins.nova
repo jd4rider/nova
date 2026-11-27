@@ -1,5 +1,7 @@
 fn main() -> Int {
     let json = "{\"name\":\"nova\"}"
     let text = char_string(65) + json_string(json, "name")
-    return text.len()
+    let code = char_code("A")
+    let arrow = char_code(char_string(57520))
+    return text.len() + code - 65 + arrow - 57520
 }

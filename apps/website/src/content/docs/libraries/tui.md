@@ -221,6 +221,7 @@ These builtins are implemented in the native runtime, so a program needs no pack
 | `http_get(url)` | Response body, or `""` on failure. Runs the host `curl` directly (no shell), with a 20 s timeout. POSIX only. Used by `examples/bible`. |
 | `json_string(json, key)` | Decodes the last `"key": "value"` string in the document and its JSON escapes. Not a parser: numbers, arrays, objects and nesting are not decoded. |
 | `char_string(code)` | A one-character `String` from a Unicode scalar, for text entry from key codes. |
+| `char_code(text)` | First Unicode scalar as an `Int`, the inverse of `char_string`; `-1` for empty input. |
 
 `http_get` blocks until the request finishes. There is no connection reuse, header control, TLS policy, streaming or async request, and the Windows build returns an empty string.
 

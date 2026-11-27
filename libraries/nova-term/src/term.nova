@@ -1596,46 +1596,11 @@ fn tm_code_of(ch: String) -> Int {
     if ch.len() == 0 {
         return 0
     }
-    let chars = tm_printable().chars()
-    var i = 0
-    while i < chars.len() {
-        if chars[i] == ch {
-            return 32 + i
-        }
-        i = i + 1
-    }
-    if ch == char_string(27) {
-        return 27
-    }
-    if ch == "\r" {
-        return 13
-    }
-    if ch == "\n" {
-        return 10
-    }
-    if ch == "\t" {
-        return 9
-    }
-    if ch == char_string(127) {
-        return 127
-    }
-    let bytes = ch.bytes()
-    if bytes.len() == 1 {
-        if bytes[0] < 128 {
-            return bytes[0]
-        }
+    let code = char_code(ch)
+    if code < 0 {
         return 0
     }
-    if bytes.len() == 2 {
-        return (bytes[0] - 192) * 64 + (bytes[1] - 128)
-    }
-    if bytes.len() == 3 {
-        return (bytes[0] - 224) * 4096 + (bytes[1] - 128) * 64 + (bytes[2] - 128)
-    }
-    if bytes.len() == 4 {
-        return (bytes[0] - 240) * 262144 + (bytes[1] - 128) * 4096 + (bytes[2] - 128) * 64 + (bytes[3] - 128)
-    }
-    return 0
+    return code
 }
 
 // `\u{...}` is not decoded by the Nova lexer; the char_string builtin is the

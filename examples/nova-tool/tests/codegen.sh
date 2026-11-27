@@ -982,6 +982,7 @@ fi
 
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-builtins.nova" "$tool")
 echo "$out" | grep -q "call %nova.string @nova_char_to_string(i32" && ok || no "char_string call"
+echo "$out" | grep -q "call i64 @nova_char_code(%nova.string" && ok || no "char_code call"
 echo "$out" | grep -q "call %nova.string @nova_json_string" && ok || no "json_string call"
 printf '%s\n' "$out" > "$tmp/builtins.ll"
 if clang_ir "$tmp/builtins.ll" "$tmp/builtins" "$tmp/builtins-clang.log"; then

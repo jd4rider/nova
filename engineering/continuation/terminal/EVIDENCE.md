@@ -35,12 +35,13 @@ All entries are from this working tree on 2026-11-26, macOS ARM64.
 | `(cd examples/nova-tool && ../../bootstrap/nova build)` | PASS: built `examples/nova-tool/target/nova/nova-tool` |
 | `(cd examples/nova-term && ../../examples/nova-tool/target/nova/nova-tool build)` | PASS: built `target/nova/nova-term` |
 | `sh examples/nova-term/tests/term-ui.sh` | PASS: `passed 25, failed 0` (adds split glyph, BEL OSC, split CSI and composed-text cases) |
-| `sh examples/nova-tool/tests/codegen.sh` | PASS: `passed 258, failed 0` |
+| `sh examples/nova-tool/tests/codegen.sh` | PASS: `passed 259, failed 0` (adds `char_code`) |
 | `sh examples/nova-tool/tests/sema-ast.sh` | PASS: `passed 39, failed 0` |
 | `sh examples/nova-tool/tests/diff-errors.sh` | PASS: 27 fixtures matched, 0 mismatched |
 | `(cd examples/nova-term && ../../examples/nova-tool/target/nova/nova-tool check)` | PASS: `Checked …/src/main.nova: no errors` |
 | Direct build of `codegen-list-field-write.nova` | PASS: exit 9 (`buffer.cells[1]` written through the field) |
-| `sh examples/nova-term/install-macos.sh` | PASS: installed `/Applications/Nova Terminal.app`, version 0.1.0, `NovaTerminal.icns`, ad-hoc signed |
+| `codegen-builtins.nova` | PASS: exit 5 with `char_code("A")` and `char_code(char_string(57520))` |
+| `sh examples/nova-term/install-macos.sh` | PASS: installed `/Applications/Nova Terminal.app`, version 0.1.0, `NovaTerminal.icns`, ad-hoc signed; headless Chrome uses a private profile |
 | `NOVA_TERM_SHOT=/tmp/nova-term-live.png <installed binary>` | PASS: PNG written (88,105 bytes) |
 | `NOVA_TERM_SCRIPT` with `wait 1800; shot /tmp/nova-term-live2.png` | PASS: PNG written (100,335 bytes) |
 | `open -a "Nova Terminal"` + `pgrep -fl` | PASS: installed app process running |
@@ -68,6 +69,19 @@ Child environment after the host change: `TERM=xterm-256color`,
 `TERM_PROGRAM=NovaTerminal`, `TERM_PROGRAM_VERSION=0.1.0`,
 `COLORTERM=truecolor`; inherited `WARP_*`, `NOVA_TERM_*`, iTerm/VS Code/kitty
 variables are removed before `exec`.
+
+## Input latency and frame cost
+
+A timestamped `NOVA_GUI_TRACE` run (2026-11-26, installed binary) recorded nine
+queued keys, nine `pty write` calls and the first `present` inside one
+millisecond band; the next frame landed ~14 ms after the keys. Enter produced
+a pty write immediately and the shell echo ~14 ms later. After the command, a
+335-byte burst arrived ~195 ms later: that is oh-my-posh rebuilding the prompt,
+not terminal input latency.
+
+Steady-state frame cost: `draw` 8–9 ms, `present` 2–3 ms. The first frame is
+33 ms draw + 29 ms present (font/line-cache warmup). The renderer is
+CoreGraphics/CoreText into a CPU bitmap; no GPU/Metal path exists yet.
 
 ## Keyboard path
 

@@ -1049,6 +1049,15 @@ fn run_script(app: App, path: String) -> App {
                     ms = ms - 10
                 }
             }
+            if cmd == "frame" {
+                let t0 = gui.now()
+                gui.begin()
+                draw(app)
+                let t1 = gui.now()
+                gui.present()
+                let t2 = gui.now()
+                println("FRAME draw=" + (t1 - t0).to_string() + " present=" + (t2 - t1).to_string())
+            }
             if cmd == "shot" && words.len() >= 2 {
                 gui.begin()
                 draw(app)
@@ -1237,6 +1246,38 @@ fn main() {
     while !app.quit {
         app = sync_size(app)
         app = poll(app)
+        gui.pump()
+        /* Drain input before drawing and coalesce a burst into one frame. A
+         * key must reach the pty before the renderer blocks the main thread. */
+        var handled = 0
+        var running = true
+        while running && handled < 64 {
+            let event = gui.next_event()
+            if event.kind == gui.event_none() {
+                running = false
+            } else if event.kind == gui.event_close() {
+                app.quit = true
+                running = false
+            } else {
+                if event.kind == gui.event_key() {
+                    app = key(app, event.code, event.mods)
+                } else if event.kind == gui.event_text() {
+                    app = typed(app, gui.typed_text())
+                } else if event.kind == gui.event_mouse_down() {
+                    app = mouse_press(app, event.x, event.y, event.code)
+                } else if event.kind == gui.event_mouse_up() {
+                    app = release(app)
+                } else if event.kind == gui.event_drag() {
+                    app = drag(app, event.x, event.y)
+                } else if event.kind == gui.event_scroll() {
+                    if app.tabs.len() > 0 && app.overlay.len() == 0 {
+                        app = set_term(app, app.active, vt.tm_scroll(app.tabs[app.active].term, event.delta * 3))
+                    }
+                }
+                app.needs_draw = true
+                handled = handled + 1
+            }
+        }
         if app.needs_draw {
             gui.begin()
             draw(app)
@@ -1247,34 +1288,8 @@ fn main() {
                 app.quit = true
             }
         }
-        let event = gui.next_event()
-        if event.kind == gui.event_none() {
-            gui.pump()
+        if handled == 0 && !app.quit {
             gui.sleep(8)
-        } else if event.kind == gui.event_close() {
-            app.quit = true
-        } else if event.kind == gui.event_key() {
-            app = key(app, event.code, event.mods)
-            app.needs_draw = true
-        } else if event.kind == gui.event_text() {
-            app = typed(app, gui.typed_text())
-            app.needs_draw = true
-        } else if event.kind == gui.event_mouse_down() {
-            app = mouse_press(app, event.x, event.y, event.code)
-            app.needs_draw = true
-        } else if event.kind == gui.event_mouse_up() {
-            app = release(app)
-            app.needs_draw = true
-        } else if event.kind == gui.event_drag() {
-            app = drag(app, event.x, event.y)
-            app.needs_draw = true
-        } else if event.kind == gui.event_scroll() {
-            if app.tabs.len() > 0 && app.overlay.len() == 0 {
-                app = set_term(app, app.active, vt.tm_scroll(app.tabs[app.active].term, event.delta * 3))
-            }
-            app.needs_draw = true
-        } else if event.kind == gui.event_resize() || event.kind == gui.event_repaint() {
-            app.needs_draw = true
         }
     }
     var i = 0

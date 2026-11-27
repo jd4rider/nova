@@ -1559,6 +1559,15 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
                 work = sa_args(work, node, 1, ["Int"], true)
                 return sa_result(work, "String")
             }
+            if callee_node.text == "char_code" {
+                let got = ctx.ast.nodes[node].count - 1
+                var work = ctx
+                if got != 1 {
+                    work = sa_error(work, node, "E0303", "char_code expects 1 argument, got " + got.to_string())
+                }
+                work = sa_args(work, node, 1, ["String"], true)
+                return sa_result(work, "Int")
+            }
             if callee_node.text == "http_get" {
                 let got = ctx.ast.nodes[node].count - 1
                 var work = ctx

@@ -1902,6 +1902,17 @@ nova_str nova_char_to_string(uint32_t cp) {
     return nova_copy_str(buf, n);
 }
 
+/* First Unicode scalar in a string, the inverse of nova_char_to_string. Returns
+ * -1 for empty input so NUL (0) stays a real value. Invalid UTF-8 decodes to
+ * U+FFFD, matching .chars(). */
+int64_t nova_char_code(nova_str value) {
+    if (!value.ptr || value.len <= 0) return -1;
+    uint32_t cp = 0;
+    int64_t next = 0;
+    if (!nova_utf8_decode((const unsigned char *)value.ptr, value.len, 0, &cp, &next)) return -1;
+    return (int64_t)cp;
+}
+
 void *nova_list_at(nova_list *list, int64_t index, int64_t elem_size, int64_t line) {
     if (index < 0 || index >= list->len) {
         nova_panic_bounds(index, list->len, line);

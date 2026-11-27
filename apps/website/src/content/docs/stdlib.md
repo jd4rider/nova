@@ -19,6 +19,7 @@ description: The small standard-library surface currently implemented by Nova, a
 | `http_get(url)` | Fetch a URL with the host `curl` (no shell) and return the body, or `""` on failure. Blocks; POSIX only. |
 | `json_string(json, key)` | Decode the last `"key": "value"` string in a JSON document, with escapes. Not a JSON parser. |
 | `char_string(code)` | One-character `String` from a Unicode scalar, for text entry from key codes. |
+| `char_code(text)` | First Unicode scalar as an `Int`, the inverse of `char_string`; `-1` for empty input. |
 | `http_listen(port)` | Bind a blocking HTTP/1.1 listener on `127.0.0.1:port`. `0` on success, `-1` on failure. POSIX only. |
 | `http_accept()` | Parse the next request and block until one arrives. `1` on success, `-1` on error. |
 | `http_method()` | Method of the current request, e.g. `"GET"`. |

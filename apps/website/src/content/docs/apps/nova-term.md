@@ -87,7 +87,7 @@ vt.tm_draw(t, 16, 8, 1200, 640, 13, vt.tm_palette_dark())
 
 `tm_feed` mutates the terminal in place and returns the same `Term`; store the return value because Nova passes structs by value. `tm_resize`, `tm_scroll`, `tm_all_text`, `tm_find`, `tm_cell_at`, `tm_key_text` and `tm_palette_gruvbox()` cover the rest.
 
-The parser needs raw Unicode scalars, so this work also added **`String.chars()`** to the language: unlike `graphemes()`, which glues ANSI sequences onto the following cluster for styled-text measurement, `chars()` returns one element per scalar and keeps escape bytes intact. `String.bytes()` is used to decode a scalar or detect a split sequence.
+The parser needs raw Unicode scalars, so this work also added **`String.chars()`** to the language: unlike `graphemes()`, which glues ANSI sequences onto the following cluster for styled-text measurement, `chars()` returns one element per scalar and keeps escape bytes intact. `char_code()` turns a scalar back into an `Int`; `String.bytes()` is still used to detect a split sequence at a pty-read boundary.
 
 ## Tests
 
@@ -117,4 +117,8 @@ Assembles `Nova Terminal.app` under `dist/`, copies it to `/Applications` (or `~
 - **Scrollback is plain text**, so scrolled-off colour is lost.
 - **Wide cells and emoji width** are not modelled; combining marks and double-width glyphs need work before this is a daily driver for every TUI.
 
-Compared with Warp it is a fraction of the feature set and has no AI. Compared with Ghostty it is not in the same performance class: Nova draws text through CoreText and re-renders in Nova code, whereas Ghostty uses Metal. What it does prove is that the language, the host and `nova-gui` are enough to build a working terminal.
+## Performance, honestly
+
+Input is drained before a frame is drawn, and a burst of keys is coalesced into one frame. A timestamped trace of the installed app recorded nine queued keys → nine pty writes in one millisecond and the first frame about 14 ms later; Enter echo was also about 14 ms. Steady-state frames cost 8–9 ms to draw and 2–3 ms to present on this machine. After a command, oh-my-posh can take ~200 ms to rebuild the prompt; that delay is shell-side.
+
+The renderer is **CoreGraphics/CoreText into a CPU bitmap, not GPU/Metal**. A GPU glyph atlas is planned, not shipped. Compared with Warp it is a fraction of the feature set and has no AI. Compared with Ghostty it is not in the same performance class: Nova draws text through CoreText and re-renders in Nova code, whereas Ghostty uses Metal. What it does prove is that the language, the host and `nova-gui` are enough to build a working terminal.
