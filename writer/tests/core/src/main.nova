@@ -132,15 +132,17 @@ fn main() -> Int {
     let serialized = wd.wd_serialize(saved)
     let loaded = wd.wd_parse(serialized)
     failures = failures + check("serialized document loads", loaded.ok)
-    failures = failures + check("serialize writes version 2", serialized.starts_with("NOVADOC\t2\n"))
+    failures = failures + check("serialize writes version 3", serialized.starts_with("NOVADOC\t3\n"))
     failures = failures + check("serialize writes the language", serialized.contains("lang\ten\n"))
     failures = failures + check("title survives escaping", loaded.doc.title == "A\tB")
     failures = failures + check("paragraph count survives", loaded.doc.paragraphs.len() == saved.paragraphs.len())
     failures = failures + check("text survives", loaded.doc.paragraphs[0].text == "The quick")
     failures = failures + check("kind survives", loaded.doc.paragraphs[1].kind == wd.wd_heading2())
     failures = failures + check("next_id survives", loaded.doc.next_id == saved.next_id)
-    failures = failures + check("loaded document is version 2", loaded.doc.version == 2)
+    failures = failures + check("loaded document is version 3", loaded.doc.version == 3)
     failures = failures + check("language survives", loaded.doc.language == "en")
+    let empty_round = wd.wd_parse(wd.wd_serialize(wd.wd_empty()))
+    failures = failures + check("empty paragraph round trips", empty_round.ok && empty_round.doc.paragraphs[0].text == "")
 
     // Version 1 files migrate on load. The fixture is built with the public
     // checksum function so it exercises the same validation path as disk data.
@@ -148,23 +150,50 @@ fn main() -> Int {
     let v1_text = v1_body + "CK\t" + wd.wd_checksum(v1_body).to_string() + "\n"
     let migrated = wd.wd_parse(v1_text)
     failures = failures + check("v1 file loads", migrated.ok)
-    failures = failures + check("v1 file migrates to v2", migrated.doc.version == 2)
+    failures = failures + check("v1 file migrates to v3", migrated.doc.version == 3)
     failures = failures + check("v1 gets the default language", migrated.doc.language == "en")
     failures = failures + check("v1 text survives migration", migrated.doc.paragraphs[0].text == "Old text")
     failures = failures + check("v1 doc id survives", migrated.doc.doc_id == 7)
-    failures = failures + check("migrated document serializes as v2", wd.wd_serialize(migrated.doc).starts_with("NOVADOC\t2\n"))
+    failures = failures + check("v1 gets auto direction", migrated.doc.paragraphs[0].dir == wd.wd_dir_auto())
+    failures = failures + check("migrated document serializes as v3", wd.wd_serialize(migrated.doc).starts_with("NOVADOC\t3\n"))
     failures = failures + check("v1 header is recognized", store.wd_has_native_header(v1_text))
-    failures = failures + check("v2 header is recognized", store.wd_has_native_header(serialized))
+    failures = failures + check("v3 header is recognized", store.wd_has_native_header(serialized))
+
+    // Version 2 already had a language but no paragraph direction.
+    let v2_body = "NOVADOC\t2\nid\t8\ntitle\tV2 Legacy\nlang\tfr\nnext\t2\np\t1\t0\t0\tBonjour\nEND\n"
+    let v2_text = v2_body + "CK\t" + wd.wd_checksum(v2_body).to_string() + "\n"
+    let migrated2 = wd.wd_parse(v2_text)
+    failures = failures + check("v2 file loads", migrated2.ok)
+    failures = failures + check("v2 file migrates to v3", migrated2.doc.version == 3)
+    failures = failures + check("v2 language survives", migrated2.doc.language == "fr")
+    failures = failures + check("v2 gets auto direction", migrated2.doc.paragraphs[0].dir == wd.wd_dir_auto())
+    failures = failures + check("v2 text survives", migrated2.doc.paragraphs[0].text == "Bonjour")
+    failures = failures + check("v2 header is recognized", store.wd_has_native_header(v2_text))
 
     let no_lang_body = "NOVADOC\t2\nid\t1\ntitle\tNo Lang\nnext\t2\np\t1\t0\t0\tx\nEND\n"
     let no_lang = no_lang_body + "CK\t" + wd.wd_checksum(no_lang_body).to_string() + "\n"
     failures = failures + check("v2 requires a language", !wd.wd_parse(no_lang).ok)
+    let no_dir_body = "NOVADOC\t3\nid\t1\ntitle\tNo Dir\nlang\ten\nnext\t2\np\t1\t0\t0\tx\nEND\n"
+    let no_dir = no_dir_body + "CK\t" + wd.wd_checksum(no_dir_body).to_string() + "\n"
+    failures = failures + check("v3 requires a direction", !wd.wd_parse(no_dir).ok)
+    let bad_dir_body = "NOVADOC\t3\nid\t1\ntitle\tBad Dir\nlang\ten\nnext\t2\np\t1\t0\t0\t3\tx\nEND\n"
+    let bad_dir = bad_dir_body + "CK\t" + wd.wd_checksum(bad_dir_body).to_string() + "\n"
+    failures = failures + check("unknown direction is rejected", !wd.wd_parse(bad_dir).ok)
     let v9_body = "NOVADOC\t9\nEND\n"
     let v9 = v9_body + "CK\t" + wd.wd_checksum(v9_body).to_string() + "\n"
     failures = failures + check("unknown version is rejected", !wd.wd_parse(v9).ok)
 
     let localized = wd.wd_set_language(saved, "fr")
     failures = failures + check("language can be changed", localized.language == "fr")
+
+    let rtl_saved = wd.wd_set_dir(saved, 0, wd.wd_dir_rtl())
+    failures = failures + check("direction can be changed", rtl_saved.paragraphs[0].dir == wd.wd_dir_rtl())
+    let rtl_loaded = wd.wd_parse(wd.wd_serialize(rtl_saved))
+    failures = failures + check("direction survives", rtl_loaded.ok && rtl_loaded.doc.paragraphs[0].dir == wd.wd_dir_rtl())
+    var rtl_split = wd.wd_insert(wd.wd_empty(), 0, 0, "אבג")
+    rtl_split = wd.wd_set_dir(rtl_split, 0, wd.wd_dir_rtl())
+    rtl_split = wd.wd_split(rtl_split, 0, 1)
+    failures = failures + check("split preserves direction", rtl_split.paragraphs[1].dir == wd.wd_dir_rtl())
 
     let corrupted = serialized.replace("quick", "quack")
     failures = failures + check("checksum rejects corruption", !wd.wd_parse(corrupted).ok)
@@ -226,6 +255,54 @@ fn main() -> Int {
     let many_layout = wl.wl_layout(many, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
     failures = failures + check("long document paginates", many_layout.pages > 1)
     failures = failures + check("long document keeps every line on a page", many_layout.lines[many_layout.lines.len() - 1].page >= 1)
+
+    // ---------- fallback, bidi and CJK fixtures ----------
+    let mixed = "English · עברית · العربية · 日本語 · 中文 · 한국어 · 🇺🇸"
+    failures = failures + check("mixed-script text measures", gui.text_fmt_width(mixed, 11, 2, 0) > gui.text_fmt_width("English", 11, 2, 0))
+    failures = failures + check("CJK fallback measures", gui.text_fmt_width("日本語", 11, 2, 0) > 0)
+    failures = failures + check("auto direction is LTR for Latin", tx.tx_auto_dir("English") == wd.wd_dir_ltr())
+    failures = failures + check("auto direction is RTL for Hebrew", tx.tx_auto_dir("עברית") == wd.wd_dir_rtl())
+    failures = failures + check("auto direction skips digits", tx.tx_auto_dir("123 עברית") == wd.wd_dir_rtl())
+
+    var rtl_doc = wd.wd_empty()
+    rtl_doc = wd.wd_insert(rtl_doc, 0, 0, "עברית נקראת מימין לשמאל")
+    rtl_doc = wd.wd_set_dir(rtl_doc, 0, wd.wd_dir_rtl())
+    let rtl_layout = wl.wl_layout(rtl_doc, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
+    failures = failures + check("RTL paragraph has lines", rtl_layout.lines.len() > 0)
+    failures = failures + check("RTL line is right aligned", rtl_layout.lines[0].x > wl.wl_margin())
+    let rtl_count = tx.tx_count(rtl_doc.paragraphs[0].text)
+    let rtl_start = wl.wl_caret(rtl_doc, rtl_layout, 0, 0)
+    let rtl_end = wl.wl_caret(rtl_doc, rtl_layout, 0, rtl_count)
+    failures = failures + check("RTL caret starts at the right", rtl_start.x > rtl_end.x)
+    failures = failures + check("RTL caret ends at the left", rtl_end.x < rtl_start.x)
+    let rtl_hit = wl.wl_hit(rtl_doc, rtl_layout, 0, rtl_start.x - 1, rtl_start.y + 2)
+    failures = failures + check("RTL hit maps to the start", rtl_hit.found && rtl_hit.offset == 0)
+
+    var auto_rtl = wd.wd_insert(wd.wd_empty(), 0, 0, "עברית")
+    let auto_layout = wl.wl_layout(auto_rtl, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
+    failures = failures + check("auto direction reaches layout", auto_layout.lines[0].dir == wd.wd_dir_rtl())
+    let forced_ltr = wd.wd_set_dir(auto_rtl, 0, wd.wd_dir_ltr())
+    let forced_layout = wl.wl_layout(forced_ltr, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
+    failures = failures + check("explicit LTR overrides auto", forced_layout.lines[0].dir == wd.wd_dir_ltr())
+
+    var cjk_text = ""
+    var ci = 0
+    while ci < 8 {
+        cjk_text = cjk_text + "日本語の文章を組みます。"
+        ci = ci + 1
+    }
+    var cjk_doc = wd.wd_insert(wd.wd_empty(), 0, 0, cjk_text)
+    let cjk_layout = wl.wl_layout(cjk_doc, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
+    failures = failures + check("CJK paragraph wraps", cjk_layout.lines.len() > 1)
+    var cjk_fits = true
+    var cj = 0
+    while cj < cjk_layout.lines.len() {
+        if cjk_layout.lines[cj].w > content_w + 2 {
+            cjk_fits = false
+        }
+        cj = cj + 1
+    }
+    failures = failures + check("CJK lines fit the column", cjk_fits)
 
     // ---------- atomic store ----------
     let path = "/tmp/nova-writer-core-test.novadoc"

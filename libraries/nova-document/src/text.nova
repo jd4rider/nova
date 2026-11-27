@@ -90,6 +90,57 @@ fn tx_regional(cp: Int) -> Bool {
     return cp >= 127462 && cp <= 127487
 }
 
+// Strong right-to-left scripts. Used only for paragraph auto-direction; the
+// final visual order inside a line is CoreText's bidi pass.
+fn tx_is_rtl_cp(cp: Int) -> Bool {
+    if cp >= 1424 && cp <= 1535 { return true }   // Hebrew
+    if cp >= 1536 && cp <= 1791 { return true }   // Arabic
+    if cp >= 1792 && cp <= 1871 { return true }   // Syriac
+    if cp >= 1872 && cp <= 1919 { return true }
+    if cp >= 1920 && cp <= 1983 { return true }   // Thaana
+    if cp >= 1984 && cp <= 2047 { return true }   // NKo
+    if cp >= 2048 && cp <= 2111 { return true }   // Samaritan
+    if cp >= 2112 && cp <= 2143 { return true }   // Mandaic
+    if cp >= 2208 && cp <= 2303 { return true }
+    if cp >= 64285 && cp <= 64335 { return true }
+    if cp >= 64336 && cp <= 65023 { return true }
+    if cp >= 65136 && cp <= 65279 { return true }
+    return false
+}
+
+fn tx_is_ltr_cp(cp: Int) -> Bool {
+    if cp >= 65 && cp <= 90 { return true }
+    if cp >= 97 && cp <= 122 { return true }
+    if cp >= 192 && cp <= 687 { return true }
+    if cp >= 880 && cp <= 1423 { return true }
+    if cp >= 2304 && cp <= 8191 { return true }
+    if cp >= 11360 && cp <= 11391 { return true }
+    if cp >= 11520 && cp <= 11567 { return true }
+    if cp >= 11904 && cp <= 40959 { return true }  // CJK
+    if cp >= 40960 && cp <= 42191 { return true }
+    if cp >= 44032 && cp <= 55215 { return true }  // Hangul
+    if cp >= 63744 && cp <= 64255 { return true }
+    if cp >= 65313 && cp <= 65338 { return true }
+    if cp >= 65345 && cp <= 65370 { return true }
+    if cp >= 65382 && cp <= 65439 { return true }
+    return false
+}
+
+// Paragraph auto-direction: the first strong character wins, otherwise LTR.
+// This is the UAX #9 P2/P3 rule reduced to the scripts Writer can name.
+fn tx_auto_dir(text: String) -> Int {
+    for ch in text.chars() {
+        let cp = tx_code_point(ch)
+        if tx_is_rtl_cp(cp) {
+            return 2
+        }
+        if tx_is_ltr_cp(cp) {
+            return 1
+        }
+    }
+    return 1
+}
+
 // Scalar offset of every cluster start, followed by the end of the text.
 fn tx_starts(text: String) -> List<Int> {
     let chars = text.chars()

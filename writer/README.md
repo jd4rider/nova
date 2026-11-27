@@ -7,10 +7,11 @@ that wraps AppKit/CoreText, which the directive permits as a native OS service.
 
 ## Status
 
-Version 0.1.0 — real document model, measured typography, paginated A4 pages,
-editing, selection, IME composition, undo/redo, save/open, autosave, crash
-recovery, zoom, themes and an installable app. DOCX/ODT/PDF, tables, images,
-headers and inline formatting are not implemented yet. See
+Version 0.1.0 — real document model, measured typography with mixed-script
+fallback and bidi paragraph direction, paginated A4 pages, editing, selection,
+IME composition, undo/redo, save/open, autosave, crash recovery, zoom, themes
+and an installable app. DOCX/ODT/PDF, tables, images, headers and inline
+formatting are not implemented yet. See
 `engineering/continuation/writer/` for the ledger.
 
 ## Build, test, install
@@ -19,7 +20,7 @@ headers and inline formatting are not implemented yet. See
 # Compiler (if not already built)
 (cd examples/nova-tool && ../../bootstrap/nova build)
 
-# Headless core: 97 assertions
+# Headless core: 124 assertions
 sh writer/tests/core.sh
 
 # Two-process crash recovery
@@ -101,14 +102,16 @@ the caret.
 
 ## Native format
 
-`.novadoc` v2 is a deterministic UTF-8 container: magic header, version,
+`.novadoc` v3 is a deterministic UTF-8 container: magic header, version,
 title, language, next paragraph ID, tab-separated paragraph records (ID, kind,
-alignment, escaped text) and a 31-based polynomial body checksum. Version 1
-files migrate on load (the missing language defaults to `en`) and are
-rewritten as v2 on the next save. Save writes `<path>.tmp`, verifies it, then
-renames atomically. Unknown records, bad checksums, missing v2 fields and
-malformed data are rejected. A ZIP container with styles and media is a later
-migration; the loader dispatches on the header.
+alignment, direction, escaped text) and a 31-based polynomial body checksum.
+Version 1 migrates with language `en` and auto direction; version 2 keeps its
+language and gains auto direction. Both are rewritten as v3 on the next save.
+Save writes
+`<path>.tmp`, verifies it, then renames atomically. Unknown records, bad
+checksums, missing v3 fields and malformed data are rejected. A ZIP container
+with styles and media is a later migration; the loader dispatches on the
+header.
 
 ## Packages
 
@@ -116,7 +119,7 @@ migration; the loader dispatches on the header.
   `store.nova`, `recovery.nova`. GUI-independent and reusable by future Nova
   Office apps.
 - `writer/src/main.nova` — the application.
-- `writer/tests/core.sh` — headless acceptance (97 assertions).
+- `writer/tests/core.sh` — headless acceptance (124 assertions).
 - `writer/tests/recovery.sh` — crash recovery across two processes.
 - `writer/tests/ime.sh` — IME commit and Escape cancellation (14 assertions).
 - `writer/tests/smoke.sh` — native window launch/render.

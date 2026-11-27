@@ -1,6 +1,6 @@
 ---
 title: Nova Writer
-description: A native word processor written in Nova — a real document model, measured A4 pages, crash recovery and inline IME composition.
+description: A native word processor written in Nova — a real document model, measured A4 pages, mixed-script typography, crash recovery and inline IME composition.
 ---
 
 **Status: experimental, macOS only.** `writer/` is a word processor written in Nova on [nova-gui](../../libraries/gui/). The document model, measured line breaking, pagination, editing, persistence and recovery are Nova source; the only non-Nova code is the audited AppKit/CoreText host. There is no Electron, no web view and no `contenteditable`.
@@ -28,12 +28,12 @@ The installer builds, renders the icon, ad-hoc signs and copies `/Applications/N
 
 ## What it does
 
-- **A real document model.** A versioned `Document` holds paragraphs with stable IDs and grapheme offsets. Insert, delete, split, merge, style and alignment are validated operations; edits return a new document.
-- **Measured typography.** CoreText shapes and measures styled runs; Nova decides where a line breaks and where a page ends. Pages are A4 with one-inch margins, a ruler, zoom and visible-page virtualization.
+- **A real document model.** A versioned `Document` holds paragraphs with stable IDs, grapheme offsets, alignment and auto/LTR/RTL direction. Insert, delete, split, merge and style changes are validated operations; edits return a new document.
+- **Measured typography.** CoreText shapes and measures styled runs with per-glyph fallback; Nova decides where a line breaks and where a page ends. Paragraph direction drives alignment and caret geometry, and CJK text wraps without overflowing. Pages are A4 with one-inch margins, a ruler, zoom and visible-page virtualization.
 - **Grapheme-aware editing.** The caret and deletion stop on extended grapheme clusters: combining marks, skin tones, flags and joined emoji families are never split by one keypress.
 - **Selection, clipboard and undo.** Click/drag and Shift+arrows select; copy/cut/paste use the system clipboard; undo/redo restore bounded snapshots. The app stores serialized snapshots; the compiler now supports a `List<Document>` field, so it can switch later without changing behavior.
 - **Styles and outline.** Title, Heading 1, Heading 2, Body, Quote and List have real metrics. The sidebar applies them and lists headings.
-- **A checksummed native format.** `.novadoc` v2 is deterministic UTF-8 with a document language and a 31-based polynomial body checksum. Save writes a temporary file, verifies it and renames atomically; corrupt files, missing v2 fields and unknown versions are rejected with a line number. Version 1 files migrate on load and are rewritten as v2 on save.
+- **A checksummed native format.** `.novadoc` v3 is deterministic UTF-8 with a document language, per-paragraph direction and a 31-based polynomial body checksum. Save writes a temporary file, verifies it and renames atomically; corrupt files, missing v3 fields and unknown versions are rejected with a line number. Version 1 and 2 files migrate on load and are rewritten as v3 on save.
 - **Autosave and crash recovery.** Dirty tabs are written atomically every four seconds under `~/Library/Application Support/Nova Writer/Recovery`. A crash leaves a valid `.novadoc`; the next launch restores up to six dirty tabs and says how many it recovered.
 - **IME composition.** Marked text is painted inline through a temporary layout, underlined, and pushes the following text while the saved document stays untouched. Commit inserts the string exactly once; Escape clears the composition without inserting anything.
 
@@ -44,7 +44,7 @@ writer/src/main.nova                 native app: tabs, ribbon, pages, input
 libraries/nova-document/src/
   text.nova                          grapheme segmentation and text edits
   document.nova                      versioned paragraphs, stable IDs, undo
-  layout.nova                        measured wrapping, pagination, hit-testing
+  layout.nova                        wrapping, bidi alignment, pagination, hit-testing
   store.nova                         .novadoc checksum and atomic save
   recovery.nova                      epoch-named autosave snapshots
 runtime/gui.m + libraries/nova-gui   AppKit window, CoreText, files, clipboard
@@ -55,7 +55,7 @@ The app is immediate mode: draw the frame, pump the platform queue, handle one e
 ## Tests
 
 ```sh
-sh writer/tests/core.sh       # 97 headless assertions
+sh writer/tests/core.sh       # 124 headless assertions
 sh writer/tests/recovery.sh   # two-process crash recovery
 sh writer/tests/ime.sh        # 14 IME commit/cancel assertions
 sh writer/tests/smoke.sh      # real window + PNG snapshot
@@ -71,6 +71,7 @@ The IME test drives the same `NSTextInputClient` entry points AppKit uses (`setM
 - No native save panel: Save As uses the folder picker and a unique filename.
 - No recovery prompt or discard command; startup restores every valid recovery file.
 - No accessibility text ranges; the page has a label, not a screen-reader document model.
+- Mixed-direction caret positions inside one line are approximate; CJK breaks are grapheme-based, not full UAX #14, and there is no hyphenation.
 - One window, at most six visible tabs, and a full relayout on every edit.
 - Autosave rewrites the whole document every four seconds; there is no external-change detection or encryption.
 

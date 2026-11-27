@@ -37,7 +37,7 @@ clang, CoreText and the native GUI.
 
 - **No font family/weight API.** Styled CoreText runs and measured advances
   were added (DEC-WRI-004), so serif body, bold, italic and underline are real.
-- **No native test target.** A headless core binary with 97 assertions exists.
+- **No native test target.** A headless core binary with 124 assertions exists.
 - **No installable bundle.** `/Applications/Nova Writer.app` builds, signs and
   launches.
 - **No autosave or crash recovery.** `recovery.nova`, a two-process crash test
@@ -45,6 +45,9 @@ clang, CoreText and the native GUI.
 - **No IME marked text.** The host exposes `marked_text()` and clears it on
   commit or Escape; Writer paints the composition inline and commits once.
   `writer/tests/ime.sh` passes 14 assertions.
+- **No bidi direction or CJK fixture.** `.novadoc` v3 stores per-paragraph
+  auto/LTR/RTL direction; the core suite covers RTL alignment/caret geometry,
+  mixed-script fallback and CJK wrapping.
 
 ## Known correctness limits
 
@@ -52,8 +55,10 @@ clang, CoreText and the native GUI.
   large documents; the app reparses on undo.
 - Pagination is single-column A4 with fixed margins; sections, columns,
   headers/footers and footnotes are not implemented.
-- The renderer draws one CoreText line per visual line; explicit bidi paragraph
-  direction and complex-script line breaking are not yet tested.
+- CoreText shapes bidi runs, but caret and selection geometry use one
+  paragraph direction; mixed-direction caret positions inside a line are
+  approximate. CJK breaks are grapheme-based, not full UAX #14 kinsoku, and
+  there is no hyphenation dictionary.
 - Autosave rewrites the full document every 4 seconds. There is no incremental
   save, external-change detection or encryption; recovery files are plain
   `.novadoc` under Application Support.

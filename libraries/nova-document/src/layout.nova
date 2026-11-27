@@ -23,6 +23,7 @@ struct LineBox {
     text: String,
     prefix: String,
     indent: Int,
+    dir: Int,
 }
 
 struct Layout {
@@ -143,9 +144,25 @@ fn wl_prefix(kind: Int) -> String {
     return ""
 }
 
-fn wl_align_x(align: Int, margin: Int, content_w: Int, width: Int) -> Int {
+fn wl_dir(p: wd.Paragraph) -> Int {
+    if p.dir == wd.wd_dir_rtl() {
+        return wd.wd_dir_rtl()
+    }
+    if p.dir == wd.wd_dir_ltr() {
+        return wd.wd_dir_ltr()
+    }
+    return tx.tx_auto_dir(p.text)
+}
+
+fn wl_align_x(align: Int, dir: Int, margin: Int, content_w: Int, width: Int) -> Int {
     if align == wd.wd_center() {
         return margin + (content_w - width) / 2
+    }
+    if dir == wd.wd_dir_rtl() {
+        if align == wd.wd_right() {
+            return margin
+        }
+        return margin + content_w - width
     }
     if align == wd.wd_right() {
         return margin + content_w - width
@@ -176,6 +193,7 @@ fn wl_emit(lines: List<LineBox>, page: Int, y: Int, page_h: Int, margin: Int, li
         text: line.text,
         prefix: line.prefix,
         indent: line.indent,
+        dir: line.dir,
     }
     out.push(placed)
     yy = yy + lh
@@ -189,6 +207,7 @@ fn wl_wrap(doc: wd.Document, index: Int, page: Int, y: Int, page_w: Int, page_h:
     let size = wl_size(p.kind)
     let family = wl_family(p.kind)
     let style = wl_style(p.kind)
+    let dir = wl_dir(p)
     let content_w = page_w - margin * 2
     let prefix = wl_prefix(p.kind)
     let indent = gui.text_fmt_width(prefix, size, family, style)
@@ -199,7 +218,7 @@ fn wl_wrap(doc: wd.Document, index: Int, page: Int, y: Int, page_w: Int, page_h:
         let e = wl_emit(lines, page, y, page_h, margin, LineBox {
             para: index, start: 0, end: 0, page: 0,
             x: margin, y: 0, w: 0, size: size, style: style, family: family,
-            text: "", prefix: prefix, indent: indent,
+            text: "", prefix: prefix, indent: indent, dir: dir,
         })
         return WrapResult { lines: e.lines, page: e.page, y: e.y }
     }
@@ -233,13 +252,13 @@ fn wl_wrap(doc: wd.Document, index: Int, page: Int, y: Int, page_w: Int, page_h:
             let cw = gui.text_fmt_width(candidate, size, family, style) + pad
             if cw > content_w {
                 let lw = gui.text_fmt_width(line_text, size, family, style) + pad
-                let x = wl_align_x(p.align, margin, content_w, lw)
+                let x = wl_align_x(p.align, dir, margin, content_w, lw)
                 let pre = if first { prefix } else { "" }
                 let pin = if first { indent } else { 0 }
                 let e = wl_emit(lines, page, y, page_h, margin, LineBox {
                     para: index, start: line_start, end: line_end, page: 0,
                     x: x, y: 0, w: lw, size: size, style: style, family: family,
-                    text: line_text, prefix: pre, indent: pin,
+                    text: line_text, prefix: pre, indent: pin, dir: dir,
                 })
                 lines = e.lines
                 page = e.page
@@ -272,13 +291,13 @@ fn wl_wrap(doc: wd.Document, index: Int, page: Int, y: Int, page_w: Int, page_h:
                     }
                     let chunk = tx.tx_slice(rest.chars(), 0, tx.tx_scalar_at(rest, best))
                     let lw = gui.text_fmt_width(chunk, size, family, style) + (if first { indent } else { 0 })
-                    let x = wl_align_x(p.align, margin, content_w, lw)
+                    let x = wl_align_x(p.align, dir, margin, content_w, lw)
                     let pre = if first { prefix } else { "" }
                     let pin = if first { indent } else { 0 }
                     let e = wl_emit(lines, page, y, page_h, margin, LineBox {
                         para: index, start: rest_g, end: rest_g + best, page: 0,
                         x: x, y: 0, w: lw, size: size, style: style, family: family,
-                        text: chunk, prefix: pre, indent: pin,
+                        text: chunk, prefix: pre, indent: pin, dir: dir,
                     })
                     lines = e.lines
                     page = e.page
@@ -298,13 +317,13 @@ fn wl_wrap(doc: wd.Document, index: Int, page: Int, y: Int, page_w: Int, page_h:
     if line_text.len() > 0 {
         let pad = if first { indent } else { 0 }
         let lw = gui.text_fmt_width(line_text, size, family, style) + pad
-        let x = wl_align_x(p.align, margin, content_w, lw)
+        let x = wl_align_x(p.align, dir, margin, content_w, lw)
         let pre = if first { prefix } else { "" }
         let pin = if first { indent } else { 0 }
         let e = wl_emit(lines, page, y, page_h, margin, LineBox {
             para: index, start: line_start, end: line_end, page: 0,
             x: x, y: 0, w: lw, size: size, style: style, family: family,
-            text: line_text, prefix: pre, indent: pin,
+            text: line_text, prefix: pre, indent: pin, dir: dir,
         })
         lines = e.lines
         page = e.page
@@ -345,7 +364,7 @@ fn wl_layout(doc: wd.Document, page_w: Int, page_h: Int, margin: Int) -> Layout 
         lines.push(LineBox {
             para: 0, start: 0, end: 0, page: 0,
             x: margin, y: margin, w: 0, size: 11, style: 0, family: 2,
-            text: "", prefix: "", indent: 0,
+            text: "", prefix: "", indent: 0, dir: wd.wd_dir_ltr(),
         })
     }
     return Layout { lines: lines, pages: page + 1, page_w: page_w, page_h: page_h, margin: margin }
@@ -371,6 +390,9 @@ fn wl_line_index(layout: Layout, para: Int, offset: Int) -> Int {
 
 fn wl_x_at(doc: wd.Document, line: LineBox, offset: Int) -> Int {
     if line.para < 0 || line.para >= doc.paragraphs.len() {
+        if line.dir == wd.wd_dir_rtl() {
+            return line.x + line.w
+        }
         return line.x + line.indent
     }
     let text = doc.paragraphs[line.para].text
@@ -380,7 +402,11 @@ fn wl_x_at(doc: wd.Document, line: LineBox, offset: Int) -> Int {
     let g1 = tx.tx_clamp(offset, count)
     let chars = text.chars()
     let pre = tx.tx_slice(chars, starts[g0], starts[g1])
-    return line.x + line.indent + gui.text_fmt_width(pre, line.size, line.family, line.style)
+    let pw = gui.text_fmt_width(pre, line.size, line.family, line.style)
+    if line.dir == wd.wd_dir_rtl() {
+        return line.x + line.w - line.indent - pw
+    }
+    return line.x + line.indent + pw
 }
 
 fn wl_caret(doc: wd.Document, layout: Layout, para: Int, offset: Int) -> CaredBox {

@@ -93,9 +93,9 @@ struct Session {
     selecting: Bool,
     scroll: Int,
     zoom: Int,
-    // The compiler rejects a List<Document> field, so the app keeps bounded
-    // serialized snapshots. The format preserves ids and formatting; the core
-    // library's Document-based history remains separately tested.
+    // The app keeps bounded serialized snapshots. The compiler now supports a
+    // List<Document> field, but this path is already tested; the core library's
+    // Document-based history remains separately tested.
     undo: List<String>,
     redo: List<String>,
     recovery_path: String,
@@ -317,11 +317,15 @@ fn wr_demo() -> wd.Document {
     d = wr_add(d, wd.wd_bullet(), "Type in the page. Enter splits a paragraph; Backspace merges at the start of one.")
     d = wr_add(d, wd.wd_bullet(), "Select with a drag or Shift+arrows. Copy, cut and paste use the system clipboard.")
     d = wr_add(d, wd.wd_bullet(), "Undo and redo restore whole document snapshots, not just the last character.")
-    d = wr_add(d, wd.wd_bullet(), "Apply Title, Heading, Body, Quote or List from the Styles panel; align left, centre or right from the ribbon.")
+    d = wr_add(d, wd.wd_bullet(), "Apply Title, Heading, Body, Quote or List from the Styles panel; align left, centre or right from the ribbon, and set paragraph direction in the panel.")
     d = wr_add(d, wd.wd_quote(), "Every visible command executes real document behavior. Features that are not implemented are absent, not painted as fake controls.")
     d = wr_add(d, wd.wd_heading1(), "Layout")
     d = wr_add(d, wd.wd_body(), "CoreText shapes each line and reports its advance width; Nova decides where the line breaks and where the page ends. Pages are A4 with one-inch margins, and zoom scales the canvas without reflowing the document.")
     d = wr_add(d, wd.wd_body(), "Save writes a verified temporary file and renames it over the target, so a failed save leaves the previous document intact. Open reads the same versioned .novadoc container and validates its checksum before showing anything.")
+    d = wr_add(d, wd.wd_heading1(), "Typography")
+    d = wr_add(d, wd.wd_body(), "English, עברית, العربية, 日本語, 中文 and 한국어 share one measured line; CoreText falls back per glyph and shapes right-to-left runs.")
+    d = wr_add(d, wd.wd_body(), "עברית נקראת מימין לשמאל, והפסקה הזאת מיושרת לימין.")
+    d = wd.wd_set_dir(d, d.paragraphs.len() - 1, wd.wd_dir_rtl())
     d = wr_add(d, wd.wd_heading1(), "Next")
     d = wr_add(d, wd.wd_body(), "Inline bold and italic runs, find and replace, tables, images, headers and footers, DOCX and PDF are tracked as later milestones. This build is the vertical slice: a real model, real layout and real persistence behind a native window.")
     return d
@@ -1172,6 +1176,16 @@ fn wr_apply_align(app: App, align: Int) -> App {
     return app
 }
 
+fn wr_apply_dir(app: App, dir: Int) -> App {
+    var app = wr_snapshot(app)
+    var s = app.sessions[app.active]
+    s.doc = wd.wd_set_dir(s.doc, s.cursor_para, dir)
+    app = wr_put(app, app.active, s)
+    app = wr_changed(app)
+    app.status = "Direction: " + wd.wd_dir_name(dir)
+    return app
+}
+
 fn wr_zoom(app: App, delta: Int) -> App {
     var app = app
     var s = app.sessions[app.active]
@@ -1543,7 +1557,17 @@ fn wr_sidebar_click(app: App, x: Int, y: Int, mods: Int) -> App {
         }
         i = i + 1
     }
-    let outline_y = top + 32 + kinds.len() * 26 + 18
+    let dir_y = top + 32 + kinds.len() * 26 + 12
+    let dirs: List<Int> = [wd.wd_dir_auto(), wd.wd_dir_ltr(), wd.wd_dir_rtl()]
+    var di = 0
+    while di < dirs.len() {
+        let ry = dir_y + 18 + di * 22
+        if y >= ry && y < ry + 20 {
+            return wr_apply_dir(app, dirs[di])
+        }
+        di = di + 1
+    }
+    let outline_y = dir_y + 18 + dirs.len() * 22 + 12
     let outline = wd.wd_outline(app.sessions[app.active].doc)
     var j = 0
     while j < outline.len() {
@@ -1668,7 +1692,29 @@ fn wr_draw_sidebar(app: App, h: Int) {
         gui.text(18, y + 5, wd.wd_kind_name(kinds[i]), 12, color)
         i = i + 1
     }
-    let outline_y = top + 32 + kinds.len() * 26 + 18
+    let dir_y = top + 32 + kinds.len() * 26 + 12
+    gui.text(16, dir_y, "DIRECTION", 10, theme.muted)
+    let dirs: List<Int> = [wd.wd_dir_auto(), wd.wd_dir_ltr(), wd.wd_dir_rtl()]
+    let current_dir = s.doc.paragraphs[s.cursor_para].dir
+    var di = 0
+    while di < dirs.len() {
+        let y = dir_y + 18 + di * 22
+        let active = current_dir == dirs[di]
+        if active {
+            gui.rect(8, y, wr_sidebar_w() - 16, 20, theme.selection)
+        } else {
+            if gui.inside(8, y, wr_sidebar_w() - 16, 20, app.mouse_x, app.mouse_y) {
+                gui.rect(8, y, wr_sidebar_w() - 16, 20, theme.elevated)
+            }
+        }
+        var color = theme.fg
+        if active {
+            color = theme.fg_bright
+        }
+        gui.text(18, y + 4, wd.wd_dir_name(dirs[di]), 11, color)
+        di = di + 1
+    }
+    let outline_y = dir_y + 18 + dirs.len() * 22 + 12
     gui.text(16, outline_y, "OUTLINE", 10, theme.muted)
     let outline = wd.wd_outline(s.doc)
     if outline.len() == 0 {
@@ -1689,6 +1735,20 @@ fn wr_draw_sidebar(app: App, h: Int) {
             j = j + 1
         }
     }
+}
+
+fn wr_line_prefix_x(l: wl.LineBox) -> Int {
+    if l.dir == wd.wd_dir_rtl() {
+        return l.x + l.w - l.indent
+    }
+    return l.x
+}
+
+fn wr_line_text_x(l: wl.LineBox) -> Int {
+    if l.dir == wd.wd_dir_rtl() {
+        return l.x
+    }
+    return l.x + l.indent
 }
 
 fn wr_draw_pages(app: App, w: Int, h: Int) {
@@ -1784,7 +1844,7 @@ fn wr_draw_pages(app: App, w: Int, h: Int) {
         }
         let top = wr_page_top(app, l.page)
         let ly = top + l.y * s.zoom / 100
-        let lx = left + l.x * s.zoom / 100
+        let lx = left + wr_line_prefix_x(l) * s.zoom / 100
         var size = l.size * s.zoom / 100
         if size < 6 {
             size = 6
@@ -1800,15 +1860,20 @@ fn wr_draw_pages(app: App, w: Int, h: Int) {
                 b = sel.o1
             }
             if a < b {
-                let x0 = left + wl.wl_x_at(doc, l, a) * s.zoom / 100
-                let x1 = left + wl.wl_x_at(doc, l, b) * s.zoom / 100
+                var x0 = left + wl.wl_x_at(doc, l, a) * s.zoom / 100
+                var x1 = left + wl.wl_x_at(doc, l, b) * s.zoom / 100
+                if x1 < x0 {
+                    let swap = x0
+                    x0 = x1
+                    x1 = swap
+                }
                 gui.rect(x0, ly, x1 - x0, lh, wr_select())
             }
         }
         if l.prefix.len() > 0 {
             gui.text_fmt(lx, ly, l.prefix, size, wr_ink(), l.family, l.style)
         }
-        let text_x = lx + l.indent * s.zoom / 100
+        let text_x = left + wr_line_text_x(l) * s.zoom / 100
         var ink = wr_ink()
         if l.para >= 0 && l.para < doc.paragraphs.len() {
             if doc.paragraphs[l.para].kind == wd.wd_quote() {
@@ -1829,8 +1894,13 @@ fn wr_draw_pages(app: App, w: Int, h: Int) {
                 b = comp_end
             }
             if a < b {
-                let x0 = left + wl.wl_x_at(doc, l, a) * s.zoom / 100
-                let x1 = left + wl.wl_x_at(doc, l, b) * s.zoom / 100
+                var x0 = left + wl.wl_x_at(doc, l, a) * s.zoom / 100
+                var x1 = left + wl.wl_x_at(doc, l, b) * s.zoom / 100
+                if x1 < x0 {
+                    let swap = x0
+                    x0 = x1
+                    x1 = swap
+                }
                 gui.rect(x0, ly + lh - 2, x1 - x0, 1, theme.accent)
             }
         }

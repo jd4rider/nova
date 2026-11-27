@@ -12,7 +12,7 @@ not a single session.
 | WRI-01 | Native shell: window, command surface, tabs, harness | PARTIAL | WRI-00 |
 | WRI-02 | Document core: typed tree, stable ranges, transactions, undo | PARTIAL | WRI-00 |
 | WRI-03 | Text editing: Unicode, selection, clipboard, IME, caret | PARTIAL | WRI-02 |
-| WRI-04 | Typography: shaping, fallback, bidi, line-break fixtures | PARTIAL | WRI-03 |
+| WRI-04 | Typography: shaping, fallback, bidi, line-break fixtures | VERIFIED | WRI-03 |
 | WRI-05 | Paginated layout: pages, margins, zoom, hit-testing | PARTIAL | WRI-04 |
 | WRI-06 | Styles and formatting: named styles, inheritance, lists | PARTIAL | WRI-05 |
 | WRI-07 | Native persistence: save/open, migration, autosave, recovery | PARTIAL | WRI-02 |
@@ -33,15 +33,16 @@ not a single session.
 
 ## Current slice
 
-The vertical slice, autosave/crash recovery, IME marked-text composition and
-`.novadoc` schema migration are landed and installed: a native Writer window
-over a GUI-independent document core with measured pagination, editable
-paragraphs, bounded undo, a checksummed v2 round trip with v1 migration,
-recovery files that survive a process crash, and inline composition that
-commits once or cancels on Escape.
+The vertical slice, autosave/crash recovery, IME marked-text composition,
+`.novadoc` v3 migration and mixed-script typography are landed and installed:
+a native Writer window over a GUI-independent document core with measured
+pagination, editable paragraphs, bounded undo, a checksummed v3 round trip
+with v1/v2 migration, per-paragraph bidi direction, CJK wrapping, recovery
+files that survive a process crash, and inline composition that commits once
+or cancels on Escape.
 
-Next: **WRI-04.002 fallback/bidi fixtures**. Then WRI-07.004 save panel,
-WRI-07.005 recovery prompt/discard, WRI-06 inline runs.
+Next: **WRI-06.003 inline bold/italic runs**. Then WRI-05.005 incremental
+layout, WRI-07.004 save panel, WRI-07.005 recovery prompt/discard.
 
 ## Critical path
 

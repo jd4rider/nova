@@ -37,10 +37,10 @@ directive and impossible to index cheaply in this language today.
 - A rope or piece table can replace the internal text storage without changing
   the public position type.
 
-## DEC-WRI-002 — `.novadoc` v2 is a deterministic text container
+## DEC-WRI-002 — `.novadoc` v3 is a deterministic text container
 
-Status: accepted for WRI-07.001/WRI-02.005; ZIP container is a later
-migration.
+Status: accepted for WRI-07.001/WRI-02.005/WRI-04.002; ZIP container is a
+later migration.
 
 ### Context
 
@@ -51,18 +51,19 @@ block the first vertical slice and risk a half-valid container.
 
 ### Decision
 
-- v2 is a UTF-8, line-oriented container with a magic header, version,
-  document metadata including a BCP-47 language, paragraph records and a
-  31-based polynomial body checksum. It detects truncation and corruption, not
-  tampering; the format makes no cryptographic claim.
-- Version 1 files migrate on load: the missing language defaults to `en`, and
-  the next save writes v2.
+- v3 is a UTF-8, line-oriented container with a magic header, version,
+  document metadata including a BCP-47 language, paragraph records with a
+  direction, and a 31-based polynomial body checksum. It detects truncation
+  and corruption, not tampering; the format makes no cryptographic claim.
+- Version 1 files migrate on load: language defaults to `en`, direction to
+  auto, and the next save writes v3.
+- Version 2 files keep their language and gain auto direction.
 - Records are escaped, bounded and validated on load; unknown record kinds,
-  missing v2 fields and unknown versions are rejected rather than silently
+  missing v3 fields and unknown versions are rejected rather than silently
   ignored.
 - Writes go to `<path>.tmp`, are verified, then renamed atomically.
-- A later v3 may wrap the same parts in a ZIP container; the loader dispatches
-  on the magic header, so v1 and v2 files remain readable.
+- A later v4 may wrap the same parts in a ZIP container; the loader dispatches
+  on the magic header, so v1, v2 and v3 files remain readable.
 
 ### Consequences
 
@@ -122,8 +123,9 @@ use established text services.
 ### Consequences
 
 - Bold/italic/underline become real, not simulated.
-- Bidi and complex-script runs are only as good as a single CoreText line;
-  explicit bidi paragraph layout is a later WRI-04 task.
+- CoreText shapes bidi runs within a line; Writer supplies the paragraph
+  direction and maps alignment and caret geometry from it. Per-run caret
+  positions in mixed-direction lines remain approximate.
 - Other Nova apps keep the existing API; the new functions are additive.
 
 ## DEC-WRI-005 — No fake controls
@@ -245,3 +247,36 @@ without leaving text behind.
 - Composition reflows inline but costs a temporary full layout while active;
   this is acceptable for ordinary documents and measurable later.
 - A cancelled composition leaves no recovery or document artifact.
+
+## DEC-WRI-010 — Paragraph direction is explicit, with auto fallback
+
+Status: accepted.
+
+### Context
+
+CoreText shapes mixed runs, but Writer's line, alignment and caret model needs
+one base direction per paragraph. Deriving it only from the document language
+would make a Hebrew quote inside an English document impossible to align
+correctly.
+
+### Decision
+
+- Every paragraph stores `dir`: 0 auto, 1 LTR, 2 RTL. `.novadoc` v3 persists
+  it; v1/v2 migrate to auto.
+- Auto uses the first strong character (Hebrew, Arabic and related RTL
+  ranges); digits, spaces and punctuation are skipped. If no strong character
+  exists, the default is LTR.
+- Layout treats left alignment as the paragraph start: an RTL paragraph with
+  "left" alignment is placed against the right margin. Centre is unchanged.
+- The caret x is measured from the text's right edge for RTL and from its left
+  edge for LTR. Hit-testing uses the same mapping.
+- The sidebar exposes Auto/LTR/RTL and records the choice in undo history.
+
+### Consequences
+
+- A document can mix LTR and RTL paragraphs without changing its language.
+- Mixed-direction text inside one line is shaped by CoreText, but caret and
+  selection geometry use the paragraph base direction; per-run bidi caret
+  positions are approximate and remain a future refinement.
+- CJK text wraps at grapheme boundaries; full UAX #14 kinsoku and hyphenation
+  are not implemented.

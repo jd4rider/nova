@@ -29,7 +29,7 @@ Stable IDs are permanent. Statuses are evidence-based. See `EVIDENCE.md`.
 - **WRI-01.003 — Command routing and shortcuts: VERIFIED.** Every visible
   command executes real document behavior; unsupported commands are absent.
 - **WRI-01.004 — Headless test target: VERIFIED.** `writer/tests/core.sh`
-  runs 97 assertions without a window and exits non-zero on failure.
+  runs 124 assertions without a window and exits non-zero on failure.
 
 ## WRI-02 — Document core
 
@@ -42,10 +42,11 @@ Stable IDs are permanent. Statuses are evidence-based. See `EVIDENCE.md`.
   serialized snapshots (DEC-WRI-006).
 - **WRI-02.004 — Structural validation: VERIFIED.** Rejects invalid
   positions, empty paragraph IDs, duplicate IDs and unknown records.
-- **WRI-02.005 — Schema migration: VERIFIED.** `.novadoc` v2 adds a
-  persisted document language. Version 1 files migrate on load (language
-  defaults to `en`) and are rewritten as v2 on save; v2 files missing the
-  field and unknown versions are rejected.
+- **WRI-02.005 — Schema migration: VERIFIED.** `.novadoc` v3 adds a
+  persisted document language and paragraph direction. Version 1 migrates
+  with language `en` and auto direction; version 2 keeps its language and
+  gains auto direction. Both rewrite as v3 on save; missing fields and
+  unknown versions are rejected.
 
 ## WRI-03 — Text editing
 
@@ -68,8 +69,12 @@ Stable IDs are permanent. Statuses are evidence-based. See `EVIDENCE.md`.
 - **WRI-04.001 — Styled CoreText runs: VERIFIED.** Sans/serif/mono, bold,
   italic and underline shape and measure through CoreText; rendered in the
   snapshot.
-- **WRI-04.002 — Fallback/bidi fixtures: TODO.** No explicit bidi paragraph
-  direction, CJK line-breaking or hyphenation fixtures yet.
+- **WRI-04.002 — Fallback/bidi fixtures: VERIFIED.** `.novadoc` v3 stores
+  auto/LTR/RTL per paragraph; auto uses the first strong character. Layout
+  aligns and maps the caret from the paragraph direction, CoreText falls back
+  per glyph, and CJK text wraps at grapheme boundaries without overflowing.
+  The core suite includes Hebrew, Arabic, Japanese, Chinese, Korean and emoji
+  fixtures. Hyphenation is still absent.
 
 ## WRI-05 — Paginated layout
 
@@ -95,12 +100,12 @@ Stable IDs are permanent. Statuses are evidence-based. See `EVIDENCE.md`.
 
 ## WRI-07 — Native persistence
 
-- **WRI-07.001 — `.novadoc` v2 save/open: VERIFIED.** Deterministic UTF-8
+- **WRI-07.001 — `.novadoc` v3 save/open: VERIFIED.** Deterministic UTF-8
   format, checksum, validation, atomic temp-then-rename write, reopen and
-  corrupt-file rejection tested. Version 1 files migrate on load.
-- **WRI-07.002 — Migration: VERIFIED.** See WRI-02.005: a v1 fixture
-  migrates to v2 with the default language, v2 requires `lang`, and unknown
-  versions are rejected.
+  corrupt-file rejection tested. Version 1 and 2 files migrate on load.
+- **WRI-07.002 — Migration: VERIFIED.** See WRI-02.005: v1 and v2 fixtures
+  migrate to v3, v3 requires `lang` and `dir`, and unknown versions are
+  rejected.
 - **WRI-07.003 — Autosave and crash recovery: VERIFIED.** Atomic snapshots
   every 4 seconds under Application Support, epoch-named; startup restores up
   to six valid files as dirty tabs; save and clean close remove them. A
@@ -131,8 +136,9 @@ Stable IDs are permanent. Statuses are evidence-based. See `EVIDENCE.md`.
 ## Verification limits
 
 Recovery save/load, a two-process crash, app startup restore, the first
-autosave write and the IME marked-text commit/cancel path are machine-tested.
-Interactive typing, selection, clipboard, zoom, theme, native file panels, the
-4-second autosave cadence over a long session, and recovery cleanup after save
-are wired but not automated. Do not mark them VERIFIED until an automated GUI
-test exists.
+autosave write, IME marked-text commit/cancel, mixed-script fallback, bidi
+caret geometry and CJK wrapping are machine-tested. Interactive typing,
+selection, clipboard, zoom, theme, native file panels, the sidebar direction
+control, the 4-second autosave cadence over a long session, and recovery
+cleanup after save are wired but not automated. Do not mark them VERIFIED
+until an automated GUI test exists.
