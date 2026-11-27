@@ -270,6 +270,9 @@ fn cg_llvm_type(type_name: String) -> String {
     if cg_is_list(type_name) {
         return "%nova.list"
     }
+    if type_name == "Float" {
+        return "double"
+    }
     if type_name == "Bool" {
         return "i1"
     }
@@ -279,10 +282,22 @@ fn cg_llvm_type(type_name: String) -> String {
     return "i64"
 }
 
+// Imported types keep their module qualifier in the AST (`gui.Theme`) while the
+// struct table is keyed by the declared name (`Theme`). Normalise at the type
+// lookup rather than at every call site.
+fn cg_unqualified(name: String) -> String {
+    let parts = name.split(".")
+    if parts.len() == 0 {
+        return name
+    }
+    return parts[parts.len() - 1]
+}
+
 fn cg_struct_index(structs: List<CgStruct>, name: String) -> Int {
+    let bare = cg_unqualified(name)
     var i = 0
     while i < structs.len() {
-        if structs[i].name == name {
+        if structs[i].name == bare {
             return i
         }
         i = i + 1
@@ -291,9 +306,10 @@ fn cg_struct_index(structs: List<CgStruct>, name: String) -> Int {
 }
 
 fn cg_enum_index(enums: List<CgEnum>, name: String) -> Int {
+    let bare = cg_unqualified(name)
     var i = 0
     while i < enums.len() {
-        if enums[i].name == name {
+        if enums[i].name == bare {
             return i
         }
         i = i + 1
@@ -596,17 +612,19 @@ fn cg_llvm_type_in(structs: List<CgStruct>, enums: List<CgEnum>, type_name: Stri
         }
         return out + " }"
     }
-    if cg_struct_index(structs, type_name) >= 0 {
-        return "%nova.struct." + type_name
+    let bare = cg_unqualified(type_name)
+    if cg_struct_index(structs, bare) >= 0 {
+        return "%nova.struct." + bare
     }
-    if cg_enum_index(enums, type_name) >= 0 {
-        return "%nova.enum." + type_name
+    if cg_enum_index(enums, bare) >= 0 {
+        return "%nova.enum." + bare
     }
-    return cg_llvm_type(type_name)
+    return cg_llvm_type(bare)
 }
 
 fn cg_supported_type(structs: List<CgStruct>, enums: List<CgEnum>, type_name: String) -> Bool {
-    if type_name == "Int" || type_name == "Bool" || type_name == "String" || type_name == "Unit" {
+    let bare = cg_unqualified(type_name)
+    if bare == "Int" || bare == "Float" || bare == "Bool" || bare == "String" || bare == "Unit" {
         return true
     }
     if cg_is_fn_type(type_name) {
@@ -1342,15 +1360,15 @@ fn cg_method_exists(fns: List<CgSig>, name: String) -> Bool {
 }
 
 fn cg_number(text: String) -> String {
-    if text.contains(".") {
-        return ""
-    }
     let chars = text.chars()
     var out = ""
     for c in chars {
         if c != "_" {
             out = out + c
         }
+    }
+    if out.len() == 0 {
+        return ""
     }
     return out
 }
@@ -1362,6 +1380,9 @@ fn cg_val(state: CgState, value: String) -> CgVal {
 fn cg_source_from_llvm(structs: List<CgStruct>, enums: List<CgEnum>, ty: String) -> String {
     if ty == "i64" {
         return "Int"
+    }
+    if ty == "double" {
+        return "Float"
     }
     if ty == "i1" {
         return "Bool"
@@ -2554,8 +2575,11 @@ fn cg_index(ast: Ast, state: CgState, node: Int) -> CgVal {
 
 fn cg_index_assign(ast: Ast, state: CgState, target: Int, value_node: Int) -> CgVal {
     let recv = a_child(ast, target, 0)
-    if recv < 0 || ast.nodes[recv].kind != ak_ident() {
-        return cg_val(cg_error(state, "index assignment requires a mutable list variable"), "0")
+    if recv < 0 {
+        return cg_val(cg_error(state, "index assignment needs a list"), "0")
+    }
+    if ast.nodes[recv].kind != ak_ident() {
+        return cg_aggregate_index_assign(ast, state, target, recv, value_node)
     }
     let index = cg_local_index(state.locals, ast.nodes[recv].text)
     if index < 0 {
@@ -2651,6 +2675,44 @@ fn cg_index_assign(ast: Ast, state: CgState, target: Int, value_node: Int) -> Cg
     )
     work = cg_line(work, "  store " + elem_ty + " " + value.value + ", ptr " + ptr)
     return cg_val_from_source(work, value.value, local.elem)
+}
+
+// A list reached through a struct field or a list element shares its backing
+// storage, so writing through that handle is visible to every holder. This is
+// what lets a library mutate state it was handed (`t.cells[i] = cell`) without
+// passing a mutable local back to the caller.
+fn cg_aggregate_index_assign(ast: Ast, state: CgState, target: Int, recv: Int, value_node: Int) -> CgVal {
+    let base = cg_expr2(ast, state, recv)
+    if base.ty != "%nova.list" {
+        return cg_val(cg_error(base.state, "index assignment expects a list"), "0")
+    }
+    let elem = cg_list_elem(base.source)
+    if elem.len() == 0 {
+        return cg_val(cg_error(base.state, "list element type is unknown"), "0")
+    }
+    let at = cg_expr2(ast, base.state, a_child(ast, target, 1))
+    if at.ty != "i64" {
+        return cg_val(cg_error(at.state, "list index must be Int"), "0")
+    }
+    let value = cg_expr_expected(ast, at.state, value_node, elem)
+    var work = value.state
+    let elem_ty = cg_llvm_type_in(work.structs, work.enums, elem)
+    if value.ty != elem_ty {
+        return cg_val(cg_error(work, "list element type mismatch"), "0")
+    }
+    let size_result = cg_elem_size(work, elem)
+    work = size_result.0
+    let elem_size = size_result.1
+    let list_slot_result = cg_entry_slot(work, "%nova.list")
+    work = list_slot_result.0
+    let list_slot = list_slot_result.1
+    work = cg_line(work, "  store %nova.list " + base.value + ", ptr " + list_slot)
+    let ptr_result = cg_temp(work)
+    work = ptr_result.0
+    let ptr = ptr_result.1
+    work = cg_line(work, "  " + ptr + " = call ptr @nova_list_at(ptr " + list_slot + ", i64 " + at.value + ", i64 " + elem_size + ", i64 " + ast.nodes[target].line.to_string() + ")")
+    work = cg_line(work, "  store " + elem_ty + " " + value.value + ", ptr " + ptr)
+    return cg_val_from_source(work, value.value, elem)
 }
 
 fn cg_list_push(ast: Ast, state: CgState, node: Int) -> CgVal {
@@ -2866,7 +2928,7 @@ fn cg_compile(source: String) -> CgResult {
                 payload_offsets.push(payload_types.len())
                 payload_counts.push(types.len())
                 for payload_type in types {
-                    payload_types.push(payload_type)
+                    payload_types.push(cg_unqualified(payload_type))
                 }
                 k = k + 1
             }
@@ -2893,7 +2955,7 @@ fn cg_compile(source: String) -> CgResult {
                     return CgResult { ir: "", error: "duplicate field " + field.text + " on " + item.text }
                 }
                 fields.push(field.text)
-                types.push(field.aux)
+                types.push(cg_unqualified(field.aux))
                 k = k + 1
             }
             structs.push(CgStruct { name: item.text, fields: fields, types: types, index: structs.len() })
@@ -2929,7 +2991,7 @@ fn cg_compile(source: String) -> CgResult {
         let node = a_child(ast, file, i)
         let item = ast.nodes[node]
         if item.kind == ak_fn() {
-            var ret = item.aux
+            var ret = cg_unqualified(item.aux)
             if ret == "" {
                 ret = "Unit"
             }
@@ -2948,13 +3010,13 @@ fn cg_compile(source: String) -> CgResult {
                     return CgResult { ir: "", error: "unsupported parameter type on " + param.text }
                 }
                 params.push(param.text)
-                param_types.push(param.aux)
+                param_types.push(cg_unqualified(param.aux))
                 k = k + 1
             }
             let index = fns.len()
             fns.push(CgSig { name: item.text, params: params, param_types: param_types, ret: ret, body: a_child(ast, node, item.count - 1), index: index, external: false, captures: [], capture_types: [], closure: false })
         } else if item.kind == ak_extern() {
-            var ret = item.aux
+            var ret = cg_unqualified(item.aux)
             if ret == "" {
                 ret = "Unit"
             }
@@ -2973,7 +3035,7 @@ fn cg_compile(source: String) -> CgResult {
                     return CgResult { ir: "", error: "unsupported extern parameter type on " + param.text }
                 }
                 params.push(param.text)
-                param_types.push(param.aux)
+                param_types.push(cg_unqualified(param.aux))
                 k = k + 1
             }
             let index = fns.len()
@@ -2991,7 +3053,7 @@ fn cg_compile(source: String) -> CgResult {
                 let method_node = a_child(ast, node, k)
                 let method = ast.nodes[method_node]
                 let symbol = item.text + "." + method.text
-                var ret = method.aux
+                var ret = cg_unqualified(method.aux)
                 if ret == "" {
                     ret = "Unit"
                 }
@@ -3014,7 +3076,7 @@ fn cg_compile(source: String) -> CgResult {
                         return CgResult { ir: "", error: "unsupported parameter type on " + symbol }
                     }
                     params.push(param.text)
-                    param_types.push(param_type)
+                    param_types.push(cg_unqualified(param_type))
                     p = p + 1
                 }
                 let index = fns.len()
@@ -5229,6 +5291,10 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
         if number.len() == 0 {
             return cg_val(cg_error(state, "unsupported number " + item.text), "0")
         }
+        if item.text.contains(".") {
+            // LLVM wants a floating constant in scientific form.
+            return cg_val_typed(state, number + "e+00", "double")
+        }
         return cg_val(state, number)
     }
     if item.kind == ak_string() {
@@ -5324,6 +5390,10 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
         let temp_result = cg_temp(value.state)
         var work = temp_result.0
         let temp = temp_result.1
+        if value.ty == "double" {
+            work = cg_line(work, "  " + temp + " = fneg double " + value.value)
+            return cg_val_typed(work, temp, "double")
+        }
         work = cg_line(work, "  " + temp + " = sub i64 0, " + value.value)
         return cg_val(work, temp)
     }
@@ -5389,6 +5459,40 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
                 work = cg_line(work, "  " + temp + " = icmp " + pred + " i32 " + equal + ", 0")
                 return cg_val_typed(work, temp, "i1")
             }
+            if left.ty == "double" || right.ty == "double" {
+                var work = right.state
+                var left_value = left.value
+                var right_value = right.value
+                if left.ty != "double" {
+                    let converted = cg_temp(work)
+                    work = converted.0
+                    left_value = converted.1
+                    work = cg_line(work, "  " + left_value + " = sitofp i64 " + left.value + " to double")
+                }
+                if right.ty != "double" {
+                    let converted = cg_temp(work)
+                    work = converted.0
+                    right_value = converted.1
+                    work = cg_line(work, "  " + right_value + " = sitofp i64 " + right.value + " to double")
+                }
+                var fpred = "oeq"
+                if op == "!=" {
+                    fpred = "one"
+                } else if op == "<" {
+                    fpred = "olt"
+                } else if op == "<=" {
+                    fpred = "ole"
+                } else if op == ">" {
+                    fpred = "ogt"
+                } else if op == ">=" {
+                    fpred = "oge"
+                }
+                let temp_result = cg_temp(work)
+                work = temp_result.0
+                let temp = temp_result.1
+                work = cg_line(work, "  " + temp + " = fcmp " + fpred + " double " + left_value + ", " + right_value)
+                return cg_val_typed(work, temp, "i1")
+            }
             if left.ty != "i64" || right.ty != "i64" {
                 return cg_val(cg_error(right.state, "comparison operands must be Int or String"), "0")
             }
@@ -5421,6 +5525,42 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
             let temp = temp_result.1
             work = cg_line(work, "  " + temp + " = call %nova.string @nova_string_concat(%nova.string " + left.value + ", %nova.string " + right.value + ")")
             return cg_val_typed(work, temp, "%nova.string")
+        }
+        if left.ty == "double" || right.ty == "double" {
+            var work = right.state
+            var left_value = left.value
+            var right_value = right.value
+            if left.ty != "double" {
+                let converted = cg_temp(work)
+                work = converted.0
+                left_value = converted.1
+                work = cg_line(work, "  " + left_value + " = sitofp i64 " + left.value + " to double")
+            }
+            if right.ty != "double" {
+                let converted = cg_temp(work)
+                work = converted.0
+                right_value = converted.1
+                work = cg_line(work, "  " + right_value + " = sitofp i64 " + right.value + " to double")
+            }
+            var fopcode = ""
+            if op == "+" {
+                fopcode = "fadd"
+            } else if op == "-" {
+                fopcode = "fsub"
+            } else if op == "*" {
+                fopcode = "fmul"
+            } else if op == "/" {
+                fopcode = "fdiv"
+            } else if op == "%" {
+                fopcode = "frem"
+            } else {
+                return cg_val(cg_error(work, "unsupported float operator " + op), "0")
+            }
+            let temp_result = cg_temp(work)
+            work = temp_result.0
+            let temp = temp_result.1
+            work = cg_line(work, "  " + temp + " = " + fopcode + " double " + left_value + ", " + right_value)
+            return cg_val_typed(work, temp, "double")
         }
         var opcode = ""
         if op == "+" {
@@ -5573,14 +5713,15 @@ fn cg_expr2(ast: Ast, state: CgState, node: Int) -> CgVal {
                 return cg_val_typed(work, cond, "i1")
             }
             if ast.nodes[callee].text == "min" || ast.nodes[callee].text == "max" {
-                if ast.nodes[node].count - 1 != 0 {
-                    return cg_val(cg_error(state, ast.nodes[callee].text + " takes no arguments"), "0")
+                // List.min()/max() take no arguments. With arguments this is a
+                // user function such as gui.min(a, b): fall through to the call
+                // path instead of claiming the builtin.
+                if ast.nodes[node].count - 1 == 0 {
+                    let recv = cg_expr2(ast, state, a_child(ast, callee, 0))
+                    if recv.ty == "%nova.list" {
+                        return cg_list_extreme(ast, node, recv, ast.nodes[callee].text == "min")
+                    }
                 }
-                let recv = cg_expr2(ast, state, a_child(ast, callee, 0))
-                if recv.ty != "%nova.list" {
-                    return cg_val(cg_error(recv.state, ast.nodes[callee].text + " requires a List<Int>"), "0")
-                }
-                return cg_list_extreme(ast, node, recv, ast.nodes[callee].text == "min")
             }
             if ast.nodes[callee].text == "sum" {
                 if ast.nodes[node].count - 1 != 0 {

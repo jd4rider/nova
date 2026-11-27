@@ -1,0 +1,597 @@
+// Engine world: generational entities with concrete component columns.
+//
+// The language has no generic structs, so each component is a concrete column
+// set rather than a generic sparse set. Columns are indexed by the pool slot;
+// a handle is only ever resolved through `pool_is_alive`, so a destroyed and
+// reused slot cannot be addressed by an old EntityId.
+//
+// Structural changes requested during a step are queued and flushed at the end
+// of that step (ENG-01.005). A system therefore sees a stable entity set for
+// the whole step, which is what deterministic iteration and save/load need.
+//
+// Every mutator rebuilds the World value: `var column = world.column` clones
+// the list header, so returning the input would discard the writes (the
+// ENG-01.00 scene bug).
+
+import "core.nova"
+import "math.nova"
+
+struct World {
+    pool: EntityPool,
+    // Transform: position in Q16.16 world units.
+    px: List<Int>,
+    py: List<Int>,
+    pz: List<Int>,
+    // Rotation quaternion, identity is (w=1, x=0, y=0, z=0).
+    qx: List<Int>,
+    qy: List<Int>,
+    qz: List<Int>,
+    qw: List<Int>,
+    // Scale, identity is 1.
+    sx: List<Int>,
+    sy: List<Int>,
+    sz: List<Int>,
+    // Velocity in Q16.16 units per second.
+    vx: List<Int>,
+    vy: List<Int>,
+    vz: List<Int>,
+    // Gameplay tag; the scene layer and editor map this to names/colours.
+    tags: List<Int>,
+    // Snapshot at the start of the last step, for render interpolation.
+    prev_x: List<Int>,
+    prev_y: List<Int>,
+    prev_z: List<Int>,
+    // Deferred structural requests, applied by world_flush at step end.
+    pending_tags: List<Int>,
+    pending_destroy: List<Int>,
+    gravity: Int,
+    step: Int,
+}
+
+struct WorldSpawned {
+    world: World,
+    id: EntityId,
+}
+
+// Rebuilds a World with a different pool and the given columns, carrying the
+// fields that mutators never change. Keeping this in one place avoids a
+// 22-field literal in every setter.
+fn world_carry(
+    world: World,
+    pool: EntityPool,
+    px: List<Int>,
+    py: List<Int>,
+    pz: List<Int>,
+    qx: List<Int>,
+    qy: List<Int>,
+    qz: List<Int>,
+    qw: List<Int>,
+    sx: List<Int>,
+    sy: List<Int>,
+    sz: List<Int>,
+    vx: List<Int>,
+    vy: List<Int>,
+    vz: List<Int>,
+    tags: List<Int>,
+    prev_x: List<Int>,
+    prev_y: List<Int>,
+    prev_z: List<Int>,
+) -> World {
+    return World {
+        pool: pool,
+        px: px,
+        py: py,
+        pz: pz,
+        qx: qx,
+        qy: qy,
+        qz: qz,
+        qw: qw,
+        sx: sx,
+        sy: sy,
+        sz: sz,
+        vx: vx,
+        vy: vy,
+        vz: vz,
+        tags: tags,
+        prev_x: prev_x,
+        prev_y: prev_y,
+        prev_z: prev_z,
+        pending_tags: world.pending_tags,
+        pending_destroy: world.pending_destroy,
+        gravity: world.gravity,
+        step: world.step,
+    }
+}
+
+fn world_new(gravity: Int) -> World {
+    var empty_i: List<Int> = []
+    var empty_b: List<Int> = []
+    return World {
+        pool: pool_new(),
+        px: empty_i,
+        py: empty_i,
+        pz: empty_i,
+        qx: empty_i,
+        qy: empty_i,
+        qz: empty_i,
+        qw: empty_i,
+        sx: empty_i,
+        sy: empty_i,
+        sz: empty_i,
+        vx: empty_i,
+        vy: empty_i,
+        vz: empty_i,
+        tags: empty_b,
+        prev_x: empty_i,
+        prev_y: empty_i,
+        prev_z: empty_i,
+        pending_tags: empty_b,
+        pending_destroy: empty_b,
+        gravity: gravity,
+        step: 0,
+    }
+}
+
+fn world_capacity(world: World) -> Int {
+    return pool_capacity(world.pool)
+}
+
+fn world_live_count(world: World) -> Int {
+    return pool_live_count(world.pool)
+}
+
+fn world_step(world: World) -> Int {
+    return world.step
+}
+
+fn world_pending_count(world: World) -> Int {
+    return world.pending_tags.len() + world.pending_destroy.len()
+}
+
+// Column rows always match the pool capacity. A fresh slot appends one row;
+// reused slots already have theirs and are overwritten by world_spawn.
+fn world_grow(world: World) -> World {
+    let capacity = pool_capacity(world.pool)
+    var px = world.px
+    var py = world.py
+    var pz = world.pz
+    var qx = world.qx
+    var qy = world.qy
+    var qz = world.qz
+    var qw = world.qw
+    var sx = world.sx
+    var sy = world.sy
+    var sz = world.sz
+    var vx = world.vx
+    var vy = world.vy
+    var vz = world.vz
+    var tags = world.tags
+    var prev_x = world.prev_x
+    var prev_y = world.prev_y
+    var prev_z = world.prev_z
+    while px.len() < capacity {
+        px.push(0)
+        py.push(0)
+        pz.push(0)
+        qx.push(0)
+        qy.push(0)
+        qz.push(0)
+        qw.push(65536)
+        sx.push(65536)
+        sy.push(65536)
+        sz.push(65536)
+        vx.push(0)
+        vy.push(0)
+        vz.push(0)
+        tags.push(0)
+        prev_x.push(0)
+        prev_y.push(0)
+        prev_z.push(0)
+    }
+    return world_carry(world, world.pool, px, py, pz, qx, qy, qz, qw, sx, sy, sz, vx, vy, vz, tags, prev_x, prev_y, prev_z)
+}
+
+fn world_spawn(world: World, tag: Int) -> WorldSpawned {
+    let spawned = pool_spawn(world.pool)
+    var work = world_carry(
+        world,
+        spawned.pool,
+        world.px,
+        world.py,
+        world.pz,
+        world.qx,
+        world.qy,
+        world.qz,
+        world.qw,
+        world.sx,
+        world.sy,
+        world.sz,
+        world.vx,
+        world.vy,
+        world.vz,
+        world.tags,
+        world.prev_x,
+        world.prev_y,
+        world.prev_z,
+    )
+    work = world_grow(work)
+    let index = spawned.id.index
+    var px = work.px
+    var py = work.py
+    var pz = work.pz
+    var qx = work.qx
+    var qy = work.qy
+    var qz = work.qz
+    var qw = work.qw
+    var sx = work.sx
+    var sy = work.sy
+    var sz = work.sz
+    var vx = work.vx
+    var vy = work.vy
+    var vz = work.vz
+    var tags = work.tags
+    var prev_x = work.prev_x
+    var prev_y = work.prev_y
+    var prev_z = work.prev_z
+    px[index] = 0
+    py[index] = 0
+    pz[index] = 0
+    qx[index] = 0
+    qy[index] = 0
+    qz[index] = 0
+    qw[index] = 65536
+    sx[index] = 65536
+    sy[index] = 65536
+    sz[index] = 65536
+    vx[index] = 0
+    vy[index] = 0
+    vz[index] = 0
+    tags[index] = tag
+    prev_x[index] = 0
+    prev_y[index] = 0
+    prev_z[index] = 0
+    return WorldSpawned {
+        world: world_carry(work, work.pool, px, py, pz, qx, qy, qz, qw, sx, sy, sz, vx, vy, vz, tags, prev_x, prev_y, prev_z),
+        id: spawned.id,
+    }
+}
+
+fn world_has(world: World, id: EntityId) -> Bool {
+    return pool_is_alive(world.pool, id)
+}
+
+fn world_despawn(world: World, id: EntityId) -> World {
+    if !pool_is_alive(world.pool, id) {
+        return world
+    }
+    return world_carry(
+        world,
+        pool_destroy(world.pool, id),
+        world.px,
+        world.py,
+        world.pz,
+        world.qx,
+        world.qy,
+        world.qz,
+        world.qw,
+        world.sx,
+        world.sy,
+        world.sz,
+        world.vx,
+        world.vy,
+        world.vz,
+        world.tags,
+        world.prev_x,
+        world.prev_y,
+        world.prev_z,
+    )
+}
+
+fn world_index(world: World, id: EntityId) -> Int {
+    return pool_index(world.pool, id)
+}
+
+fn world_tag(world: World, id: EntityId) -> Int {
+    let index = pool_index(world.pool, id)
+    if index < 0 {
+        return 0
+    }
+    return world.tags[index]
+}
+
+fn world_position(world: World, id: EntityId) -> Vec3 {
+    let index = pool_index(world.pool, id)
+    if index < 0 {
+        return v3_zero()
+    }
+    return Vec3 { x: world.px[index], y: world.py[index], z: world.pz[index] }
+}
+
+fn world_velocity(world: World, id: EntityId) -> Vec3 {
+    let index = pool_index(world.pool, id)
+    if index < 0 {
+        return v3_zero()
+    }
+    return Vec3 { x: world.vx[index], y: world.vy[index], z: world.vz[index] }
+}
+
+fn world_rotation(world: World, id: EntityId) -> Quat {
+    let index = pool_index(world.pool, id)
+    if index < 0 {
+        return quat_identity()
+    }
+    return Quat { w: world.qw[index], x: world.qx[index], y: world.qy[index], z: world.qz[index] }
+}
+
+fn world_scale(world: World, id: EntityId) -> Vec3 {
+    let index = pool_index(world.pool, id)
+    if index < 0 {
+        return v3_one()
+    }
+    return Vec3 { x: world.sx[index], y: world.sy[index], z: world.sz[index] }
+}
+
+fn world_set_position(world: World, id: EntityId, position: Vec3) -> World {
+    let index = pool_index(world.pool, id)
+    if index < 0 {
+        return world
+    }
+    var px = world.px
+    var py = world.py
+    var pz = world.pz
+    px[index] = position.x
+    py[index] = position.y
+    pz[index] = position.z
+    return world_carry(world, world.pool, px, py, pz, world.qx, world.qy, world.qz, world.qw, world.sx, world.sy, world.sz, world.vx, world.vy, world.vz, world.tags, world.prev_x, world.prev_y, world.prev_z)
+}
+
+fn world_set_velocity(world: World, id: EntityId, velocity: Vec3) -> World {
+    let index = pool_index(world.pool, id)
+    if index < 0 {
+        return world
+    }
+    var vx = world.vx
+    var vy = world.vy
+    var vz = world.vz
+    vx[index] = velocity.x
+    vy[index] = velocity.y
+    vz[index] = velocity.z
+    return world_carry(world, world.pool, world.px, world.py, world.pz, world.qx, world.qy, world.qz, world.qw, world.sx, world.sy, world.sz, vx, vy, vz, world.tags, world.prev_x, world.prev_y, world.prev_z)
+}
+
+fn world_set_rotation(world: World, id: EntityId, rotation: Quat) -> World {
+    let index = pool_index(world.pool, id)
+    if index < 0 {
+        return world
+    }
+    var qx = world.qx
+    var qy = world.qy
+    var qz = world.qz
+    var qw = world.qw
+    qx[index] = rotation.x
+    qy[index] = rotation.y
+    qz[index] = rotation.z
+    qw[index] = rotation.w
+    return world_carry(world, world.pool, world.px, world.py, world.pz, qx, qy, qz, qw, world.sx, world.sy, world.sz, world.vx, world.vy, world.vz, world.tags, world.prev_x, world.prev_y, world.prev_z)
+}
+
+fn world_set_scale(world: World, id: EntityId, scale: Vec3) -> World {
+    let index = pool_index(world.pool, id)
+    if index < 0 {
+        return world
+    }
+    var sx = world.sx
+    var sy = world.sy
+    var sz = world.sz
+    sx[index] = scale.x
+    sy[index] = scale.y
+    sz[index] = scale.z
+    return world_carry(world, world.pool, world.px, world.py, world.pz, world.qx, world.qy, world.qz, world.qw, sx, sy, sz, world.vx, world.vy, world.vz, world.tags, world.prev_x, world.prev_y, world.prev_z)
+}
+
+fn world_transform(world: World, id: EntityId) -> Transform {
+    return transform_new(world_position(world, id), world_rotation(world, id), world_scale(world, id))
+}
+
+// ---------- deferred structural changes ----------
+
+fn world_request_spawn(world: World, tag: Int) -> World {
+    var pending = world.pending_tags
+    pending.push(tag)
+    return World {
+        pool: world.pool,
+        px: world.px,
+        py: world.py,
+        pz: world.pz,
+        qx: world.qx,
+        qy: world.qy,
+        qz: world.qz,
+        qw: world.qw,
+        sx: world.sx,
+        sy: world.sy,
+        sz: world.sz,
+        vx: world.vx,
+        vy: world.vy,
+        vz: world.vz,
+        tags: world.tags,
+        prev_x: world.prev_x,
+        prev_y: world.prev_y,
+        prev_z: world.prev_z,
+        pending_tags: pending,
+        pending_destroy: world.pending_destroy,
+        gravity: world.gravity,
+        step: world.step,
+    }
+}
+
+fn world_request_destroy(world: World, id: EntityId) -> World {
+    if !pool_is_alive(world.pool, id) {
+        return world
+    }
+    var pending = world.pending_destroy
+    pending.push(entity_key(id))
+    return World {
+        pool: world.pool,
+        px: world.px,
+        py: world.py,
+        pz: world.pz,
+        qx: world.qx,
+        qy: world.qy,
+        qz: world.qz,
+        qw: world.qw,
+        sx: world.sx,
+        sy: world.sy,
+        sz: world.sz,
+        vx: world.vx,
+        vy: world.vy,
+        vz: world.vz,
+        tags: world.tags,
+        prev_x: world.prev_x,
+        prev_y: world.prev_y,
+        prev_z: world.prev_z,
+        pending_tags: world.pending_tags,
+        pending_destroy: pending,
+        gravity: world.gravity,
+        step: world.step,
+    }
+}
+
+// Applies queued spawns and destroys. Ordering is deterministic: destroys are
+// applied before spawns, so a slot freed this step is the one reused.
+fn world_flush(world: World) -> World {
+    var work = world
+    var d = 0
+    while d < work.pending_destroy.len() {
+        let key = work.pending_destroy[d]
+        let index = key / 1000000
+        let generation = key % 1000000
+        work = world_despawn(work, EntityId { index: index, generation: generation })
+        d = d + 1
+    }
+    var s = 0
+    while s < work.pending_tags.len() {
+        let spawned = world_spawn(work, work.pending_tags[s])
+        work = spawned.world
+        s = s + 1
+    }
+    var empty_i: List<Int> = []
+    var empty_d: List<Int> = []
+    return World {
+        pool: work.pool,
+        px: work.px,
+        py: work.py,
+        pz: work.pz,
+        qx: work.qx,
+        qy: work.qy,
+        qz: work.qz,
+        qw: work.qw,
+        sx: work.sx,
+        sy: work.sy,
+        sz: work.sz,
+        vx: work.vx,
+        vy: work.vy,
+        vz: work.vz,
+        tags: work.tags,
+        prev_x: work.prev_x,
+        prev_y: work.prev_y,
+        prev_z: work.prev_z,
+        pending_tags: empty_i,
+        pending_destroy: empty_d,
+        gravity: work.gravity,
+        step: work.step,
+    }
+}
+
+// ---------- fixed step ----------
+
+// One deterministic step: snapshot, gravity, integration, then flush the
+// structural queue. `dt` is the fixed step in Q16.16 seconds. Entities queued
+// for destruction are still simulated for this step and disappear at the end.
+fn world_tick(world: World, dt: Int) -> World {
+    var px = world.px
+    var py = world.py
+    var pz = world.pz
+    var vx = world.vx
+    var vy = world.vy
+    var vz = world.vz
+    var prev_x = world.prev_x
+    var prev_y = world.prev_y
+    var prev_z = world.prev_z
+
+    var i = 0
+    while i < world.pool.alive.len() {
+        if world.pool.alive[i] {
+            prev_x[i] = px[i]
+            prev_y[i] = py[i]
+            prev_z[i] = pz[i]
+            vy[i] = vy[i] + fx_mul(world.gravity, dt)
+            px[i] = px[i] + fx_mul(vx[i], dt)
+            py[i] = py[i] + fx_mul(vy[i], dt)
+            pz[i] = pz[i] + fx_mul(vz[i], dt)
+        }
+        i = i + 1
+    }
+
+    let stepped = world_carry(world, world.pool, px, py, pz, world.qx, world.qy, world.qz, world.qw, world.sx, world.sy, world.sz, vx, vy, vz, world.tags, prev_x, prev_y, prev_z)
+    let advanced = World {
+        pool: stepped.pool,
+        px: stepped.px,
+        py: stepped.py,
+        pz: stepped.pz,
+        qx: stepped.qx,
+        qy: stepped.qy,
+        qz: stepped.qz,
+        qw: stepped.qw,
+        sx: stepped.sx,
+        sy: stepped.sy,
+        sz: stepped.sz,
+        vx: stepped.vx,
+        vy: stepped.vy,
+        vz: stepped.vz,
+        tags: stepped.tags,
+        prev_x: stepped.prev_x,
+        prev_y: stepped.prev_y,
+        prev_z: stepped.prev_z,
+        pending_tags: stepped.pending_tags,
+        pending_destroy: stepped.pending_destroy,
+        gravity: stepped.gravity,
+        step: stepped.step + 1,
+    }
+    return world_flush(advanced)
+}
+
+// Render interpolation between the previous and current step. `alpha` is
+// Q16.16 in [0, 65536]; both endpoints are exact.
+fn world_lerp_position(world: World, id: EntityId, alpha: Int) -> Vec3 {
+    let index = pool_index(world.pool, id)
+    if index < 0 {
+        return v3_zero()
+    }
+    let t = fx_clamp(alpha, 0, 65536)
+    return Vec3 {
+        x: fx_lerp(world.prev_x[index], world.px[index], t),
+        y: fx_lerp(world.prev_y[index], world.py[index], t),
+        z: fx_lerp(world.prev_z[index], world.pz[index], t),
+    }
+}
+
+// Deterministic FNV-1a-style hash over every alive entity's transform,
+// velocity and tag in slot order. Two runs of the same script must match.
+fn world_trace_hash(world: World) -> Int {
+    var hash = 1469598103
+    var i = 0
+    while i < world.pool.alive.len() {
+        if world.pool.alive[i] {
+            hash = (hash * 16777619 + world.pool.generations[i]) % 2147483647
+            hash = (hash * 16777619 + world.tags[i]) % 2147483647
+            hash = (hash * 16777619 + world.px[i]) % 2147483647
+            hash = (hash * 16777619 + world.py[i]) % 2147483647
+            hash = (hash * 16777619 + world.pz[i]) % 2147483647
+            hash = (hash * 16777619 + world.vx[i]) % 2147483647
+            hash = (hash * 16777619 + world.vy[i]) % 2147483647
+            hash = (hash * 16777619 + world.vz[i]) % 2147483647
+        }
+        i = i + 1
+    }
+    return hash
+}

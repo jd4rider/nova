@@ -1,0 +1,17 @@
+// Float lowering fixture: literal, var, assignment, fadd, fmul and fcmp.
+fn average(a: Float, b: Float) -> Float {
+    return (a + b) / 2.0
+}
+
+fn main() -> Int {
+    var total = 0.0
+    total = total + 1.5
+    total = total * 2.0
+    let mean = average(total, 1.0)
+    if mean == 2.0 {
+        if total == 3.0 {
+            return 7
+        }
+    }
+    return 1
+}

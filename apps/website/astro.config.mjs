@@ -41,7 +41,7 @@ export default defineConfig({
         { label: 'Libraries', items: [{ slug: 'libraries/tui' }, { slug: 'libraries/gui' }, { slug: 'libraries/web' }, { slug: 'libraries/templating' }, { slug: 'libraries/wasm' }, { slug: 'libraries/game' }] },
         { label: 'Toolchain', items: [{ slug: 'toolchain/cli' }, { slug: 'toolchain/projects' }, { slug: 'toolchain/lsp' }, { slug: 'toolchain/vscode' }, { slug: 'toolchain/playground' }] },
         { label: 'Nova Studio', items: [{ slug: 'studio/overview' }, { slug: 'studio/nova-studio' }, { slug: 'studio/shortcuts' }, { slug: 'studio/vim' }, { slug: 'studio/plugins' }, { slug: 'studio/freebuff' }] },
-        { label: 'Apps', items: [{ slug: 'apps/nova-term' }] },
+        { label: 'Apps', items: [{ slug: 'apps/nova-term' }, { slug: 'apps/engine-studio' }] },
         { label: 'Internals', items: [{ slug: 'internals/compiler' }, { slug: 'internals/runtime' }] },
         { label: 'Project', items: [{ slug: 'status' }, { slug: 'contributing' }, { slug: 'cookbook' }, { slug: 'website' }] }
       ]

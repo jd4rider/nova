@@ -172,7 +172,22 @@ fn scene_set_position(scene: Scene, id: Int, x: Int, y: Int) -> Scene {
     var ys = scene.ys
     xs[index] = x
     ys[index] = y
-    return scene
+    return Scene {
+        ids: scene.ids,
+        names: scene.names,
+        tags: scene.tags,
+        xs: xs,
+        ys: ys,
+        vxs: scene.vxs,
+        vys: scene.vys,
+        hws: scene.hws,
+        hhs: scene.hhs,
+        colours: scene.colours,
+        solids: scene.solids,
+        bounces: scene.bounces,
+        gravity: scene.gravity,
+        next_id: scene.next_id,
+    }
 }
 
 fn scene_set_solid(scene: Scene, id: Int, solid: Bool) -> Scene {
@@ -182,7 +197,22 @@ fn scene_set_solid(scene: Scene, id: Int, solid: Bool) -> Scene {
     }
     var solids = scene.solids
     solids[index] = solid
-    return scene
+    return Scene {
+        ids: scene.ids,
+        names: scene.names,
+        tags: scene.tags,
+        xs: scene.xs,
+        ys: scene.ys,
+        vxs: scene.vxs,
+        vys: scene.vys,
+        hws: scene.hws,
+        hhs: scene.hhs,
+        colours: scene.colours,
+        solids: solids,
+        bounces: scene.bounces,
+        gravity: scene.gravity,
+        next_id: scene.next_id,
+    }
 }
 
 fn scene_set_gravity(scene: Scene, gravity: Int) -> Scene {
@@ -270,7 +300,22 @@ fn scene_set_velocity(scene: Scene, id: Int, vx: Int, vy: Int) -> Scene {
     var vys = scene.vys
     vxs[index] = vx
     vys[index] = vy
-    return scene
+    return Scene {
+        ids: scene.ids,
+        names: scene.names,
+        tags: scene.tags,
+        xs: scene.xs,
+        ys: scene.ys,
+        vxs: vxs,
+        vys: vys,
+        hws: scene.hws,
+        hhs: scene.hhs,
+        colours: scene.colours,
+        solids: scene.solids,
+        bounces: scene.bounces,
+        gravity: scene.gravity,
+        next_id: scene.next_id,
+    }
 }
 
 // One fixed step: gravity, swept collision against every solid, then bounds.
@@ -430,5 +475,23 @@ fn scene_tick(scene: Scene) -> Scene {
         }
         c = c + 1
     }
-    return scene
+    // A `var` list binding clones the header, so the writes above live in the
+    // local lists. Returning `scene` would silently discard the whole tick;
+    // surface the mutated lists through a new value instead.
+    return Scene {
+        ids: scene.ids,
+        names: scene.names,
+        tags: scene.tags,
+        xs: xs,
+        ys: ys,
+        vxs: vxs,
+        vys: vys,
+        hws: scene.hws,
+        hhs: scene.hhs,
+        colours: scene.colours,
+        solids: scene.solids,
+        bounces: scene.bounces,
+        gravity: scene.gravity,
+        next_id: scene.next_id,
+    }
 }

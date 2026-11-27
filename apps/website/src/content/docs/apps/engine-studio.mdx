@@ -1,0 +1,83 @@
+---
+title: Nova Engine Studio
+description: A native Unity-first editor shell written in Nova, with real World state, Scene and Game views, and a signed macOS app.
+---
+
+export const base = import.meta.env.BASE_URL
+
+**Status: phase-0 vertical slice, macOS arm64.** Nova Engine Studio is the native editor shell for Nova Engine. It is not a Unity wrapper, an Electron app or a mock layout: hierarchy, Scene/Game views, inspector and console all read the same live `World` value.
+
+Every panel is drawn by [nova-gui](../../libraries/gui/) from Nova code. The project is the first editor-facing slice of the engine, not a finished product.
+
+<img
+  src={`${base}engine/engine-scene.png`}
+  alt="Nova Engine Studio Scene tab with hierarchy, wireframe scene, inspector and console"
+  style="width:100%;border:1px solid var(--sl-color-hairline);border-radius:10px;margin:14px 0 6px"
+/>
+<p style="font-size:13px;color:var(--sl-color-gray-3);margin:0 0 28px">
+  Scene tab: six live entities, selected Player <code>3:1</code>, hierarchy, inspector and console. Captured from the signed app at 2880×1800 and shown at 1440×900.
+</p>
+
+## What is real
+
+- **One World.** The hierarchy lists live entity slots and their generation handles. Selection, inspector fields, play/pause/step and the console all read the same `world.nova` value.
+- **Two view states.** Scene draws the perspective grid, wireframes, selection colour and entity labels. Game hides the editor grid, selection overlay and labels while keeping the same entities.
+- **Real time controls.** `Space` plays or pauses, `S` advances one fixed 1/60 s tick, `Tab` cycles live entities, `Delete` despawns the selection, and `R` resets the demo world.
+- **A native shell.** The installer produces `Nova Engine Studio.app` with an icon and an ad-hoc signature. There is no web view, Electron or JavaScript runtime.
+
+<img
+  src={`${base}engine/engine-game.png`}
+  alt="Nova Engine Studio Game tab with no editor grid or selection overlay"
+  style="width:100%;border:1px solid var(--sl-color-hairline);border-radius:10px;margin:14px 0 6px"
+/>
+<p style="font-size:13px;color:var(--sl-color-gray-3);margin:0 0 28px">
+  Game tab: the same six entities with editor overlays hidden, a separate active-tab state and the Game camera toolbar label.
+</p>
+
+## Run it
+
+Use the compiler built from the current sources; the checked-in stage-0 bootstrap predates the shell and Metal support.
+
+```sh
+# from the repository root
+(cd examples/nova-tool && ../../bootstrap/nova build)
+cd examples/scene-gui
+../../examples/nova-tool/target/nova/nova-tool build
+./target/nova/scene-gui
+```
+
+Install the signed local app:
+
+```sh
+cd examples/scene-gui
+sh install-macos.sh
+open "/Applications/Nova Engine Studio.app"
+```
+
+The bundle is ad-hoc signed, not Developer ID signed or notarized. On first launch macOS may require right-click → **Open**. The installer falls back to `~/Applications` when `/Applications` is not writable.
+
+## Capture test
+
+```sh
+cd examples/scene-gui
+sh tests/shell.sh
+```
+
+The test captures both tabs at 2880×1800, checks the traffic-light row through `NOVA_GUI_TRACE`, enters Game through the same mouse-down hit test as the window, and samples 12 pixels: panel surfaces, both active-tab states, the selected hierarchy row, a Scene grid line that becomes plain background in Game, and the drawer. Both PNGs are left in `target/` for review.
+
+The title strip calls `gui.place_traffic_lights(14)` and reserves 84 points on the left, so AppKit's close/minimize/zoom buttons do not overlap the title or menu. AppKit's own event delivery is still a manual check; the capture test verifies the handler below it.
+
+## Honest gaps
+
+- **The viewport is a CPU preview.** It projects Q16.16 transforms through `mat4_perspective` and `mat4_look_at` into Nova GUI lines. The lit Metal cube lives in `examples/metal-lab`; embedding it in Studio is the next slice.
+- **The inspector is read-only.** Add Component reports that no component types are registered yet. There is no undo or redo.
+- **Game is a view state, not a build.** It does not simulate a separate runtime camera, package a player or handle input as a game.
+- **No save/load or docking.** The six-entity demo world is created in code each launch.
+- **macOS arm64 only.** The host uses AppKit, CoreGraphics and CoreText, with Metal support in the separate engine lab.
+
+## Source
+
+- [`examples/scene-gui`](https://github.com/jd4rider/nova/tree/main/examples/scene-gui) — shell, tests and installer
+- [`libraries/nova-engine`](https://github.com/jd4rider/nova/tree/main/libraries/nova-engine) — Q16.16 math, generational handles, fixed tick and World storage
+- [`examples/metal-lab`](https://github.com/jd4rider/nova/tree/main/examples/metal-lab) — native Metal cube, camera and physics acceptance
+- [`engineering/continuation/engine`](https://github.com/jd4rider/nova/tree/main/engineering/continuation/engine) — task ledger, evidence and session notes

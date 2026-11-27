@@ -1,0 +1,61 @@
+import std.io { println }
+import "../../../libraries/nova-engine/src/core.nova"
+import "../../../libraries/nova-engine/src/math.nova"
+import "../../../libraries/nova-engine/src/world.nova"
+
+// Headless engine-lab: no window, no GPU. It proves the runtime core the rest
+// of Nova Engine will sit on — generational handles, a fixed-timestep loop and
+// deterministic fixed-point transforms — and prints the exact state so a test
+// script can compare it.
+
+fn main() {
+    var pool = pool_new()
+    let first = pool_spawn(pool)
+    pool = first.pool
+    let doomed = pool_spawn(pool)
+    pool = doomed.pool
+
+    pool = pool_destroy(pool, doomed.id)
+    let recycled = pool_spawn(pool)
+    pool = recycled.pool
+
+    var clock = clock_new(60)
+    var position = Vec3 { x: 0, y: 0, z: 0 }
+    let velocity = Vec3 { x: fx(3), y: fx(4), z: 0 }
+    let step_seconds = fx_ratio(1, 60)
+    var frames = 0
+    var total_steps = 0
+
+    while frames < 120 {
+        let tick = clock_advance(clock, 16666)
+        clock = tick.clock
+        total_steps = total_steps + tick.steps
+        var s = 0
+        while s < tick.steps {
+            position = v3_add(position, v3_scale(velocity, step_seconds))
+            s = s + 1
+        }
+        frames = frames + 1
+    }
+
+    let rotation = quat_axis_angle(vec3(0, 0, fx(1)), fx_half_pi())
+    let rotated = quat_rotate_vec3(rotation, vec3(fx(1), 0, 0))
+
+    println("engine-lab: frames=${frames} steps=${total_steps} live=${pool_live_count(pool)} capacity=${pool_capacity(pool)}")
+    println("engine-lab: position=${fx_round_int(position.x)},${fx_round_int(position.y)} first_alive=${pool_is_alive(pool, first.id)} recycled_generation=${recycled.id.generation}")
+    println("engine-lab: rotated=${fx_round_int(rotated.x)},${fx_round_int(rotated.y)} dropped_us=${clock.dropped_us}")
+
+    var world = world_new(fx(9))
+    let left = world_spawn(world, 1)
+    world = left.world
+    let right = world_spawn(world, 2)
+    world = right.world
+    world = world_set_velocity(world, left.id, vec3(fx(2), 0, 0))
+    world = world_set_velocity(world, right.id, vec3(fx(0 - 1), fx(3), 0))
+    var world_steps = 0
+    while world_steps < 600 {
+        world = world_tick(world, fx_ratio(1, 60))
+        world_steps = world_steps + 1
+    }
+    println("engine-lab: world_live=${world_live_count(world)} world_steps=${world_step(world)} world_hash=${world_trace_hash(world)}")
+}

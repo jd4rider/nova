@@ -963,6 +963,23 @@ else
     no "list-copy binary missing"
 fi
 
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-list-field-write.nova" "$tool")
+echo "$out" | grep -q "call ptr @nova_list_at" && ok || no "field index write uses nova_list_at"
+printf '%s\n' "$out" > "$tmp/list-field-write.ll"
+if clang_ir "$tmp/list-field-write.ll" "$tmp/list-field-write" "$tmp/list-field-write-clang.log"; then
+    ok
+else
+    no "clang rejects field list write IR"
+    cat "$tmp/list-field-write-clang.log"
+fi
+if [ -x "$tmp/list-field-write" ]; then
+    "$tmp/list-field-write"
+    code=$?
+    [ "$code" -eq 9 ] && ok || no "field list write result (got $code, expected 9)"
+else
+    no "field list write binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-builtins.nova" "$tool")
 echo "$out" | grep -q "call %nova.string @nova_char_to_string(i32" && ok || no "char_string call"
 echo "$out" | grep -q "call %nova.string @nova_json_string" && ok || no "json_string call"
@@ -1067,6 +1084,27 @@ if [ -x "$tmp/map-set" ]; then
     [ "$code" -eq 23 ] && ok || no "map/set result (got $code, expected 23)"
 else
     no "map/set binary missing"
+fi
+
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-float.nova" "$tool")
+echo "$out" | grep -q "define double @nova_user_0" && ok || no "Float parameter signature"
+echo "$out" | grep -q "fadd double" && ok || no "float addition lowering"
+echo "$out" | grep -q "fmul double" && ok || no "float multiplication lowering"
+echo "$out" | grep -q "fdiv double" && ok || no "float division lowering"
+echo "$out" | grep -q "fcmp oeq double" && ok || no "float comparison lowering"
+printf '%s\n' "$out" > "$tmp/float.ll"
+if clang_ir "$tmp/float.ll" "$tmp/float" "$tmp/float-clang.log"; then
+    ok
+else
+    no "clang rejects float IR"
+    cat "$tmp/float-clang.log"
+fi
+if [ -x "$tmp/float" ]; then
+    "$tmp/float"
+    code=$?
+    [ "$code" -eq 7 ] && ok || no "float result (got $code, expected 7)"
+else
+    no "float binary missing"
 fi
 
 printf 'fn main() -> Int {\n    return "x"\n}\n' > "$tmp/bad.nova"

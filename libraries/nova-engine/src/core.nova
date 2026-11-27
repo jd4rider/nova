@@ -1,0 +1,275 @@
+// Engine core: identity, lifecycle and time.
+//
+// Two decisions are encoded here and recorded in
+// engineering/continuation/engine/DECISIONS.md:
+//
+// - Entity handles carry a generation, so a destroyed handle can never address
+//   a reused slot. Scripts and editor selections hold EntityId values, never
+//   list indices.
+// - Time is integer microseconds. A fixed step plus an interpolation alpha is
+//   what lets rendering interpolate instead of the simulation seeing variable
+//   dt. Deterministic and wasm-safe, with no float dependency.
+
+// ---------- entity handles ----------
+
+struct EntityId {
+    index: Int,
+    generation: Int,
+}
+
+fn entity_none() -> EntityId {
+    return EntityId { index: 0 - 1, generation: 0 }
+}
+
+fn entity_is_none(id: EntityId) -> Bool {
+    return id.index < 0
+}
+
+fn entity_eq(a: EntityId, b: EntityId) -> Bool {
+    if a.index != b.index {
+        return false
+    }
+    return a.generation == b.generation
+}
+
+fn entity_key(id: EntityId) -> Int {
+    return id.index * 1000000 + id.generation
+}
+
+// ---------- pool ----------
+
+struct EntityPool {
+    generations: List<Int>,
+    alive: List<Bool>,
+    free: List<Int>,
+    free_cursor: Int,
+    spawned: Int,
+    destroyed: Int,
+}
+
+struct Spawned {
+    pool: EntityPool,
+    id: EntityId,
+}
+
+fn pool_new() -> EntityPool {
+    var generations: List<Int> = []
+    var alive: List<Bool> = []
+    var free: List<Int> = []
+    return EntityPool {
+        generations: generations,
+        alive: alive,
+        free: free,
+        free_cursor: 0,
+        spawned: 0,
+        destroyed: 0,
+    }
+}
+
+fn pool_capacity(pool: EntityPool) -> Int {
+    return pool.generations.len()
+}
+
+fn pool_live_count(pool: EntityPool) -> Int {
+    var live = 0
+    for slot in pool.alive {
+        if slot {
+            live = live + 1
+        }
+    }
+    return live
+}
+
+// Reuses a destroyed slot when one is queued, so a long-running game does not
+// grow the component arrays forever. The generation was already bumped when the
+// slot was destroyed, so the new handle is distinct from the old one.
+fn pool_spawn(pool: EntityPool) -> Spawned {
+    if pool.free_cursor < pool.free.len() {
+        let index = pool.free[pool.free_cursor]
+        var alive = pool.alive
+        alive[index] = true
+        let next = EntityPool {
+            generations: pool.generations,
+            alive: alive,
+            free: pool.free,
+            free_cursor: pool.free_cursor + 1,
+            spawned: pool.spawned + 1,
+            destroyed: pool.destroyed,
+        }
+        return Spawned { pool: next, id: EntityId { index: index, generation: pool.generations[index] } }
+    }
+
+    var generations = pool.generations
+    var alive = pool.alive
+    generations.push(1)
+    alive.push(true)
+    let index = generations.len() - 1
+    let next = EntityPool {
+        generations: generations,
+        alive: alive,
+        free: pool.free,
+        free_cursor: pool.free_cursor,
+        spawned: pool.spawned + 1,
+        destroyed: pool.destroyed,
+    }
+    return Spawned { pool: next, id: EntityId { index: index, generation: 1 } }
+}
+
+// Destroying twice, destroying a stale generation or destroying an index that
+// never existed is a no-op. The caller keeps the returned pool.
+fn pool_destroy(pool: EntityPool, id: EntityId) -> EntityPool {
+    if id.index < 0 {
+        return pool
+    }
+    if id.index >= pool.generations.len() {
+        return pool
+    }
+    if pool.generations[id.index] != id.generation {
+        return pool
+    }
+    if !pool.alive[id.index] {
+        return pool
+    }
+    var generations = pool.generations
+    var alive = pool.alive
+    var free = pool.free
+    generations[id.index] = generations[id.index] + 1
+    alive[id.index] = false
+    free.push(id.index)
+    return EntityPool {
+        generations: generations,
+        alive: alive,
+        free: free,
+        free_cursor: pool.free_cursor,
+        spawned: pool.spawned,
+        destroyed: pool.destroyed + 1,
+    }
+}
+
+fn pool_is_alive(pool: EntityPool, id: EntityId) -> Bool {
+    if id.index < 0 {
+        return false
+    }
+    if id.index >= pool.generations.len() {
+        return false
+    }
+    if !pool.alive[id.index] {
+        return false
+    }
+    return pool.generations[id.index] == id.generation
+}
+
+// Diagnostics helper: resolves a handle to the slot index, or -1 when stale.
+fn pool_index(pool: EntityPool, id: EntityId) -> Int {
+    if !pool_is_alive(pool, id) {
+        return 0 - 1
+    }
+    return id.index
+}
+
+// ---------- fixed timestep ----------
+
+struct Clock {
+    step_us: Int,
+    accumulator_us: Int,
+    elapsed_us: Int,
+    frame: Int,
+    max_steps: Int,
+    dropped_us: Int,
+}
+
+// `steps` is how many fixed updates to run this frame; `alpha` is the fraction
+// of the next step that has already elapsed, in Q16.16 (0..65535), for render
+// interpolation.
+struct Tick {
+    clock: Clock,
+    steps: Int,
+    alpha: Int,
+}
+
+fn clock_new(hz: Int) -> Clock {
+    var step = 16666
+    if hz > 0 {
+        step = 1000000 / hz
+    }
+    return Clock {
+        step_us: step,
+        accumulator_us: 0,
+        elapsed_us: 0,
+        frame: 0,
+        max_steps: 8,
+        dropped_us: 0,
+    }
+}
+
+fn clock_with_max_steps(clock: Clock, max_steps: Int) -> Clock {
+    var cap = max_steps
+    if cap < 1 {
+        cap = 1
+    }
+    return Clock {
+        step_us: clock.step_us,
+        accumulator_us: clock.accumulator_us,
+        elapsed_us: clock.elapsed_us,
+        frame: clock.frame,
+        max_steps: cap,
+        dropped_us: clock.dropped_us,
+    }
+}
+
+// A long stall (debugger pause, window drag on some platforms) is clamped so the
+// simulation does not try to replay every missed step at once. The excess is
+// recorded in `dropped_us` rather than hidden.
+fn clock_advance(clock: Clock, delta_us: Int) -> Tick {
+    var delta = delta_us
+    if delta < 0 {
+        delta = 0
+    }
+    var dropped = clock.dropped_us
+    let cap = clock.step_us * clock.max_steps
+    if delta > cap {
+        dropped = dropped + (delta - cap)
+        delta = cap
+    }
+
+    var accumulator = clock.accumulator_us + delta
+    var steps = 0
+    while accumulator >= clock.step_us && steps < clock.max_steps {
+        accumulator = accumulator - clock.step_us
+        steps = steps + 1
+    }
+
+    var alpha = 0
+    if clock.step_us > 0 {
+        alpha = accumulator * 65536 / clock.step_us
+    }
+
+    return Tick {
+        clock: Clock {
+            step_us: clock.step_us,
+            accumulator_us: accumulator,
+            elapsed_us: clock.elapsed_us + delta,
+            frame: clock.frame + steps,
+            max_steps: clock.max_steps,
+            dropped_us: dropped,
+        },
+        steps: steps,
+        alpha: alpha,
+    }
+}
+
+fn clock_reset(clock: Clock) -> Clock {
+    return Clock {
+        step_us: clock.step_us,
+        accumulator_us: 0,
+        elapsed_us: 0,
+        frame: 0,
+        max_steps: clock.max_steps,
+        dropped_us: 0,
+    }
+}
+
+// Seconds as a fixed-point number, for HUD and profiling output.
+fn clock_elapsed_fx(clock: Clock) -> Int {
+    return clock.elapsed_us * 65536 / 1000000
+}

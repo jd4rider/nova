@@ -501,6 +501,22 @@ fn nt_wants_speech(ir: String) -> Bool {
     return ir.contains("@nova_speech_")
 }
 
+fn nt_find_metal(runtime: String) -> String {
+    var base = runtime
+    if !base.starts_with("/") {
+        base = gui.cwd() + "/" + base
+    }
+    let candidate = rs_dirname(base) + "/metal.m"
+    if gui.exists(candidate) {
+        return candidate
+    }
+    return ""
+}
+
+fn nt_wants_metal(ir: String) -> Bool {
+    return ir.contains("@nova_metal_")
+}
+
 fn nt_build_project() -> Int {
     let root = nt_find_root()
     if root.len() == 0 {
@@ -820,6 +836,22 @@ fn nt_build_source(path: String, source: String, target: String) -> Int {
             return 1
         }
     }
+    let metal_source = nt_find_metal(runtime)
+    var wants_metal = false
+    var metal_object = ""
+    if host == "Darwin" && metal_source.len() > 0 && nt_wants_metal(result.ir) {
+        wants_metal = true
+        metal_object = target + ".metal.o"
+        let metal_command = "clang -fobjc-arc -O2 -c " + nt_shell_quote(metal_source) + " -o " + nt_shell_quote(metal_object)
+        let metal_output = gui.run(metal_command, gui.cwd())
+        if gui.exit_status() != 0 {
+            println("error: clang failed to compile nova-metal for " + path)
+            if metal_output.len() > 0 {
+                println(metal_output)
+            }
+            return 1
+        }
+    }
     var command = "clang -x ir " + nt_shell_quote(ir_path) + " -x none " + nt_shell_quote(runtime) + " -o " + nt_shell_quote(target) + " -lm"
     if wants_gui {
         command = command + " " + nt_shell_quote(gui_object) + " -framework Cocoa -framework CoreText -framework CoreGraphics -framework ImageIO -framework QuartzCore"
@@ -829,6 +861,9 @@ fn nt_build_source(path: String, source: String, target: String) -> Int {
     }
     if wants_speech {
         command = command + " " + nt_shell_quote(speech_object) + " -framework AVFoundation -framework Cocoa"
+    }
+    if wants_metal {
+        command = command + " " + nt_shell_quote(metal_object) + " -framework Metal -framework MetalKit -framework Cocoa -framework QuartzCore -framework ImageIO -framework CoreGraphics"
     }
     let output = gui.run(command, gui.cwd())
     if gui.exit_status() != 0 {
@@ -846,6 +881,9 @@ fn nt_build_source(path: String, source: String, target: String) -> Int {
     }
     if wants_speech {
         gui.run("rm -f " + nt_shell_quote(speech_object), gui.cwd())
+    }
+    if wants_metal {
+        gui.run("rm -f " + nt_shell_quote(metal_object), gui.cwd())
     }
     println("built " + target)
     return 0

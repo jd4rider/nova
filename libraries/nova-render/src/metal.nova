@@ -1,0 +1,93 @@
+// Nova Engine Metal binding.
+//
+// The host is runtime/metal.m (ADR-ENG-008). Metal objects and the window stay
+// in Objective-C; this module is the whole FFI surface and passes only Int
+// handles, Ints and strings. No callbacks cross the boundary: the Nova loop
+// polls `metal_poll`, draws, and shuts down explicitly.
+//
+// A session handle is 0 on failure. Call `metal_last_error` for the reason.
+
+extern "C" fn nova_metal_init(title: String, width: Int, height: Int) -> Int
+extern "C" fn nova_metal_poll(handle: Int) -> Int
+extern "C" fn nova_metal_draw(handle: Int, red: Int, green: Int, blue: Int) -> Int
+extern "C" fn nova_metal_resize(handle: Int, width: Int, height: Int) -> Int
+extern "C" fn nova_metal_texture(handle: Int, path: String) -> Int
+extern "C" fn nova_metal_geometry(handle: Int, kind: Int) -> Int
+extern "C" fn nova_metal_light(handle: Int, enabled: Int, x: Int, y: Int, z: Int) -> Int
+extern "C" fn nova_metal_input(handle: Int, slot: Int) -> Int
+extern "C" fn nova_metal_input_reset(handle: Int) -> Unit
+extern "C" fn nova_metal_mvp(handle: Int, m00: Int, m01: Int, m02: Int, m03: Int, m10: Int, m11: Int, m12: Int, m13: Int, m20: Int, m21: Int, m22: Int, m23: Int, m30: Int, m31: Int, m32: Int, m33: Int) -> Int
+extern "C" fn nova_metal_capture(handle: Int, path: String) -> Int
+extern "C" fn nova_metal_env(name: String) -> String
+extern "C" fn nova_metal_last_error() -> String
+extern "C" fn nova_metal_shutdown(handle: Int) -> Unit
+
+fn metal_init(title: String, width: Int, height: Int) -> Int {
+    return nova_metal_init(title, width, height)
+}
+
+// 1 while the window is open, 0 after it is closed.
+fn metal_poll(handle: Int) -> Int {
+    return nova_metal_poll(handle)
+}
+
+// 1 when a frame was submitted, 0 when the drawable is not ready yet.
+fn metal_draw(handle: Int, red: Int, green: Int, blue: Int) -> Int {
+    return nova_metal_draw(handle, red, green, blue)
+}
+
+// Resizes the window and drawable; 1 when applied.
+fn metal_resize(handle: Int, width: Int, height: Int) -> Int {
+    return nova_metal_resize(handle, width, height)
+}
+
+// Loads a PNG as the active texture; 1 on success. A white 1x1 texture is
+// active until then, so the draw path never depends on load order.
+fn metal_texture(handle: Int, path: String) -> Int {
+    return nova_metal_texture(handle, path)
+}
+
+// Selects the built-in quad (0), colour cube (1) or textured lit cube (2);
+// 1 on success.
+fn metal_geometry(handle: Int, kind: Int) -> Int {
+    return nova_metal_geometry(handle, kind)
+}
+
+// Enables/disables one directional light and sets its direction toward the
+// light in Q16.16. The shader normalizes it; lighting is off by default.
+fn metal_light(handle: Int, enabled: Int, x: Int, y: Int, z: Int) -> Int {
+    return nova_metal_light(handle, enabled, x, y, z)
+}
+
+// Accumulated camera input since the last reset: 0 orbit dx, 1 orbit dy,
+// 2 pan dx, 3 pan dy, 4 scroll. The host uses whole-point deltas; no event
+// callback crosses the FFI.
+fn metal_input(handle: Int, slot: Int) -> Int {
+    return nova_metal_input(handle, slot)
+}
+
+fn metal_input_reset(handle: Int) {
+    nova_metal_input_reset(handle)
+}
+
+// Sets model-view-projection from 16 row-major Q16.16 cells; 1 on success.
+fn metal_mvp(handle: Int, m00: Int, m01: Int, m02: Int, m03: Int, m10: Int, m11: Int, m12: Int, m13: Int, m20: Int, m21: Int, m22: Int, m23: Int, m30: Int, m31: Int, m32: Int, m33: Int) -> Int {
+    return nova_metal_mvp(handle, m00, m01, m02, m03, m10, m11, m12, m13, m20, m21, m22, m23, m30, m31, m32, m33)
+}
+
+// Writes a PNG from an offscreen render of the same frame. 1 on success.
+fn metal_capture(handle: Int, path: String) -> Int {
+    return nova_metal_capture(handle, path)
+}
+
+fn metal_env(name: String) -> String {
+    return nova_metal_env(name)
+}
+
+fn metal_last_error() -> String {
+    return nova_metal_last_error()
+}
+
+fn metal_shutdown(handle: Int) {
+    nova_metal_shutdown(handle)
+}

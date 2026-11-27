@@ -1,0 +1,18 @@
+// A list stored in a struct field is a shared handle: writing through the field
+// must be visible to every holder. Nova Terminal depends on this for its screen
+// buffer and scrollback rings. Growth (push) still requires a mutable local, so
+// fixed-size rings use index writes instead.
+struct Buffer {
+    cells: List<Int>,
+    marks: List<Int>,
+}
+
+fn set_cell(buffer: Buffer, index: Int, value: Int) {
+    buffer.cells[index] = value
+}
+
+fn main() -> Int {
+    let buffer = Buffer { cells: [1, 2, 3], marks: [0] }
+    set_cell(buffer, 1, 9)
+    return buffer.cells[1]
+}

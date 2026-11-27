@@ -1,0 +1,37 @@
+import std.io { println }
+import "../../../libraries/nova-engine/src/math.nova"
+import "../../../libraries/nova-engine/src/world.nova"
+
+// ENG-01.007 soak: create 10,000 entities, run 10,000 fixed steps and print the
+// final state plus a deterministic trace hash. Wall-clock timing is measured
+// by tests/soak.sh around the whole process so the number includes process
+// start-up, which is what a caller actually pays.
+
+fn soak_entities() -> Int {
+    return 10000
+}
+
+fn soak_steps() -> Int {
+    return 10000
+}
+
+fn main() {
+    var world = world_new(fx(9))
+    var i = 0
+    while i < soak_entities() {
+        let spawned = world_spawn(world, i % 8)
+        world = spawned.world
+        world = world_set_position(world, spawned.id, vec3(fx(i % 100), fx(i / 100), 0))
+        world = world_set_velocity(world, spawned.id, vec3(fx(i % 7 - 3), fx(i % 5), 0))
+        i = i + 1
+    }
+
+    let dt = fx_ratio(1, 60)
+    var s = 0
+    while s < soak_steps() {
+        world = world_tick(world, dt)
+        s = s + 1
+    }
+
+    println("engine-soak: entities=${soak_entities()} steps=${soak_steps()} live=${world_live_count(world)} capacity=${world_capacity(world)} hash=${world_trace_hash(world)}")
+}

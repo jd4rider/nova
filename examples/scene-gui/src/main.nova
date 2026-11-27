@@ -1,358 +1,1014 @@
 import std.io { println }
 import "../../../libraries/nova-gui/src/gui.nova" as gui
-import "../../../libraries/nova-engine/src/scene.nova"
-import "../../../libraries/nova-engine/src/render.nova"
+import "../../../libraries/nova-engine/src/core.nova"
+import "../../../libraries/nova-engine/src/math.nova"
+import "../../../libraries/nova-engine/src/world.nova"
 
-// Scene playground + editor. The left side is the live scene; the right side is
-// an inspector for the selected entity. Click to select, drag to move, arrows
-// to nudge, backspace to delete, S to toggle solid, G for gravity.
+// Nova Engine Studio, ENG-04.002.
+//
+// The shell follows ADR-ENG-009: hierarchy on the left, scene/game view with a
+// play/pause/step toolbar in the centre, inspector on the right, and a
+// project/console drawer along the bottom. Every panel reads the same World
+// value. The scene view is a real projection of that world, not a mock scene:
+// grid and wireframe boxes are built from entity transforms, and selection is
+// the same EntityId the hierarchy and inspector use.
 
 fn window_w() -> Int {
-    return 1200
+    return 1440
 }
 
 fn window_h() -> Int {
-    return 760
+    return 900
 }
 
-fn field_x() -> Int {
-    return 50
+fn menu_h() -> Int {
+    return 28
 }
 
-fn field_y() -> Int {
-    return 112
+fn strip_h() -> Int {
+    return 32
 }
 
-fn orb_size() -> Int {
-    return 18
+fn body_y() -> Int {
+    return 60
 }
 
-fn orb_count() -> Int {
-    return 140
+fn drawer_h() -> Int {
+    return 196
 }
 
-fn panel_x() -> Int {
-    return 876
+fn drawer_y() -> Int {
+    return window_h() - drawer_h()
 }
 
-fn panel_y() -> Int {
-    return 112
+fn body_h() -> Int {
+    return drawer_y() - body_y()
 }
 
-fn panel_w() -> Int {
-    return 280
+fn left_w() -> Int {
+    return 252
 }
 
-fn panel_h() -> Int {
-    return 520
+fn centre_x() -> Int {
+    return left_w()
+}
+
+fn right_w() -> Int {
+    return 304
+}
+
+fn centre_w() -> Int {
+    return window_w() - left_w() - right_w()
+}
+
+fn inspector_x() -> Int {
+    return window_w() - right_w()
+}
+
+fn tabs_h() -> Int {
+    return 30
+}
+
+fn toolbar_h() -> Int {
+    return 36
+}
+
+fn view_y() -> Int {
+    return body_y() + tabs_h() + toolbar_h()
+}
+
+fn view_h() -> Int {
+    return drawer_y() - view_y()
+}
+
+fn hierarchy_first_row() -> Int {
+    return body_y() + 66
+}
+
+fn hierarchy_row_h() -> Int {
+    return 26
+}
+
+fn scene_tab_x() -> Int {
+    return centre_x() + 8
+}
+
+fn game_tab_x() -> Int {
+    return centre_x() + 88
+}
+
+// The traffic lights are AppKit's own buttons; reserve their corner instead of
+// painting the menu title underneath them.
+fn traffic_inset() -> Int {
+    return 84
+}
+
+fn play_x() -> Int {
+    return centre_x() + 12
+}
+
+fn pause_x() -> Int {
+    return centre_x() + 48
+}
+
+fn step_x() -> Int {
+    return centre_x() + 84
+}
+
+fn tool_button_y() -> Int {
+    return body_y() + tabs_h() + 6
+}
+
+fn add_component_y() -> Int {
+    return drawer_y() - 54
+}
+
+struct View3D {
+    x: Int,
+    y: Int,
+    w: Int,
+    h: Int,
+    vp: Mat4,
 }
 
 struct App {
-    scene: Scene,
-    selected: Int,
-    dragging: Bool,
+    world: World,
+    selected: EntityId,
+    playing: Bool,
+    tab: Int,
+    drawer: Int,
+    notice: String,
     quit: Bool,
-    dropped: Int,
 }
 
-fn absv(v: Int) -> Int {
-    if v < 0 {
-        return -v
+fn app_set_world(app: App, world: World) -> App {
+    return App {
+        world: world,
+        selected: app.selected,
+        playing: app.playing,
+        tab: app.tab,
+        drawer: app.drawer,
+        notice: app.notice,
+        quit: app.quit,
     }
-    return v
 }
 
-fn box(gravity: Int) -> Scene {
-    var scene = scene_new(gravity)
-    scene = scene_spawn(scene, "ceiling", "solid", 400, 8, 800, 16, 0, true, 0)
-    scene = scene_spawn(scene, "floor", "solid", 400, 510, 800, 20, 0, true, 0)
-    scene = scene_spawn(scene, "left", "solid", 8, 260, 16, 520, 0, true, 0)
-    scene = scene_spawn(scene, "right", "solid", 792, 260, 16, 520, 0, true, 0)
-    return scene
+fn app_set_selected(app: App, selected: EntityId) -> App {
+    return App {
+        world: app.world,
+        selected: selected,
+        playing: app.playing,
+        tab: app.tab,
+        drawer: app.drawer,
+        notice: app.notice,
+        quit: app.quit,
+    }
 }
 
-// Deterministic spread: the same first frame every launch keeps screenshots
-// comparable. Velocities are small enough that dynamic pairs cannot tunnel.
-fn populated(gravity: Int) -> Scene {
-    var scene = box(gravity)
+fn app_set_playing(app: App, playing: Bool) -> App {
+    return App {
+        world: app.world,
+        selected: app.selected,
+        playing: playing,
+        tab: app.tab,
+        drawer: app.drawer,
+        notice: app.notice,
+        quit: app.quit,
+    }
+}
+
+fn app_set_tab(app: App, tab: Int) -> App {
+    return App {
+        world: app.world,
+        selected: app.selected,
+        playing: app.playing,
+        tab: tab,
+        drawer: app.drawer,
+        notice: app.notice,
+        quit: app.quit,
+    }
+}
+
+fn app_set_drawer(app: App, drawer: Int) -> App {
+    return App {
+        world: app.world,
+        selected: app.selected,
+        playing: app.playing,
+        tab: app.tab,
+        drawer: drawer,
+        notice: app.notice,
+        quit: app.quit,
+    }
+}
+
+fn app_set_notice(app: App, notice: String) -> App {
+    return App {
+        world: app.world,
+        selected: app.selected,
+        playing: app.playing,
+        tab: app.tab,
+        drawer: app.drawer,
+        notice: notice,
+        quit: app.quit,
+    }
+}
+
+fn app_quit(app: App) -> App {
+    return App {
+        world: app.world,
+        selected: app.selected,
+        playing: app.playing,
+        tab: app.tab,
+        drawer: app.drawer,
+        notice: app.notice,
+        quit: true,
+    }
+}
+
+// ---------- demo world ----------
+
+fn demo_world() -> World {
+    var world = world_new(0)
+
+    let ground = world_spawn(world, 1)
+    world = ground.world
+    world = world_set_position(world, ground.id, vec3(0, fx_ratio(0 - 2, 5), 0))
+    world = world_set_scale(world, ground.id, vec3(fx(9), fx_ratio(1, 5), fx(9)))
+
+    let crate_a = world_spawn(world, 2)
+    world = crate_a.world
+    world = world_set_position(world, crate_a.id, vec3(fx_ratio(0 - 8, 5), fx_ratio(1, 2), fx_ratio(2, 5)))
+    world = world_set_scale(world, crate_a.id, vec3(fx(1), fx(1), fx(1)))
+    world = world_set_velocity(world, crate_a.id, vec3(fx_ratio(3, 5), 0, fx_ratio(1, 5)))
+
+    let crate_b = world_spawn(world, 2)
+    world = crate_b.world
+    world = world_set_position(world, crate_b.id, vec3(fx_ratio(4, 5), fx_ratio(1, 2), fx_ratio(0 - 6, 5)))
+    world = world_set_scale(world, crate_b.id, vec3(fx(1), fx(1), fx(1)))
+
+    let player = world_spawn(world, 3)
+    world = player.world
+    world = world_set_position(world, player.id, vec3(0, fx_ratio(7, 5), fx(1)))
+    world = world_set_scale(world, player.id, vec3(fx_ratio(4, 5), fx_ratio(17, 10), fx_ratio(4, 5)))
+
+    let light = world_spawn(world, 4)
+    world = light.world
+    world = world_set_position(world, light.id, vec3(fx_ratio(12, 5), fx_ratio(13, 5), fx_ratio(0 - 7, 5)))
+    world = world_set_scale(world, light.id, vec3(fx_ratio(2, 5), fx_ratio(2, 5), fx_ratio(2, 5)))
+    world = world_set_velocity(world, light.id, vec3(0, fx_ratio(2, 5), 0))
+
+    let pedestal = world_spawn(world, 5)
+    world = pedestal.world
+    world = world_set_position(world, pedestal.id, vec3(fx_ratio(11, 5), fx_ratio(2, 5), fx_ratio(8, 5)))
+    world = world_set_scale(world, pedestal.id, vec3(fx_ratio(8, 5), fx_ratio(2, 5), fx_ratio(8, 5)))
+
+    return world
+}
+
+fn find_tag(world: World, tag: Int) -> EntityId {
     var i = 0
-    while i < orb_count() {
-        let x = 60 + i % 12 * 58
-        let y = 80 + i / 12 * 26
-        let vx = i * 37 % 21 - 10
-        let vy = i * 53 % 15 - 7
-        scene = scene_spawn(scene, "orb", "orb", x, y, orb_size(), orb_size(), i % 6, false, 90)
-        let id = scene.ids[scene_count(scene) - 1]
-        scene = scene_set_velocity(scene, id, vx, vy)
+    while i < world_capacity(world) {
+        if world.pool.alive[i] && world.tags[i] == tag {
+            return EntityId { index: i, generation: world.pool.generations[i] }
+        }
         i = i + 1
     }
-    return scene
+    return entity_none()
 }
 
-fn hit_test(scene: Scene, x: Int, y: Int) -> Int {
-    var i = scene_count(scene) - 1
-    while i >= 0 {
-        if absv(x - scene.xs[i]) <= scene.hws[i] && absv(y - scene.ys[i]) <= scene.hhs[i] {
-            return scene.ids[i]
+fn first_live(world: World) -> EntityId {
+    var i = 0
+    while i < world_capacity(world) {
+        if world.pool.alive[i] {
+            return EntityId { index: i, generation: world.pool.generations[i] }
         }
-        i = i - 1
+        i = i + 1
     }
-    return 0
+    return entity_none()
 }
 
-fn select(app: App, id: Int) -> App {
-    return App { scene: app.scene, selected: id, dragging: false, quit: false, dropped: app.dropped }
+fn next_live(world: World, id: EntityId) -> EntityId {
+    let start = world_index(world, id)
+    var i = start + 1
+    while i < world_capacity(world) {
+        if world.pool.alive[i] {
+            return EntityId { index: i, generation: world.pool.generations[i] }
+        }
+        i = i + 1
+    }
+    return first_live(world)
 }
 
-fn row(y: Int, label: String, value: String, theme: gui.Theme) {
-    gui.text(panel_x() + 18, y, label, 11, theme.faint)
-    gui.text(panel_x() + 108, y, value, 12, theme.fg)
+// ---------- formatting ----------
+
+fn fixed2(value: Int) -> String {
+    var v = value
+    var sign = ""
+    if v < 0 {
+        sign = "-"
+        v = 0 - v
+    }
+    var whole = v / 65536
+    var fraction = ((v % 65536) * 100 + 32768) / 65536
+    if fraction >= 100 {
+        fraction = 0
+        whole = whole + 1
+    }
+    var pad = ""
+    if fraction < 10 {
+        pad = "0"
+    }
+    return "${sign}${whole}.${pad}${fraction}"
 }
 
-fn inspector(app: App, theme: gui.Theme) {
-    gui.round_rect(panel_x(), panel_y(), panel_w(), panel_h(), 10, theme.panel)
-    gui.stroke(panel_x(), panel_y(), panel_w(), panel_h(), theme.border_strong)
-    gui.text(panel_x() + 18, panel_y() + 16, "INSPECTOR", 12, theme.fg_bright)
-    gui.text(panel_x() + 18, panel_y() + 36, "${scene_count(app.scene)} entities", 11, theme.faint)
+fn tag_name(tag: Int) -> String {
+    if tag == 1 {
+        return "Ground"
+    }
+    if tag == 2 {
+        return "Crate"
+    }
+    if tag == 3 {
+        return "Player"
+    }
+    if tag == 4 {
+        return "Key Light"
+    }
+    if tag == 5 {
+        return "Pedestal"
+    }
+    return "Entity"
+}
 
-    let index = scene_index(app.scene, app.selected)
-    if index < 0 {
-        gui.text(panel_x() + 18, panel_y() + 74, "click an entity", 13, theme.muted)
-        gui.text(panel_x() + 18, panel_y() + 96, "to inspect and drag it", 11, theme.faint)
+fn entity_name(world: World, id: EntityId) -> String {
+    if entity_is_none(id) {
+        return "Nothing selected"
+    }
+    let tag = world_tag(world, id)
+    if tag == 2 {
+        return "Crate ${id.index}"
+    }
+    return tag_name(tag)
+}
+
+fn tag_colour(tag: Int, theme: gui.Theme) -> Int {
+    if tag == 1 {
+        return theme.border_strong
+    }
+    if tag == 2 {
+        return theme.orange
+    }
+    if tag == 3 {
+        return theme.blue
+    }
+    if tag == 4 {
+        return theme.yellow
+    }
+    if tag == 5 {
+        return theme.green
+    }
+    return theme.muted
+}
+
+// ---------- projection ----------
+
+fn make_view(x: Int, y: Int, w: Int, h: Int) -> View3D {
+    let eye = vec3(fx(6), fx(4), fx(8))
+    let target = vec3(0, fx_ratio(1, 2), 0)
+    let up = vec3(0, 65536, 0)
+    let view = mat4_look_at(eye, target, up)
+    let fov = fx_mul(fx(42), fx_div(fx_pi(), fx(180)))
+    let projection = mat4_perspective(fov, fx_ratio(w, h), fx_ratio(1, 10), fx(60))
+    return View3D { x: x, y: y, w: w, h: h, vp: mat4_mul(projection, view) }
+}
+
+fn project(view: View3D, point: Vec3) -> Vec3 {
+    let ndc = mat4_transform_point(view.vp, point)
+    let px = view.x + (ndc.x + 65536) * view.w / 131072
+    let py = view.y + (65536 - ndc.y) * view.h / 131072
+    return Vec3 { x: px, y: py, z: ndc.z }
+}
+
+fn project_ok(point: Vec3) -> Bool {
+    return point.z > 0 - 65536 && point.z < 65536
+}
+
+fn corner(world: World, id: EntityId, sx: Int, sy: Int, sz: Int) -> Vec3 {
+    let scale = world_scale(world, id)
+    var hx = scale.x / 2
+    var hy = scale.y / 2
+    var hz = scale.z / 2
+    if sx < 0 {
+        hx = 0 - hx
+    }
+    if sy < 0 {
+        hy = 0 - hy
+    }
+    if sz < 0 {
+        hz = 0 - hz
+    }
+    let local = vec3(hx, hy, hz)
+    let rotated = quat_rotate_vec3(world_rotation(world, id), local)
+    return v3_add(world_position(world, id), rotated)
+}
+
+// ---------- drawing helpers ----------
+
+fn label(x: Int, y: Int, value: String, theme: gui.Theme) {
+    gui.text(x, y, value, 10, theme.faint)
+}
+
+fn section_title(x: Int, y: Int, w: Int, title: String, theme: gui.Theme) {
+    gui.rect(x, y, w, 28, theme.elevated)
+    gui.line(x, y + 27, x + w, y + 27, theme.border)
+    gui.text(x + 11, y + 8, title, 11, theme.fg_bright)
+}
+
+fn field_row(x: Int, y: Int, w: Int, name: String, value: String, theme: gui.Theme) {
+    gui.text(x + 11, y + 5, name, 10, theme.faint)
+    let value_w = gui.text_width(value, 11)
+    gui.text(x + w - 11 - value_w, y + 3, value, 11, theme.fg)
+    gui.line(x + 11, y + 22, x + w - 11, y + 22, theme.border)
+}
+
+fn component_card(x: Int, y: Int, w: Int, h: Int, theme: gui.Theme) {
+    gui.round_rect(x, y, w, h, 6, theme.panel)
+    gui.stroke(x, y, w, h, theme.border)
+}
+
+fn icon_box(x: Int, y: Int, colour: Int, theme: gui.Theme) {
+    gui.round_rect(x, y, 10, 10, 2, colour)
+    gui.stroke(x, y, 10, 10, theme.bg_hard)
+}
+
+fn draw_play_icon(x: Int, y: Int, colour: Int) {
+    gui.line(x, y, x, y + 12, colour)
+    gui.line(x, y, x + 9, y + 6, colour)
+    gui.line(x + 9, y + 6, x, y + 12, colour)
+}
+
+fn draw_pause_icon(x: Int, y: Int, colour: Int) {
+    gui.rect(x, y, 3, 12, colour)
+    gui.rect(x + 7, y, 3, 12, colour)
+}
+
+fn draw_step_icon(x: Int, y: Int, colour: Int) {
+    gui.line(x, y, x, y + 12, colour)
+    gui.line(x, y, x + 8, y + 6, colour)
+    gui.line(x + 8, y + 6, x, y + 12, colour)
+    gui.rect(x + 10, y, 2, 12, colour)
+}
+
+fn draw_tool_button(x: Int, y: Int, w: Int, active: Bool, theme: gui.Theme, kind: Int) {
+    var fill = theme.panel
+    if active {
+        fill = theme.selection
+    }
+    gui.round_rect(x, y, w, 24, 5, fill)
+    gui.stroke(x, y, w, 24, theme.border)
+    var colour = theme.muted
+    if active {
+        colour = theme.fg_bright
+    }
+    if kind == 0 {
+        draw_play_icon(x + 11, y + 6, colour)
+    }
+    if kind == 1 {
+        draw_pause_icon(x + 10, y + 6, colour)
+    }
+    if kind == 2 {
+        draw_step_icon(x + 9, y + 6, colour)
+    }
+}
+
+// ---------- top chrome ----------
+
+fn draw_top(app: App, theme: gui.Theme) {
+    // Full-size content puts the native buttons over the menu strip. Keep them
+    // in that strip but stop the title and menu from running underneath them.
+    gui.place_traffic_lights(14)
+    gui.rect(0, 0, window_w(), menu_h(), theme.bg_hard)
+    let brand_x = traffic_inset()
+    gui.text(brand_x, 7, "Nova", 13, theme.fg_bright)
+    let engine_x = brand_x + gui.text_width("Nova", 13) + 5
+    gui.text(engine_x, 7, "Engine", 13, theme.accent)
+    let items = "File    Edit    Assets    GameObject    Component    Window    Help"
+    gui.text(engine_x + gui.text_width("Engine", 13) + 28, 8, items, 11, theme.muted)
+    let version = "0.2.0"
+    gui.text(window_w() - 18 - gui.text_width(version, 10), 9, version, 10, theme.faint)
+    gui.line(0, menu_h() - 1, window_w(), menu_h() - 1, theme.border)
+
+    gui.rect(0, menu_h(), window_w(), strip_h(), theme.panel)
+    gui.text_fmt(18, menu_h() + 9, "Demo Scene", 13, theme.fg_bright, gui.font_sans(), gui.style_bold())
+    gui.text(18 + gui.text_width("Demo Scene", 13) + 10, menu_h() + 11, "·  unsaved", 10, theme.faint)
+    gui.text(centre_x() + 18, menu_h() + 10, "Nova Engine Studio", 11, theme.muted)
+    let live = "${world_live_count(app.world)} entities"
+    let rate = "60 Hz"
+    gui.text(window_w() - 18 - gui.text_width(rate, 10), menu_h() + 11, rate, 10, theme.faint)
+    gui.text(window_w() - 34 - gui.text_width(rate, 10) - gui.text_width(live, 10), menu_h() + 11, live, 10, theme.muted)
+    gui.line(0, menu_h() + strip_h() - 1, window_w(), menu_h() + strip_h() - 1, theme.border)
+}
+
+// ---------- hierarchy ----------
+
+fn hierarchy_row_y(n: Int) -> Int {
+    return hierarchy_first_row() + n * hierarchy_row_h()
+}
+
+fn hierarchy_pick(world: World, x: Int, y: Int) -> EntityId {
+    if x < 0 || x >= left_w() {
+        return entity_none()
+    }
+    var n = 0
+    var i = 0
+    while i < world_capacity(world) {
+        if world.pool.alive[i] {
+            let row_y = hierarchy_row_y(n)
+            if y >= row_y && y < row_y + hierarchy_row_h() {
+                return EntityId { index: i, generation: world.pool.generations[i] }
+            }
+            n = n + 1
+        }
+        i = i + 1
+    }
+    return entity_none()
+}
+
+fn draw_hierarchy(app: App, theme: gui.Theme) {
+    gui.rect(0, body_y(), left_w(), body_h(), theme.panel)
+    gui.line(left_w() - 1, body_y(), left_w() - 1, drawer_y(), theme.border_strong)
+    gui.text(16, body_y() + 13, "HIERARCHY", 10, theme.faint)
+
+    let header_y = body_y() + 30
+    gui.rect(0, header_y, left_w(), 30, theme.elevated)
+    gui.text(14, header_y + 8, "▾", 12, theme.fg)
+    gui.text(32, header_y + 8, "Demo Scene", 12, theme.fg_bright)
+    let count = "${world_live_count(app.world)}"
+    gui.text(left_w() - 16 - gui.text_width(count, 10), header_y + 10, count, 10, theme.faint)
+
+    var n = 0
+    var i = 0
+    while i < world_capacity(app.world) {
+        if app.world.pool.alive[i] {
+            let id = EntityId { index: i, generation: app.world.pool.generations[i] }
+            let y = hierarchy_row_y(n)
+            let selected = entity_eq(id, app.selected)
+            if selected {
+                gui.rect(0, y, left_w(), hierarchy_row_h() - 2, theme.selection)
+                gui.rect(0, y, 3, hierarchy_row_h() - 2, theme.accent)
+            }
+            let colour = tag_colour(app.world.tags[i], theme)
+            icon_box(22, y + 8, colour, theme)
+            var text_colour = theme.fg
+            if selected {
+                text_colour = theme.fg_bright
+            }
+            gui.text(42, y + 4, entity_name(app.world, id), 12, text_colour)
+            n = n + 1
+        }
+        i = i + 1
+    }
+
+    gui.line(0, drawer_y() - 30, left_w(), drawer_y() - 30, theme.border)
+    let footer = "${world_live_count(app.world)} entities  ·  step ${world_step(app.world)}"
+    gui.text(16, drawer_y() - 22, footer, 10, theme.faint)
+    let pending = "${world_pending_count(app.world)} pending"
+    gui.text(left_w() - 16 - gui.text_width(pending, 10), drawer_y() - 22, pending, 10, theme.faint)
+}
+
+// ---------- scene / game viewport ----------
+
+fn draw_grid(view: View3D, theme: gui.Theme) {
+    var i = 0 - 6
+    while i <= 6 {
+        let a = project(view, vec3(fx(i), 0, fx(0 - 6)))
+        let b = project(view, vec3(fx(i), 0, fx(6)))
+        let c = project(view, vec3(fx(0 - 6), 0, fx(i)))
+        let d = project(view, vec3(fx(6), 0, fx(i)))
+        gui.line(a.x, a.y, b.x, b.y, theme.border)
+        gui.line(c.x, c.y, d.x, d.y, theme.border)
+        i = i + 1
+    }
+    let origin = project(view, vec3(0, 0, 0))
+    let x_axis = project(view, vec3(fx(2), 0, 0))
+    let y_axis = project(view, vec3(0, fx(2), 0))
+    let z_axis = project(view, vec3(0, 0, fx(2)))
+    gui.line(origin.x, origin.y, x_axis.x, x_axis.y, theme.red)
+    gui.line(origin.x, origin.y, y_axis.x, y_axis.y, theme.green)
+    gui.line(origin.x, origin.y, z_axis.x, z_axis.y, theme.blue)
+}
+
+fn draw_cube_line(a: Vec3, b: Vec3, colour: Int) {
+    if project_ok(a) && project_ok(b) {
+        gui.line(a.x, a.y, b.x, b.y, colour)
+    }
+}
+
+fn draw_cube(world: World, id: EntityId, view: View3D, colour: Int) {
+    let p0 = project(view, corner(world, id, 0 - 1, 0 - 1, 0 - 1))
+    let p1 = project(view, corner(world, id, 1, 0 - 1, 0 - 1))
+    let p2 = project(view, corner(world, id, 0 - 1, 1, 0 - 1))
+    let p3 = project(view, corner(world, id, 1, 1, 0 - 1))
+    let p4 = project(view, corner(world, id, 0 - 1, 0 - 1, 1))
+    let p5 = project(view, corner(world, id, 1, 0 - 1, 1))
+    let p6 = project(view, corner(world, id, 0 - 1, 1, 1))
+    let p7 = project(view, corner(world, id, 1, 1, 1))
+
+    draw_cube_line(p0, p1, colour)
+    draw_cube_line(p1, p3, colour)
+    draw_cube_line(p3, p2, colour)
+    draw_cube_line(p2, p0, colour)
+    draw_cube_line(p4, p5, colour)
+    draw_cube_line(p5, p7, colour)
+    draw_cube_line(p7, p6, colour)
+    draw_cube_line(p6, p4, colour)
+    draw_cube_line(p0, p4, colour)
+    draw_cube_line(p1, p5, colour)
+    draw_cube_line(p2, p6, colour)
+    draw_cube_line(p3, p7, colour)
+}
+
+fn draw_scene_entity(app: App, id: EntityId, view: View3D, theme: gui.Theme, editor: Bool) {
+    let tag = world_tag(app.world, id)
+    let selected = entity_eq(id, app.selected)
+    var colour = tag_colour(tag, theme)
+    if editor && selected {
+        colour = theme.fg_bright
+    }
+    draw_cube(app.world, id, view, colour)
+
+    let centre = project(view, world_position(app.world, id))
+    if editor && project_ok(centre) && gui.inside(view.x, view.y, view.w, view.h, centre.x, centre.y) {
+        if selected {
+            let name = entity_name(app.world, id)
+            let w = gui.text_width(name, 10) + 16
+            gui.round_rect(centre.x + 8, centre.y - 22, w, 19, 4, theme.selection)
+            gui.stroke(centre.x + 8, centre.y - 22, w, 19, theme.accent)
+            gui.text(centre.x + 16, centre.y - 18, name, 10, theme.fg_bright)
+            gui.stroke(centre.x - 10, centre.y - 10, 20, 20, theme.fg_bright)
+            gui.stroke(centre.x - 12, centre.y - 12, 24, 24, theme.accent)
+        }
+    }
+}
+
+fn draw_viewport(app: App, theme: gui.Theme) {
+    let x = centre_x()
+    let y = view_y()
+    let w = centre_w()
+    let h = view_h()
+    gui.rect(x, y, w, h, theme.bg)
+    gui.clip(x, y, w, h)
+    let view = make_view(x, y, w, h)
+    let editor = app.tab == 0
+    if editor {
+        draw_grid(view, theme)
+    }
+    var pass = 0
+    while pass < 2 {
+        var i = 0
+        while i < world_capacity(app.world) {
+            if app.world.pool.alive[i] {
+                let id = EntityId { index: i, generation: app.world.pool.generations[i] }
+                let selected = entity_eq(id, app.selected)
+                if !editor || (pass == 0 && !selected) || (pass == 1 && selected) {
+                    draw_scene_entity(app, id, view, theme, editor)
+                }
+            }
+            i = i + 1
+        }
+        pass = pass + 1
+    }
+    gui.clip_reset()
+
+    var view_name = "SCENE"
+    if app.tab == 1 {
+        view_name = "GAME"
+    }
+    gui.text(x + 14, y + 12, view_name, 10, theme.faint)
+    gui.text(x + w - 14 - gui.text_width("Perspective", 10), y + 12, "Perspective", 10, theme.faint)
+    if !editor {
+        gui.text(x + 14, y + h - 24, "Game view · editor overlays hidden", 10, theme.faint)
+    }
+}
+
+fn draw_centre(app: App, theme: gui.Theme) {
+    let x = centre_x()
+    gui.rect(x, body_y(), centre_w(), body_h(), theme.panel)
+
+    gui.rect(x, body_y(), centre_w(), tabs_h(), theme.panel)
+    let scene_active = app.tab == 0
+    let game_active = app.tab == 1
+    if scene_active {
+        gui.rect(scene_tab_x(), body_y(), 76, tabs_h(), theme.bg)
+        gui.rect(scene_tab_x(), body_y() + tabs_h() - 2, 76, 2, theme.accent)
+    }
+    if game_active {
+        gui.rect(game_tab_x(), body_y(), 76, tabs_h(), theme.bg)
+        gui.rect(game_tab_x(), body_y() + tabs_h() - 2, 76, 2, theme.accent)
+    }
+    gui.text(scene_tab_x() + 16, body_y() + 8, "Scene", 12, if scene_active { theme.fg_bright } else { theme.muted })
+    gui.text(game_tab_x() + 16, body_y() + 8, "Game", 12, if game_active { theme.fg_bright } else { theme.muted })
+    gui.line(x, body_y() + tabs_h() - 1, x + centre_w(), body_y() + tabs_h() - 1, theme.border)
+
+    gui.rect(x, body_y() + tabs_h(), centre_w(), toolbar_h(), theme.panel)
+    gui.line(x, body_y() + tabs_h() + toolbar_h() - 1, x + centre_w(), body_y() + tabs_h() + toolbar_h() - 1, theme.border_strong)
+    draw_tool_button(play_x(), tool_button_y(), 30, app.playing, theme, 0)
+    draw_tool_button(pause_x(), tool_button_y(), 30, false, theme, 1)
+    draw_tool_button(step_x(), tool_button_y(), 30, false, theme, 2)
+    gui.line(step_x() + 42, tool_button_y() + 3, step_x() + 42, tool_button_y() + 20, theme.border)
+    var tool_label = "Grid 1m"
+    if app.tab == 1 {
+        tool_label = "Game camera"
+    }
+    gui.text(step_x() + 54, tool_button_y() + 5, tool_label, 11, theme.muted)
+    var mode = "EDIT MODE"
+    if app.tab == 1 {
+        mode = "GAME VIEW"
+    }
+    if app.playing {
+        mode = "PLAYING"
+    }
+    gui.text(x + centre_w() - 16 - gui.text_width(mode, 10), tool_button_y() + 6, mode, 10, theme.faint)
+
+    draw_viewport(app, theme)
+}
+
+// ---------- inspector ----------
+
+fn draw_inspector(app: App, theme: gui.Theme) {
+    let x = inspector_x()
+    gui.rect(x, body_y(), right_w(), body_h(), theme.panel)
+    gui.line(x, body_y(), x, drawer_y(), theme.border_strong)
+    gui.text(x + 16, body_y() + 13, "INSPECTOR", 10, theme.faint)
+
+    let inner_x = x + 12
+    let inner_w = right_w() - 24
+    if entity_is_none(app.selected) || !world_has(app.world, app.selected) {
+        gui.text(x + 16, body_y() + 52, "Nothing selected", 14, theme.muted)
+        gui.text(x + 16, body_y() + 76, "Select an entity in the", 11, theme.faint)
+        gui.text(x + 16, body_y() + 94, "hierarchy or scene view.", 11, theme.faint)
+        return
+    }
+
+    let name = entity_name(app.world, app.selected)
+    let tag = world_tag(app.world, app.selected)
+    icon_box(x + 16, body_y() + 47, tag_colour(tag, theme), theme)
+    gui.text_fmt(x + 34, body_y() + 42, name, 16, theme.fg_bright, gui.font_sans(), gui.style_bold())
+    gui.text(x + 16, body_y() + 70, "TAG ${tag}  ·  entity ${app.selected.index}:${app.selected.generation}", 10, theme.faint)
+
+    let transform_y = body_y() + 96
+    component_card(inner_x, transform_y, inner_w, 126, theme)
+    section_title(inner_x, transform_y, inner_w, "Transform", theme)
+    let position = world_position(app.world, app.selected)
+    let rotation = world_rotation(app.world, app.selected)
+    let scale = world_scale(app.world, app.selected)
+    field_row(inner_x, transform_y + 30, inner_w, "Position", "${fixed2(position.x)}, ${fixed2(position.y)}, ${fixed2(position.z)}", theme)
+    field_row(inner_x, transform_y + 54, inner_w, "Rotation", "${fixed2(rotation.w)}, ${fixed2(rotation.x)}, ${fixed2(rotation.y)}, ${fixed2(rotation.z)}", theme)
+    field_row(inner_x, transform_y + 78, inner_w, "Scale", "${fixed2(scale.x)}, ${fixed2(scale.y)}, ${fixed2(scale.z)}", theme)
+
+    let velocity_y = transform_y + 136
+    component_card(inner_x, velocity_y, inner_w, 102, theme)
+    section_title(inner_x, velocity_y, inner_w, "Velocity", theme)
+    let velocity = world_velocity(app.world, app.selected)
+    field_row(inner_x, velocity_y + 30, inner_w, "Linear", "${fixed2(velocity.x)}, ${fixed2(velocity.y)}, ${fixed2(velocity.z)}", theme)
+    field_row(inner_x, velocity_y + 54, inner_w, "Frame", "fixed 1/60 s", theme)
+
+    let identity_y = velocity_y + 112
+    component_card(inner_x, identity_y, inner_w, 102, theme)
+    section_title(inner_x, identity_y, inner_w, "Entity", theme)
+    field_row(inner_x, identity_y + 30, inner_w, "Tag", "${tag_name(tag)}  (${tag})", theme)
+    field_row(inner_x, identity_y + 54, inner_w, "Handle", "${app.selected.index} : ${app.selected.generation}", theme)
+
+    let world_y = identity_y + 112
+    component_card(inner_x, world_y, inner_w, 126, theme)
+    section_title(inner_x, world_y, inner_w, "World", theme)
+    field_row(inner_x, world_y + 30, inner_w, "Step", "${world_step(app.world)}", theme)
+    field_row(inner_x, world_y + 54, inner_w, "Gravity", fixed2(app.world.gravity), theme)
+    field_row(inner_x, world_y + 78, inner_w, "Live / pending", "${world_live_count(app.world)}  /  ${world_pending_count(app.world)}", theme)
+
+    let add_y = add_component_y()
+    gui.round_rect(inner_x, add_y, inner_w, 28, 5, theme.bg_hard)
+    gui.stroke(inner_x, add_y, inner_w, 28, theme.border_strong)
+    gui.text(inner_x + 12, add_y + 7, "+  Add Component", 11, theme.muted)
+    if app.notice.len() > 0 {
+        gui.text(inner_x + 12, add_y + 38, app.notice, 10, theme.faint)
     } else {
-        var y = panel_y() + 74
-        row(y, "id", "${app.scene.ids[index]}", theme)
-        y = y + 24
-        row(y, "name", app.scene.names[index], theme)
-        y = y + 24
-        row(y, "tag", app.scene.tags[index], theme)
-        y = y + 24
-        row(y, "position", "${app.scene.xs[index]}, ${app.scene.ys[index]}", theme)
-        y = y + 24
-        row(y, "velocity", "${app.scene.vxs[index]}, ${app.scene.vys[index]}", theme)
-        y = y + 24
-        row(y, "size", "${app.scene.hws[index] * 2} × ${app.scene.hhs[index] * 2}", theme)
-        y = y + 24
-        row(y, "restitution", "${app.scene.bounces[index]}%", theme)
-        y = y + 24
-        var solid = "dynamic"
-        if app.scene.solids[index] {
-            solid = "solid"
-        }
-        row(y, "body", solid, theme)
-        y = y + 40
-        gui.text(panel_x() + 18, y, "drag to move · arrows nudge", 10, theme.faint)
-        y = y + 18
-        gui.text(panel_x() + 18, y, "S solid · backspace delete", 10, theme.faint)
+        gui.text(inner_x + 12, add_y + 38, "No component types registered yet.", 10, theme.faint)
     }
-
-    let gravity = "gravity ${app.scene.gravity}"
-    gui.text(panel_x() + 18, panel_y() + panel_h() - 30, gravity, 11, theme.muted)
-    gui.text(panel_x() + panel_w() - 18 - gui.text_width("G toggles", 10), panel_y() + panel_h() - 30, "G toggles", 10, theme.faint)
 }
+
+// ---------- drawer ----------
+
+fn draw_drawer(app: App, theme: gui.Theme) {
+    let y = drawer_y()
+    gui.rect(0, y, window_w(), drawer_h(), theme.bg_hard)
+    gui.line(0, y, window_w(), y, theme.border_strong)
+
+    let project_x = 16
+    let console_x = 92
+    gui.text(project_x, y + 10, "Project", 12, if app.drawer == 0 { theme.fg_bright } else { theme.muted })
+    gui.text(console_x, y + 10, "Console", 12, if app.drawer == 1 { theme.fg_bright } else { theme.muted })
+    if app.drawer == 0 {
+        gui.rect(project_x, y + 29, gui.text_width("Project", 12), 2, theme.accent)
+    } else {
+        gui.rect(console_x, y + 29, gui.text_width("Console", 12), 2, theme.accent)
+    }
+    var mode = "edit"
+    if app.playing {
+        mode = "playing"
+    }
+    let status = "${world_live_count(app.world)} entities  ·  step ${world_step(app.world)}  ·  ${mode}"
+    gui.text(window_w() - 18 - gui.text_width(status, 10), y + 12, status, 10, theme.faint)
+    gui.line(0, y + 32, window_w(), y + 32, theme.border)
+
+    if app.drawer == 1 {
+        let selected = entity_name(app.world, app.selected)
+        let position = world_position(app.world, app.selected)
+        gui.mono(18, y + 44, "[world]    Demo Scene ready · ${world_live_count(app.world)} entities · handle ${app.selected.index}:${app.selected.generation}", 11, theme.fg)
+        gui.mono(18, y + 62, "[assembly] ${selected} · ${fixed2(position.x)}, ${fixed2(position.y)}, ${fixed2(position.z)}", 11, theme.muted)
+        gui.mono(18, y + 80, "[runtime]  fixed dt 1/60 s · gravity ${fixed2(app.world.gravity)} · step ${world_step(app.world)}", 11, theme.muted)
+        var shell_line = "[shell]    Scene tab · perspective · grid 1 m"
+        if app.tab == 1 {
+            shell_line = "[shell]    Game tab · game camera · editor overlays hidden"
+        }
+        gui.mono(18, y + 98, shell_line, 11, theme.muted)
+        gui.mono(18, y + 116, "[input]    click selects · Space play/pause · S step · Tab cycles · ⌫ deletes", 11, theme.faint)
+    } else {
+        gui.mono(18, y + 44, "Runtime", 11, theme.fg_bright)
+        gui.mono(18, y + 64, "  World        Demo Scene        ${world_live_count(app.world)} entities", 11, theme.muted)
+        gui.mono(18, y + 82, "  Module       world.nova        transforms · tags · fixed step", 11, theme.muted)
+        gui.mono(18, y + 100, "  Module       core.nova         generational handles · clock", 11, theme.muted)
+        gui.mono(18, y + 118, "  Module       math.nova         Q16.16 vectors and matrices", 11, theme.muted)
+        gui.mono(18, y + 142, "All panels read the same runtime World value.", 10, theme.faint)
+    }
+}
+
+// ---------- frame ----------
 
 fn draw(app: App) {
     let theme = gui.dark()
     gui.clear(theme.bg)
-    gui.text(24, 26, "NOVA", 20, theme.fg_bright)
-    gui.text(24 + gui.text_width("NOVA", 20) + 10, 26, "PHYSICS", 20, theme.accent)
-    gui.text(24, 56, "engine phase 0 · scene · collisions · editor", 11, theme.faint)
-
-    var title = "edit mode"
-    if app.selected > 0 {
-        title = "selected #${app.selected}"
-    }
-    gui.text(window_w() - 24 - gui.text_width(title, 13), 30, title, 13, theme.fg)
-
-    gui.round_rect(field_x() - 14, field_y() - 14, 828, 548, 12, theme.panel)
-    gui.stroke(field_x() - 14, field_y() - 14, 828, 548, theme.border_strong)
-    draw_scene_selected(app.scene, field_x(), field_y(), theme, app.selected)
-
-    inspector(app, theme)
-
-    let hint = "click selects · drag moves · arrows nudge · S solid · backspace delete · N new crate · G gravity · R reset · ⌘Q quit"
-    gui.text((window_w() - gui.text_width(hint, 11)) / 2, window_h() - 34, hint, 11, theme.faint)
+    draw_top(app, theme)
+    draw_hierarchy(app, theme)
+    draw_centre(app, theme)
+    draw_inspector(app, theme)
+    draw_drawer(app, theme)
 }
 
-fn key(app: App, code: Int, mods: Int) -> App {
+// ---------- input ----------
+
+fn scene_pick(app: App, x: Int, y: Int) -> EntityId {
+    let view = make_view(centre_x(), view_y(), centre_w(), view_h())
+    var best = entity_none()
+    var best_distance = 2500
+    var i = 0
+    while i < world_capacity(app.world) {
+        if app.world.pool.alive[i] {
+            let point = project(view, world_position(app.world, EntityId { index: i, generation: app.world.pool.generations[i] }))
+            if project_ok(point) {
+                let dx = x - point.x
+                let dy = y - point.y
+                let distance = dx * dx + dy * dy
+                if distance < best_distance {
+                    best_distance = distance
+                    best = EntityId { index: i, generation: app.world.pool.generations[i] }
+                }
+            }
+        }
+        i = i + 1
+    }
+    return best
+}
+
+fn handle_key(app: App, code: Int, mods: Int) -> App {
     let command = mods % 2 == 1
     if command && code == 113 {
-        return App { scene: app.scene, selected: app.selected, dragging: false, quit: true, dropped: app.dropped }
+        return app_quit(app)
     }
     if code == gui.key_escape() {
-        return App { scene: app.scene, selected: app.selected, dragging: false, quit: true, dropped: app.dropped }
+        return app_quit(app)
     }
-    if code == 114 {
-        return App { scene: populated(0), selected: 0, dragging: false, quit: false, dropped: 0 }
-    }
-    if code == gui.key_tab() {
-        if scene_count(app.scene) == 0 {
-            return app
-        }
-        let current = scene_index(app.scene, app.selected)
-        var next = current + 1
-        if next >= scene_count(app.scene) {
-            next = 0
-        }
-        return select(app, app.scene.ids[next])
-    }
-    if code == gui.key_backspace() || code == gui.key_delete() {
-        let scene = scene_despawn(app.scene, app.selected)
-        return App { scene: scene, selected: 0, dragging: false, quit: false, dropped: app.dropped }
-    }
-    if code == 103 {
-        var gravity = 0
-        if app.scene.gravity == 0 {
-            gravity = 30
-        }
-        let scene = scene_set_gravity(app.scene, gravity)
-        return App { scene: scene, selected: app.selected, dragging: false, quit: false, dropped: app.dropped }
+    if code == 32 {
+        return app_set_playing(app, !app.playing)
     }
     if code == 115 {
-        let index = scene_index(app.scene, app.selected)
-        if index >= 0 {
-            var solid = true
-            if app.scene.solids[index] {
-                solid = false
-            }
-            let scene = scene_set_solid(app.scene, app.selected, solid)
-            return App { scene: scene, selected: app.selected, dragging: false, quit: false, dropped: app.dropped }
+        return app_set_world(app_set_playing(app, false), world_tick(app.world, fx_ratio(1, 60)))
+    }
+    if code == 114 {
+        let world = demo_world()
+        return app_set_selected(app_set_world(app, world), find_tag(world, 3))
+    }
+    if code == gui.key_tab() {
+        return app_set_selected(app, next_live(app.world, app.selected))
+    }
+    if code == gui.key_backspace() || code == gui.key_delete() {
+        let world = world_despawn(app.world, app.selected)
+        return app_set_selected(app_set_world(app, world), first_live(world))
+    }
+    return app
+}
+
+fn handle_mouse_down(app: App, x: Int, y: Int) -> App {
+    if x >= scene_tab_x() && x < scene_tab_x() + 76 && y >= body_y() && y < body_y() + tabs_h() {
+        return app_set_tab(app, 0)
+    }
+    if x >= game_tab_x() && x < game_tab_x() + 76 && y >= body_y() && y < body_y() + tabs_h() {
+        return app_set_tab(app, 1)
+    }
+    if x >= play_x() && x < play_x() + 30 && y >= tool_button_y() && y < tool_button_y() + 24 {
+        return app_set_playing(app, true)
+    }
+    if x >= pause_x() && x < pause_x() + 30 && y >= tool_button_y() && y < tool_button_y() + 24 {
+        return app_set_playing(app, false)
+    }
+    if x >= step_x() && x < step_x() + 30 && y >= tool_button_y() && y < tool_button_y() + 24 {
+        let world = world_tick(app.world, fx_ratio(1, 60))
+        return app_set_playing(app_set_world(app, world), false)
+    }
+    if x >= inspector_x() + 12 && x < inspector_x() + 12 + right_w() - 24 && y >= add_component_y() && y < add_component_y() + 28 {
+        return app_set_notice(app, "No component types registered yet.")
+    }
+    if y >= drawer_y() + 4 && y < drawer_y() + 30 {
+        if x >= 16 && x < 80 {
+            return app_set_drawer(app, 0)
+        }
+        if x >= 92 && x < 172 {
+            return app_set_drawer(app, 1)
         }
     }
-    if code == 110 {
-        var scene = scene_spawn(app.scene, "crate", "crate", 400, 220, 26, 26, app.dropped % 6, false, 30)
-        let id = scene.ids[scene_count(scene) - 1]
-        scene = scene_set_velocity(scene, id, 0, 0)
-        return App { scene: scene, selected: id, dragging: false, quit: false, dropped: app.dropped + 1 }
-    }
-    var dx = 0
-    var dy = 0
-    if code == gui.key_left() {
-        dx = -6
-    }
-    if code == gui.key_right() {
-        dx = 6
-    }
-    if code == gui.key_up() {
-        dy = -6
-    }
-    if code == gui.key_down() {
-        dy = 6
-    }
-    if dx != 0 || dy != 0 {
-        let index = scene_index(app.scene, app.selected)
-        if index >= 0 {
-            var x = app.scene.xs[index] + dx
-            var y = app.scene.ys[index] + dy
-            if x < 20 {
-                x = 20
-            }
-            if x > 780 {
-                x = 780
-            }
-            if y < 20 {
-                y = 20
-            }
-            if y > 490 {
-                y = 490
-            }
-            let scene = scene_set_position(app.scene, app.selected, x, y)
-            return App { scene: scene, selected: app.selected, dragging: false, quit: false, dropped: app.dropped }
+    if x >= 0 && x < left_w() && y >= hierarchy_first_row() && y < hierarchy_first_row() + world_live_count(app.world) * hierarchy_row_h() {
+        let picked = hierarchy_pick(app.world, x, y)
+        if !entity_is_none(picked) {
+            return app_set_selected(app, picked)
         }
+    }
+    if x >= centre_x() && x < centre_x() + centre_w() && y >= view_y() && y < view_y() + view_h() {
+        return app_set_selected(app, scene_pick(app, x, y))
     }
     return app
 }
 
 fn handle(app: App, event: gui.Event) -> App {
     if event.kind == gui.event_key() {
-        return key(app, event.code, event.mods)
+        return handle_key(app, event.code, event.mods)
     }
     if event.kind == gui.event_close() {
-        return App { scene: app.scene, selected: app.selected, dragging: false, quit: true, dropped: app.dropped }
+        return app_quit(app)
     }
     if event.kind == gui.event_mouse_down() {
-        let x = event.x - field_x()
-        let y = event.y - field_y()
-        if x >= 0 && x <= 800 && y >= 0 && y <= 520 {
-            let id = hit_test(app.scene, x, y)
-            if id > 0 {
-                var out = select(app, id)
-                out = App { scene: out.scene, selected: id, dragging: true, quit: false, dropped: app.dropped }
-                return out
-            }
-            return select(app, 0)
-        }
-        return select(app, 0)
-    }
-    if event.kind == gui.event_drag() {
-        if app.dragging && app.selected > 0 {
-            var x = event.x - field_x()
-            var y = event.y - field_y()
-            if x < 20 {
-                x = 20
-            }
-            if x > 780 {
-                x = 780
-            }
-            if y < 20 {
-                y = 20
-            }
-            if y > 490 {
-                y = 490
-            }
-            var scene = scene_set_position(app.scene, app.selected, x, y)
-            scene = scene_set_velocity(scene, app.selected, 0, 0)
-            return App { scene: scene, selected: app.selected, dragging: true, quit: false, dropped: app.dropped }
-        }
-        return app
-    }
-    if event.kind == gui.event_mouse_up() {
-        return App { scene: app.scene, selected: app.selected, dragging: false, quit: false, dropped: app.dropped }
+        return handle_mouse_down(app, event.x, event.y)
     }
     return app
 }
 
+// ---------- entry ----------
+
 fn main() {
+    var app = App {
+        world: demo_world(),
+        selected: entity_none(),
+        playing: false,
+        tab: 0,
+        drawer: 1,
+        notice: "",
+        quit: false,
+    }
+    app = app_set_selected(app, find_tag(app.world, 3))
+
     let shot = gui.env("NOVA_SCENE_SHOT")
     if shot.len() > 0 {
-        var gravity = 0
-        if gui.env("NOVA_SCENE_GRAVITY").len() > 0 {
-            gravity = 30
+        // Capture acceptance uses the same hit test as a real mouse-down so a
+        // Game tab that paints but cannot be entered fails the check.
+        if gui.env("NOVA_SCENE_CLICK") == "game" {
+            app = handle_mouse_down(app, game_tab_x() + 16, body_y() + 8)
         }
-        var scene = populated(gravity)
-        var i = 0
-        while i < 240 {
-            scene = scene_tick(scene)
-            i = i + 1
-        }
-        let app = App { scene: scene, selected: 20, dragging: false, quit: false, dropped: 0 }
-        if gui.open("Nova Physics", window_w(), window_h()) {
+        if gui.open("Nova Engine Studio", window_w(), window_h()) {
             gui.begin()
             draw(app)
             gui.present()
             let saved = gui.save_png(shot)
-            println("scene-gui: saved=${saved} entities=${scene_count(app.scene)} gravity=${app.scene.gravity}")
+            var tab_label = "scene"
+            if app.tab == 1 {
+                tab_label = "game"
+            }
+            println("scene-gui: shell=captured saved=${saved} entities=${world_live_count(app.world)} selected=${app.selected.index}:${app.selected.generation} tab=${tab_label} drawer=console")
             gui.close()
         }
         return
     }
-    if !gui.open("Nova Physics", window_w(), window_h()) {
+
+    if !gui.open("Nova Engine Studio", window_w(), window_h()) {
         println("scene-gui: could not open a window")
         return
     }
-    var app = App { scene: populated(0), selected: 0, dragging: false, quit: false, dropped: 0 }
     while !app.quit && gui.is_open() {
         var event = gui.next_event()
         while event.kind != gui.event_none() {
             app = handle(app, event)
             event = gui.next_event()
         }
-        app = App {
-            scene: scene_tick(app.scene),
-            selected: app.selected,
-            dragging: app.dragging,
-            quit: app.quit,
-            dropped: app.dropped,
+        if app.playing {
+            app = app_set_world(app, world_tick(app.world, fx_ratio(1, 60)))
         }
         gui.begin()
         draw(app)

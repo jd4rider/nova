@@ -932,11 +932,32 @@ fn sa_match_expr(ctx: SaCtx, node: Int, scrutinee: String) -> SaResult {
     return sa_result(work, result)
 }
 
+// Imported types keep a module qualifier in some positions (`vt.Term`) while a
+// method signature or a literal uses the bare name. Compare the trailing name
+// so both spellings agree; the flattened namespace already rejects duplicate
+// unqualified declarations, so this cannot merge two distinct types.
+fn sa_unqualified(name: String) -> String {
+    let parts = name.split(".")
+    if parts.len() == 0 {
+        return name
+    }
+    return parts[parts.len() - 1]
+}
+
 fn sa_same(expected: String, actual: String) -> Bool {
     if expected == "?" || actual == "?" || expected == "Any" {
         return true
     }
-    return expected == actual
+    if expected == actual {
+        return true
+    }
+    if expected.contains("<") || expected.contains(">") || expected.contains("(") || expected.contains("[") {
+        return false
+    }
+    if actual.contains("<") || actual.contains(">") || actual.contains("(") || actual.contains("[") {
+        return false
+    }
+    return sa_unqualified(expected) == sa_unqualified(actual)
 }
 
 // Like `sa_same`, but treats an unknown element inside a list or tuple as a
@@ -1371,8 +1392,18 @@ fn sa_expr(ctx: SaCtx, node: Int) -> SaResult {
         let r = right.type_name
         if op == "=" || op == "+=" || op == "-=" || op == "*=" || op == "/=" || op == "%=" {
             let target = a_child(ctx.ast, node, 0)
+            // Writing through an aggregate field (`t.cells[i] = cell`) mutates
+            // the shared list handle and does not need a mutable local. A bare
+            // `xs[i] = value` on an immutable local still does.
+            var check_root = true
+            if target >= 0 && ctx.ast.nodes[target].kind == ak_index() {
+                let base = a_child(ctx.ast, target, 0)
+                if base >= 0 && ctx.ast.nodes[base].kind != ak_ident() {
+                    check_root = false
+                }
+            }
             let root = sa_root_ident(ctx.ast, target)
-            if root >= 0 {
+            if check_root && root >= 0 {
                 let name = ctx.ast.nodes[root].text
                 if sa_local_index(work, name) >= 0 && !sa_local_mutable(work, name) {
                     work = sa_error(work, root, "E0301", "cannot assign to immutable binding `" + name + "`")
