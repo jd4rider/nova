@@ -102,6 +102,20 @@ Each task needs a reproducible acceptance check before it is marked done.
   dedupe. Bookmarks and history now use linear readers. Measured on the real
   profile: killed at 7.2 GB before, 455 MB after, the same 662 bookmarks and
   372 visits.
+- **WB-04.010 — Chrome extension inventory.** DONE in 0.9.5. Every installed
+  extension is listed from `Extensions/<id>/<version>/manifest.json`, with
+  `__MSG_*__` names resolved through `_locales/en/messages.json` (an unresolved
+  name falls back to the id). The import prints `extensions=N` and writes
+  `chrome-extensions.tsv`; a dry run writes nothing. Evidence: the fixture
+  profile gains one literal and one i18n-named extension and the test requires
+  `extensions=2` plus both names in the file.
+- **BROWSER-EXT-01 — Chrome extension compatibility.** OPEN, not started. A
+  Chrome `.crx` cannot run in `WKWebView`; WebKit's extension model is the
+  Safari web-extension bundle, which is a different API surface and packaging.
+  The import therefore reports extensions instead of claiming them. Planned
+  replacements: `WKContentRuleList` for ad/tracker blocking, userscripts for
+  page tweaks, and native features instead of extension for things Nova already
+  does (reader, downloads, voice).
 - **WB-04.002 — Downloads.** DONE. `WKDownloadDelegate` registry, attachment/
   MIME response policy, Nova shelf with cancel/reveal, `--download`, loopback
   test writing a real file. 0.7.3 adds pause/resume: clicking a running row

@@ -1145,6 +1145,33 @@ failures) confirm the overlay still carries the reader panel and the chrome.
 Not evidenced: a hand-driven hover — there is no mouse injection here. The forced
 tip takes the same `draw_tooltip` path a real hover does.
 
+## 0.9.5 — Chrome extension inventory
+
+Chrome's extensions are reported, because they cannot be carried across:
+`WKWebView` loads Safari-style web extensions, not Chrome `.crx` packages, and
+nothing in the app claims otherwise.
+
+`import_profile` reads `Extensions/<id>/<version>/manifest.json` for each
+installed extension. A literal `name` is used as-is; an i18n key
+(`__MSG_extName__`) is resolved through `_locales/en/messages.json`, and an
+unresolved name falls back to the extension id. The summary line gains
+`extensions=N` and the import writes `chrome-extensions.tsv` next to the
+bookmarks; a dry run writes nothing.
+
+Evidence from `browser/tests/history.sh` (exit 0, `failures=0`): the fixture
+profile holds `Clear Cache` (literal name) and a second extension whose name is
+`__MSG_extName__` with `Reading List Helper` in `_locales/en/messages.json`. The
+import prints `... search=duckduckgo extensions=2` and the test requires both
+names in `chrome-extensions.tsv`.
+
+The owner's real profile, read with `NOVA_BROWSER_IMPORT_DRY=1` (no names
+printed, nothing written), reports `extensions=85` alongside the same 662
+bookmarks and 372 visits. None of them can run in Nova today.
+
+Not evidenced: resolving every locale-encoded name (only the English locale is
+consulted), disabled-vs-enabled state, and any Chrome extension API behaviour —
+none exists to test.
+
 ## Not yet evidenced
 
 - hosted CI run of the browser address/lifecycle steps;

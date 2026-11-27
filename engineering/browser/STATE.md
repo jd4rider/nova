@@ -3,7 +3,7 @@
 Updated: 2026-11-26
 Branch: `main`
 Last known good compiler checkpoint: `cfa00e3` (before browser work)
-Browser: **0.9.4 installed at `/Applications/Nova Browser.app`**
+Browser: **0.9.5 installed at `/Applications/Nova Browser.app`**
 Browser working tree: uncommitted; see `git status`
 Active gate: G0 WebKit; G1 WebCore not started
 Active task: **WB-04.002 — downloads** (0.7.5 persisted completed downloads;
@@ -312,6 +312,14 @@ Active task: **WB-04.002 — downloads** (0.7.5 persisted completed downloads;
     why the right-hand toolbar controls showed no tips). `tests/tooltip.sh`
     forces a tip at the right edge and checks the box and the host's
     `overlay rects` trace.
+- **0.9.5 — Chrome extension inventory**
+  - Every profile's `Extensions/<id>/<version>/manifest.json` is read; i18n
+    names resolve through `_locales/en/messages.json`, unresolved ones fall back
+    to the id. The import prints `extensions=N` and writes
+    `chrome-extensions.tsv`. The real profile: 85 installed, none runnable.
+  - WebKit has no Chrome extension runtime (`WKWebView` loads Safari web
+    extensions). Replacements are tracked as `BROWSER-EXT-01`: content rules,
+    userscripts, native features; none implemented yet.
 - **0.9.1 — window buttons back on the strip, whole chrome drags**
   - The three traffic lights had been placed from the window's height while
     AppKit keeps them in its own 32 pt titlebar view, so they landed hundreds of

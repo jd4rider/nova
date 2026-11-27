@@ -171,6 +171,7 @@ struct ProfileImport {
     startup: List<String>,
     startup_mode: Int,
     homepage: String,
+    extensions: List<String>,
 }
 
 struct ImportSummary {
@@ -180,6 +181,7 @@ struct ImportSummary {
     search: String,
     startup: Int,
     homepage: String,
+    extensions: Int,
 }
 
 fn gruvbox_theme() -> Chrome {
@@ -1919,6 +1921,114 @@ fn read_pref_json(path: String, key: String) -> String {
     return value.trim()
 }
 
+// One string field of a small JSON document, read from quote-split pieces.
+fn json_field(text: String, name: String) -> String {
+    let parts = text.split("\"")
+    var i = 0
+    while i + 2 < parts.len() {
+        if parts[i] == name && parts[i + 1].trim().starts_with(":") {
+            return library.chrome_unescape(parts[i + 2]).trim()
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+// The `message` of one key in a `_locales/en/messages.json` document.
+fn json_message(text: String, key: String) -> String {
+    let parts = text.split("\"")
+    var i = 0
+    while i + 2 < parts.len() {
+        if parts[i] == key && parts[i + 1].trim().starts_with(":") {
+            var j = i + 2
+            while j + 2 < parts.len() {
+                if parts[j] == "message" && parts[j + 1].trim().starts_with(":") {
+                    return library.chrome_unescape(parts[j + 2]).trim()
+                }
+                j = j + 1
+            }
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+// Drops a known ASCII prefix and suffix. The names this runs on are short.
+fn trim_affixes(text: String, prefix: String, suffix: String) -> String {
+    let chars = text.chars()
+    var out = ""
+    var i = 0
+    while i < chars.len() {
+        if i >= prefix.len() && i < chars.len() - suffix.len() {
+            out = out + chars[i]
+        }
+        i = i + 1
+    }
+    return out
+}
+
+// Chrome stores `Extensions/<id>/<version>/manifest.json`. Names may be an
+// i18n key (`__MSG_extName__`), resolved from the English locale; a missing
+// literal leaves the id, which is still a usable label.
+fn chrome_extension_name(root: String, id: String) -> String {
+    let dir = root + "/" + id
+    var version = ""
+    for line in gui.list(dir).split("\n") {
+        if line.starts_with("d\t") {
+            let parts = line.split("\t")
+            if parts.len() > 1 {
+                version = parts[1]
+            }
+        }
+    }
+    if version.len() == 0 {
+        return id
+    }
+    let path = dir + "/" + version
+    let name = json_field(gui.read(path + "/manifest.json"), "name")
+    if !name.starts_with("__MSG_") {
+        return if name.len() > 0 { name } else { id }
+    }
+    let resolved = json_message(gui.read(path + "/_locales/en/messages.json"), trim_affixes(name, "__MSG_", "__"))
+    return if resolved.len() > 0 { resolved } else { id }
+}
+
+// What Chrome had installed, as `id<TAB>name`. Nova cannot run these: WebKit
+// loads Safari-style web extensions and has no Chrome extension runtime, so the
+// import reports them instead of pretending they came across.
+fn import_chrome_extensions(dir: String) -> List<String> {
+    var out: List<String> = []
+    let root = dir + "/Extensions"
+    if !gui.exists(root) {
+        return out
+    }
+    for line in gui.list(root).split("\n") {
+        if line.starts_with("d\t") {
+            let parts = line.split("\t")
+            if parts.len() > 1 {
+                out.push(parts[1] + "\t" + chrome_extension_name(root, parts[1]))
+            }
+        }
+    }
+    return out
+}
+
+// A file next to an existing profile file, by replacing its last path piece.
+fn sibling_path(path: String, name: String) -> String {
+    let parts = path.split("/")
+    var out = ""
+    var i = 0
+    while i < parts.len() {
+        if i == parts.len() - 1 {
+            out = out + name
+        } else {
+            out = out + parts[i] + "/"
+        }
+        i = i + 1
+    }
+    return out
+}
+
 fn import_profile(dir: String) -> ProfileImport {
     var marks: List<String> = []
     if gui.exists(dir + "/Bookmarks") {
@@ -1928,6 +2038,7 @@ fn import_profile(dir: String) -> ProfileImport {
     if gui.exists(dir + "/History") {
         history = import_history(dir + "/History")
     }
+    let extensions = import_chrome_extensions(dir)
     var search = ""
     var startup: List<String> = []
     var startup_mode = 0
@@ -1964,6 +2075,7 @@ fn import_profile(dir: String) -> ProfileImport {
         startup: startup,
         startup_mode: startup_mode,
         homepage: homepage,
+        extensions: extensions,
     }
 }
 
@@ -1971,6 +2083,7 @@ fn empty_profile_import() -> ProfileImport {
     var bookmarks: List<String> = []
     var history: List<String> = []
     var startup: List<String> = []
+    var extensions: List<String> = []
     return ProfileImport {
         profiles: 0,
         bookmarks: bookmarks,
@@ -1979,6 +2092,7 @@ fn empty_profile_import() -> ProfileImport {
         startup: startup,
         startup_mode: 0,
         homepage: "",
+        extensions: extensions,
     }
 }
 
@@ -1991,6 +2105,7 @@ fn profile_import_merge(first: ProfileImport, more: ProfileImport) -> ProfileImp
         startup: if first.startup.len() > 0 { first.startup } else { more.startup },
         startup_mode: if first.startup_mode > 0 { first.startup_mode } else { more.startup_mode },
         homepage: if first.homepage.len() > 0 { first.homepage } else { more.homepage },
+        extensions: library.merge(first.extensions, more.extensions),
     }
 }
 
@@ -2092,6 +2207,17 @@ fn apply_profile_import(store: Store, found: ProfileImport, write: Bool) -> Impo
         next.homepage = found.homepage
         home = found.homepage
     }
+    var extensions = 0
+    if found.extensions.len() > 0 {
+        extensions = found.extensions.len()
+        if write {
+            var text = ""
+            for line in found.extensions {
+                text = text + line + "\n"
+            }
+            gui.write(sibling_path(next.bookmarks_path, "chrome-extensions.tsv"), text)
+        }
+    }
     return ImportSummary {
         store: next,
         bookmarks: added_marks,
@@ -2099,6 +2225,7 @@ fn apply_profile_import(store: Store, found: ProfileImport, write: Bool) -> Impo
         search: applied,
         startup: added_startup,
         homepage: home,
+        extensions: extensions,
     }
 }
 
@@ -4978,7 +5105,7 @@ fn run_cli_import(argument: String) -> Bool {
     let summary = apply_profile_import(store, found, !dry)
     let saved = if dry { summary.store } else { save_store(summary.store) }
     let prefix = if dry { "import(dry)" } else { "import" }
-    println("${prefix}: files=${profiles.len() + files.len()} found=${found.bookmarks.len()} new=${summary.bookmarks} bookmarks=${library.bookmark_count(saved.bookmarks)} history=${summary.history} startup=${summary.startup} homepage=${summary.homepage} search=${summary.search} path=${saved.bookmarks_path}")
+    println("${prefix}: files=${profiles.len() + files.len()} found=${found.bookmarks.len()} new=${summary.bookmarks} bookmarks=${library.bookmark_count(saved.bookmarks)} history=${summary.history} startup=${summary.startup} homepage=${summary.homepage} search=${summary.search} extensions=${summary.extensions} path=${saved.bookmarks_path}")
     return summary.bookmarks > 0 || summary.history > 0
 }
 

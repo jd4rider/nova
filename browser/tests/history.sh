@@ -64,6 +64,20 @@ insert into urls (url, title, visit_count, last_visit_time) values
   ('https://example.com/two', 'Two', 1, 2),
   ('chrome://settings', 'Settings', 9, 1);
 SQL
+# Chrome extensions are reported, not run: the same profile carries two
+# installed extensions, one with a literal name and one behind an i18n key.
+mkdir -p "$CHROME/Default/Extensions/clearcache/1.0" \
+    "$CHROME/Default/Extensions/msgname/2.0/_locales/en"
+cat > "$CHROME/Default/Extensions/clearcache/1.0/manifest.json" <<JSON
+{"manifest_version":3,"name":"Clear Cache","version":"1.0"}
+JSON
+cat > "$CHROME/Default/Extensions/msgname/2.0/manifest.json" <<JSON
+{"manifest_version":3,"name":"__MSG_extName__","version":"2.0"}
+JSON
+cat > "$CHROME/Default/Extensions/msgname/2.0/_locales/en/messages.json" <<JSON
+{"extName":{"message":"Reading List Helper"}}
+JSON
+
 OUT4=$(cd "$ROOT" && NOVA_BROWSER_PROFILE="$SETTINGS_PROFILE" \
     "$ROOT/browser/target/nova/nova-browser" --import "$CHROME/Default" 2>&1)
 echo "$OUT4"
@@ -73,6 +87,9 @@ grep -q '^visit' "$SETTINGS_PROFILE/history.tsv"
 grep -q '^search=duckduckgo$' "$SETTINGS_PROFILE/settings.tsv"
 grep -q '^startup=pages$' "$SETTINGS_PROFILE/settings.tsv"
 grep -q '^homepage=https://example.com/home$' "$SETTINGS_PROFILE/settings.tsv"
+echo "$OUT4" | grep -q 'extensions=2'
+grep -q 'Clear Cache' "$SETTINGS_PROFILE/chrome-extensions.tsv"
+grep -q 'Reading List Helper' "$SETTINGS_PROFILE/chrome-extensions.tsv"
 [ "$(grep -c '^visit' "$SETTINGS_PROFILE/history.tsv")" = "2" ] || { echo "history: expected two visits" >&2; exit 1; }
 # Startup pages keep Chrome's order; the mailto: entry is skipped.
 grep -q 'tab\thttps://fixture.nova.invalid/start$' "$SETTINGS_PROFILE/startup.tsv"
@@ -113,6 +130,6 @@ OUT8=$(cd "$ROOT" && NOVA_BROWSER_PROFILE="$DRY" NOVA_BROWSER_IMPORT_DRY=1 \
     "$ROOT/browser/target/nova/nova-browser" --import "$CHROME/Default" 2>&1)
 echo "$OUT8"
 echo "$OUT8" | grep -q 'import(dry): files=1 found=2 new=2 bookmarks=2 history=2 startup=2 homepage=https://example.com/home search=duckduckgo'
-for f in bookmarks.tsv history.tsv startup.tsv settings.tsv session.tsv downloads.tsv; do
+for f in bookmarks.tsv history.tsv startup.tsv settings.tsv session.tsv downloads.tsv chrome-extensions.tsv; do
     [ ! -e "$DRY/$f" ] || { echo "history: dry run wrote $f" >&2; exit 1; }
 done
