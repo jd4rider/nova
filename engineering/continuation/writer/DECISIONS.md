@@ -37,9 +37,10 @@ directive and impossible to index cheaply in this language today.
 - A rope or piece table can replace the internal text storage without changing
   the public position type.
 
-## DEC-WRI-002 — `.novadoc` v1 is a deterministic text container
+## DEC-WRI-002 — `.novadoc` v2 is a deterministic text container
 
-Status: accepted for WRI-07.001; ZIP container is a later migration.
+Status: accepted for WRI-07.001/WRI-02.005; ZIP container is a later
+migration.
 
 ### Context
 
@@ -50,13 +51,18 @@ block the first vertical slice and risk a half-valid container.
 
 ### Decision
 
-- v1 is a UTF-8, line-oriented container with a magic header, version,
-  document metadata, paragraph records and a SHA-256 body checksum.
-- Records are escaped, bounded and validated on load; unknown record kinds are
-  rejected with a line number rather than silently ignored.
+- v2 is a UTF-8, line-oriented container with a magic header, version,
+  document metadata including a BCP-47 language, paragraph records and a
+  31-based polynomial body checksum. It detects truncation and corruption, not
+  tampering; the format makes no cryptographic claim.
+- Version 1 files migrate on load: the missing language defaults to `en`, and
+  the next save writes v2.
+- Records are escaped, bounded and validated on load; unknown record kinds,
+  missing v2 fields and unknown versions are rejected rather than silently
+  ignored.
 - Writes go to `<path>.tmp`, are verified, then renamed atomically.
-- v2 may wrap the same parts in a ZIP container; the loader will dispatch on
-  the magic header, so v1 files remain readable.
+- A later v3 may wrap the same parts in a ZIP container; the loader dispatches
+  on the magic header, so v1 and v2 files remain readable.
 
 ### Consequences
 
@@ -87,9 +93,9 @@ composition and is easy to get subtly wrong while the model is still moving.
 
 - Memory is proportional to document size × history depth; bounded and
   measurable.
-- The core library stores `Document` snapshots. The Writer app stores bounded
-  serialized snapshots because the compiler rejects a `List<Document>` field
-  (DEC-WRI-006); both paths are tested.
+- The core library stores `Document` snapshots. The Writer app still stores
+  bounded serialized snapshots (DEC-WRI-006); the compiler now supports a
+  `List<Document>` field, so the app can switch later. Both paths are tested.
 - A later slice can replace snapshots with inverse edits behind the same API
   without changing tests.
 

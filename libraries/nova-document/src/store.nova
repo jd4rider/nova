@@ -1,4 +1,4 @@
-// nova-document/store — disk persistence for `.novadoc` v1.
+// nova-document/store — disk persistence for `.novadoc` v2.
 //
 // The model and the serialization format stay in document.nova; this module is
 // the only place that touches the host filesystem. A save writes a temporary
@@ -39,5 +39,5 @@ fn wd_load(path: String) -> wd.LoadResult {
 }
 
 fn wd_has_native_header(text: String) -> Bool {
-    return text.starts_with("NOVADOC\t1\n")
+    return text.starts_with("NOVADOC\t1\n") || text.starts_with("NOVADOC\t2\n")
 }

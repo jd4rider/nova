@@ -29,7 +29,7 @@ Stable IDs are permanent. Statuses are evidence-based. See `EVIDENCE.md`.
 - **WRI-01.003 — Command routing and shortcuts: VERIFIED.** Every visible
   command executes real document behavior; unsupported commands are absent.
 - **WRI-01.004 — Headless test target: VERIFIED.** `writer/tests/core.sh`
-  runs 82 assertions without a window and exits non-zero on failure.
+  runs 97 assertions without a window and exits non-zero on failure.
 
 ## WRI-02 — Document core
 
@@ -42,7 +42,10 @@ Stable IDs are permanent. Statuses are evidence-based. See `EVIDENCE.md`.
   serialized snapshots (DEC-WRI-006).
 - **WRI-02.004 — Structural validation: VERIFIED.** Rejects invalid
   positions, empty paragraph IDs, duplicate IDs and unknown records.
-- **WRI-02.005 — Schema migration: TODO.** Only version 1 exists.
+- **WRI-02.005 — Schema migration: VERIFIED.** `.novadoc` v2 adds a
+  persisted document language. Version 1 files migrate on load (language
+  defaults to `en`) and are rewritten as v2 on save; v2 files missing the
+  field and unknown versions are rejected.
 
 ## WRI-03 — Text editing
 
@@ -92,10 +95,12 @@ Stable IDs are permanent. Statuses are evidence-based. See `EVIDENCE.md`.
 
 ## WRI-07 — Native persistence
 
-- **WRI-07.001 — `.novadoc` v1 save/open: VERIFIED.** Deterministic UTF-8
+- **WRI-07.001 — `.novadoc` v2 save/open: VERIFIED.** Deterministic UTF-8
   format, checksum, validation, atomic temp-then-rename write, reopen and
-  corrupt-file rejection tested.
-- **WRI-07.002 — Migration: TODO.** Version 1 only.
+  corrupt-file rejection tested. Version 1 files migrate on load.
+- **WRI-07.002 — Migration: VERIFIED.** See WRI-02.005: a v1 fixture
+  migrates to v2 with the default language, v2 requires `lang`, and unknown
+  versions are rejected.
 - **WRI-07.003 — Autosave and crash recovery: VERIFIED.** Atomic snapshots
   every 4 seconds under Application Support, epoch-named; startup restores up
   to six valid files as dirty tabs; save and clean close remove them. A

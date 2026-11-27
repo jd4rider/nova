@@ -19,7 +19,7 @@ headers and inline formatting are not implemented yet. See
 # Compiler (if not already built)
 (cd examples/nova-tool && ../../bootstrap/nova build)
 
-# Headless core: 82 assertions
+# Headless core: 97 assertions
 sh writer/tests/core.sh
 
 # Two-process crash recovery
@@ -101,13 +101,14 @@ the caret.
 
 ## Native format
 
-`.novadoc` v1 is a deterministic UTF-8 container: magic header, version,
-title, next paragraph ID, tab-separated paragraph records (ID, kind,
-alignment, escaped text) and a SHA-256 body checksum. Save writes
-`<path>.tmp`, verifies it, then renames atomically. Unknown records, bad
-checksums and malformed data are rejected. A ZIP container with styles and
-media is a later migration; v1 files remain readable by dispatching on the
-header.
+`.novadoc` v2 is a deterministic UTF-8 container: magic header, version,
+title, language, next paragraph ID, tab-separated paragraph records (ID, kind,
+alignment, escaped text) and a 31-based polynomial body checksum. Version 1
+files migrate on load (the missing language defaults to `en`) and are
+rewritten as v2 on the next save. Save writes `<path>.tmp`, verifies it, then
+renames atomically. Unknown records, bad checksums, missing v2 fields and
+malformed data are rejected. A ZIP container with styles and media is a later
+migration; the loader dispatches on the header.
 
 ## Packages
 
@@ -115,7 +116,7 @@ header.
   `store.nova`, `recovery.nova`. GUI-independent and reusable by future Nova
   Office apps.
 - `writer/src/main.nova` — the application.
-- `writer/tests/core.sh` — headless acceptance (82 assertions).
+- `writer/tests/core.sh` — headless acceptance (97 assertions).
 - `writer/tests/recovery.sh` — crash recovery across two processes.
 - `writer/tests/ime.sh` — IME commit and Escape cancellation (14 assertions).
 - `writer/tests/smoke.sh` — native window launch/render.

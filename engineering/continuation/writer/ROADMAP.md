@@ -33,15 +33,15 @@ not a single session.
 
 ## Current slice
 
-The vertical slice, autosave/crash recovery and IME marked-text composition are
-landed and installed: a native Writer window over a GUI-independent document
-core with measured pagination, editable paragraphs, bounded undo, a checksummed
-`.novadoc` round trip, recovery files that survive a process crash, and inline
-composition that commits once or cancels on Escape.
+The vertical slice, autosave/crash recovery, IME marked-text composition and
+`.novadoc` schema migration are landed and installed: a native Writer window
+over a GUI-independent document core with measured pagination, editable
+paragraphs, bounded undo, a checksummed v2 round trip with v1 migration,
+recovery files that survive a process crash, and inline composition that
+commits once or cancels on Escape.
 
-Next: **WRI-02.005 schema migration** — only `.novadoc` v1 exists; the loader
-dispatches on the version header. Then WRI-04.002 bidi fixtures, WRI-07.004
-save panel, WRI-07.005 recovery prompt/discard, WRI-06 inline runs.
+Next: **WRI-04.002 fallback/bidi fixtures**. Then WRI-07.004 save panel,
+WRI-07.005 recovery prompt/discard, WRI-06 inline runs.
 
 ## Critical path
 

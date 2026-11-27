@@ -18,7 +18,7 @@ clang, CoreText and the native GUI.
 
 | Gap | Effect | Task |
 |---|---|---|
-| Compiler rejects `List<Document>` struct fields | app undo uses serialized `List<String>` snapshots | DEC-WRI-006; compiler parity |
+| App undo still uses serialized snapshots | compiler now supports `List<Document>`; app can switch later | DEC-WRI-006; not user-visible |
 | Index assignment through a struct field is rejected | session replacement goes through `wr_put` with a local list copy | compiler parity |
 | No native save panel | Save As cannot exist; Save writes the current path | WRI-07.004 |
 | No alert/confirmation bridge | recovery auto-restores without a prompt and has no discard command | WRI-07.005 |
@@ -37,7 +37,7 @@ clang, CoreText and the native GUI.
 
 - **No font family/weight API.** Styled CoreText runs and measured advances
   were added (DEC-WRI-004), so serif body, bold, italic and underline are real.
-- **No native test target.** A headless core binary with 82 assertions exists.
+- **No native test target.** A headless core binary with 97 assertions exists.
 - **No installable bundle.** `/Applications/Nova Writer.app` builds, signs and
   launches.
 - **No autosave or crash recovery.** `recovery.nova`, a two-process crash test

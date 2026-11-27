@@ -9,13 +9,14 @@ Silicon). Commands are reproducible from the repository root.
 sh writer/tests/core.sh
 ```
 
-Result: exit 0; 82 `PASS` lines; final line `failures=0`.
+Result: exit 0; 97 `PASS` lines; final line `failures=0`.
 
 Covers: grapheme segmentation (combining marks, skin tones, flags, ZWJ),
 insert/delete, escaping, word count, find, document validation, stable IDs,
 split/merge, cross-paragraph delete, styles/alignment, outline, Document-based
-undo/redo and the 100-entry bound, `.novadoc` serialize/parse, checksum and
-unknown-record rejection, measured layout, line-width bound, caret geometry,
+undo/redo and the 100-entry bound, `.novadoc` v2 serialize/parse, checksum,
+v1-to-v2 migration, missing-field and unknown-version rejection, measured
+layout, line-width bound, caret geometry,
 hit-testing, long-word hard break, multi-page pagination, atomic save, reopen,
 corrupt-file rejection, and recovery save/load/list/newest/remove/reject.
 
@@ -182,11 +183,24 @@ core test now declares `struct DocStack { docs: List<wd.Document> }`, writes
 through `stack.docs[0]`, and passes. The standalone fixture lives at
 `examples/nova-tool/tests/codegen-list-qualified.nova`.
 
+## 12. Schema migration v1 → v2
+
+```sh
+sh writer/tests/core.sh
+```
+
+A hand-built `NOVADOC\t1` fixture with a valid checksum loads as version 2,
+gets the default language `en`, and keeps its doc id and text. The test also
+rejects a v2 body without `lang` and a `NOVADOC\t9` body. `store.wd_has_native_header`
+accepts both v1 and v2 headers. The next save writes v2, so opening an old
+file and saving it completes the migration on disk.
+
 ## Verified vs not verified
 
 Verified by machine: document model and edits, grapheme boundaries, undo/redo
-invariants, serialization/checksum, atomic store, layout measurement and
-pagination, hit-testing, recovery save/load/list/remove, a two-process crash,
+invariants, serialization/checksum, v1-to-v2 migration, atomic store, layout
+measurement and pagination, hit-testing, recovery save/load/list/remove, a
+two-process crash,
 app startup restore, the first autosave write, IME marked-text composition and
 Escape cancellation through the host probe, native window launch and rendering,
 bundle signing and installation.

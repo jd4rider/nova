@@ -31,9 +31,9 @@ The installer builds, renders the icon, ad-hoc signs and copies `/Applications/N
 - **A real document model.** A versioned `Document` holds paragraphs with stable IDs and grapheme offsets. Insert, delete, split, merge, style and alignment are validated operations; edits return a new document.
 - **Measured typography.** CoreText shapes and measures styled runs; Nova decides where a line breaks and where a page ends. Pages are A4 with one-inch margins, a ruler, zoom and visible-page virtualization.
 - **Grapheme-aware editing.** The caret and deletion stop on extended grapheme clusters: combining marks, skin tones, flags and joined emoji families are never split by one keypress.
-- **Selection, clipboard and undo.** Click/drag and Shift+arrows select; copy/cut/paste use the system clipboard; undo/redo restore bounded snapshots. The app stores serialized snapshots because the current compiler rejects a `List<Document>` field.
+- **Selection, clipboard and undo.** Click/drag and Shift+arrows select; copy/cut/paste use the system clipboard; undo/redo restore bounded snapshots. The app stores serialized snapshots; the compiler now supports a `List<Document>` field, so it can switch later without changing behavior.
 - **Styles and outline.** Title, Heading 1, Heading 2, Body, Quote and List have real metrics. The sidebar applies them and lists headings.
-- **A checksummed native format.** `.novadoc` v1 is deterministic UTF-8 with a SHA-256 body checksum. Save writes a temporary file, verifies it and renames atomically; corrupt files are rejected with a line number.
+- **A checksummed native format.** `.novadoc` v2 is deterministic UTF-8 with a document language and a 31-based polynomial body checksum. Save writes a temporary file, verifies it and renames atomically; corrupt files, missing v2 fields and unknown versions are rejected with a line number. Version 1 files migrate on load and are rewritten as v2 on save.
 - **Autosave and crash recovery.** Dirty tabs are written atomically every four seconds under `~/Library/Application Support/Nova Writer/Recovery`. A crash leaves a valid `.novadoc`; the next launch restores up to six dirty tabs and says how many it recovered.
 - **IME composition.** Marked text is painted inline through a temporary layout, underlined, and pushes the following text while the saved document stays untouched. Commit inserts the string exactly once; Escape clears the composition without inserting anything.
 
@@ -55,7 +55,7 @@ The app is immediate mode: draw the frame, pump the platform queue, handle one e
 ## Tests
 
 ```sh
-sh writer/tests/core.sh       # 82 headless assertions
+sh writer/tests/core.sh       # 97 headless assertions
 sh writer/tests/recovery.sh   # two-process crash recovery
 sh writer/tests/ime.sh        # 14 IME commit/cancel assertions
 sh writer/tests/smoke.sh      # real window + PNG snapshot

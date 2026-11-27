@@ -1,7 +1,7 @@
 # Nova Writer — current state
 
 Updated: 2026-11-26
-Branch: `selfhost/pure-nova` (working tree; no Writer commit yet)
+Branch: `main` (Writer landed; schema v2 is the current slice).
 Installed app: `/Applications/Nova Writer.app` — version 0.1.0,
 `dev.nova.writer.native`, ad-hoc signed.
 
@@ -13,7 +13,8 @@ It is not a mock and not a browser canvas.
 - **Document core** (`libraries/nova-document/`): versioned `Document` with
   stable paragraph IDs, grapheme offsets, validated insert/delete/split/merge,
   paragraph styles and alignment, bounded Document-based undo/redo, outline,
-  counts, and a checksummed `.novadoc` v1 format with atomic save.
+  counts, and a checksummed `.novadoc` v2 format with atomic save and v1
+  migration.
 - **Text** (`text.nova`): extended-grapheme segmentation implemented in Nova
   (combining marks, skin tones, flags, ZWJ families), insert, backspace,
   forward delete, escaping, word count and case-aware find.
@@ -34,14 +35,14 @@ It is not a mock and not a browser canvas.
   paper size, accessibility labels, autoclose/snapshot hooks.
 - **Packaging** (`writer/scripts/install-macos.sh`): builds, renders the icon,
   creates and signs `Nova Writer.app`, installs to `/Applications`.
-- **Tests**: `writer/tests/core.sh` (82 assertions, headless),
+- **Tests**: `writer/tests/core.sh` (97 assertions, headless),
   `writer/tests/recovery.sh` (two-process crash recovery),
   `writer/tests/ime.sh` (14 IME composition assertions) and
   `writer/tests/smoke.sh` (real window + PNG snapshot).
 
 ## Evidence (latest run)
 
-- Core: `failures=0`, 82 PASS, exit 0.
+- Core: `failures=0`, 97 PASS, exit 0.
 - Crash recovery: `PASS recovery survives a process exit`; a second process
   loaded `Crash Report` / `Unsaved work survives a crash.` from the file the
   first process left behind.
@@ -54,6 +55,8 @@ It is not a mock and not a browser canvas.
   (332,535 bytes) shows “にほ” underlined inline with “Nova Writer” pushed
   right; commit inserts “日本” exactly once; Escape clears the composition and
   a later composition still commits.
+- Migration: a v1 fixture loads as v2 with language `en`, preserving its doc
+  id and text; a v2 body without `lang` and a `NOVADOC 9` body are rejected.
 - Host: `clang -fobjc-arc -O2 -c runtime/gui.m` exit 0; one pre-existing
   `accessibilityPerformPress` warning.
 - App build: `built .../writer/target/nova/nova-writer`, exit 0.
@@ -85,16 +88,15 @@ It is not a mock and not a browser canvas.
 
 ## Active slice
 
-**WRI-02.005 — schema migration** is next. Only `.novadoc` v1 exists; the
-loader dispatches on the version header so v2 can be added without breaking
-v1 files.
+**WRI-04.002 — fallback/bidi fixtures** is next. Schema migration landed:
+`.novadoc` v2 adds a persisted document language, v1 files migrate on load
+and are rewritten as v2 on save, and v2 files missing the field are rejected.
 
-After that: WRI-04.002 bidi fixtures, WRI-07.004 save panel (host work),
-WRI-07.005 recovery prompt/discard, WRI-06 inline runs.
+After that: WRI-07.004 save panel (host work), WRI-07.005 recovery
+prompt/discard, WRI-06 inline runs.
 
 ## Working-tree state
 
-Modified: `runtime/gui.m`, `libraries/nova-gui/src/gui.nova`.
-New: `libraries/nova-document/`, `writer/`,
-`engineering/continuation/writer/`.
-Unrelated Browser/engine/render/metal/speech changes are untouched.
+Writer is committed on `main`; the installed app is rebuilt from the current
+tree after each slice. Unrelated Browser/Terminal/engine changes remain
+uncommitted and untouched.

@@ -2,8 +2,9 @@
 //
 // This module is GUI-independent and file-format-independent: it owns the
 // typed paragraph tree, stable IDs, grapheme positions, pure transactions,
-// bounded undo history and the versioned `.novadoc` v1 container. It imports
-// no GUI or filesystem code; `store.nova` handles disk access.
+// bounded undo history and the versioned `.novadoc` v2 container. It imports
+// no GUI or filesystem code; `store.nova` handles disk access. Version 1 files
+// are migrated on load and rewritten as version 2 on the next save.
 //
 // A position is a paragraph index plus a grapheme offset. Edits are pure
 // functions that return a new Document, which is what makes snapshot undo and
@@ -11,7 +12,7 @@
 
 import "text.nova" as tx
 
-// Paragraph kinds. Numeric values are part of the `.novadoc` v1 format.
+// Paragraph kinds. Numeric values are part of the `.novadoc` v1/v2 format.
 fn wd_body() -> Int {
     return 0
 }
@@ -101,6 +102,7 @@ struct Document {
     version: Int,
     doc_id: Int,
     title: String,
+    language: String,
     next_id: Int,
     paragraphs: List<Paragraph>,
 }
@@ -122,13 +124,18 @@ fn wd_para(id: Int, kind: Int, text: String) -> Paragraph {
     return Paragraph { id: id, kind: kind, align: wd_left(), text: text }
 }
 
+fn wd_format_version() -> Int {
+    return 2
+}
+
 fn wd_empty() -> Document {
     var ps: List<Paragraph> = []
     ps.push(wd_para(1, wd_body(), ""))
     return Document {
-        version: 1,
+        version: wd_format_version(),
         doc_id: 1,
         title: "Untitled",
+        language: "en",
         next_id: 2,
         paragraphs: ps,
     }
@@ -146,8 +153,11 @@ fn wd_load_fail(message: String) -> LoadResult {
 
 // Structural validation. Returns "" when the document is valid.
 fn wd_valid(doc: Document) -> String {
-    if doc.version != 1 {
+    if doc.version != wd_format_version() {
         return "unsupported document version"
+    }
+    if doc.language.len() == 0 {
+        return "document language is empty"
     }
     if doc.paragraphs.len() == 0 {
         return "document has no paragraphs"
@@ -371,6 +381,14 @@ fn wd_set_title(doc: Document, title: String) -> Document {
     return d
 }
 
+fn wd_set_language(doc: Document, language: String) -> Document {
+    var d = doc
+    if language.len() > 0 {
+        d.language = language
+    }
+    return d
+}
+
 // ---------- counts and outline ----------
 
 fn wd_word_count(doc: Document) -> Int {
@@ -454,7 +472,7 @@ fn wd_redo(undo: List<Document>, redo: List<Document>, current: Document) -> Und
     return UndoResult { ok: true, doc: next_doc, undo: next_undo, redo: next_redo }
 }
 
-// ---------- native container v1 ----------
+// ---------- native container v2 ----------
 
 // A 31-based polynomial checksum modulo 2^31-1. It detects truncation and
 // corruption, not tampering; the format makes no cryptographic claim.
@@ -501,9 +519,10 @@ fn wd_parse_int(text: String) -> Int {
 }
 
 fn wd_body_text(doc: Document) -> String {
-    var out = "NOVADOC\t1\n"
+    var out = "NOVADOC\t" + wd_format_version().to_string() + "\n"
     out = out + "id\t" + doc.doc_id.to_string() + "\n"
     out = out + "title\t" + tx.tx_escape(doc.title) + "\n"
+    out = out + "lang\t" + tx.tx_escape(doc.language) + "\n"
     out = out + "next\t" + doc.next_id.to_string() + "\n"
     var i = 0
     while i < doc.paragraphs.len() {
@@ -526,14 +545,19 @@ fn wd_parse(text: String) -> LoadResult {
         return wd_load_fail("empty document")
     }
     let head = lines[0].split("\t")
-    if head.len() != 2 || head[0] != "NOVADOC" || head[1] != "1" {
-        return wd_load_fail("not a NOVADOC version 1 file")
+    if head.len() != 2 || head[0] != "NOVADOC" {
+        return wd_load_fail("not a NOVADOC file")
+    }
+    let source_version = wd_parse_int(head[1])
+    if source_version != 1 && source_version != wd_format_version() {
+        return wd_load_fail("unsupported NOVADOC version " + head[1])
     }
     var doc = wd_empty()
     var paragraphs: List<Paragraph> = []
     var body = ""
     var ended = false
     var checksum = -1
+    var saw_lang = false
     var i = 0
     while i < lines.len() {
         let line = lines[i]
@@ -570,6 +594,13 @@ fn wd_parse(text: String) -> LoadResult {
                 doc.title = tx.tx_unescape(fields[1])
             } else {
                 doc.title = ""
+            }
+        } else if key == "lang" {
+            if fields.len() >= 2 {
+                doc.language = tx.tx_unescape(fields[1])
+                saw_lang = true
+            } else {
+                return wd_load_fail("line " + (i + 1).to_string() + ": missing language")
             }
         } else if key == "next" && fields.len() >= 2 {
             doc.next_id = wd_parse_int(fields[1])
@@ -608,7 +639,16 @@ fn wd_parse(text: String) -> LoadResult {
     if paragraphs.len() == 0 {
         return wd_load_fail("document has no paragraphs")
     }
+    if source_version == wd_format_version() && !saw_lang {
+        return wd_load_fail("missing language")
+    }
     doc.paragraphs = paragraphs
+    if source_version == 1 {
+        // Version 1 had no language field. Migrate it in memory; the next save
+        // writes version 2.
+        doc.language = "en"
+    }
+    doc.version = wd_format_version()
     let invalid = wd_valid(doc)
     if invalid.len() > 0 {
         return wd_load_fail(invalid)

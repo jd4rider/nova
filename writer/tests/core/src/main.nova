@@ -132,11 +132,39 @@ fn main() -> Int {
     let serialized = wd.wd_serialize(saved)
     let loaded = wd.wd_parse(serialized)
     failures = failures + check("serialized document loads", loaded.ok)
+    failures = failures + check("serialize writes version 2", serialized.starts_with("NOVADOC\t2\n"))
+    failures = failures + check("serialize writes the language", serialized.contains("lang\ten\n"))
     failures = failures + check("title survives escaping", loaded.doc.title == "A\tB")
     failures = failures + check("paragraph count survives", loaded.doc.paragraphs.len() == saved.paragraphs.len())
     failures = failures + check("text survives", loaded.doc.paragraphs[0].text == "The quick")
     failures = failures + check("kind survives", loaded.doc.paragraphs[1].kind == wd.wd_heading2())
     failures = failures + check("next_id survives", loaded.doc.next_id == saved.next_id)
+    failures = failures + check("loaded document is version 2", loaded.doc.version == 2)
+    failures = failures + check("language survives", loaded.doc.language == "en")
+
+    // Version 1 files migrate on load. The fixture is built with the public
+    // checksum function so it exercises the same validation path as disk data.
+    let v1_body = "NOVADOC\t1\nid\t7\ntitle\tLegacy\nnext\t2\np\t1\t0\t0\tOld text\nEND\n"
+    let v1_text = v1_body + "CK\t" + wd.wd_checksum(v1_body).to_string() + "\n"
+    let migrated = wd.wd_parse(v1_text)
+    failures = failures + check("v1 file loads", migrated.ok)
+    failures = failures + check("v1 file migrates to v2", migrated.doc.version == 2)
+    failures = failures + check("v1 gets the default language", migrated.doc.language == "en")
+    failures = failures + check("v1 text survives migration", migrated.doc.paragraphs[0].text == "Old text")
+    failures = failures + check("v1 doc id survives", migrated.doc.doc_id == 7)
+    failures = failures + check("migrated document serializes as v2", wd.wd_serialize(migrated.doc).starts_with("NOVADOC\t2\n"))
+    failures = failures + check("v1 header is recognized", store.wd_has_native_header(v1_text))
+    failures = failures + check("v2 header is recognized", store.wd_has_native_header(serialized))
+
+    let no_lang_body = "NOVADOC\t2\nid\t1\ntitle\tNo Lang\nnext\t2\np\t1\t0\t0\tx\nEND\n"
+    let no_lang = no_lang_body + "CK\t" + wd.wd_checksum(no_lang_body).to_string() + "\n"
+    failures = failures + check("v2 requires a language", !wd.wd_parse(no_lang).ok)
+    let v9_body = "NOVADOC\t9\nEND\n"
+    let v9 = v9_body + "CK\t" + wd.wd_checksum(v9_body).to_string() + "\n"
+    failures = failures + check("unknown version is rejected", !wd.wd_parse(v9).ok)
+
+    let localized = wd.wd_set_language(saved, "fr")
+    failures = failures + check("language can be changed", localized.language == "fr")
 
     let corrupted = serialized.replace("quick", "quack")
     failures = failures + check("checksum rejects corruption", !wd.wd_parse(corrupted).ok)
