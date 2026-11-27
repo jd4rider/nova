@@ -126,9 +126,13 @@ Stable IDs are permanent. Statuses are evidence-based. See `EVIDENCE.md`.
   Save use it; the panel owns overwrite confirmation and appends `.novadoc`.
   `writer/tests/save-panel.sh` opens the real panel, verifies the saved v4 file
   and verifies that cancel writes nothing.
-- **WRI-07.005 — Recovery prompt/discard UI: TODO.** Startup auto-restores
-  without a confirmation dialog because the host has no alert bridge. There
-  is no “discard recovery” command.
+- **WRI-07.005 — Recovery prompt/discard UI: VERIFIED.** The host exposes a
+  native three-button `NSAlert` (`Recover`, `Keep for Now`, `Discard`) with
+  Escape mapped to the safe keep action. Startup asks before restoring;
+  dismissal keeps snapshots and exposes a conditional `Discard` ribbon command
+  that confirms before removing only the pending files.
+  `writer/tests/recovery-prompt.sh` drives recover, keep, discard and the
+  explicit command through the real alert.
 
 ## WRI-14 — Professional UX
 
@@ -148,7 +152,8 @@ Stable IDs are permanent. Statuses are evidence-based. See `EVIDENCE.md`.
 
 ## Verification limits
 
-Recovery save/load, a two-process crash, app startup restore, the first
+Recovery save/load, a two-process crash, app startup restore, the native
+recovery prompt (recover/keep/discard), the explicit discard command, the first
 autosave write, IME marked-text commit/cancel, mixed-script fallback, bidi
 caret geometry, CJK wrapping, inline run propagation, incremental layout
 cache counts/timing and native Save As confirm/cancel are machine-tested.

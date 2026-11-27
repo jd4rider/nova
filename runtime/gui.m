@@ -3238,6 +3238,129 @@ nova_str nova_gui_save_panel(nova_str default_name, nova_str directory) {
     }
 }
 
+/* Native alert bridge. The app supplies a title, message and up to three
+ * button labels; the result is 1/2/3 for the clicked button and 0 when the
+ * alert is dismissed. The calls are split because the FFI path for several
+ * strings plus a trailing integer is unreliable. The second button is the
+ * Escape/cancel action, so dismissing a recovery prompt never discards work. */
+static NSAlert *nova_alert = nil;
+static int nova_alert_buttons = 0;
+static char nova_alert_probe_buf[256];
+static char *nova_alert_probe_parts[8];
+static int nova_alert_probe_count = -1;
+static int nova_alert_probe_at = 0;
+
+static const char *nova_alert_next_probe(void) {
+    if (nova_alert_probe_count < 0) {
+        nova_alert_probe_count = 0;
+        const char *env = getenv("NOVA_GUI_ALERT_PROBE");
+        if (env && env[0]) {
+            snprintf(nova_alert_probe_buf, sizeof(nova_alert_probe_buf), "%s", env);
+            char *p = nova_alert_probe_buf;
+            while (*p && nova_alert_probe_count < 8) {
+                while (*p == ',' || *p == ' ' || *p == '\t') p++;
+                if (!*p) break;
+                nova_alert_probe_parts[nova_alert_probe_count] = p;
+                nova_alert_probe_count++;
+                while (*p && *p != ',' && *p != ' ' && *p != '\t') p++;
+                if (*p) {
+                    *p = '\0';
+                    p++;
+                }
+            }
+        }
+    }
+    if (nova_alert_probe_at >= nova_alert_probe_count) return NULL;
+    const char *part = nova_alert_probe_parts[nova_alert_probe_at];
+    nova_alert_probe_at++;
+    return part;
+}
+
+void nova_gui_alert_begin(nova_str title, nova_str message) {
+    @autoreleasepool {
+        nova_alert = [[NSAlert alloc] init];
+        char *title_text = nova_gui_cstr(title);
+        char *message_text = nova_gui_cstr(message);
+        NSString *title_string = (title_text && title_text[0])
+            ? [NSString stringWithUTF8String:title_text] : @"Nova Writer";
+        NSString *message_string = (message_text && message_text[0])
+            ? [NSString stringWithUTF8String:message_text] : nil;
+        free(title_text);
+        free(message_text);
+        nova_alert.messageText = title_string ? title_string : @"Nova Writer";
+        nova_alert.informativeText = message_string ? message_string : @"";
+        nova_alert.alertStyle = NSAlertStyleWarning;
+        nova_alert_buttons = 0;
+    }
+}
+
+void nova_gui_alert_button(nova_str label) {
+    if (!nova_alert) return;
+    @autoreleasepool {
+        char *label_text = nova_gui_cstr(label);
+        NSString *title = (label_text && label_text[0])
+            ? [NSString stringWithUTF8String:label_text] : @"OK";
+        free(label_text);
+        NSButton *button = [nova_alert addButtonWithTitle:title ? title : @"OK"];
+        /* The second button is the cancel action. AppKit maps Escape to it, so
+         * a dismissed alert returns 0/2 without choosing the destructive third
+         * button. */
+        if (nova_alert_buttons == 1) button.keyEquivalent = @"\033";
+        nova_alert_buttons++;
+    }
+}
+
+int64_t nova_gui_alert_run(void) {
+    if (!nova_alert) return 0;
+    @autoreleasepool {
+        const char *probe = nova_alert_next_probe();
+        NSModalResponse probe_code = 0;
+        int probe_valid = 0;
+        if (probe) {
+            if (strcmp(probe, "primary") == 0) {
+                probe_code = NSAlertFirstButtonReturn;
+                probe_valid = 1;
+            } else if (strcmp(probe, "secondary") == 0) {
+                probe_code = NSAlertSecondButtonReturn;
+                probe_valid = 1;
+            } else if (strcmp(probe, "tertiary") == 0) {
+                probe_code = NSAlertThirdButtonReturn;
+                probe_valid = 1;
+            } else if (strcmp(probe, "dismiss") == 0) {
+                probe_code = 0;
+                probe_valid = 1;
+            }
+        }
+
+        NSTimer *probe_timer = nil;
+        if (probe_valid) {
+            probe_timer = [NSTimer timerWithTimeInterval:0.35 repeats:NO block:^(NSTimer *timer) {
+                (void)timer;
+                [NSApp stopModalWithCode:probe_code];
+            }];
+            [[NSRunLoop mainRunLoop] addTimer:probe_timer forMode:NSModalPanelRunLoopMode];
+            [[NSRunLoop mainRunLoop] addTimer:probe_timer forMode:NSDefaultRunLoopMode];
+        }
+
+        [NSApp activateIgnoringOtherApps:YES];
+        nova_gui_own_modal = 1;
+        NSModalResponse response = [nova_alert runModal];
+        nova_gui_own_modal = 0;
+        if (probe_timer) [probe_timer invalidate];
+
+        int64_t choice = 0;
+        if (response == NSAlertFirstButtonReturn) choice = 1;
+        else if (response == NSAlertSecondButtonReturn) choice = 2;
+        else if (response == NSAlertThirdButtonReturn) choice = 3;
+        nova_gui_trace("alert buttons=%d response=%lld choice=%lld probe=%s",
+                       nova_alert_buttons, (long long)response, (long long)choice,
+                       probe ? probe : "");
+        nova_alert = nil;
+        nova_alert_buttons = 0;
+        return choice;
+    }
+}
+
 nova_str nova_env(nova_str name) {
     char *key = nova_gui_cstr(name);
     if (!key) return nova_gui_empty();

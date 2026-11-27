@@ -59,7 +59,7 @@ The handoff is an internal weak symbol, not a new Nova type: GUI-only programs s
 | Area | Calls |
 |---|---|
 | Window | `open(title, w, h)`, `close()`, `is_open()`, `width()`, `height()`, `set_title(text)` |
-| Pickers | `pick_file()`, `pick_folder()` — native `NSOpenPanel`; `save_panel(name, dir)` — native `NSSavePanel`; all return `""` on cancel |
+| Dialogs | `pick_file()`, `pick_folder()` — native `NSOpenPanel`; `save_panel(name, dir)` — native `NSSavePanel`; `alert(title, message, primary, secondary, tertiary)` — native `NSAlert` returning 1/2/3 or 0 |
 | Clipboard | `clipboard()`, `set_clipboard(text)` — the system pasteboard |
 | Terminal | `term_start(cmd, dir)`, `term_poll()`, `term_running()`, `term_clear()` — a real PTY (libc `posix_openpt` + `fork`) read by a host thread, so a child program sees a terminal |
 | Terminal input | `term_send(code)` — write a byte (`13` Enter, `127` Backspace) to the running PTY |
@@ -77,6 +77,8 @@ The handoff is an internal weak symbol, not a new Nova type: GUI-only programs s
 | Workspace | `read`, `write`, `exists`, `is_dir`, `list`, `cwd`, `env`, `run`, `exit_status`, `rename`, `delete_file`, `sha256` |
 
 `present()` pumps the platform queue with `nextEventMatchingMask:` and sends each event, then blits the framebuffer into the view. Printable keys arrive as their Unicode scalar; everything else uses the codes above, which match `nova-tui` where the two overlap.
+
+`alert` uses the second button as the Escape/cancel action and returns 0 when dismissed, so a destructive third button cannot be chosen by accident. `NOVA_GUI_ALERT_PROBE=primary|secondary|tertiary|dismiss` (or a comma-separated sequence) stops the modal for tests.
 
 **An idle loop must still call `pump()`.** `pump` drains events without redrawing; `present` drains and redraws. A program that only touches AppKit when it draws stops answering the window server the moment it goes idle, and its layer transaction never commits — macOS then shows a blank window with a spinning cursor. The pattern is:
 

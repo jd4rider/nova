@@ -10,8 +10,8 @@ that wraps AppKit/CoreText, which the directive permits as a native OS service.
 Version 0.1.0 — real document model, measured typography with mixed-script
 fallback, bidi paragraph direction, inline bold/italic, incremental layout,
 native Save As, paginated A4 pages, editing, selection, IME composition,
-undo/redo, save/open, autosave, crash recovery, zoom, themes and an
-installable app. DOCX/ODT/PDF, tables, images,
+undo/redo, save/open, autosave, crash recovery with a native recovery prompt,
+zoom, themes and an installable app. DOCX/ODT/PDF, tables, images,
 headers and character styles are not implemented yet. See
 `engineering/continuation/writer/` for the ledger.
 
@@ -32,6 +32,9 @@ sh writer/tests/ime.sh
 
 # Native Save As: confirm and cancel
 sh writer/tests/save-panel.sh
+
+# Native recovery prompt: recover, keep, discard, explicit discard
+sh writer/tests/recovery-prompt.sh
 
 # Build the app
 (cd writer && ../examples/nova-tool/target/nova/nova-tool build)
@@ -59,8 +62,14 @@ Optional environment hooks:
 - `NOVA_WRITER_DEMO=0` — start with a blank document.
 - `NOVA_WRITER_THEME=light|dark|gruvbox` — initial theme.
 - `NOVA_WRITER_RECOVERY_DIR=/path` — override the recovery directory.
-- `NOVA_WRITER_NO_RECOVERY=1` — skip startup restore (used by the smoke test).
-- `NOVA_WRITER_TRACE=1` — log preedit/commit/escape events to stdout.
+- `NOVA_WRITER_NO_RECOVERY=1` — skip the startup prompt and restore (used by
+  the smoke and Save As tests).
+- `NOVA_WRITER_COMMAND_PROBE=discard_recovery` — run one command at startup;
+  used to test the discard confirmation.
+- `NOVA_GUI_ALERT_PROBE=primary|secondary|tertiary|dismiss` — stop a native
+  alert for automated tests; accepts a comma-separated sequence.
+- `NOVA_WRITER_TRACE=1` — log preedit/commit/escape and recovery decisions to
+  stdout.
 - `NOVA_WRITER_SNAPSHOT_PREEDIT=1` — with `NOVA_WRITER_SNAPSHOT`, capture the
   frame while marked text is active.
 
@@ -71,11 +80,12 @@ Dirty tabs are written atomically to
 seconds, and immediately after the first edit. Files are ordinary `.novadoc`
 documents named `recovery-<epoch-ms>-<tab>.novadoc`.
 
-On launch, every valid recovery file (up to six) becomes a dirty tab, replacing
-the demo/blank tab; the status bar reports how many were recovered. Saving a
-tab removes its recovery file, as does closing a clean tab. Closing a dirty tab
-is blocked until it is saved. There is no confirmation dialog or “discard
-recovery” command yet; recovery is automatic and visible in the status bar.
+On launch, if snapshots exist, a native alert asks Recover, Keep for Now or
+Discard. Recover restores up to six valid files as dirty tabs; Keep (or Escape)
+leaves them on disk; Discard removes only those snapshots. When snapshots stay
+pending, a Discard button appears in the ribbon and asks for confirmation.
+Saving a tab removes its recovery file, as does closing a clean tab. Closing a
+dirty tab is blocked until it is saved.
 
 ## IME composition
 
@@ -128,6 +138,8 @@ loader dispatches on the header.
 - `writer/tests/recovery.sh` — crash recovery across two processes.
 - `writer/tests/ime.sh` — IME commit and Escape cancellation (14 assertions).
 - `writer/tests/save-panel.sh` — native Save As confirm and cancel.
+- `writer/tests/recovery-prompt.sh` — recover, keep, discard and explicit
+  discard through the native alert.
 - `writer/tests/smoke.sh` — native window launch/render.
 - `writer/scripts/install-macos.sh` — bundle and install.
 
@@ -136,9 +148,9 @@ loader dispatches on the header.
 No DOCX/ODT/RTF/HTML/PDF, tables, images, headers/footers, footnotes,
 sections, character styles, list numbering, comments, revisions, or
 accessibility text ranges. Save As uses the native macOS save panel; recovery
-still auto-restores without a prompt or discard command. Autosave rewrites the
-whole document every four seconds, with no external-change detection or
-encryption. Unchanged paragraphs keep their measured lines; only edited or new
+asks before restoring and keeps unreadable or over-limit snapshots pending for
+the discard command. Autosave rewrites the whole document every four seconds,
+with no external-change detection or encryption. Unchanged paragraphs keep their measured lines; only edited or new
 paragraphs are reshaped, though pagination still copies line boxes. These are
 tracked in
 `engineering/continuation/writer/BLOCKERS.md`, not hidden.

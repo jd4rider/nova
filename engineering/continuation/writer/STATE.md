@@ -1,8 +1,8 @@
 # Nova Writer — current state
 
 Updated: 2026-11-27
-Branch: `main` (Writer landed; v4 inline runs, incremental layout and native
-Save As are current).
+Branch: `main` (Writer landed; v4 inline runs, incremental layout, native
+Save As and the recovery prompt are current).
 Installed app: `/Applications/Nova Writer.app` — version 0.1.0,
 `dev.nova.writer.native`, ad-hoc signed.
 
@@ -28,22 +28,24 @@ It is not a mock and not a browser canvas.
   validation rejects corruption, unknown records and garbage.
 - **Recovery** (`recovery.nova`): atomic `.novadoc` autosave snapshots under
   `~/Library/Application Support/Nova Writer/Recovery`, epoch-named; startup
-  restores valid snapshots as dirty tabs; save and clean close remove them.
+  asks with a native alert before restoring, and save/clean close remove them.
 - **Host** (`runtime/gui.m`, `libraries/nova-gui`): styled CoreText runs
   (sans/serif/mono, bold/italic/underline), measured advances, atomic rename,
-  epoch time, file deletion and a native save panel.
+  epoch time, file deletion, a native save panel and a three-button native
+  alert.
 - **App** (`writer/src/main.nova`): tabs, ribbon with Bold/Italic, ruler,
   styles/direction and outline sidebar, pages, caret, selection, keyboard/mouse
-  editing, clipboard, IME composition, undo/redo, native Save As, save/open,
-  autosave, crash restore, zoom, themes, paper size, accessibility labels,
-  autoclose/snapshot hooks.
+  editing, clipboard, IME composition, undo/redo, native Save As, the recovery
+  prompt and discard command, save/open, autosave, crash restore, zoom, themes,
+  paper size, accessibility labels, autoclose/snapshot hooks.
 - **Packaging** (`writer/scripts/install-macos.sh`): builds, renders the icon,
   creates and signs `Nova Writer.app`, installs to `/Applications`.
 - **Tests**: `writer/tests/core.sh` (156 assertions, headless),
   `writer/tests/recovery.sh` (two-process crash recovery),
   `writer/tests/ime.sh` (14 IME composition assertions),
-  `writer/tests/save-panel.sh` (native Save As confirm/cancel) and
-  `writer/tests/smoke.sh` (real window + PNG snapshot).
+  `writer/tests/save-panel.sh` (native Save As confirm/cancel),
+  `writer/tests/recovery-prompt.sh` (recover/keep/discard plus the explicit
+  discard command) and `writer/tests/smoke.sh` (real window + PNG snapshot).
 
 ## Evidence (latest run)
 
@@ -51,9 +53,14 @@ It is not a mock and not a browser canvas.
 - Crash recovery: `PASS recovery survives a process exit`; a second process
   loaded `Crash Report` / `Unsaved work survives a crash.` from the file the
   first process left behind.
-- App restore: installed bundle restored the crash document, tab
-  “Crash Report”, status “Recovered 1 unsaved document”; snapshot 132,828
-  bytes.
+- App restore: installed bundle restored the crash document after the native
+  Recover choice, tab “Crash Report”, status “Recovered 1 unsaved document”;
+  snapshot 133,974 bytes.
+- Recovery prompt: `sh writer/tests/recovery-prompt.sh` → 4 PASS, exit 0.
+  Recover restored one snapshot and kept the file; Keep left it on disk;
+  Discard removed it; dismissing then invoking `discard_recovery` confirmed
+  and removed the pending file. Installed bundle: `recover`, `recovered=1`,
+  133,974-byte snapshot.
 - Autosave: recovery-file mtime advanced `1795758920` → `1795758922` during an
   app run, and the rewritten file still loaded.
 - IME: `sh writer/tests/ime.sh` → 14 PASS, 0 FAIL, exit 0. The snapshot
@@ -102,8 +109,9 @@ It is not a mock and not a browser canvas.
   kinsoku; there is no hyphenation dictionary.
 - IME composition is painted from a temporary document/layout; the real
   document is unchanged until the input method commits.
-- No recovery prompt or discard command: startup auto-restores every valid
-  recovery file (up to six) as a dirty tab. Saving removes that tab’s file.
+- The recovery prompt is modal and restores at most six valid snapshots per
+  launch. Valid snapshots beyond that limit, and unreadable files, stay pending
+  for the explicit discard command. Saving a restored tab removes its file.
 - Autosave rewrites the whole document every 4 seconds; no incremental save,
   external-change detection or encryption. Recovery files are local plain
   `.novadoc` under Application Support.
@@ -115,14 +123,15 @@ It is not a mock and not a browser canvas.
 
 ## Active slice
 
-**WRI-07.005 — recovery prompt/discard** is next. WRI-07.004 landed: the host
-exposes `NSSavePanel`, Writer's Save As uses the panel URL and suggested
-`.novadoc` name, and `writer/tests/save-panel.sh` verifies confirm and cancel.
-WRI-05.005 landed earlier: `layout.nova` caches measured paragraphs by stable
-ID and content, and an 80-paragraph benchmark measured a one-paragraph update
-at 56ms versus 2,265ms for a full relayout.
+**WRI-07.005 — recovery prompt/discard** landed. The host exposes a native
+three-button alert, Writer asks before restoring, and the conditional Discard
+command removes only pending snapshots after confirmation. WRI-07.004 landed
+earlier: `NSSavePanel` returns the Save As path and `writer/tests/save-panel.sh`
+verifies confirm and cancel. WRI-05.005 landed earlier: `layout.nova` caches
+measured paragraphs by stable ID and content, and an 80-paragraph benchmark
+measured a one-paragraph update at 56ms versus 2,265ms for a full relayout.
 
-After that: WRI-06.002 list numbering, WRI-05.002 sections/columns.
+Next: WRI-06.002 list numbering, WRI-05.002 sections/columns.
 
 ## Working-tree state
 

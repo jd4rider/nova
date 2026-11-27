@@ -20,7 +20,6 @@ clang, CoreText and the native GUI.
 |---|---|---|
 | App undo still uses serialized snapshots | compiler now supports `List<Document>`; app can switch later | DEC-WRI-006; not user-visible |
 | Index assignment through a struct field is rejected | session replacement goes through `wr_put` with a local list copy | compiler parity |
-| No alert/confirmation bridge | recovery auto-restores without a prompt and has no discard command | WRI-07.005 |
 | No app-defined native menu model | only the fixed host app menu; commands live in the ribbon | host work |
 | No ZIP central directory/deflate | DOCX/ODT/native ZIP container blocked | WRI-10 prerequisite |
 | No XML parser | OOXML/ODF blocked | WRI-10 prerequisite |
@@ -54,6 +53,10 @@ clang, CoreText and the native GUI.
 - **No native save panel.** The host exposes `nova_gui_save_panel`; Writer's
   Save As uses the panel URL and suggested `.novadoc` name, and
   `writer/tests/save-panel.sh` covers confirm and cancel.
+- **No alert/confirmation bridge.** The host exposes a native three-button
+  alert; Writer asks before restoring, keeps snapshots on dismissal, and has a
+  conditional discard command. `writer/tests/recovery-prompt.sh` covers all
+  four paths.
 
 ## Known correctness limits
 
@@ -71,8 +74,9 @@ clang, CoreText and the native GUI.
 - Autosave rewrites the full document every 4 seconds. There is no incremental
   save, external-change detection or encryption; recovery files are plain
   `.novadoc` under Application Support.
-- Startup auto-restores recovery files without a prompt; a save removes that
-  tab’s recovery file, but there is no “discard recovery” command.
+- The recovery prompt is modal and restores at most six valid snapshots.
+  Unreadable snapshots and valid files beyond that limit stay pending for the
+  explicit discard command. Saving a restored tab removes its file.
 - IME composition is painted from a temporary document/layout, so it reflows
   while composing but is not part of the document until commit.
 - AppKit prints a benign `ApplePersistenceIgnoreState` notice at launch; window

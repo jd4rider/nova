@@ -116,6 +116,9 @@ extern "C" fn nova_fs_mkdir(path: String) -> Int
 extern "C" fn nova_fs_list(path: String) -> String
 extern "C" fn nova_gui_panel(mode: Int) -> String
 extern "C" fn nova_gui_save_panel(default_name: String, directory: String) -> String
+extern "C" fn nova_gui_alert_begin(title: String, message: String) -> Unit
+extern "C" fn nova_gui_alert_button(label: String) -> Unit
+extern "C" fn nova_gui_alert_run() -> Int
 extern "C" fn nova_gui_clipboard_get() -> String
 extern "C" fn nova_gui_clipboard_set(text: String)
 extern "C" fn nova_term_start(command: String, cwd: String) -> Int
@@ -897,6 +900,19 @@ fn pick_folder() -> String {
 // suggested name may include the `.novadoc` extension; directory may be "".
 fn save_panel(default_name: String, directory: String) -> String {
     return nova_gui_save_panel(default_name, directory)
+}
+
+// Native macOS alert with up to three buttons. Returns 1, 2 or 3 for the
+// clicked button, or 0 when the alert is dismissed. The second button is the
+// Escape/cancel action. Pass "" as tertiary for a two-button alert.
+fn alert(title: String, message: String, primary: String, secondary: String, tertiary: String) -> Int {
+    nova_gui_alert_begin(title, message)
+    nova_gui_alert_button(primary)
+    nova_gui_alert_button(secondary)
+    if tertiary.len() > 0 {
+        nova_gui_alert_button(tertiary)
+    }
+    return nova_gui_alert_run()
 }
 
 // The system clipboard, shared with every other application.

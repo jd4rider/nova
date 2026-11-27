@@ -377,5 +377,39 @@ the user could not name the file in the dialog.
   overwrite confirmation.
 - Save As is machine-tested for both confirm and cancel in
   `writer/tests/save-panel.sh`; the open panel remains a manual check.
-- The host still has no alert bridge, so the recovery prompt/discard flow
-  remains WRI-07.005.
+- The host now also exposes a native alert bridge for WRI-07.005.
+
+## DEC-WRI-014 — Recovery restore is an explicit native choice
+
+Status: accepted.
+
+### Context
+
+Autosave restored every valid recovery file silently at launch, so a crash
+could reopen old work without asking, and there was no way to discard stale
+snapshots. The host had no alert bridge.
+
+### Decision
+
+- `runtime/gui.m` exposes a native `NSAlert` in begin/button/run calls. The
+  second button is the Escape/cancel action; the result is 1, 2 or 3 for the
+  chosen button and 0 when dismissed.
+- Startup asks `Recover`, `Keep for Now` or `Discard`. `Recover` restores up to
+  six valid snapshots as dirty tabs and leaves their files on disk until save.
+  `Keep for Now` (or Escape/dismissal) leaves every snapshot on disk and records
+  the pending paths. `Discard` removes only the snapshots listed by that prompt.
+- If some snapshots are unreadable or beyond the six-tab limit, they remain
+  pending instead of disappearing.
+- A `Discard` ribbon button appears only while pending snapshots exist. It opens
+  a second alert and removes only those pending paths after confirmation, so
+  snapshots created by later autosaves are not swept away.
+- `NOVA_GUI_ALERT_PROBE` accepts a comma-separated sequence of `primary`,
+  `secondary`, `tertiary` or `dismiss` for tests; `NOVA_WRITER_COMMAND_PROBE`
+  invokes one Writer command for the discard-command test.
+
+### Consequences
+
+- Recovery is no longer silent, and dismissing the prompt is non-destructive.
+- The prompt is modal and blocks the first frame until the user chooses.
+- Recovery files remain plain local `.novadoc` snapshots; this adds no
+  encryption or external-change detection.

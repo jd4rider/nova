@@ -275,6 +275,44 @@ save panel response=0 cancelled=1 path=
 The native open panel is still a manual check; Save As is now automated through
 the real panel.
 
+## 17. Recovery prompt and discard
+
+```sh
+sh writer/tests/recovery-prompt.sh
+```
+
+Result: 4 PASS, exit 0.
+
+```
+PASS recovery prompt restored a snapshot and kept the file
+PASS keep for now left the snapshot on disk
+PASS discard removed the snapshot
+PASS discard command removed a pending snapshot after confirmation
+```
+
+The host opened a real three-button `NSAlert`; the probe only stopped the modal
+after 0.35s. Traces:
+
+```
+writer: recovery files=1
+writer: recovery choice=recover
+writer: recovered=1
+writer: recovery choice=keep
+writer: recovery choice=discard
+writer: discarded=1
+writer: recovery choice=keep
+writer: discard files=1
+writer: discarded=1
+alert buttons=3 response=1000 choice=1 probe=primary
+alert buttons=3 response=1001 choice=2 probe=secondary
+alert buttons=3 response=1002 choice=3 probe=tertiary
+alert buttons=3 response=0 choice=0 probe=dismiss
+alert buttons=2 response=1000 choice=1 probe=primary
+```
+
+The installed bundle also opened the prompt, chose Recover, restored the
+snapshot and wrote a 133,974-byte snapshot; `codesign --verify --strict` passed.
+
 ## Verified vs not verified
 
 Verified by machine: document model and edits, grapheme boundaries, undo/redo
@@ -283,8 +321,9 @@ toggle/save/edit propagation, atomic store, layout measurement and pagination,
 incremental cache reuse/equivalence and timing, hit-testing, mixed-script
 fallback, auto/LTR/RTL paragraph direction, RTL caret geometry, CJK wrapping,
 recovery save/load/list/remove, a two-process crash,
-app startup restore, the first autosave write, IME marked-text composition and
-Escape cancellation through the host probe, native Save As confirm/cancel,
+app startup restore, the native recovery prompt recover/keep/discard, the
+explicit discard command, the first autosave write, IME marked-text composition
+and Escape cancellation through the host probe, native Save As confirm/cancel,
 native window launch and rendering, bundle signing and installation.
 
 Not machine-verified: interactive typing, selection, clipboard, zoom, theme
@@ -297,6 +336,5 @@ wired to real code but require manual or future automated GUI tests; they are
 not claimed as tested.
 
 Not implemented: DOCX/ODT/RTF/HTML/PDF, tables, images, headers/footers,
-footnotes, character styles, underline UI, comments/revisions, recovery
-prompt/discard UI, external-change detection, encryption, performance
-baselines.
+footnotes, character styles, underline UI, comments/revisions,
+external-change detection, encryption, performance baselines.

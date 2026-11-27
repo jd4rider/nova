@@ -116,6 +116,7 @@ struct App {
     chars: Int,
     status: String,
     sidebar: Bool,
+    recovery_pending: List<String>,
     quit: Bool,
     mouse_x: Int,
     mouse_y: Int,
@@ -373,6 +374,24 @@ fn wr_theme(name: String) -> gui.Theme {
     return gui.dark()
 }
 
+// Removes only the snapshot paths the user chose to discard. A file that is
+// already gone is treated as removed; a failed delete stays pending so the
+// command can be retried.
+fn wr_discard_paths(paths: List<String>) -> List<String> {
+    var left: List<String> = []
+    var i = 0
+    while i < paths.len() {
+        let path = paths[i]
+        if gui.exists(path) {
+            if !rec.rec_remove(path) {
+                left.push(path)
+            }
+        }
+        i = i + 1
+    }
+    return left
+}
+
 fn wr_restore(app: App) -> App {
     var app = app
     if gui.env("NOVA_WRITER_NO_RECOVERY") == "1" {
@@ -382,8 +401,61 @@ fn wr_restore(app: App) -> App {
     if files.len() == 0 {
         return app
     }
-    var restored = 0
+    let trace = gui.env("NOVA_WRITER_TRACE") == "1"
+    var paths: List<String> = []
     var i = 0
+    while i < files.len() {
+        paths.push(files[i].path)
+        i = i + 1
+    }
+    var noun = "document"
+    if files.len() != 1 {
+        noun = "documents"
+    }
+    if trace {
+        println("writer: recovery files=" + files.len().to_string())
+    }
+    // The second button is the safe cancel action: Escape or closing the alert
+    // keeps the snapshots instead of deleting them.
+    let choice = gui.alert(
+        "Recover unsaved documents?",
+        "Nova Writer found " + files.len().to_string() + " unsaved " + noun + " from a previous session. Recover them as dirty tabs, keep the snapshots for later, or discard them.",
+        "Recover",
+        "Keep for Now",
+        "Discard"
+    )
+    if choice == 3 {
+        let left = wr_discard_paths(paths)
+        let removed = paths.len() - left.len()
+        app.recovery_pending = left
+        app.status = "Discarded " + removed.to_string() + " recovery snapshot"
+        if removed != 1 {
+            app.status = app.status + "s"
+        }
+        if trace {
+            println("writer: recovery choice=discard")
+            println("writer: discarded=" + removed.to_string())
+        }
+        return app
+    }
+    if choice != 1 {
+        app.recovery_pending = paths
+        app.status = "Recovery kept — " + files.len().to_string() + " snapshot"
+        if files.len() != 1 {
+            app.status = app.status + "s"
+        }
+        app.status = app.status + " ready to discard"
+        if trace {
+            println("writer: recovery choice=keep")
+        }
+        return app
+    }
+    if trace {
+        println("writer: recovery choice=recover")
+    }
+    var restored = 0
+    var pending: List<String> = []
+    i = 0
     while i < files.len() && restored < 6 {
         let loaded = rec.rec_load(files[i].path)
         if loaded.ok {
@@ -391,11 +463,23 @@ fn wr_restore(app: App) -> App {
             sessions.push(wr_session(loaded.doc, "", true, files[i].path))
             app.sessions = sessions
             restored = restored + 1
+        } else {
+            pending.push(files[i].path)
         }
         i = i + 1
     }
+    // Valid snapshots beyond the six-tab restore limit stay on disk and remain
+    // available to the explicit discard command.
+    while i < files.len() {
+        pending.push(files[i].path)
+        i = i + 1
+    }
+    app.recovery_pending = pending
     if restored == 0 {
         app.status = "Recovery files could not be read"
+        if trace {
+            println("writer: recovered=0")
+        }
         return app
     }
     // The demo or blank tab was a placeholder; recovered work replaces it.
@@ -409,8 +493,14 @@ fn wr_restore(app: App) -> App {
     app.active = keep.len() - 1
     app.layout_dirty = true
     app.status = "Recovered " + restored.to_string() + " unsaved document"
-    if restored > 1 {
+    if restored != 1 {
         app.status = app.status + "s"
+    }
+    if pending.len() > 0 {
+        app.status = app.status + " (" + pending.len().to_string() + " kept)"
+    }
+    if trace {
+        println("writer: recovered=" + restored.to_string())
     }
     return app
 }
@@ -438,6 +528,7 @@ fn wr_start() -> App {
         chars: wd.wd_char_count(doc),
         status: "",
         sidebar: true,
+        recovery_pending: wr_no_text(),
         quit: false,
         mouse_x: 0,
         mouse_y: 0,
@@ -1190,6 +1281,42 @@ fn wr_close(app: App) -> App {
     return wr_close_at(app, app.active)
 }
 
+fn wr_discard_recovery(app: App) -> App {
+    var app = app
+    let paths = app.recovery_pending
+    if paths.len() == 0 {
+        app.status = "No recovery snapshots to discard"
+        return app
+    }
+    var noun = "snapshot"
+    if paths.len() != 1 {
+        noun = "snapshots"
+    }
+    let choice = gui.alert(
+        "Discard recovery snapshots?",
+        "This permanently deletes " + paths.len().to_string() + " recovery " + noun + ". Open documents are not affected.",
+        "Discard",
+        "Cancel",
+        ""
+    )
+    if choice != 1 {
+        app.status = "Discard cancelled"
+        return app
+    }
+    let left = wr_discard_paths(paths)
+    let removed = paths.len() - left.len()
+    app.recovery_pending = left
+    app.status = "Discarded " + removed.to_string() + " recovery " + noun
+    if left.len() > 0 {
+        app.status = app.status + " (" + left.len().to_string() + " could not be removed)"
+    }
+    if gui.env("NOVA_WRITER_TRACE") == "1" {
+        println("writer: discard files=" + paths.len().to_string())
+        println("writer: discarded=" + removed.to_string())
+    }
+    return app
+}
+
 fn wr_apply_kind(app: App, kind: Int) -> App {
     var app = wr_snapshot(app)
     var s = app.sessions[app.active]
@@ -1322,7 +1449,7 @@ fn wr_box_w(label: String) -> Int {
     return gui.text_width(label, 12) + 24
 }
 
-fn wr_ribbon(w: Int) -> List<HitBox> {
+fn wr_ribbon(app: App, w: Int) -> List<HitBox> {
     var out: List<HitBox> = []
     var x = 14
     let y = wr_title_h() + 9
@@ -1363,11 +1490,15 @@ fn wr_ribbon(w: Int) -> List<HitBox> {
     out.push(HitBox { id: "paper", label: "Paper", x: x, y: y, w: wr_box_w("Paper"), h: h })
     x = x + wr_box_w("Paper") + gap
     out.push(HitBox { id: "sidebar", label: "Panel", x: x, y: y, w: wr_box_w("Panel"), h: h })
+    if app.recovery_pending.len() > 0 {
+        x = x + wr_box_w("Panel") + 16
+        out.push(HitBox { id: "discard_recovery", label: "Discard", x: x, y: y, w: wr_box_w("Discard"), h: h })
+    }
     return out
 }
 
 fn wr_ribbon_hit(app: App, x: Int, y: Int) -> String {
-    for box in wr_ribbon(gui.width()) {
+    for box in wr_ribbon(app, gui.width()) {
         if gui.inside(box.x, box.y, box.w, box.h, x, y) {
             return box.id
         }
@@ -1422,6 +1553,9 @@ fn wr_command(app: App, id: String) -> App {
         var next = app
         next.sidebar = !next.sidebar
         return next
+    }
+    if id == "discard_recovery" {
+        return wr_discard_recovery(app)
     }
     return app
 }
@@ -1716,7 +1850,7 @@ fn wr_draw_ribbon(app: App, w: Int) {
     let theme = app.theme
     gui.rect(0, wr_title_h(), w, wr_ribbon_h(), theme.panel)
     gui.line(0, wr_title_h() + wr_ribbon_h() - 1, w, wr_title_h() + wr_ribbon_h() - 1, theme.border)
-    for box in wr_ribbon(w) {
+    for box in wr_ribbon(app, w) {
         var bg = theme.panel
         if gui.inside(box.x, box.y, box.w, box.h, app.mouse_x, app.mouse_y) {
             bg = theme.elevated
@@ -2055,7 +2189,7 @@ fn wr_draw_status(app: App, w: Int, h: Int) {
 }
 
 fn wr_push_accessibility(app: App, w: Int, h: Int) {
-    for box in wr_ribbon(w) {
+    for box in wr_ribbon(app, w) {
         gui.ax_button(box.x, box.y, box.w, box.h, box.label)
     }
     var i = 0
@@ -2106,8 +2240,10 @@ fn main() {
     let snapshot_preedit = gui.env("NOVA_WRITER_SNAPSHOT_PREEDIT") == "1"
     let autoclose = gui.env("NOVA_WRITER_AUTOCLOSE")
     let save_probe = gui.env("NOVA_WRITER_SAVE_PANEL_PROBE")
+    let command_probe = gui.env("NOVA_WRITER_COMMAND_PROBE")
     let trace = gui.env("NOVA_WRITER_TRACE") == "1"
     var save_probe_done = false
+    var command_probe_done = false
     var last_preedit = ""
     var snapshot_saved = false
     var running = true
@@ -2115,6 +2251,10 @@ fn main() {
         if save_probe.len() > 0 && !save_probe_done {
             app = wr_save(app, true)
             save_probe_done = true
+        }
+        if command_probe.len() > 0 && !command_probe_done {
+            app = wr_command(app, command_probe)
+            command_probe_done = true
         }
         app = wr_autosave(app)
         app = wr_relayout(app)
