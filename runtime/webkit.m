@@ -13,6 +13,7 @@
 #import <AppKit/AppKit.h>
 #import <WebKit/WebKit.h>
 #import <Security/Security.h>
+#import <CommonCrypto/CommonCrypto.h>
 
 #include <math.h>
 #include <stdint.h>
@@ -1323,4 +1324,94 @@ int64_t nova_keychain_delete(nova_str account) {
                             (__bridge id)kSecAttrAccount:acct};
     OSStatus status = SecItemDelete((__bridge CFDictionaryRef)query);
     return (status == errSecSuccess || status == errSecItemNotFound) ? 1 : 0;
+}
+
+/* ---------- Chrome password import ---------- */
+
+/* Chrome's macOS password store is `v10` plus AES-128-CBC. The key is
+ * PBKDF2-HMAC-SHA1 of the "Chrome Safe Storage" keychain password over
+ * "saltysalt" with 1003 iterations, and the IV is sixteen spaces. Anything
+ * unexpected (another prefix, a bad pad, a missing key) returns "" rather than
+ * a guessed plaintext. */
+static NSData *nova_hex_data(NSString *hex) {
+    if (hex.length == 0 || hex.length % 2 != 0) return nil;
+    NSUInteger length = hex.length / 2;
+    NSMutableData *data = [NSMutableData dataWithLength:length];
+    unsigned char *bytes = data.mutableBytes;
+    for (NSUInteger i = 0; i < length; i++) {
+        unsigned int value = 0;
+        if (sscanf([[hex substringWithRange:NSMakeRange(i * 2, 2)] UTF8String], "%02x", &value) != 1) {
+            return nil;
+        }
+        bytes[i] = (unsigned char)value;
+    }
+    return data;
+}
+
+static NSData *nova_chrome_derive(NSString *password) {
+    const char *pass = password.UTF8String;
+    if (!pass) return nil;
+    unsigned char key[kCCKeySizeAES128];
+    int status = CCKeyDerivationPBKDF(kCCPBKDF2, pass, strlen(pass),
+                                      (const uint8_t *)"saltysalt", 9,
+                                      kCCPRFHmacAlgSHA1, 1003,
+                                      key, sizeof(key));
+    if (status != kCCSuccess) return nil;
+    return [NSData dataWithBytes:key length:sizeof(key)];
+}
+
+nova_str nova_chrome_decrypt(nova_str hex, nova_str password) {
+    NSData *blob = nova_hex_data(nova_webview_string(hex));
+    NSString *pass = nova_webview_string(password);
+    if (blob.length <= 3 || pass.length == 0) return nova_webview_empty();
+    NSData *prefix = [@"v10" dataUsingEncoding:NSUTF8StringEncoding];
+    if (![[blob subdataWithRange:NSMakeRange(0, 3)] isEqualToData:prefix]) {
+        return nova_webview_empty();
+    }
+    NSData *key = nova_chrome_derive(pass);
+    if (!key) return nova_webview_empty();
+    NSData *cipher = [blob subdataWithRange:NSMakeRange(3, blob.length - 3)];
+    if (cipher.length == 0 || cipher.length % kCCBlockSizeAES128 != 0) {
+        return nova_webview_empty();
+    }
+    unsigned char iv[kCCBlockSizeAES128];
+    memset(iv, ' ', sizeof(iv));
+    size_t out_len = 0;
+    NSMutableData *out = [NSMutableData dataWithLength:cipher.length + kCCBlockSizeAES128];
+    CCCryptorStatus status = CCCrypt(kCCDecrypt, kCCAlgorithmAES128, 0,
+                                     key.bytes, key.length, iv,
+                                     cipher.bytes, cipher.length,
+                                     out.mutableBytes, out.length, &out_len);
+    if (status != kCCSuccess || out_len == 0) return nova_webview_empty();
+    unsigned char *bytes = out.mutableBytes;
+    NSUInteger pad = bytes[out_len - 1];
+    if (pad == 0 || pad > kCCBlockSizeAES128 || pad > out_len) return nova_webview_empty();
+    for (NSUInteger i = 0; i < pad; i++) {
+        if (bytes[out_len - 1 - i] != pad) return nova_webview_empty();
+    }
+    out.length = out_len - pad;
+    NSString *text = [[NSString alloc] initWithData:out encoding:NSUTF8StringEncoding];
+    return nova_webview_copy(text);
+}
+
+/* Chrome's key, from its own keychain item. macOS may ask before handing it
+ * over; a refusal is an empty key, and the import then reports a lock instead
+ * of guessing. The environment overrides exist for tests and for a key the
+ * user keeps outside the keychain. */
+nova_str nova_chrome_key(void) {
+    const char *forced = getenv("NOVA_BROWSER_CHROME_KEY");
+    if (forced) return nova_webview_copy([NSString stringWithUTF8String:forced]);
+    if (getenv("NOVA_BROWSER_NO_CHROME_KEY")) return nova_webview_empty();
+    NSDictionary *query = @{(__bridge id)kSecClass:(__bridge id)kSecClassGenericPassword,
+                            (__bridge id)kSecAttrService:@"Chrome Safe Storage",
+                            (__bridge id)kSecAttrAccount:@"Chrome",
+                            (__bridge id)kSecReturnData:@YES,
+                            (__bridge id)kSecMatchLimit:(__bridge id)kSecMatchLimitOne};
+    CFTypeRef found = NULL;
+    if (SecItemCopyMatching((__bridge CFDictionaryRef)query, &found) != errSecSuccess || !found) {
+        return nova_webview_empty();
+    }
+    NSData *data = (__bridge_transfer NSData *)found;
+    NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    return nova_webview_copy(text);
 }

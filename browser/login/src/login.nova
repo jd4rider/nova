@@ -55,3 +55,18 @@ fn forget(host: String) -> Bool {
     }
     return nova_keychain_delete(host) == 1
 }
+
+// Chrome's password store on this Mac: the "Chrome Safe Storage" keychain
+// item supplies the key, and each value is v10-prefixed AES-128-CBC. Reading
+// another app's keychain item makes macOS ask; an empty key means the import
+// reports the lock instead of writing a guess.
+extern "C" fn nova_chrome_key() -> String
+extern "C" fn nova_chrome_decrypt(hex: String, password: String) -> String
+
+fn chrome_key() -> String {
+    return nova_chrome_key()
+}
+
+fn decrypt(hex: String, key: String) -> String {
+    return nova_chrome_decrypt(hex, key)
+}

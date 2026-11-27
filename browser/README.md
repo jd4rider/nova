@@ -101,7 +101,7 @@ blinking caret, and the loading bar follows WebKit's own estimate.
 | Cmd+G / Cmd+Shift+G | next / previous match |
 | Cmd+= / Cmd+- | zoom the page in / out |
 | Cmd+0 | reset the page zoom |
-| Cmd+Shift+I | import Google Chrome bookmarks |
+| Cmd+Shift+I | import Chrome bookmarks, history and saved passwords |
 | Cmd+Shift+E | tabs: top → sidebar → rail → top |
 | Cmd+Shift+L | read the page aloud, or stop reading |
 | Cmd+Shift+V | choose the next reader voice |
@@ -128,7 +128,7 @@ open -a "/Applications/Nova Browser.app"
 ```
 
 The script rebuilds, renders the icon, assembles `Nova Browser.app`, ad-hoc
-signs it locally and replaces the installed copy. Version 0.9.12 is installed.
+signs it locally and replaces the installed copy. Version 0.9.13 is installed.
 Re-run it after every completed phase. This is not Developer ID signing or
 notarization.
 
@@ -262,6 +262,10 @@ A profile folder also brings over the parts of Chrome that map onto Nova:
   `homepage` and opened with Cmd+Shift+H; without one, that shortcut opens
   Nova's start page in a new tab.
 - **Bookmarks.** Bookmark bar and Other bookmarks, as above.
+- **Saved passwords.** The `logins` table of `Login Data`, decrypted with the
+  `Chrome Safe Storage` key (see Saved logins above). Hosts Nova already has a
+  login for are skipped, so the import never overwrites a credential changed in
+  Nova. On a dry run the count is reported and no keychain entry is written.
 
 Extensions are listed, not run: `extensions.tsv` and `chrome-extensions.tsv`
 record what Chrome has (name from whichever `_locales` locale is installed,
@@ -273,11 +277,11 @@ the folder is readable) converts `Bookmarks.plist` through `plutil` and queries
 `History.db` with sqlite3. macOS may deny those files without Full Disk Access;
 an unreadable file imports nothing rather than reporting a guess.
 
-Not imported: passwords, cookies, site permissions, open tabs (the last session
-is not read) or themes. Completed downloads come over when the file still exists
-on disk. Passwords in particular stay in Chrome's Keychain-backed store; Nova
-reads no credential database. The logins Nova saves itself (above) are a
-separate store, not a copy of Chrome's.
+Not imported: cookies, site permissions, open tabs (the last session is not
+read), themes, or Safari's passwords (they live in iCloud Keychain, not in a
+file Nova can read). Completed downloads come over when the file still exists on
+disk. Chrome's passwords are imported into Nova's own keychain store; Chrome's
+copies stay where they are.
 
 A dry run applies everything in memory and writes nothing, so you can see what
 would change first:
@@ -324,6 +328,13 @@ host in the login keychain, under its own `dev.nova.browser.login` service, and
 says **Saved login for example.com**. The next time the host shows a password
 form, Nova fills it; it never submits the form for you. Private tabs neither
 save nor fill a login.
+
+Chrome's saved passwords come over with Cmd+Shift+I or `--import`. Nova reads
+the profile's `Login Data`, decrypts each `v10` row with the key from Chrome's
+`Chrome Safe Storage` keychain item (macOS may ask once before handing it over),
+and stores hosts Nova does not already know in its own keychain store. An
+existing Nova login is never replaced, and without the key the import prints
+`chrome key locked` and imports none rather than writing blank passwords.
 
 One login is kept per host. There is no password list yet, so removing one is a
 command:

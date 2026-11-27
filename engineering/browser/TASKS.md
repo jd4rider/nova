@@ -164,6 +164,13 @@ Each task needs a reproducible acceptance check before it is marked done.
   re-applied on navigation) and publishes the find query and close control to
   the accessibility tree; the same test relaunches the profile and requires
   `zoom: host=127.0.0.1 applied=150 stored=150` plus both AX names (11 PASS).
+- **WB-03.017 — Chrome password import.** DONE in 0.9.13. `--import` and
+  Cmd+Shift+I read Chrome's `Login Data`, decrypt `v10` rows with PBKDF2 +
+  AES-128-CBC in the runtime, and store new hosts in Nova's keychain login
+  store. Existing hosts are skipped; a dry run writes nothing; a missing key
+  prints `chrome key locked` and imports nothing. Evidence:
+  `browser/tests/chrome-logins.sh` 6/6. Not done: Safari passwords (iCloud
+  Keychain), multi-account hosts, and any password list UI.
 - **WB-03.016 — Saved logins.** DONE in 0.9.12. Submitted password forms on
   normal tabs are captured through WebKit's `novaLogin` bridge and stored in
   the login keychain under `dev.nova.browser.login`, one item per host. A later

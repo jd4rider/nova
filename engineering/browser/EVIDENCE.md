@@ -1414,3 +1414,33 @@ login: pass=3 fail=0
 - Not tested: a live Keychain prompt after a rebuild (ad-hoc signing can change
   the app identity macOS associates with the item), multi-account logins (the
   store keeps one per host), and password-change forms.
+
+## 0.9.13 — Chrome password import
+
+- `import_chrome_logins` reads `Login Data` with sqlite3 from an immutable
+  snapshot and selects `hex(password_value)`, so the encrypted bytes survive
+  the text pipe. `nova_chrome_decrypt` strips `v10`, derives the AES-128 key
+  with PBKDF2-HMAC-SHA1 (salt `saltysalt`, 1003 iterations) from the
+  `Chrome Safe Storage` keychain item, decrypts CBC with a sixteen-space IV and
+  verifies PKCS#7 padding. Bad prefix, size or padding produces no plaintext.
+- A missing or refused key prints `import: chrome key locked, passwords not
+  read` and imports nothing. New hosts are stored in Nova's keychain login
+  store; hosts Nova already has are skipped, and a dry run counts only.
+- Evidence: `browser/tests/chrome-logins.sh` 6/6:
+
+```
+import: files=1 found=0 new=0 bookmarks=0 history=0 startup=0 homepage= search= extensions=0 downloads=0 logins=1 ...
+PASS a Chrome login is decrypted and stored
+PASS the profile's bookmarks still import
+autofill: host=127.0.0.1 filled=1 fields=ada|hunter2
+PASS the imported password fills the site's form
+PASS a second import adds no login
+import: chrome key locked, passwords not read
+PASS a locked Chrome key imports nothing
+PASS a locked import reports zero logins
+chrome-logins: pass=6 fail=0
+```
+
+- Not tested: a live prompt for Chrome's keychain item, Chrome profiles that
+  use a non-v10 password format, and hosts with several Chrome accounts (the
+  store keeps one login per host).

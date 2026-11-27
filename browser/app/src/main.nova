@@ -185,6 +185,9 @@ struct ProfileImport {
     homepage: String,
     extensions: List<String>,
     downloads: List<String>,
+    // host<TAB>escaped-user<TAB>escaped-password, already decrypted. Written to
+    // the keychain only on a real import, never on a dry run.
+    logins: List<String>,
 }
 
 struct ImportSummary {
@@ -196,6 +199,7 @@ struct ImportSummary {
     homepage: String,
     extensions: Int,
     downloads: Int,
+    logins: Int,
 }
 
 fn gruvbox_theme() -> Chrome {
@@ -2243,7 +2247,41 @@ fn import_safari_profile(dir: String) -> ProfileImport {
         homepage: "",
         extensions: [],
         downloads: [],
+        logins: [],
     }
+}
+
+// Chrome keeps saved logins in `Login Data`, encrypted per row. sqlite3 reads
+// an immutable snapshot so a running Chrome is not disturbed, and hex() keeps
+// the ciphertext intact through the text pipe. A missing key means a locked
+// report, not a partial import of blank passwords.
+fn import_chrome_logins(dir: String) -> List<String> {
+    let key = login.chrome_key()
+    if key.len() == 0 {
+        if gui.env("NOVA_BROWSER_NO_CHROME_KEY") == "1" || gui.env("NOVA_BROWSER_CHROME_KEY").len() == 0 {
+            println("import: chrome key locked, passwords not read")
+        }
+        return []
+    }
+    let path = "/tmp/nova-logins-${gui.now()}.txt"
+    let query = "select origin_url, username_value, hex(password_value) from logins"
+    gui.run("sqlite3 -readonly -separator '\t' 'file:" + dir + "/Login Data?immutable=1' \"" + query + "\" > '" + path + "' 2>/dev/null", "/")
+    let dump = gui.read(path)
+    gui.run("rm -f '" + path + "'", "/")
+    var found: List<String> = []
+    for line in dump.split("\n") {
+        let parts = line.split("\t")
+        if parts.len() < 3 {
+            continue
+        }
+        let host = library.host_of(parts[0])
+        let pass = login.decrypt(parts[2], key)
+        if host.len() == 0 || pass.len() == 0 {
+            continue
+        }
+        found.push(host + "\t" + library.escape(parts[1]) + "\t" + library.escape(pass))
+    }
+    return found
 }
 
 fn import_profile(dir: String) -> ProfileImport {
@@ -2262,6 +2300,10 @@ fn import_profile(dir: String) -> ProfileImport {
     var downloads: List<String> = []
     if gui.exists(dir + "/History") {
         downloads = import_chrome_downloads(dir + "/History")
+    }
+    var logins: List<String> = []
+    if gui.exists(dir + "/Login Data") {
+        logins = import_chrome_logins(dir)
     }
     var search = ""
     var startup: List<String> = []
@@ -2301,6 +2343,7 @@ fn import_profile(dir: String) -> ProfileImport {
         homepage: homepage,
         extensions: extensions,
         downloads: downloads,
+        logins: logins,
     }
 }
 
@@ -2310,6 +2353,7 @@ fn empty_profile_import() -> ProfileImport {
     var startup: List<String> = []
     var extensions: List<String> = []
     var downloads: List<String> = []
+    var logins: List<String> = []
     return ProfileImport {
         profiles: 0,
         bookmarks: bookmarks,
@@ -2320,6 +2364,7 @@ fn empty_profile_import() -> ProfileImport {
         homepage: "",
         extensions: extensions,
         downloads: downloads,
+        logins: logins,
     }
 }
 
@@ -2334,7 +2379,31 @@ fn profile_import_merge(first: ProfileImport, more: ProfileImport) -> ProfileImp
         homepage: if first.homepage.len() > 0 { first.homepage } else { more.homepage },
         extensions: library.merge(first.extensions, more.extensions),
         downloads: library.merge(first.downloads, more.downloads),
+        logins: library.merge(first.logins, more.logins),
     }
+}
+
+// An import must not overwrite a login the user changed in Nova, so a host
+// that already has an entry is skipped. A dry run counts without writing.
+fn apply_imported_logins(rows: List<String>, write: Bool) -> Int {
+    var added = 0
+    for row in rows {
+        let host = library.field(row, 0)
+        let user = library.field(row, 1)
+        let pass = library.field(row, 2)
+        if host.len() == 0 || pass.len() == 0 {
+            continue
+        }
+        if login.lookup(host).found {
+            continue
+        }
+        if !write {
+            added = added + 1
+        } else if login.save(host, user, pass) {
+            added = added + 1
+        }
+    }
+    return added
 }
 
 fn import_file(path: String) -> List<String> {
@@ -2484,6 +2553,7 @@ fn apply_profile_import(store: Store, found: ProfileImport, write: Bool) -> Impo
         homepage: home,
         extensions: extensions,
         downloads: added_downloads,
+        logins: 0,
     }
 }
 
@@ -2497,7 +2567,8 @@ fn import_from_google(store: Store) -> Imported {
         found = profile_import_merge(found, import_profile(dir))
     }
     let summary = apply_profile_import(store, found, true)
-    if summary.bookmarks == 0 && summary.history == 0 && summary.startup == 0 && summary.homepage.len() == 0 && summary.search.len() == 0 {
+    let added_logins = apply_imported_logins(found.logins, true)
+    if summary.bookmarks == 0 && summary.history == 0 && summary.startup == 0 && summary.homepage.len() == 0 && summary.search.len() == 0 && added_logins == 0 {
         return Imported { store: summary.store, message: "Bookmarks and history already up to date" }
     }
     var parts: List<String> = []
@@ -2515,6 +2586,9 @@ fn import_from_google(store: Store) -> Imported {
     }
     if summary.search.len() > 0 {
         parts.push("search " + summary.search)
+    }
+    if added_logins > 0 {
+        parts.push("${added_logins} saved logins")
     }
     var text = ""
     var i = 0
@@ -5737,6 +5811,13 @@ fn auto_close(session: Session, theme: Chrome, address: Address, store: Store) {
     // the values over, the Keychain stores them, and the same host's form is
     // filled from what was stored. The entry is removed again so the probe
     // leaves nothing behind.
+    // Headless form of arriving at a site with a saved login: the page loads
+    // empty and the Keychain entry fills its own fields.
+    if gui.env("NOVA_BROWSER_AUTOFILL_CHECK") == "1" {
+        let autofilled = autofill_login(handle, engine.page_url(handle))
+        let fields = engine.run_js(handle, "document.querySelector('#u').value+'|'+document.querySelector('#p').value")
+        println("autofill: host=${login.origin(engine.page_url(handle))} filled=${flag(autofilled)} fields=${fields}")
+    }
     if gui.env("NOVA_BROWSER_LOGIN_CHECK") == "1" {
         engine.run_js(handle, "document.querySelector('#u').value='ada';document.querySelector('#p').value='hunter2';document.querySelector('form').requestSubmit();'submitted'")
         var waited_login = 0
@@ -5903,10 +5984,11 @@ fn run_cli_import(argument: String) -> Bool {
     // NOVA_BROWSER_IMPORT_DRY=1 reports what would change and writes nothing.
     let dry = gui.env("NOVA_BROWSER_IMPORT_DRY") == "1"
     let summary = apply_profile_import(store, found, !dry)
+    let added_logins = apply_imported_logins(found.logins, !dry)
     let saved = if dry { summary.store } else { save_store(summary.store) }
     let prefix = if dry { "import(dry)" } else { "import" }
-    println("${prefix}: files=${profiles.len() + files.len()} found=${found.bookmarks.len()} new=${summary.bookmarks} bookmarks=${library.bookmark_count(saved.bookmarks)} history=${summary.history} startup=${summary.startup} homepage=${summary.homepage} search=${summary.search} extensions=${summary.extensions} downloads=${summary.downloads} path=${saved.bookmarks_path}")
-    return summary.bookmarks > 0 || summary.history > 0
+    println("${prefix}: files=${profiles.len() + files.len()} found=${found.bookmarks.len()} new=${summary.bookmarks} bookmarks=${library.bookmark_count(saved.bookmarks)} history=${summary.history} startup=${summary.startup} homepage=${summary.homepage} search=${summary.search} extensions=${summary.extensions} downloads=${summary.downloads} logins=${added_logins} path=${saved.bookmarks_path}")
+    return summary.bookmarks > 0 || summary.history > 0 || added_logins > 0
 }
 
 // One place decides whether a page may enter history: private tabs and the

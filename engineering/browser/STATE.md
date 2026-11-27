@@ -3,11 +3,12 @@
 Updated: 2026-11-27
 Branch: `main`
 Last known good compiler checkpoint: `cfa00e3` (before browser work)
-Browser: **0.9.12 installed at `/Applications/Nova Browser.app`**
-Browser working tree: clean after the 0.9.12 commit; see `git status`
+Browser: **0.9.13 installed at `/Applications/Nova Browser.app`**
+Browser working tree: clean after the 0.9.13 commit; see `git status`
 Active gate: G0 WebKit; G1 WebCore not started
-Active task: **WB-03.016 — saved logins** (0.9.12: login keychain store for
-submitted password forms, host-scoped autofill, `--forget-login`)
+Active task: **WB-03.017 — Chrome password import** (0.9.13: `Login Data`
+rows decrypted with the Chrome Safe Storage key and stored in Nova's keychain,
+never overwriting a host Nova already has)
 
 ## Completed
 
@@ -324,6 +325,22 @@ submitted password forms, host-scoped autofill, `--forget-login`)
     `lsregister -f`, `--set-default-browser` reports `set=1 state=1` and
     `NSWorkspace` resolves a web URL to `Nova Browser.app`. Revert in System
     Settings → Desktop & Dock → Default web browser.
+- **0.9.13 — Chrome password import**
+  - `import_chrome_logins` reads `Login Data` through `sqlite3` from an
+    immutable snapshot, with `hex(password_value)` keeping the ciphertext
+    intact through the text pipe. Each `v10` row is decrypted with AES-128-CBC
+    (PBKDF2-HMAC-SHA1 over `saltysalt`, 1003 iterations, sixteen-space IV) in
+    `nova_chrome_decrypt`.
+  - The key comes from Chrome's `Chrome Safe Storage` keychain item. A refusal
+    or a missing key imports nothing and prints `chrome key locked`; a bad
+    prefix, block size or padding also yields no plaintext rather than a guess.
+  - New hosts are written to Nova's keychain store; a host that already has a
+    Nova login is skipped, so an import cannot overwrite a changed password.
+    Dry runs count without writing. Cmd+Shift+I now reports saved logins.
+  - Evidence: `browser/tests/chrome-logins.sh` 6/6 — one decrypted row stored
+    (`logins=1`), the imported `ada|hunter2` filling a site's form through
+    autofill, a second import adding nothing, and a locked key importing none.
+
 - **0.9.12 — saved logins**
   - A normal tab's submitted password form is reported through WebKit's
     `novaLogin` message bridge. `save_captured_login` stores it as a
@@ -530,7 +547,8 @@ submitted password forms, host-scoped autofill, `--forget-login`)
   normal tabs, and a private tab is still visible in the strip while open. No
   permission prompts, inspector, Developer ID signing/notarization or release.
   Saved logins are one per host with no list, edit or rename UI, are not
-  imported from Chrome or Safari, and are not synced; there is no account.
+  imported from Safari, and are not synced; there is no account. Chrome's
+  keychain item can prompt once on macOS before the import reads it.
   Find reports Found / No matches, not a match count; the bar's field
   and close control are in the accessibility tree, its status text is not. Zoom
   is stored per host, so every tab showing that host shares one zoom level. The
