@@ -191,6 +191,11 @@ when it cannot run says why and reads with the system voice instead of failing
 silently. `backend` reports `kokoro` only while its job is actually producing
 audio, and a failed command shows its own error text.
 
+The window's close, minimize and fullscreen lights are macOS's own buttons,
+moved onto the tab strip when tabs are horizontal and onto the toolbar when they
+are vertical, so they sit on the same row as the chrome instead of floating at
+the window's top edge.
+
 ## History, bookmarks and Google import
 
 Visits and bookmarks are stored as plain, escaped UTF-8 lines in the profile

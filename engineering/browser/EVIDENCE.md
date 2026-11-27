@@ -968,6 +968,21 @@ This does not evidence real Kokoro audio: no `kokoro-tts`/`kokoro-cli` is
 installed (Python has an `onnxruntime`, but no Kokoro runner uses it here), and
 the stub writes silence.
 
+## 0.8.9 — window buttons on the layout's row
+
+The three traffic lights are still AppKit's standard buttons, so close,
+minimize, zoom and full screen keep their native behaviour; the host only sets
+their frames through `nova_gui_place_traffic_lights`. `browser/tests/traffic.sh`
+runs each layout with `NOVA_GUI_TRACE` and reads the host's report:
+`traffic center_y=23` for horizontal tabs (the tab strip's centre) and
+`traffic center_y=29` for vertical tabs and the rail (the toolbar controls'
+centre). Each run also asserts the close button exists and the page still
+renders.
+
+A framebuffer snapshot cannot show these buttons: AppKit draws them above the
+Nova view. The trace's frame numbers are the evidence for placement, not a
+screenshot.
+
 ## Not yet evidenced
 
 - hosted CI run of the browser address/lifecycle steps;

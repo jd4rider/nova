@@ -150,6 +150,12 @@ Each task needs a reproducible acceptance check before it is marked done.
   the address suggestion list uses it. The rail name panel still resizes the
   page instead of floating, which is fine but not the same mechanism.
 
+- **WB-03.007 — Window buttons on the layout row.** DONE in 0.8.9. The three
+  AppKit traffic lights are moved onto the tab strip's centre (horizontal tabs)
+  or the toolbar's centre (vertical tabs and the rail) every pass, because a
+  full-size content view pins them to the window edge. `browser/tests/traffic.sh`
+  reads both placements from the GUI trace.
+
 ## Compiler / library blockers
 
 - **BROWSER-COMP-01 — Imported qualified struct signatures.** READY.

@@ -422,6 +422,17 @@ fn toolbar_y(vertical: Bool) -> Int {
     return 44
 }
 
+// The window buttons follow the row they belong to: the tab strip when tabs are
+// horizontal (tab centre), the toolbar when they are vertical (button centre).
+// The host moves the real AppKit buttons here rather than drawing copies.
+fn traffic_center(vertical: Bool) -> Int {
+    if vertical {
+        return toolbar_y(true) + 17
+    }
+    // tab_box_y is 8 and a horizontal tab is 30 tall, so its centre is 23.
+    return tab_box_y(0, false) + tab_box_h(false) / 2
+}
+
 fn sidebar_width() -> Int {
     var width = gui.width() / 4
     if width < 176 {
@@ -4390,6 +4401,9 @@ fn settle(frames: Int) {
 
 fn auto_close(session: Session, theme: Chrome, address: Address, store: Store) {
     let handle = active_handle(session)
+    // The loop normally places these every pass; a headless run never reaches
+    // the loop, so the frame it saves needs the same placement first.
+    gui.place_traffic_lights(traffic_center(session.vertical))
     speech.use_engine(stored_engine(store))
     let final_state = engine.wait(handle, 8000)
     sync_visibility(session)
@@ -4892,6 +4906,9 @@ fn main() {
         let handle = active_handle(session)
         // The saved engine is applied here, so a settings change or a shortcut
         // reaches the host before the next reading without per-frame churn.
+        // Re-applied every pass: AppKit restores the buttons to the window's top
+        // edge on resize and when full screen exits.
+        gui.place_traffic_lights(traffic_center(session.vertical))
         let sound = stored_engine(store)
         if sound != voice_engine {
             speech.use_engine(sound)

@@ -1218,6 +1218,38 @@ int64_t nova_gui_width(void) {
     return nova_w;
 }
 
+/* The traffic lights stay AppKit's own buttons: the window server delivers their
+ * clicks, VoiceOver names them, and the green button keeps its zoom menu. Nova
+ * only moves them onto the row it is drawing, because a full-size content view
+ * otherwise pins them to the top of the window while the tab strip and toolbar
+ * move with the layout. center_y is in Nova's top-left coordinates. */
+void nova_gui_place_traffic_lights(int64_t center_y) {
+    if (!nova_window) return;
+    CGFloat height = nova_window.frame.size.height;
+    CGFloat x = 20;
+    NSWindowButton kinds[3] = { NSWindowCloseButton, NSWindowMiniaturizeButton, NSWindowZoomButton };
+    int i = 0;
+    while (i < 3) {
+        NSButton *button = [nova_window standardWindowButton:kinds[i]];
+        if (button) {
+            NSRect frame = button.frame;
+            frame.origin.x = x - frame.size.width / 2;
+            frame.origin.y = height - (CGFloat)center_y - frame.size.height / 2;
+            button.frame = frame;
+        }
+        x += 20;
+        i++;
+    }
+    static int64_t reported = -1;
+    if (center_y != reported) {
+        reported = center_y;
+        NSButton *close = [nova_window standardWindowButton:NSWindowCloseButton];
+        nova_gui_trace("traffic center_y=%lld close=%.0f,%.0f", (long long)center_y,
+                       close ? close.frame.origin.x : -1.0,
+                       close ? close.frame.origin.y : -1.0);
+    }
+}
+
 /* Opaque native content-view handle for trusted platform adapters. The value
  * is an NSView pointer valid until nova_gui_close(); callers must stay on the
  * main thread. Browser and other embedders use this instead of exposing raw
