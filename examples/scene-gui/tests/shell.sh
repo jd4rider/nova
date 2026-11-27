@@ -1,9 +1,10 @@
 #!/bin/sh
-# ENG-04.002 / ENG-11.003 acceptance: capture the Unity-first shell from real
-# World state, with the Metal viewport composited into the same bitmap. Asserts
-# the shell regions, selected hierarchy row, traffic-light clearance, distinct
-# Scene/Game tabs, a real lit Metal frame, and a clean live loop. Leaves
-# target/engine-shell.png and engine-game.png for review.
+# ENG-04.002 / ENG-04.003 / ENG-11.003 acceptance: capture the Unity-first
+# shell from real World state, with the Metal viewport composited into the same
+# bitmap. Asserts the shell regions, selected hierarchy row, traffic-light
+# clearance, distinct Scene/Game tabs, a real lit Metal frame, editable
+# inspector history, and a clean live loop. Leaves target/engine-*.png for
+# review.
 set -eu
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -20,7 +21,11 @@ cd "$HERE/.."
 "$NOVA" build >/tmp/scene-gui-build.log 2>&1
 mkdir -p target
 SHOT=target/engine-shell.png
+BASE="$SHOT"
 GAME=target/engine-game.png
+EDIT=target/engine-edit.png
+UNDO=target/engine-undo.png
+REDO=target/engine-redo.png
 TRACE=target/shell-traffic.log
 rm -f "$TRACE"
 OUT=$(NOVA_GUI_TRACE="$TRACE" NOVA_SCENE_SHOT="$SHOT" ./target/nova/scene-gui)
@@ -106,6 +111,35 @@ expect_pixel 820 150 30 30 30 "game-tab-active"
 # and its textured geometry remain.
 expect_pixel 590 290 13 15 20 "game-no-editor-grid"
 expect_pixel 1000 900 138 0 0 "game-metal-red-texture"
+
+# Inspector editing goes through the same row hit test and text handler as a
+# real click and keystrokes. Each run starts from the demo world, applies one
+# Position edit, then optionally undoes and redoes it.
+EDIT_OUT=$(NOVA_SCENE_EDIT=position NOVA_SCENE_TEXT="2.5, 1.4, 1" NOVA_SCENE_SHOT="$EDIT" ./target/nova/scene-gui)
+echo "$EDIT_OUT"
+echo "$EDIT_OUT" | grep -q "history=1/1 position=2.50, 1.40, 1.00"
+UNDO_OUT=$(NOVA_SCENE_EDIT=position NOVA_SCENE_TEXT="2.5, 1.4, 1" NOVA_SCENE_UNDO=1 NOVA_SCENE_SHOT="$UNDO" ./target/nova/scene-gui)
+echo "$UNDO_OUT"
+echo "$UNDO_OUT" | grep -q "history=0/1 position=0.00, 1.40, 1.00"
+REDO_OUT=$(NOVA_SCENE_EDIT=position NOVA_SCENE_TEXT="2.5, 1.4, 1" NOVA_SCENE_UNDO=1 NOVA_SCENE_REDO=1 NOVA_SCENE_SHOT="$REDO" ./target/nova/scene-gui)
+echo "$REDO_OUT"
+echo "$REDO_OUT" | grep -q "history=1/1 position=2.50, 1.40, 1.00"
+
+# Compare only the Scene viewport crop so the inspector's Undo/Redo buttons
+# cannot mask whether the World actually changed. Undo must restore the base
+# viewport, the edit must differ, and redo must restore the edit exactly.
+crop_view() {
+    sips -c 1156 1768 --cropOffset 252 504 "$1" --out "$2.png" >/dev/null
+    sips -s format bmp "$2.png" --out "$2.bmp" >/dev/null
+}
+crop_view "$BASE" target/base-view
+crop_view "$EDIT" target/edit-view
+crop_view "$UNDO" target/undo-view
+crop_view "$REDO" target/redo-view
+cmp -s target/base-view.bmp target/undo-view.bmp || { echo "shell: undo did not restore the base viewport" >&2; exit 1; }
+if cmp -s target/base-view.bmp target/edit-view.bmp; then echo "shell: edit did not change the viewport" >&2; exit 1; fi
+cmp -s target/edit-view.bmp target/redo-view.bmp || { echo "shell: redo did not restore the edited viewport" >&2; exit 1; }
+echo "shell: edit/undo/redo viewport checks passed"
 
 # The live path reuses the same frame targets for several frames; it must not
 # crash or lose the viewport after the capture path returns.

@@ -118,9 +118,15 @@ reproducible acceptance check before it is marked done. Stable identifiers are
   gets its own active state, camera label and overlay-free view; the title strip
   places the traffic lights at y=14 and starts the brand at x=84. Installed as
   Studio 0.2.0; 0.3.0 adds the Metal viewport (ENG-11.003).
-- **ENG-04.003 — Inspector edits and undo.** PLANNED. Editable transform
-  fields with command history over `world_set_*`; acceptance: edit, undo and
-  redo mutate the same World and are reflected in the next capture.
+- **ENG-04.003 — Inspector edits and undo.** DONE. Position, rotation and
+  scale rows accept composed text, parse decimal values to Q16.16, and commit
+  through `world_set_position/rotation/scale`. A 16-entry editor-only command
+  stack stores before/after values; Undo/Redo buttons and ⌘Z/⇧⌘Z replay it.
+  Invalid input keeps the field active, and a new edit truncates redo.
+  Acceptance: `sh examples/scene-gui/tests/shell.sh` captures base, edit, undo
+  and redo, checks `history=1/1 → 0/1 → 1/1`, and compares Scene viewport
+  crops so undo restores the base image and redo restores the edit exactly.
+  Installed as Studio 0.4.0.
 - **ENG-04.004 — Dockable panels.** PLANNED. Persisted panel sizes and
   visibility; acceptance: restart restores layout and no panel loses live data.
 
@@ -158,7 +164,8 @@ reproducible acceptance check before it is marked done. Stable identifiers are
 
 ## Next action
 
-ENG-04.003: editable inspector transform fields and undo/redo over the same
-`world_set_*` APIs, reflected in the next capture. Then ENG-04.004 (dockable
-panels). Studio's editor camera is fixed; wiring orbit/pan/zoom through GUI
-events is a separate follow-up, not part of the 11.003 acceptance.
+ENG-04.004: persisted dockable panel sizes and visibility; acceptance: restart
+restores the layout with live data. Then wire Studio's editor camera
+orbit/pan/zoom through GUI events. ENG-04.003's history is per-session and
+single-field; multi-select, gizmos and grouped commands remain later editor
+work.

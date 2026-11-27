@@ -1,19 +1,20 @@
 # Nova Engine checkpoint
 
-Updated: 2026-11-26 (Studio Metal viewport)
+Updated: 2026-11-27 (Inspector edits and undo)
 Branch: `main`
 Master directive: owner-supplied 2026-11-26; tracked by `ROADMAP.md`.
 Working tree: uncommitted. Unrelated browser/GUI changes were present before
 this session and were not touched.
 
-Active milestone: **ENG-11 — 3D vertical slice**
-Active task: **ENG-04.003 — Inspector edits and undo**
+Active milestone: **ENG-04 — Editor shell**
+Active task: **ENG-04.004 — Dockable panels**
 Status: **ENG-01 DONE** (measured soak); **ENG-02 DONE** (device host, textured
 quad, depth-tested cube, resize, capture, pixel checks and teardown verified);
-**ENG-04.002 DONE** (Unity-first shell over real `World` state); **ENG-11.001
-DONE** (lit textured cube); **ENG-11.002 DONE** (orbit/pan/zoom camera and
-physics-driven cube in the Metal lab); **ENG-11.003 DONE** (offscreen Metal
-viewport composited into Studio, installed as 0.3.0).
+**ENG-04.002 DONE** (Unity-first shell over real `World` state); **ENG-04.003
+DONE** (editable transform inspector with undo/redo, installed as 0.4.0);
+**ENG-11.001 DONE** (lit textured cube); **ENG-11.002 DONE** (orbit/pan/zoom
+camera and physics-driven cube in the Metal lab); **ENG-11.003 DONE**
+(offscreen Metal viewport composited into Studio).
 
 ## Verified this session
 
@@ -29,8 +30,8 @@ viewport composited into Studio, installed as 0.3.0).
 | Metal lit cube | `sh examples/metal-lab/tests/lit.sh` | lit textured cube, 19 face/texture/light checks, both sizes, exit 0 |
 | Metal camera/physics | `sh examples/metal-lab/tests/physics.sh` | 2 camera poses, 2 simulation states, 11 checks, exit 0 |
 | Metal teardown | `sh examples/metal-lab/tests/shutdown.sh` | 5/5 open/draw/capture/close cycles clean |
-| Editor shell | `sh examples/scene-gui/tests/shell.sh` | 6 entities, selected `3:1`, Scene/Game captures, traffic-light trace, 15 pixel checks, 5-frame live loop, nested `save_png` path, exit 0 |
-| Studio install | `sh examples/scene-gui/install-macos.sh` | `/Applications/Nova Engine Studio.app` 0.3.0, signature verified |
+| Editor shell + history | `sh examples/scene-gui/tests/shell.sh` | 6 entities, selected `3:1`, Scene/Game captures, traffic-light trace, 15 pixel checks, edit/undo/redo viewport crops (`1/1 → 0/1 → 1/1`), 5-frame live loop, nested `save_png` path, exit 0 |
+| Studio install | `sh examples/scene-gui/install-macos.sh` | `/Applications/Nova Engine Studio.app` 0.4.0, signature verified |
 
 Physics output:
 
@@ -77,27 +78,30 @@ Studio installer. Replacing `bootstrap/nova` remains the BOOT-02 gate
   idempotent shutdown and a shared BGRA frame for nova-gui.
 - `examples/metal-lab` — quad, colour cube, lit cube and physics-camera
   acceptances with captures and sampled pixels.
-- `examples/scene-gui` — Studio 0.3.0 Unity-first shell with a traffic-light-safe
-  title strip, real Scene/Game view states and an offscreen Metal viewport
-  composited into the same GUI bitmap; capture test and signed installer.
+- `examples/scene-gui` — Studio 0.4.0 Unity-first shell with a traffic-light-safe
+  title strip, real Scene/Game view states, an offscreen Metal viewport
+  composited into the same GUI bitmap, and editable Position/Rotation/Scale
+  rows with a 16-entry undo/redo stack; capture test and signed installer.
 - `examples/engine-lab` — 27-test engine suite; `examples/engine-soak` — 10k
   measured run.
 
 ## Exact next action
 
-1. **ENG-04.003:** editable inspector transform fields with undo/redo over the
-   same `world_set_*` APIs; acceptance: edit, undo and redo mutate the same
-   World and appear in the next capture.
-2. **ENG-04.004:** persisted dockable panel sizes and visibility; acceptance:
+1. **ENG-04.004:** persisted dockable panel sizes and visibility; acceptance:
    restart restores the layout with live data.
-3. Keep `runtime/metal.m` to Int handles/scalars; no callback or event struct
-   should cross the ABI. Studio's editor camera is fixed in this slice; wire
-   orbit/pan/zoom through GUI events before calling the viewport interactive.
+2. Wire Studio's editor camera orbit/pan/zoom through GUI events before calling
+   the viewport interactive.
+3. Extend the inspector beyond one field at a time: multi-select, gizmos and
+   grouped undo are later editor work, not part of 04.003.
+4. Keep `runtime/metal.m` to Int handles/scalars; no callback or event struct
+   should cross the ABI.
 
 ## Limits
 
 - The shell window is fixed at 1440×900 points. There is no docking, resizable
   panel split, menu command handling or multi-window editor yet.
+- Inspector history is per-session and single-field. It is not persisted, does
+  not group multi-select edits, and has no gizmo, prefab or scene save/load.
 - Studio's Metal viewport uses a fixed Q16.16 editor camera. The orbit camera
   and physics cube remain in the Metal lab; Studio does not poll the lab's
   camera-input slots yet.

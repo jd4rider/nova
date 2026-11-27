@@ -5,7 +5,7 @@ import "../../../libraries/nova-engine/src/math.nova"
 import "../../../libraries/nova-engine/src/world.nova"
 import "../../../libraries/nova-render/src/metal.nova"
 
-// Nova Engine Studio, ENG-04.002 + ENG-11.003.
+// Nova Engine Studio, ENG-04.002 + ENG-04.003 + ENG-11.003.
 //
 // The shell follows ADR-ENG-009: hierarchy on the left, scene/game view with a
 // play/pause/step toolbar in the centre, inspector on the right, and a
@@ -124,12 +124,66 @@ fn add_component_y() -> Int {
     return drawer_y() - 54
 }
 
+fn inspector_inner_x() -> Int {
+    return inspector_x() + 12
+}
+
+fn inspector_inner_w() -> Int {
+    return right_w() - 24
+}
+
+fn inspector_transform_y() -> Int {
+    return body_y() + 96
+}
+
+fn inspector_field_y(field: Int) -> Int {
+    return inspector_transform_y() + 30 + field * 24
+}
+
+fn history_button_y() -> Int {
+    return body_y() + 6
+}
+
+fn undo_x() -> Int {
+    return inspector_x() + right_w() - 92
+}
+
+fn redo_x() -> Int {
+    return inspector_x() + right_w() - 50
+}
+
 struct View3D {
     x: Int,
     y: Int,
     w: Int,
     h: Int,
     vp: Mat4,
+}
+
+// Editor-only command history. The runtime World never stores undo state;
+// every command replays through the same world_set_* mutators.
+struct EditValues {
+    w: Int,
+    x: Int,
+    y: Int,
+    z: Int,
+}
+
+struct EditCommand {
+    entity: EntityId,
+    field: Int,
+    before: EditValues,
+    after: EditValues,
+}
+
+struct ParsedNumber {
+    ok: Bool,
+    value: Int,
+}
+
+struct EditParse {
+    ok: Bool,
+    values: EditValues,
 }
 
 struct App {
@@ -139,6 +193,11 @@ struct App {
     tab: Int,
     drawer: Int,
     notice: String,
+    edit_field: Int,
+    edit_text: String,
+    edit_fresh: Bool,
+    history: List<EditCommand>,
+    history_at: Int,
     quit: Bool,
     metal: Int,
 }
@@ -153,6 +212,11 @@ fn app_set_world(app: App, world: World) -> App {
         notice: app.notice,
         quit: app.quit,
         metal: app.metal,
+        edit_field: app.edit_field,
+        edit_text: app.edit_text,
+        edit_fresh: app.edit_fresh,
+        history: app.history,
+        history_at: app.history_at,
     }
 }
 
@@ -166,6 +230,11 @@ fn app_set_selected(app: App, selected: EntityId) -> App {
         notice: app.notice,
         quit: app.quit,
         metal: app.metal,
+        edit_field: app.edit_field,
+        edit_text: app.edit_text,
+        edit_fresh: app.edit_fresh,
+        history: app.history,
+        history_at: app.history_at,
     }
 }
 
@@ -179,6 +248,11 @@ fn app_set_playing(app: App, playing: Bool) -> App {
         notice: app.notice,
         quit: app.quit,
         metal: app.metal,
+        edit_field: app.edit_field,
+        edit_text: app.edit_text,
+        edit_fresh: app.edit_fresh,
+        history: app.history,
+        history_at: app.history_at,
     }
 }
 
@@ -192,6 +266,11 @@ fn app_set_tab(app: App, tab: Int) -> App {
         notice: app.notice,
         quit: app.quit,
         metal: app.metal,
+        edit_field: app.edit_field,
+        edit_text: app.edit_text,
+        edit_fresh: app.edit_fresh,
+        history: app.history,
+        history_at: app.history_at,
     }
 }
 
@@ -205,6 +284,11 @@ fn app_set_drawer(app: App, drawer: Int) -> App {
         notice: app.notice,
         quit: app.quit,
         metal: app.metal,
+        edit_field: app.edit_field,
+        edit_text: app.edit_text,
+        edit_fresh: app.edit_fresh,
+        history: app.history,
+        history_at: app.history_at,
     }
 }
 
@@ -218,7 +302,53 @@ fn app_set_notice(app: App, notice: String) -> App {
         notice: notice,
         quit: app.quit,
         metal: app.metal,
+        edit_field: app.edit_field,
+        edit_text: app.edit_text,
+        edit_fresh: app.edit_fresh,
+        history: app.history,
+        history_at: app.history_at,
     }
+}
+
+fn app_set_edit(app: App, field: Int, text: String, fresh: Bool) -> App {
+    return App {
+        world: app.world,
+        selected: app.selected,
+        playing: app.playing,
+        tab: app.tab,
+        drawer: app.drawer,
+        notice: app.notice,
+        edit_field: field,
+        edit_text: text,
+        edit_fresh: fresh,
+        history: app.history,
+        history_at: app.history_at,
+        quit: app.quit,
+        metal: app.metal,
+    }
+}
+
+fn app_set_history(app: App, history: List<EditCommand>, at: Int) -> App {
+    return App {
+        world: app.world,
+        selected: app.selected,
+        playing: app.playing,
+        tab: app.tab,
+        drawer: app.drawer,
+        notice: app.notice,
+        edit_field: app.edit_field,
+        edit_text: app.edit_text,
+        edit_fresh: app.edit_fresh,
+        history: history,
+        history_at: at,
+        quit: app.quit,
+        metal: app.metal,
+    }
+}
+
+fn app_clear_history(app: App) -> App {
+    var none: List<EditCommand> = []
+    return app_set_history(app_set_edit(app, 0 - 1, "", false), none, 0)
 }
 
 fn app_set_metal(app: App, metal: Int) -> App {
@@ -231,6 +361,11 @@ fn app_set_metal(app: App, metal: Int) -> App {
         notice: app.notice,
         quit: app.quit,
         metal: metal,
+        edit_field: app.edit_field,
+        edit_text: app.edit_text,
+        edit_fresh: app.edit_fresh,
+        history: app.history,
+        history_at: app.history_at,
     }
 }
 
@@ -244,6 +379,11 @@ fn app_quit(app: App) -> App {
         notice: app.notice,
         quit: true,
         metal: app.metal,
+        edit_field: app.edit_field,
+        edit_text: app.edit_text,
+        edit_fresh: app.edit_fresh,
+        history: app.history,
+        history_at: app.history_at,
     }
 }
 
@@ -341,6 +481,298 @@ fn fixed2(value: Int) -> String {
         pad = "0"
     }
     return "${sign}${whole}.${pad}${fraction}"
+}
+
+// ---------- inspector editing and undo ----------
+
+fn edit_field_name(field: Int) -> String {
+    if field == 0 {
+        return "Position"
+    }
+    if field == 1 {
+        return "Rotation"
+    }
+    if field == 2 {
+        return "Scale"
+    }
+    return "Transform"
+}
+
+fn edit_field_from_env(name: String) -> Int {
+    if name == "position" {
+        return 0
+    }
+    if name == "rotation" {
+        return 1
+    }
+    if name == "scale" {
+        return 2
+    }
+    return 0 - 1
+}
+
+fn edit_values_for(world: World, id: EntityId, field: Int) -> EditValues {
+    if field == 1 {
+        let rotation = world_rotation(world, id)
+        return EditValues { w: rotation.w, x: rotation.x, y: rotation.y, z: rotation.z }
+    }
+    var value = world_position(world, id)
+    if field == 2 {
+        value = world_scale(world, id)
+    }
+    return EditValues { w: 0, x: value.x, y: value.y, z: value.z }
+}
+
+fn edit_values_text(field: Int, values: EditValues) -> String {
+    if field == 1 {
+        return "${fixed2(values.w)}, ${fixed2(values.x)}, ${fixed2(values.y)}, ${fixed2(values.z)}"
+    }
+    return "${fixed2(values.x)}, ${fixed2(values.y)}, ${fixed2(values.z)}"
+}
+
+fn edit_values_equal(a: EditValues, b: EditValues) -> Bool {
+    if a.w != b.w || a.x != b.x || a.y != b.y || a.z != b.z {
+        return false
+    }
+    return true
+}
+
+fn edit_apply(world: World, command: EditCommand, after: Bool) -> World {
+    let values = if after { command.after } else { command.before }
+    if command.field == 0 {
+        return world_set_position(world, command.entity, vec3(values.x, values.y, values.z))
+    }
+    if command.field == 1 {
+        return world_set_rotation(world, command.entity, Quat { w: values.w, x: values.x, y: values.y, z: values.z })
+    }
+    if command.field == 2 {
+        return world_set_scale(world, command.entity, vec3(values.x, values.y, values.z))
+    }
+    return world
+}
+
+fn history_keep(history: List<EditCommand>, at: Int) -> List<EditCommand> {
+    var out: List<EditCommand> = []
+    var i = 0
+    while i < at && i < history.len() {
+        out.push(history[i])
+        i = i + 1
+    }
+    return out
+}
+
+fn history_tail(history: List<EditCommand>) -> List<EditCommand> {
+    if history.len() <= 16 {
+        return history
+    }
+    var out: List<EditCommand> = []
+    var i = history.len() - 16
+    while i < history.len() {
+        out.push(history[i])
+        i = i + 1
+    }
+    return out
+}
+
+fn history_record(history: List<EditCommand>, at: Int, command: EditCommand) -> List<EditCommand> {
+    var out = history_keep(history, at)
+    out.push(command)
+    return history_tail(out)
+}
+
+// Parses a decimal field into Q16.16. Invalid input is reported, never
+// silently rounded to zero, so a typo cannot move an entity to the origin.
+fn parse_fixed(text: String) -> ParsedNumber {
+    let chars = text.trim().chars()
+    if chars.len() == 0 {
+        return ParsedNumber { ok: false, value: 0 }
+    }
+    var i = 0
+    var negative = false
+    if chars[0] == "-" {
+        negative = true
+        i = 1
+    }
+    if i >= chars.len() {
+        return ParsedNumber { ok: false, value: 0 }
+    }
+    var whole = 0
+    var fraction = 0
+    var digits = 0
+    var fraction_digits = 0
+    var dot = false
+    while i < chars.len() {
+        let ch = chars[i]
+        if ch == "." {
+            if dot {
+                return ParsedNumber { ok: false, value: 0 }
+            }
+            dot = true
+            i = i + 1
+            continue
+        }
+        let code = ch.bytes()[0]
+        if code < 48 || code > 57 {
+            return ParsedNumber { ok: false, value: 0 }
+        }
+        let digit = code - 48
+        if dot {
+            if fraction_digits < 5 {
+                fraction = fraction * 10 + digit
+                fraction_digits = fraction_digits + 1
+            }
+        } else {
+            whole = whole * 10 + digit
+        }
+        digits = digits + 1
+        i = i + 1
+    }
+    if digits == 0 {
+        return ParsedNumber { ok: false, value: 0 }
+    }
+    var denom = 1
+    var k = 0
+    while k < fraction_digits {
+        denom = denom * 10
+        k = k + 1
+    }
+    let scaled = (fraction * 65536 + denom / 2) / denom
+    var value = whole * 65536 + scaled
+    if negative {
+        value = 0 - value
+    }
+    return ParsedNumber { ok: true, value: value }
+}
+
+fn parse_edit_values(text: String, field: Int) -> EditParse {
+    let parts = text.split(",")
+    let wanted = if field == 1 { 4 } else { 3 }
+    if parts.len() != wanted {
+        return EditParse { ok: false, values: EditValues { w: 0, x: 0, y: 0, z: 0 } }
+    }
+    let a = parse_fixed(parts[0])
+    let b = parse_fixed(parts[1])
+    let c = parse_fixed(parts[2])
+    if !a.ok || !b.ok || !c.ok {
+        return EditParse { ok: false, values: EditValues { w: 0, x: 0, y: 0, z: 0 } }
+    }
+    if field == 1 {
+        let d = parse_fixed(parts[3])
+        if !d.ok {
+            return EditParse { ok: false, values: EditValues { w: 0, x: 0, y: 0, z: 0 } }
+        }
+        return EditParse { ok: true, values: EditValues { w: a.value, x: b.value, y: c.value, z: d.value } }
+    }
+    return EditParse { ok: true, values: EditValues { w: 0, x: a.value, y: b.value, z: c.value } }
+}
+
+fn edit_begin(app: App, field: Int) -> App {
+    if entity_is_none(app.selected) || !world_has(app.world, app.selected) {
+        return app
+    }
+    let values = edit_values_for(app.world, app.selected, field)
+    let notice = "Editing ${edit_field_name(field)} · Enter applies · Esc cancels"
+    return app_set_edit(app_set_notice(app, notice), field, edit_values_text(field, values), true)
+}
+
+fn edit_commit(app: App) -> App {
+    if app.edit_field < 0 {
+        return app
+    }
+    if entity_is_none(app.selected) || !world_has(app.world, app.selected) {
+        return app_set_edit(app, 0 - 1, "", false)
+    }
+    let parsed = parse_edit_values(app.edit_text, app.edit_field)
+    if !parsed.ok {
+        var hint = "Enter 3 numbers: x, y, z"
+        if app.edit_field == 1 {
+            hint = "Enter 4 numbers: w, x, y, z"
+        }
+        return app_set_notice(app, hint)
+    }
+    let before = edit_values_for(app.world, app.selected, app.edit_field)
+    if edit_values_equal(before, parsed.values) {
+        return app_set_edit(app_set_notice(app, "No transform change"), 0 - 1, "", false)
+    }
+    let command = EditCommand { entity: app.selected, field: app.edit_field, before: before, after: parsed.values }
+    let world = edit_apply(app.world, command, true)
+    let history = history_record(app.history, app.history_at, command)
+    let notice = "Applied ${edit_field_name(command.field)} · ⌘Z undoes"
+    return app_set_history(app_set_edit(app_set_world(app_set_notice(app, notice), world), 0 - 1, "", false), history, history.len())
+}
+
+fn edit_undo(app: App) -> App {
+    if app.history_at <= 0 {
+        return app_set_notice(app, "Nothing to undo")
+    }
+    let command = app.history[app.history_at - 1]
+    let world = edit_apply(app.world, command, false)
+    let notice = "Undo ${edit_field_name(command.field)} · ⇧⌘Z redoes"
+    return app_set_history(app_set_edit(app_set_world(app_set_notice(app, notice), world), 0 - 1, "", false), app.history, app.history_at - 1)
+}
+
+fn edit_redo(app: App) -> App {
+    if app.history_at >= app.history.len() {
+        return app_set_notice(app, "Nothing to redo")
+    }
+    let command = app.history[app.history_at]
+    let world = edit_apply(app.world, command, true)
+    let notice = "Redo ${edit_field_name(command.field)} · ⌘Z undoes"
+    return app_set_history(app_set_edit(app_set_world(app_set_notice(app, notice), world), 0 - 1, "", false), app.history, app.history_at + 1)
+}
+
+fn edit_drop_last(text: String) -> String {
+    let chars = text.chars()
+    if chars.len() == 0 {
+        return ""
+    }
+    var out = ""
+    var i = 0
+    while i < chars.len() - 1 {
+        out = out + chars[i]
+        i = i + 1
+    }
+    return out
+}
+
+fn edit_allowed_char(ch: String) -> Bool {
+    return "0123456789.,- ".contains(ch)
+}
+
+fn handle_text(app: App, text: String) -> App {
+    if app.edit_field < 0 || text.len() == 0 {
+        return app
+    }
+    var next = if app.edit_fresh { "" } else { app.edit_text }
+    for ch in text.chars() {
+        if edit_allowed_char(ch) && next.len() < 64 {
+            next = next + ch
+        }
+    }
+    return app_set_edit(app, app.edit_field, next, false)
+}
+
+fn inspector_field_at(x: Int, y: Int) -> Int {
+    if x < inspector_inner_x() || x >= inspector_inner_x() + inspector_inner_w() {
+        return 0 - 1
+    }
+    var field = 0
+    while field < 3 {
+        let row_y = inspector_field_y(field)
+        if y >= row_y && y < row_y + 24 {
+            return field
+        }
+        field = field + 1
+    }
+    return 0 - 1
+}
+
+fn edit_hit(app: App, x: Int, y: Int) -> Bool {
+    if app.edit_field < 0 {
+        return false
+    }
+    let row_y = inspector_field_y(app.edit_field)
+    return x >= inspector_inner_x() && x < inspector_inner_x() + inspector_inner_w() && y >= row_y && y < row_y + 24
 }
 
 fn tag_name(tag: Int) -> String {
@@ -521,6 +953,43 @@ fn field_row(x: Int, y: Int, w: Int, name: String, value: String, theme: gui.The
     gui.line(x + 11, y + 22, x + w - 11, y + 22, theme.border)
 }
 
+fn transform_row(app: App, x: Int, y: Int, w: Int, name: String, field: Int, value: String, theme: gui.Theme) {
+    let active = app.edit_field == field
+    gui.text(x + 11, y + 5, name, 10, theme.faint)
+    let box_x = x + 72
+    let box_w = w - 83
+    var fill = theme.bg_hard
+    var border = theme.border
+    var colour = theme.fg
+    if active {
+        fill = theme.input
+        border = theme.accent
+        colour = theme.fg_bright
+    }
+    gui.round_rect(box_x, y + 1, box_w, 20, 3, fill)
+    gui.stroke(box_x, y + 1, box_w, 20, border)
+    var shown = value
+    if active {
+        shown = app.edit_text
+    }
+    gui.text(box_x + 7, y + 4, shown, 10, colour)
+    gui.line(x + 11, y + 22, x + w - 11, y + 22, theme.border)
+}
+
+fn draw_history_button(x: Int, y: Int, enabled: Bool, label: String, theme: gui.Theme) {
+    var fill = theme.bg_hard
+    var border = theme.border
+    var colour = theme.faint
+    if enabled {
+        fill = theme.input
+        border = theme.border_strong
+        colour = theme.fg
+    }
+    gui.round_rect(x, y, 38, 18, 4, fill)
+    gui.stroke(x, y, 38, 18, border)
+    gui.text(x + (38 - gui.text_width(label, 9)) / 2, y + 3, label, 9, colour)
+}
+
 fn component_card(x: Int, y: Int, w: Int, h: Int, theme: gui.Theme) {
     gui.round_rect(x, y, w, h, 6, theme.panel)
     gui.stroke(x, y, w, h, theme.border)
@@ -584,7 +1053,7 @@ fn draw_top(app: App, theme: gui.Theme) {
     gui.text(engine_x, 7, "Engine", 13, theme.accent)
     let items = "File    Edit    Assets    GameObject    Component    Window    Help"
     gui.text(engine_x + gui.text_width("Engine", 13) + 28, 8, items, 11, theme.muted)
-    let version = "0.3.0"
+    let version = "0.4.0"
     gui.text(window_w() - 18 - gui.text_width(version, 10), 9, version, 10, theme.faint)
     gui.line(0, menu_h() - 1, window_w(), menu_h() - 1, theme.border)
 
@@ -853,9 +1322,11 @@ fn draw_inspector(app: App, theme: gui.Theme) {
     gui.rect(x, body_y(), right_w(), body_h(), theme.panel)
     gui.line(x, body_y(), x, drawer_y(), theme.border_strong)
     gui.text(x + 16, body_y() + 13, "INSPECTOR", 10, theme.faint)
+    draw_history_button(undo_x(), history_button_y(), app.history_at > 0, "Undo", theme)
+    draw_history_button(redo_x(), history_button_y(), app.history_at < app.history.len(), "Redo", theme)
 
-    let inner_x = x + 12
-    let inner_w = right_w() - 24
+    let inner_x = inspector_inner_x()
+    let inner_w = inspector_inner_w()
     if entity_is_none(app.selected) || !world_has(app.world, app.selected) {
         gui.text(x + 16, body_y() + 52, "Nothing selected", 14, theme.muted)
         gui.text(x + 16, body_y() + 76, "Select an entity in the", 11, theme.faint)
@@ -869,15 +1340,16 @@ fn draw_inspector(app: App, theme: gui.Theme) {
     gui.text_fmt(x + 34, body_y() + 42, name, 16, theme.fg_bright, gui.font_sans(), gui.style_bold())
     gui.text(x + 16, body_y() + 70, "TAG ${tag}  ·  entity ${app.selected.index}:${app.selected.generation}", 10, theme.faint)
 
-    let transform_y = body_y() + 96
+    let transform_y = inspector_transform_y()
     component_card(inner_x, transform_y, inner_w, 126, theme)
     section_title(inner_x, transform_y, inner_w, "Transform", theme)
     let position = world_position(app.world, app.selected)
     let rotation = world_rotation(app.world, app.selected)
     let scale = world_scale(app.world, app.selected)
-    field_row(inner_x, transform_y + 30, inner_w, "Position", "${fixed2(position.x)}, ${fixed2(position.y)}, ${fixed2(position.z)}", theme)
-    field_row(inner_x, transform_y + 54, inner_w, "Rotation", "${fixed2(rotation.w)}, ${fixed2(rotation.x)}, ${fixed2(rotation.y)}, ${fixed2(rotation.z)}", theme)
-    field_row(inner_x, transform_y + 78, inner_w, "Scale", "${fixed2(scale.x)}, ${fixed2(scale.y)}, ${fixed2(scale.z)}", theme)
+    transform_row(app, inner_x, inspector_field_y(0), inner_w, "Position", 0, "${fixed2(position.x)}, ${fixed2(position.y)}, ${fixed2(position.z)}", theme)
+    transform_row(app, inner_x, inspector_field_y(1), inner_w, "Rotation", 1, "${fixed2(rotation.w)}, ${fixed2(rotation.x)}, ${fixed2(rotation.y)}, ${fixed2(rotation.z)}", theme)
+    transform_row(app, inner_x, inspector_field_y(2), inner_w, "Scale", 2, "${fixed2(scale.x)}, ${fixed2(scale.y)}, ${fixed2(scale.z)}", theme)
+    gui.text(inner_x + 11, transform_y + 105, "Click a row to edit · Enter applies", 9, theme.faint)
 
     let velocity_y = transform_y + 136
     component_card(inner_x, velocity_y, inner_w, 102, theme)
@@ -944,8 +1416,8 @@ fn draw_drawer(app: App, theme: gui.Theme) {
         if app.tab == 1 {
             shell_line = "[shell]    Game tab · game camera · editor overlays hidden"
         }
-        gui.mono(18, y + 98, shell_line, 11, theme.muted)
-        gui.mono(18, y + 116, "[input]    click selects · Space play/pause · S step · Tab cycles · ⌫ deletes", 11, theme.faint)
+        gui.mono(18, y + 98, shell_line + " · history ${app.history_at}/${app.history.len()}", 11, theme.muted)
+        gui.mono(18, y + 116, "[input]    click selects · click a transform row to edit · ⌘Z undo · ⇧⌘Z redo · Space play · S step", 11, theme.faint)
     } else {
         gui.mono(18, y + 44, "Runtime", 11, theme.fg_bright)
         gui.mono(18, y + 64, "  World        Demo Scene        ${world_live_count(app.world)} entities", 11, theme.muted)
@@ -995,8 +1467,52 @@ fn scene_pick(app: App, x: Int, y: Int) -> EntityId {
 
 fn handle_key(app: App, code: Int, mods: Int) -> App {
     let command = mods % 2 == 1
+    let shift = (mods / 2) % 2 == 1
     if command && code == 113 {
         return app_quit(app)
+    }
+    if command && code == 122 {
+        var next = app
+        if next.edit_field >= 0 {
+            next = app_set_edit(next, 0 - 1, "", false)
+        }
+        if shift {
+            return edit_redo(next)
+        }
+        return edit_undo(next)
+    }
+    if app.edit_field >= 0 {
+        if code == gui.key_escape() {
+            return app_set_edit(app_set_notice(app, "Edit cancelled"), 0 - 1, "", false)
+        }
+        if code == gui.key_enter() {
+            return edit_commit(app)
+        }
+        if code == gui.key_backspace() || code == gui.key_delete() {
+            if app.edit_fresh {
+                return app_set_edit(app, app.edit_field, "", false)
+            }
+            return app_set_edit(app, app.edit_field, edit_drop_last(app.edit_text), false)
+        }
+        if code == gui.key_tab() {
+            let field = app.edit_field
+            let committed = edit_commit(app)
+            if committed.edit_field >= 0 {
+                return committed
+            }
+            var next_field = field + 1
+            if shift {
+                next_field = field - 1
+            }
+            if next_field > 2 {
+                next_field = 0
+            }
+            if next_field < 0 {
+                next_field = 2
+            }
+            return edit_begin(committed, next_field)
+        }
+        return app
     }
     if code == gui.key_escape() {
         return app_quit(app)
@@ -1009,19 +1525,28 @@ fn handle_key(app: App, code: Int, mods: Int) -> App {
     }
     if code == 114 {
         let world = demo_world()
-        return app_set_selected(app_set_world(app, world), find_tag(world, 3))
+        var next = app_set_selected(app_set_world(app, world), find_tag(world, 3))
+        return app_clear_history(next)
     }
     if code == gui.key_tab() {
         return app_set_selected(app, next_live(app.world, app.selected))
     }
     if code == gui.key_backspace() || code == gui.key_delete() {
         let world = world_despawn(app.world, app.selected)
-        return app_set_selected(app_set_world(app, world), first_live(world))
+        var next = app_set_selected(app_set_world(app, world), first_live(world))
+        return app_clear_history(next)
     }
     return app
 }
 
 fn handle_mouse_down(app: App, x: Int, y: Int) -> App {
+    var app = app
+    if app.edit_field >= 0 && !edit_hit(app, x, y) {
+        app = edit_commit(app)
+        if app.edit_field >= 0 {
+            return app
+        }
+    }
     if x >= scene_tab_x() && x < scene_tab_x() + 76 && y >= body_y() && y < body_y() + tabs_h() {
         return app_set_tab(app, 0)
     }
@@ -1037,6 +1562,21 @@ fn handle_mouse_down(app: App, x: Int, y: Int) -> App {
     if x >= step_x() && x < step_x() + 30 && y >= tool_button_y() && y < tool_button_y() + 24 {
         let world = world_tick(app.world, fx_ratio(1, 60))
         return app_set_playing(app_set_world(app, world), false)
+    }
+    if y >= history_button_y() && y < history_button_y() + 18 {
+        if x >= undo_x() && x < undo_x() + 38 {
+            return edit_undo(app)
+        }
+        if x >= redo_x() && x < redo_x() + 38 {
+            return edit_redo(app)
+        }
+    }
+    let field = inspector_field_at(x, y)
+    if field >= 0 {
+        if field == app.edit_field {
+            return app
+        }
+        return edit_begin(app, field)
     }
     if x >= inspector_x() + 12 && x < inspector_x() + 12 + right_w() - 24 && y >= add_component_y() && y < add_component_y() + 28 {
         return app_set_notice(app, "No component types registered yet.")
@@ -1065,6 +1605,9 @@ fn handle(app: App, event: gui.Event) -> App {
     if event.kind == gui.event_key() {
         return handle_key(app, event.code, event.mods)
     }
+    if event.kind == gui.event_text() {
+        return handle_text(app, gui.typed_text())
+    }
     if event.kind == gui.event_close() {
         return app_quit(app)
     }
@@ -1084,6 +1627,11 @@ fn main() {
         tab: 0,
         drawer: 1,
         notice: "",
+        edit_field: 0 - 1,
+        edit_text: "",
+        edit_fresh: false,
+        history: [],
+        history_at: 0,
         quit: false,
         metal: 0,
     }
@@ -1095,6 +1643,18 @@ fn main() {
         // Game tab that paints but cannot be entered fails the check.
         if gui.env("NOVA_SCENE_CLICK") == "game" {
             app = handle_mouse_down(app, game_tab_x() + 16, body_y() + 8)
+        }
+        let edit = edit_field_from_env(gui.env("NOVA_SCENE_EDIT"))
+        if edit >= 0 {
+            app = handle_mouse_down(app, inspector_inner_x() + 20, inspector_field_y(edit) + 8)
+            app = handle_text(app, gui.env("NOVA_SCENE_TEXT"))
+            app = handle_key(app, gui.key_enter(), 0)
+        }
+        if gui.env("NOVA_SCENE_UNDO") == "1" {
+            app = handle_mouse_down(app, undo_x() + 10, history_button_y() + 8)
+        }
+        if gui.env("NOVA_SCENE_REDO") == "1" {
+            app = handle_mouse_down(app, redo_x() + 10, history_button_y() + 8)
         }
         if gui.open("Nova Engine Studio", window_w(), window_h()) {
             app = app_set_metal(app, start_metal())
@@ -1110,7 +1670,8 @@ fn main() {
             if app.metal != 0 {
                 viewport = "metal"
             }
-            println("scene-gui: shell=captured saved=${saved} entities=${world_live_count(app.world)} selected=${app.selected.index}:${app.selected.generation} tab=${tab_label} viewport=${viewport} drawer=console")
+            let position = world_position(app.world, app.selected)
+            println("scene-gui: shell=captured saved=${saved} entities=${world_live_count(app.world)} selected=${app.selected.index}:${app.selected.generation} tab=${tab_label} viewport=${viewport} drawer=console history=${app.history_at}/${app.history.len()} position=${fixed2(position.x)}, ${fixed2(position.y)}, ${fixed2(position.z)}")
             if app.metal != 0 {
                 metal_shutdown(app.metal)
             }

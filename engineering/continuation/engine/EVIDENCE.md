@@ -1,6 +1,6 @@
 # Nova Engine evidence
 
-Date: 2026-11-26
+Date: 2026-11-27 (session 14; earlier evidence 2026-11-26)
 Platform: macOS ARM64, LLVM/Clang, self-hosted Nova compiler, `main` branch,
 uncommitted working tree.
 
@@ -465,12 +465,68 @@ shows the same Metal scene without the grid, selection box or label. Both are
 and are not wired to Studio yet. There is no GPU timing, MSAA, shadow,
 multi-light or multi-viewport support.
 
+## Inspector edits and undo (ENG-04.003)
+
+```
+$ sh examples/scene-gui/tests/shell.sh
+scene-gui: shell=captured saved=true entities=6 selected=3:1 tab=scene viewport=metal drawer=console history=0/0 position=0.00, 1.40, 1.00
+shell: traffic lights placed at y=14
+scene-gui: shell=captured saved=true entities=6 selected=3:1 tab=game viewport=metal drawer=console history=0/0 position=0.00, 1.40, 1.00
+scene-gui: shell=captured saved=true entities=6 selected=3:1 tab=scene viewport=metal drawer=console history=0/0 position=0.00, 1.40, 1.00
+shell: save_png created nested capture without mkdir
+shell: capture 2880x1800
+scene-gui: shell=captured saved=true entities=6 selected=3:1 tab=scene viewport=metal drawer=console history=1/1 position=2.50, 1.40, 1.00
+scene-gui: shell=captured saved=true entities=6 selected=3:1 tab=scene viewport=metal drawer=console history=0/1 position=0.00, 1.40, 1.00
+scene-gui: shell=captured saved=true entities=6 selected=3:1 tab=scene viewport=metal drawer=console history=1/1 position=2.50, 1.40, 1.00
+shell: edit/undo/redo viewport checks passed
+scene-gui: live=stopped frames=5 viewport=metal
+shell: 15 panel checks passed
+```
+
+The test enters Position through the same row hit test a mouse uses, sends
+`2.5, 1.4, 1` through `handle_text`, and presses Enter through `handle_key`.
+The edit commits through `world_set_position`; Undo and Redo then click the
+actual inspector buttons. The console and inspector show the same World:
+`history=1/1 position=2.50, 1.40, 1.00`, then `0/1 position=0.00, 1.40,
+1.00`, then `1/1 position=2.50, 1.40, 1.00`.
+
+The acceptance compares the Scene viewport crop, not the whole window, so the
+Undo/Redo chrome cannot hide a world change. `engine-undo.png` is byte-equal to
+the base viewport, `engine-edit.png` differs, and `engine-redo.png` is
+byte-equal to the edited viewport. The four captures are 2880×1800; the edit
+and redo captures also show the Player moved in the Metal scene and the
+inspector value updated.
+
+Implementation: Position, Rotation and Scale rows open an inline field on
+click. Decimal strings are parsed to Q16.16; invalid input keeps the field
+active. Each commit records `EditCommand { entity, field, before, after }` and
+applies through the existing World setters. A 16-entry editor-only stack
+supports buttons and ⌘Z/⇧⌘Z; a new edit truncates redo. The runtime has no undo
+state. Installed as Studio 0.4.0:
+
+```
+$ sh examples/scene-gui/install-macos.sh
+Installed /Applications/Nova Engine Studio.app
+Version 0.4.0 · dev.nova.engine.studio · ad-hoc signed
+
+$ codesign --verify --strict "/Applications/Nova Engine Studio.app"   # clean
+$ plutil -extract CFBundleShortVersionString raw .../Info.plist
+0.4.0
+```
+
+The installed captures are byte-identical to the local test captures. The
+first build of this slice failed with `in handle_mouse_down: cannot assign to
+immutable binding app`; the click-commit path now uses a local `var app = app`.
+No runtime or GUI-host change was needed.
+
 ## Not measured
 
 - No frame-time breakdown, allocation count or throughput profile inside the
   soak; only whole-process wall clock.
 - No GPU timing, MSAA, mipmaps, alpha blending, shadows, multiple lights or
   asset pipeline yet. One Depth32Float attachment and one texture slot.
+- Inspector history is per-session and single-field. No multi-select, grouped
+  commands, persisted undo, gizmo, prefab or scene save/load yet.
 - The camera is orbit/pan/zoom around a target in the Metal lab. Studio uses a
   fixed editor camera and does not poll those input slots yet. Its mouse events
   are not synthesized by the acceptance test.

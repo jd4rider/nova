@@ -135,9 +135,10 @@
   Every editor slice must be capturable as a PNG through Nova GUI for review.
 - Consequences: ENG-04 panels are designed against this layout before styling;
   if a feature cannot be wired to real state it is not shown yet.
-- Status note: Studio 0.3.0 implements this layout as a real shell over one
-  `World` value (ENG-04.002/ENG-11.003). Inspector editing, undo/redo and
-  dockable panels remain open before ENG-04 is complete.
+- Status note: Studio 0.4.0 implements this layout as a real shell over one
+  `World` value (ENG-04.002/ENG-04.003/ENG-11.003). Editable transforms and
+  undo/redo are verified; dockable panels remain open before ENG-04 is
+  complete.
 
 ## ADR-ENG-010 — Studio composites an offscreen Metal frame
 - Status: accepted (ENG-11.003).
@@ -165,3 +166,23 @@
   shadow or multi-viewport support yet. Studio's editor camera is fixed; its
   orbit/pan/zoom path must be wired through GUI events before the viewport is
   called interactive.
+
+## ADR-ENG-011 — Inspector edits are editor commands over World setters
+- Status: accepted (ENG-04.003).
+- Context: the runtime must not own selection or undo (ADR-ENG-004), and the
+  editor already reads one `World` value. Directly writing component columns
+  would duplicate the setters and bypass their handle checks.
+- Decision: clicking a Position, Rotation or Scale row opens an inline field.
+  Composed text is filtered to digits, sign, decimal point and comma, parsed
+  into Q16.16, and committed only on Enter. The editor records an
+  `EditCommand { entity, field, before, after }` and applies it through
+  `world_set_position/rotation/scale`. Undo/redo replays the before/after value;
+  a 16-entry stack is per-session, and a new edit truncates redo. Undo/Redo
+  buttons and ⌘Z/⇧⌘Z share the same path. Invalid input keeps the field active.
+- Alternatives: mutate World columns directly (rejected: bypasses the runtime
+  contract); put undo in `world.nova` (rejected: mixes editor state with the
+  runtime); full text-field widget framework (deferred: this slice needs one
+  focused numeric field, not a retained widget tree).
+- Consequences: history is not persisted and does not group multi-select edits;
+  the inspector edits whole vectors, not individual axes; gizmos, prefabs and
+  scene serialization remain future work.

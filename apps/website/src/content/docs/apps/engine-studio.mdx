@@ -1,11 +1,11 @@
 ---
 title: Nova Engine Studio
-description: A native Unity-first editor shell written in Nova, with real World state, Scene and Game views, an offscreen Metal viewport, and a signed macOS app.
+description: A native Unity-first editor shell written in Nova, with real World state, editable transforms and undo/redo, Scene and Game views, an offscreen Metal viewport, and a signed macOS app.
 ---
 
 export const base = import.meta.env.BASE_URL
 
-**Status: phase-0 vertical slice, macOS arm64.** Nova Engine Studio is the native editor shell for Nova Engine. It is not a Unity wrapper, an Electron app or a mock layout: hierarchy, Scene/Game views, inspector and console all read the same live `World` value. The centre viewport is an offscreen Metal render composited into the same Nova GUI bitmap as the editor chrome.
+**Status: phase-0 vertical slice, macOS arm64.** Nova Engine Studio is the native editor shell for Nova Engine. It is not a Unity wrapper, an Electron app or a mock layout: hierarchy, Scene/Game views, editable inspector and console all read the same live `World` value. The centre viewport is an offscreen Metal render composited into the same Nova GUI bitmap as the editor chrome.
 
 Every panel is drawn by [nova-gui](../../libraries/gui/) from Nova code. The project is the first editor-facing slice of the engine, not a finished product.
 
@@ -15,15 +15,16 @@ Every panel is drawn by [nova-gui](../../libraries/gui/) from Nova code. The pro
   style="width:100%;border:1px solid var(--sl-color-hairline);border-radius:10px;margin:14px 0 6px"
 />
 <p style="font-size:13px;color:var(--sl-color-gray-3);margin:0 0 28px">
-  Scene tab: six live entities rendered by Metal, selected Player <code>3:1</code>, hierarchy, inspector and console. Captured from the signed 0.3.0 app at 2880×1800 and shown at 1440×900.
+  Scene tab: six live entities rendered by Metal, selected Player <code>3:1</code>, hierarchy, editable transform rows and console. Captured from the signed 0.4.0 app at 2880×1800 and shown at 1440×900.
 </p>
 
 ## What is real
 
 - **One World.** The hierarchy lists live entity slots and their generation handles. Selection, inspector fields, play/pause/step and the console all read the same `world.nova` value.
+- **Editable transforms with undo.** Click Position, Rotation or Scale, type comma-separated decimal values and press Enter. The inspector parses them to Q16.16 and commits through the same `world_set_position/rotation/scale` APIs. A 16-entry editor-only command stack records before/after values; Undo/Redo buttons and ⌘Z/⇧⌘Z replay it. Invalid input keeps the field active, and a new edit truncates redo. The runtime owns no undo state.
 - **A Metal viewport.** The Scene/Game centre is an offscreen Metal render, not a CPU wireframe. Studio builds one Q16.16 model-view-projection matrix per live entity and submits a bounded draw list to `runtime/metal.m`; the host renders depth-tested lit checker meshes with one directional light. The frame is read back at the display's backing scale and composited into the same sRGB bitmap as the panels, so `gui.save_png` captures the viewport and the editor together. It is an offscreen render, not an embedded `MTKView`.
 - **Two view states.** Scene draws the perspective grid, selected-player box and entity label over the Metal frame. Game hides those editor overlays while keeping the same six entities and Metal scene.
-- **Real time controls.** `Space` plays or pauses, `S` advances one fixed 1/60 s tick, `Tab` cycles live entities, `Delete` despawns the selection, and `R` resets the demo world.
+- **Real time controls.** `Space` plays or pauses, `S` advances one fixed 1/60 s tick, `Tab` cycles live entities, `Delete` despawns the selection, and `R` resets the demo world. Clicking a transform row focuses it; Enter applies and Escape cancels.
 - **A native shell.** The installer produces `Nova Engine Studio.app` with an icon and an ad-hoc signature. There is no web view, Electron or JavaScript runtime.
 
 <img
@@ -33,6 +34,15 @@ Every panel is drawn by [nova-gui](../../libraries/gui/) from Nova code. The pro
 />
 <p style="font-size:13px;color:var(--sl-color-gray-3);margin:0 0 28px">
   Game tab: the same six entities and Metal frame with editor overlays hidden, a separate active-tab state and the Game camera toolbar label.
+</p>
+
+<img
+  src={`${base}engine/engine-edit.png`}
+  alt="Nova Engine Studio inspector with Position edited to 2.50, 1.40, 1.00 and Undo enabled"
+  style="width:100%;border:1px solid var(--sl-color-hairline);border-radius:10px;margin:14px 0 6px"
+/>
+<p style="font-size:13px;color:var(--sl-color-gray-3);margin:0 0 28px">
+  Position edited to <code>2.50, 1.40, 1.00</code>. The Player moved in the Metal viewport, the inspector and console read the same World, and Undo is enabled. Captured from the signed 0.4.0 app.
 </p>
 
 ## Run it
@@ -64,14 +74,14 @@ cd examples/scene-gui
 sh tests/shell.sh
 ```
 
-The test captures both tabs at 2880×1800, checks the traffic-light row through `NOVA_GUI_TRACE`, enters Game through the same mouse-down hit test as the window, and samples 15 pixels: panel surfaces, both active-tab states, the selected hierarchy row, the Metal clear colour, two checker-texture colours, a Scene grid overlay that becomes Metal background in Game, and the drawer. It also runs five live frames through `NOVA_SCENE_FRAMES` and requires `live=stopped frames=5 viewport=metal`. Both PNGs are left in `target/` for review.
+The test captures both tabs at 2880×1800, checks the traffic-light row through `NOVA_GUI_TRACE`, enters Game through the same mouse-down hit test as the window, and samples 15 pixels: panel surfaces, both active-tab states, the selected hierarchy row, the Metal clear colour, two checker-texture colours, a Scene grid overlay that becomes Metal background in Game, and the drawer. It then focuses Position through the inspector row hit test, sends `2.5, 1.4, 1`, and captures edit, undo and redo. The output must step `history=1/1 → 0/1 → 1/1`; cropped Scene viewports must show undo equal to the base and redo equal to the edit. It also runs five live frames through `NOVA_SCENE_FRAMES` and requires `live=stopped frames=5 viewport=metal`. All captures are left in `target/` for review.
 
 The title strip calls `gui.place_traffic_lights(14)` and reserves 84 points on the left, so AppKit's close/minimize/zoom buttons do not overlap the title or menu. AppKit's own event delivery is still a manual check; the capture test verifies the handler below it.
 
 ## Honest gaps
 
 - **The editor camera is fixed.** Studio renders the Metal scene from one Q16.16 perspective camera. Orbit, pan and zoom are verified in `examples/metal-lab`, but Studio does not poll those camera-input slots yet.
-- **The inspector is read-only.** Add Component reports that no component types are registered yet. There is no undo or redo.
+- **History is per-session and single-field.** The inspector edits one whole Position, Rotation or Scale vector at a time. There is no multi-select, grouped command, gizmo, persisted undo, prefab or scene save/load. Add Component still reports that no component types are registered yet.
 - **Game is a view state, not a build.** It does not simulate a separate runtime camera, package a player or handle input as a game.
 - **No save/load or docking.** The six-entity demo world is created in code each launch.
 - **No GPU timing or advanced renderer.** The viewport has one directional light, one texture slot, no MSAA, shadows, normal mapping, mipmaps or asset pipeline.

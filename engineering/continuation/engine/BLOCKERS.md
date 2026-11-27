@@ -47,7 +47,8 @@
   Depth32Float, one texture slot, one directional light and one offscreen
   editor viewport are implemented; the viewport uses a fixed camera.
 - **No asset database, importer, UUID store or scene serialization.** ENG-03 is
-  greenfield.
+  greenfield. Inspector history is per-session and single-field; multi-select,
+  grouped commands, gizmos and persisted undo remain open.
 
 ## Process
 
