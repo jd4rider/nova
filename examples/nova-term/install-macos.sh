@@ -112,7 +112,6 @@ BIN_DIR="$HOME/.local/bin"
 mkdir -p "$BIN_DIR"
 cat > "$BIN_DIR/nova-term" <<CLI
 #!/bin/sh
-export NOVA_TERM_ROOT="\${NOVA_TERM_ROOT:-\$PWD}"
 exec "$TARGET/$APP_NAME.app/Contents/MacOS/nova-term" "\$@"
 CLI
 chmod +x "$BIN_DIR/nova-term"

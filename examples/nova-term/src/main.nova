@@ -8,7 +8,7 @@ import "../../../libraries/nova-term/src/term.nova" as vt
 // coloured cells and drawn here. The frame is immediate mode: poll each live
 // pty, feed the bytes to the emulator, draw the grid, then drain one event.
 //
-//   NOVA_TERM_ROOT   folder new tabs start in (default: the working directory)
+//   NOVA_TERM_ROOT   folder new tabs start in (default: the user's home)
 //   NOVA_TERM_SHOT   write the first frame to a PNG and exit
 //   NOVA_TERM_SCRIPT run a scripted UI test, then exit
 
@@ -144,6 +144,9 @@ fn spawn(app: App) -> App {
     let rows = grid_rows(app)
     var tabs = app.tabs
     var working = gui.env("NOVA_TERM_ROOT")
+    if working.len() == 0 {
+        working = gui.env("HOME")
+    }
     if working.len() == 0 {
         working = gui.cwd()
     }
@@ -1331,6 +1334,13 @@ fn run_script(app: App, path: String) -> App {
                 var ok = false
                 if app.tabs.len() > 0 {
                     ok = app.tabs[app.active].title == words[1]
+                }
+                println(truth(ok) + " " + trimmed)
+            }
+            if cmd == "assert_home" {
+                var ok = false
+                if app.tabs.len() > 0 {
+                    ok = app.tabs[0].cwd == gui.env("HOME")
                 }
                 println(truth(ok) + " " + trimmed)
             }

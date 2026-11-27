@@ -24,6 +24,17 @@ run_case() {
     PASS=$((PASS + p))
     FAIL=$((FAIL + f))
 }
+run_case_no_root() {
+    name=$1
+    script=$2
+    out=$(env -u NOVA_TERM_ROOT NOVA_TERM_SCRIPT="$script" "$BIN" 2>&1)
+    p=$(printf '%s\n' "$out" | grep -c '^PASS')
+    f=$(printf '%s\n' "$out" | grep -c '^FAIL')
+    printf '%s\n' "$out" | grep '^PASS' | sed "s/^PASS /  ok   [$name] /"
+    printf '%s\n' "$out" | grep '^FAIL' | sed "s/^FAIL /  FAIL [$name] /"
+    PASS=$((PASS + p))
+    FAIL=$((FAIL + f))
+}
 
 cat > "$WORK/ansi.txt" <<'SCRIPT'
 feed <E>[31mred<E>[0m <E>[92mgreen<E>[0m
@@ -206,6 +217,11 @@ feed <E>[18t
 assert_reply_has 8;
 SCRIPT
 run_case replies "$WORK/replies.txt"
+
+cat > "$WORK/home.txt" <<'SCRIPT'
+assert_home
+SCRIPT
+run_case_no_root default-home "$WORK/home.txt"
 
 echo
 echo "passed $PASS, failed $FAIL"

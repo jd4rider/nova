@@ -27,7 +27,7 @@ The installer builds, renders `packaging/icon.html`, writes `NovaTerminal.icns`,
 
 | Variable | Meaning |
 |---|---|
-| `NOVA_TERM_ROOT` | Folder new tabs start in. Defaults to the working directory. |
+| `NOVA_TERM_ROOT` | Folder new tabs start in. Defaults to the logged-in user's home directory. |
 | `NOVA_TERM_SCRIPT` | Runs a scripted UI test, then exits (see [Tests](#tests)). |
 | `NOVA_TERM_SHOT` | Writes the first frame to a PNG and exits. |
 | `NOVA_MONO_FONT` | Overrides the monospaced family. Defaults to an installed Nerd Font. |
@@ -97,7 +97,7 @@ cd examples/nova-term
 sh tests/term-ui.sh
 ```
 
-The harness feeds synthetic ANSI through the real parser and drives the real pty: colour indices, cursor addressing, alternate-screen restore, 256-colour, `pwd` through a shell, tab create/close and OSC titles. It also pins the recent prompt regressions: a `BEL`-terminated OSC, a split U+E0B0 Powerline glyph and a split `ESC[2K`. New cases cover mouse SGR/X10 press, release, drag and wheel, alternate-screen view reset, and DSR/DA/size replies. The current run is **passed 46, failed 0**.
+The harness feeds synthetic ANSI through the real parser and drives the real pty: colour indices, cursor addressing, alternate-screen restore, 256-colour, `pwd` through a shell, tab create/close and OSC titles. It also pins the recent prompt regressions: a `BEL`-terminated OSC, a split U+E0B0 Powerline glyph and a split `ESC[2K`. New cases cover mouse SGR/X10 press, release, drag and wheel, alternate-screen view reset, DSR/DA/size replies, and the default home directory. The current run is **passed 47, failed 0**.
 
 The scripted harness exercises the text handler directly; the actual AppKit `event_text` path is verified by typing a command into the installed app.
 

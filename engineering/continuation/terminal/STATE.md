@@ -93,11 +93,12 @@ is installed.
   compiler tool.
 - `(cd examples/nova-term && ../../examples/nova-tool/target/nova/nova-tool build)`
   → `built …/target/nova/nova-term`.
-- `sh examples/nova-term/tests/term-ui.sh` → passed 46, failed 0.
+- `sh examples/nova-term/tests/term-ui.sh` → passed 47, failed 0.
   Covers ANSI colours and cells, a real zsh `pwd`, tabs, OSC title, alternate
   screen history, font discovery and struct/list behavior, tab-bar click rules,
   word/drag selection, split U+E0B0, BEL OSC, split `ESC[2K`, composed text,
-  SGR/X10 mouse bytes, alternate-screen view reset and DSR/DA/size replies.
+  SGR/X10 mouse bytes, alternate-screen view reset, DSR/DA/size replies and
+  the home-directory default.
 - `stty size` in a real child → `34 133`; vim's alternate screen paints its
   banner and `~` rows after the reply queue was added.
 - Live keyboard: the installed app was frontmost and System Events typed

@@ -34,7 +34,7 @@ All entries are from this working tree on 2026-11-26, macOS ARM64.
 |---|---|
 | `(cd examples/nova-tool && ../../bootstrap/nova build)` | PASS: built `examples/nova-tool/target/nova/nova-tool` |
 | `(cd examples/nova-term && ../../examples/nova-tool/target/nova/nova-tool build)` | PASS: built `target/nova/nova-term` |
-| `sh examples/nova-term/tests/term-ui.sh` | PASS: `passed 46, failed 0` (mouse, replies, alt-view and earlier parser cases) |
+| `sh examples/nova-term/tests/term-ui.sh` | PASS: `passed 47, failed 0` (mouse, replies, alt-view, default-home and earlier parser cases) |
 | `sh examples/nova-tool/tests/codegen.sh` | PASS: `passed 259, failed 0` (adds `char_code`) |
 | `sh examples/nova-tool/tests/sema-ast.sh` | PASS: `passed 39, failed 0` |
 | `sh examples/nova-tool/tests/diff-errors.sh` | PASS: 27 fixtures matched, 0 mismatched |
@@ -108,13 +108,15 @@ file was created.
   no bare-motion reports in mode 1000. Entering/leaving the alternate screen
   resets the view and mouse modes.
 
-## Scripted UI coverage (46 assertions)
+## Scripted UI coverage (47 assertions)
 
 - ANSI: `31m` red cell, `92m` bright green cell, `2;1H` cursor address,
   `38;5;196` indexed colour.
 - Mouse: SGR press/release/drag/wheel, X10 bytes, modifiers and mode shutdown.
 - Replies: cursor-position DSR, status DSR, primary/secondary DA and `CSI 18t`.
 - Alternate screen: view reset on entry and mouse-mode reset on leave.
+- Default home: without `NOVA_TERM_ROOT`, the first tab starts in `$HOME`;
+  the installed app's `pwd` returned `/Users/jonathanforrider`.
 - Shell: real zsh prints the working directory after `pwd`.
 - Tabs: 1 → 2 → 1 after new/close.
 - Title: OSC `0;my-shell` captured from a real ESC/ST sequence.
