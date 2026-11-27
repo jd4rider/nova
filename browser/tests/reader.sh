@@ -176,6 +176,28 @@ check_in 'phase=4' "$KOKORO/bad.log" 'a failing command reaches the failed phase
 check_in 'no such voice' "$KOKORO/bad.log" 'the command output is shown as the reason'
 check_in 'synth: end backend=system' "$KOKORO/bad.log" 'a failed job leaves the system backend'
 
+echo "--- voice preview does not change the selection ---"
+PREV=$(mktemp -d /tmp/nova-reader-preview.XXXXXX)
+NOVA_BROWSER_PROFILE="$PREV" \
+NOVA_BROWSER_NO_RESTORE=1 \
+NOVA_BROWSER_NO_HISTORY=1 \
+NOVA_BROWSER_AUTOCLOSE=1 \
+NOVA_BROWSER_PREVIEW=Albert \
+NOVA_BROWSER_ENGINE=kokoro \
+NOVA_SPEECH_SILENT=1 \
+    "$BIN" >"$PREV/run.log" 2>&1
+check_in 'preview: voice=Albert found=1 speaking=1' "$PREV/run.log" 'the row preview speaks the named voice'
+check_in 'backend=system' "$PREV/run.log" 'a preview uses the system synthesizer'
+check_in 'engine=kokoro' "$PREV/run.log" 'the chosen engine is restored after a preview'
+check_in 'notice=Preview: Albert' "$PREV/run.log" 'the preview says which voice is speaking'
+if [ -f "$PREV/settings.tsv" ] && grep -qE '^(voice|engine)[[:space:]]' "$PREV/settings.tsv"; then
+    echo "FAIL a preview saved a voice or engine"
+    fail=$((fail + 1))
+else
+    echo "PASS a preview changes no saved setting"
+    pass=$((pass + 1))
+fi
+
 echo "--- undersized download is rejected ---"
 SMALL=$(mktemp -d /tmp/nova-reader-small.XXXXXX)
 printf 'tiny' >"$SMALL/tiny.onnx"

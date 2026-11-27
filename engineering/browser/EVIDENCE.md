@@ -983,6 +983,24 @@ A framebuffer snapshot cannot show these buttons: AppKit draws them above the
 Nova view. The trace's frame numbers are the evidence for placement, not a
 screenshot.
 
+## 0.9.0 — voice previews
+
+Each voice row draws a play triangle with its own hit rectangle (`190 + row`)
+and accessibility button; pressing it calls `preview_voice`, which speaks
+"This is how this voice reads a page." through the system synthesizer at
+`voice_rate`, then restores the engine that was chosen.
+
+`browser/tests/reader.sh` drives the same helper with `NOVA_BROWSER_PREVIEW=Albert`
+and `NOVA_BROWSER_ENGINE=kokoro`, and reads
+`preview: voice=Albert found=1 speaking=1 backend=system engine=kokoro
+notice=Preview: Albert`. That covers the four claims: the named voice speaks,
+the system engine does the speaking, the Kokoro pick survives, and the notice
+names the voice. The profile's settings file is checked to contain no `voice` or
+`engine` line afterwards, so a preview cannot silently change the default.
+
+Audio is muted in this run; that the sample is audible, and that it uses the
+voice's real timbre, is not evidenced.
+
 ## Not yet evidenced
 
 - hosted CI run of the browser address/lifecycle steps;

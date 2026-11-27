@@ -3,7 +3,7 @@
 Updated: 2026-11-26
 Branch: `main`
 Last known good compiler checkpoint: `cfa00e3` (before browser work)
-Browser: **0.8.9 installed at `/Applications/Nova Browser.app`**
+Browser: **0.9.0 installed at `/Applications/Nova Browser.app`**
 Browser working tree: uncommitted; see `git status`
 Active gate: G0 WebKit; G1 WebCore not started
 Active task: **WB-04.002 — downloads** (0.7.5 persisted completed downloads;
@@ -279,6 +279,11 @@ Active task: **WB-04.002 — downloads** (0.7.5 persisted completed downloads;
   - The field border is now a one-point rounded ring drawn under the fill;
     `stroke_rect` has no radius, and its square outline was the box around the
     pill. The engine chip uses the same ring.
+
+- **0.9.0 — voice previews**
+  - Every voice row carries a play triangle that speaks a short sample at the
+    current speed. Previews never change the saved voice or engine, and a Kokoro
+    pick is restored after the sample starts, so comparing system voices is safe.
 
 - **0.8.9 — window buttons follow the layout**
   - The close, minimize and fullscreen lights are still AppKit's standard

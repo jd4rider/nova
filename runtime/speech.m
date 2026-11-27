@@ -391,6 +391,9 @@ int64_t nova_speech_speak(nova_str text, nova_str voice_id, int64_t rate) {
         nova_speech_error = nil;
         return nova_job_start(body, nova_speech_string(voice_id));
     }
+    /* A system reading replaces whatever Kokoro job was running: two engines
+     * speaking over each other is never what the caller asked for. */
+    nova_job_stop();
     if (!nova_synth) nova_synth = [[AVSpeechSynthesizer alloc] init];
     if (!nova_synth) return 0;
     if (nova_synth.isSpeaking) [nova_synth stopSpeakingAtBoundary:AVSpeechBoundaryImmediate];

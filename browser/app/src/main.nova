@@ -2562,6 +2562,9 @@ fn tooltip_text(target: Int) -> String {
     if target == 10 {
         return "Search engine · click to switch"
     }
+    if target >= 190 && target <= 197 {
+        return "Preview this voice"
+    }
     return ""
 }
 
@@ -2989,6 +2992,8 @@ fn ax_reader(store: Store, open: Bool) {
     while i < voices.len() {
         let box = reader_voice_box(store, i)
         gui.ax_button(box.x, box.y, box.w, box.h, "Voice " + library.field(voices[i], 1))
+        let preview = reader_preview_box(store, i)
+        gui.ax_button(preview.x, preview.y, preview.w, preview.h, "Preview " + library.field(voices[i], 1))
         i = i + 1
     }
     if reader_kokoro_row() {
@@ -3067,6 +3072,10 @@ fn hover_target(x: Int, y: Int, session: Session, address: Address, suggestions:
             var i = 0
             while i < reader_voices().len() {
                 let box = reader_voice_box(store, i)
+                let preview = reader_preview_box(store, i)
+                if gui.inside(preview.x, preview.y, preview.w, preview.h, x, y) {
+                    return 190 + i
+                }
                 if gui.inside(box.x, box.y, box.w, box.h, x, y) {
                     return 170 + i
                 }
@@ -3315,6 +3324,10 @@ fn handle_click(handle: Int, x: Int, y: Int, clicks: Int, current: Address, sess
             var vi = 0
             while vi < voices.len() {
                 let box = reader_voice_box(store, vi)
+                let preview = reader_preview_box(store, vi)
+                if gui.inside(preview.x, preview.y, preview.w, preview.h, x, y) {
+                    return click_reader(session, current, store, preview_voice(store, library.field(voices[vi], 0)), 1, 0)
+                }
                 if gui.inside(box.x, box.y, box.w, box.h, x, y) {
                     let row = voices[vi]
                     let quality = library.field(row, 3)
@@ -3735,6 +3748,22 @@ fn voice_label(id: String) -> String {
     return "the system voice"
 }
 
+// A preview plays through the system synthesizer without touching the saved
+// voice or engine: comparing rows is how someone picks one. The chosen engine
+// is put back immediately after the sample starts, so a Kokoro preference
+// survives the comparison.
+fn preview_voice(store: Store, id: String) -> Notice {
+    let chosen = stored_engine(store)
+    speech.use_engine("system")
+    let rate = stored_rate(store)
+    let started = speech.say("This is how this voice reads a page.", id, rate)
+    speech.use_engine(chosen)
+    if !started {
+        return Notice { text: "Could not preview this voice", until: gui.now() + 2400 }
+    }
+    return Notice { text: "Preview: " + voice_label(id) + " · ${rate}%", until: gui.now() + 4200 }
+}
+
 fn toggle_listen(handle: Int, store: Store) -> Notice {
     if !speech.voice_available() {
         return Notice { text: "Speech is not available on this system", until: gui.now() + 2600 }
@@ -3916,6 +3945,18 @@ fn reader_kokoro_box(store: Store) -> Box {
     return reader_voice_box(store, reader_voice_slots())
 }
 
+// The play triangle on a voice row, left of the quality tag and the check.
+fn reader_preview_box(store: Store, index: Int) -> Box {
+    let box = reader_voice_box(store, index)
+    return Box { x: box.x + box.w - 86, y: box.y, w: 20, h: 22 }
+}
+
+fn draw_voice_preview(cx: Int, cy: Int, color: Int) {
+    gui.line(cx, cy - 4, cx + 6, cy, color)
+    gui.line(cx + 6, cy, cx, cy + 4, color)
+    gui.line(cx, cy + 4, cx, cy - 4, color)
+}
+
 fn reader_model_box(store: Store) -> Box {
     let panel = reader_panel_box(store)
     return Box { x: panel.x + 8, y: panel.y + 112 + reader_voice_total() * 24, w: panel.w - 16, h: 24 }
@@ -4066,9 +4107,12 @@ fn draw_reader_panel(theme: Chrome, store: Store, open: Bool, fetching: Bool, re
         if selected || heat > 0 {
             gui.round_rect(box.x, box.y, box.w, box.h, 6, blend(theme.elevated, theme.selection, if selected { 900 } else { heat }))
         }
-        gui.clip(box.x + 6, box.y + 2, box.w - 74, box.h - 4)
+        gui.clip(box.x + 6, box.y + 2, box.w - 96, box.h - 4)
         gui.text(box.x + 8, box.y + 4, library.field(row, 1), 11, if selected { theme.fg_bright } else { theme.fg })
         gui.clip_reset()
+        let preview = reader_preview_box(store, i)
+        let preview_heat = if hover == 190 + i { 700 } else { 0 }
+        draw_voice_preview(preview.x + 7, preview.y + 11, blend(theme.muted, theme.orange, preview_heat))
         let tag = if quality == "2" { "premium" } else if quality == "1" { "enhanced" } else { "" }
         if tag.len() > 0 {
             gui.mono(box.x + box.w - 62, box.y + 6, tag, 8, theme.muted)
@@ -4415,6 +4459,30 @@ fn auto_close(session: Session, theme: Chrome, address: Address, store: Store) {
         let notice = toggle_listen(active_handle(session), store)
         println("reader: chars=${engine.body_text(active_handle(session)).len()} backend=${speech.voice_backend()} voice=${stored_voice(store)} rate=${stored_rate(store)} speaking=${flag(speech.speaking())} notice=${notice.text}")
     }
+    // Headless form of a voice-row preview: speak the sample the way the row's
+    // triangle does, then report the engine that actually spoke.
+    let preview_name = gui.env("NOVA_BROWSER_PREVIEW").trim()
+    if preview_name.len() > 0 {
+        var preview_id = speech.default_voice()
+        var found = false
+        for row in speech.voice_rows() {
+            if library.field(row, 1) == preview_name {
+                preview_id = library.field(row, 0)
+                found = true
+            }
+        }
+        let result = preview_voice(store, preview_id)
+        // AVSpeechSynthesizer starts asynchronously; give it a turn before
+        // reporting the state the row would draw.
+        var preview_wait = 0
+        while !speech.speaking() && preview_wait < 800 {
+            gui.pump()
+            gui.sleep(20)
+            preview_wait = preview_wait + 20
+        }
+        println("preview: voice=${voice_label(preview_id)} found=${flag(found)} speaking=${flag(speech.speaking())} backend=${speech.voice_backend()} engine=${stored_engine(store)} notice=${result.text}")
+    }
+
     // Headless form of a Kokoro reading: wait for the job to finish and report
     // every phase it passed through, so a test can see loading, synthesizing
     // and the failure detail without ears.

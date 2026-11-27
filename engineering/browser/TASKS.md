@@ -145,6 +145,10 @@ Each task needs a reproducible acceptance check before it is marked done.
   shows a wheel, a moving bar and elapsed seconds while the job runs. Without a
   synthesizer command, choosing Kokoro names the problem and keeps the system
   voice.
+- **WB-05.005 — Voice previews.** DONE in 0.9.0. A play triangle on each row
+  speaks a sample at the current speed through the system synthesizer, restores
+  the chosen engine, and writes no setting. A running Kokoro job is stopped
+  before the sample so two engines never talk over each other.
 - **WB-03.006 — Chrome above the page view.** DONE in 0.8.6. `gui.overlay`
   registers rectangles the host paints above the WebView and makes clickable;
   the address suggestion list uses it. The rail name panel still resizes the

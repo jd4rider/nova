@@ -166,7 +166,9 @@ The voice is a system voice, so it works offline and needs no download. Fresh
 profiles pick the best installed English voice, and the choice is saved as
 `voice` in `settings.tsv`; speed is saved as `voice_rate` (25–200% of the system
 rate, default 50%). Speed and voice changes apply to the next reading rather
-than restarting the current one mid-sentence.
+than restarting the current one mid-sentence. Each voice row also has a play
+triangle that previews that voice at the current speed without changing the
+saved pick.
 
 A neural voice (Kokoro) needs a model and an inference runtime. Start with
 `NOVA_BROWSER_VOICE=kokoro` (or `NOVA_BROWSER_FAT=1`) and the panel gains a
