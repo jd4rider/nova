@@ -8,7 +8,8 @@
 // Cell encoding (one Int per cell, flat row-major list):
 //   0            empty
 //   4            prism — a colourless special that never joins a colour run
-//   colour*8+s   gem, colour 1..6, s = 0 normal, 1 beam-h, 2 beam-v, 3 burst
+//   colour*8+s   gem, colour 1..6, s = 0 normal, 1 beam-h, 2 beam-v, 3 burst,
+//                4 prism (colourless, stored as bare 4), 5 core
 //
 // Obstacles live in parallel columns so a crate never hides inside a gem
 // value: `mask` (0 = hole in the board), `blocked` (1 = crate) and `frost`
@@ -83,6 +84,12 @@ fn special_burst() -> Int {
 
 fn special_prism() -> Int {
     return 4
+}
+
+// A core is made by a 2x2 block: when it is used it clears its whole row and
+// column, a cross rather than the beam's single line.
+fn special_core() -> Int {
+    return 5
 }
 
 fn cell_empty() -> Int {
@@ -576,6 +583,60 @@ fn match_any(b: Board) -> Bool {
     return match_groups(b).len() > 0
 }
 
+// The four cells of a 2x2 block of one colour that contains `index`, or an
+// empty list. Only normal gems count, so a special is never absorbed into a
+// block it did not make.
+fn square_cells(b: Board, index: Int) -> List<Int> {
+    if index < 0 || index >= b.cells.len() {
+        return []
+    }
+    if !board_is_open_index(b, index) {
+        return []
+    }
+    let value = b.cells[index]
+    if gem_color(value) == 0 || gem_special(value) != 0 {
+        return []
+    }
+    let x = index % b.width
+    let y = index / b.width
+    var sy = y - 1
+    while sy <= y {
+        var sx = x - 1
+        while sx <= x {
+            if sx >= 0 && sy >= 0 && sx + 1 < b.width && sy + 1 < b.height {
+                let i0 = board_index(b, sx, sy)
+                let i1 = board_index(b, sx + 1, sy)
+                let i2 = board_index(b, sx, sy + 1)
+                let i3 = board_index(b, sx + 1, sy + 1)
+                if board_is_open_index(b, i0) && board_is_open_index(b, i1) {
+                    if board_is_open_index(b, i2) && board_is_open_index(b, i3) {
+                        if b.cells[i0] == value && b.cells[i1] == value {
+                            if b.cells[i2] == value && b.cells[i3] == value {
+                                return [i0, i1, i2, i3]
+                            }
+                        }
+                    }
+                }
+            }
+            sx = sx + 1
+        }
+        sy = sy + 1
+    }
+    return []
+}
+
+// The cell of the swapped pair that completed a 2x2 block, or -1. The
+// destination is preferred so the core appears where the player aimed.
+fn square_anchor(b: Board, a: Int, c: Int) -> Int {
+    if square_cells(b, c).len() == 4 {
+        return c
+    }
+    if square_cells(b, a).len() == 4 {
+        return a
+    }
+    return 0 - 1
+}
+
 fn match_group_color(b: Board, group: Run) -> Int {
     if group.cells.len() == 0 {
         return 0
@@ -681,7 +742,15 @@ fn swap_makes_move(board: Board, a: Int, c: Int) -> Bool {
         return true
     }
     let swapped = board_swap_indices(board, a, c)
-    return match_any(swapped)
+    if match_any(swapped) {
+        return true
+    }
+    // A swap that completes a 2x2 block is a move too, so hints and the
+    // dead-board check see the core power-up.
+    if square_anchor(swapped, a, c) >= 0 {
+        return true
+    }
+    return false
 }
 
 fn board_has_move(b: Board) -> Bool {
@@ -855,6 +924,10 @@ fn effect_cells(b: Board, index: Int) -> List<Int> {
     }
     if special == 4 {
         return mark_color(b, marks, board_most_common_color(b))
+    }
+    if special == 5 {
+        var cross = mark_row(b, marks, y)
+        return mark_col(b, cross, x)
     }
     return marks
 }
@@ -1388,7 +1461,7 @@ fn game_combo(src: Game, a: Int, b: Int) -> Game {
         let partner = board.cells[other]
         let color = gem_color(partner)
         let special = gem_special(partner)
-        if special == 1 || special == 2 || special == 3 {
+        if special == 1 || special == 2 || special == 3 || special == 5 {
             // Prism plus a beam or burst turns every gem of that colour into
             // that special, then triggers them all.
             var cells = board.cells
@@ -1404,6 +1477,11 @@ fn game_combo(src: Game, a: Int, b: Int) -> Game {
         marks = mark_color(board, marks, color)
         marks = mark_cell(board, marks, a)
         marks = mark_cell(board, marks, b)
+    } else if sa == 5 || sb == 5 {
+        // A core plus any other special: the core's cross through the
+        // destination, before the partner's own area effect expands.
+        marks = mark_row(board, marks, by)
+        marks = mark_col(board, marks, bx)
     } else if (sa == 1 || sa == 2) && (sb == 1 || sb == 2) {
         // Beam plus beam: a full cross through the destination.
         marks = mark_row(board, marks, by)
@@ -1438,6 +1516,46 @@ fn game_combo(src: Game, a: Int, b: Int) -> Game {
     return game_finish_move(game_cascade(g, -1, 1))
 }
 
+// A 2x2 block is the fourth power-up shape. Three cells clear and the fourth
+// becomes a core, which later clears its row and column. The swap has already
+// been spent when this runs, so it only resolves the block and its cascade.
+fn game_square(src: Game, anchor: Int) -> Game {
+    var g = src
+    let b = g.board
+    if anchor < 0 || !board_is_open_index(b, anchor) {
+        return g
+    }
+    let cells = square_cells(b, anchor)
+    if cells.len() != 4 {
+        return g
+    }
+    let color = gem_color(b.cells[anchor])
+    var marks = zeros(b.cells.len())
+    var cleared_cells: List<Int> = []
+    for index in cells {
+        if index != anchor {
+            marks = mark_cell(b, marks, index)
+            cleared_cells.push(index)
+        }
+    }
+    let cleared = clear_marks(b, marks)
+    var board = cleared.board
+    board = board_set_index(board, anchor, gem(color, special_core()))
+    g.board = board
+    g.last_cleared = cleared_cells
+    g.specials_made = g.specials_made + 1
+    g.power = min_int(g.power + 1, max_power())
+    let gained = cleared.gems * 10 + 25
+    g.score = g.score + gained
+    g.cleared = g.cleared + cleared.gems
+    g.events = ev_push(g.events, GameEvent { kind: ev_create(), x: anchor % board.width, y: anchor / board.width, value: special_core(), depth: 1 })
+    g.events = ev_push(g.events, GameEvent { kind: ev_score(), x: 0, y: 0, value: gained, depth: 1 })
+    let settled = settle(board, g.rng, board.colors)
+    g.board = settled.board
+    g.rng = settled.rng
+    return game_finish_move(game_cascade(g, -1, 1))
+}
+
 // The player's move. Rejected swaps cost nothing and leave the board exactly as
 // it was, so the view can animate the bounce without a second state to unwind.
 fn game_swap(src: Game, a: Int, b: Int) -> Game {
@@ -1459,10 +1577,18 @@ fn game_swap(src: Game, a: Int, b: Int) -> Game {
         return game_combo(g, a, b)
     }
     let swapped = board_swap_indices(g.board, a, b)
+    let square = square_anchor(swapped, a, b)
     if !match_any(swapped) {
-        g.rejected = g.rejected + 1
-        g.events = ev_push(g.events, GameEvent { kind: ev_reject(), x: a % g.board.width, y: a / g.board.width, value: b, depth: 0 })
-        return g
+        if square < 0 {
+            g.rejected = g.rejected + 1
+            g.events = ev_push(g.events, GameEvent { kind: ev_reject(), x: a % g.board.width, y: a / g.board.width, value: b, depth: 0 })
+            return g
+        }
+        g.board = swapped
+        g.last_cleared = []
+        g.events = ev_push(g.events, GameEvent { kind: ev_swap(), x: a, y: b, value: 0, depth: 0 })
+        g = game_spend_move(g)
+        return game_square(g, square)
     }
     g.board = swapped
     g.last_cleared = []

@@ -67,6 +67,26 @@ echo "$OUT" | grep -q "screen=play" || { echo "run: specials screen wrong" >&2; 
 OUT=$(capture power)
 echo "$OUT" | grep -q "power=2" || { echo "run: storm charges were not armed" >&2; exit 1; }
 
+# A gem held under the pointer must be in the drag state, with the gem lifted
+# off its cell and locked to the horizontal axis it was nudged along.
+OUT=$(capture drag)
+echo "$OUT" | grep -q "drag=26" || { echo "run: drag capture did not hold a gem" >&2; exit 1; }
+echo "$OUT" | grep -q "axis=1" || { echo "run: drag capture was not axis-locked" >&2; exit 1; }
+
+# A diagonal pointer path must still pick one axis and pin the ghost to the
+# source row, not let the gem float toward the diagonal cell.
+OUT=$(capture dragaxis)
+echo "$OUT" | grep -q "drag=26" || { echo "run: diagonal drag did not stay held" >&2; exit 1; }
+echo "$OUT" | grep -q "axis=1" || { echo "run: diagonal drag did not lock an axis" >&2; exit 1; }
+echo "$OUT" | grep -q "gx=462" || { echo "run: diagonal drag moved off its axis" >&2; exit 1; }
+echo "$OUT" | grep -q "gy=326" || { echo "run: diagonal drag did not pin the cross axis" >&2; exit 1; }
+
+# Press, drag onto the neighbour, release: the pointer path must spend exactly
+# one move and leave nothing held.
+OUT=$(capture dragswap)
+echo "$OUT" | grep -q "spent=1" || { echo "run: drag did not swap a gem" >&2; exit 1; }
+echo "$OUT" | grep -q "drag=-1" || { echo "run: drag was still held after release" >&2; exit 1; }
+
 # A move in flight: the capture must freeze a real slide frame, not the
 # already-settled board.
 OUT=$(capture slide)
@@ -144,6 +164,10 @@ expect_pixel target/shots/over.png "$(px 500)" "$(px 400)" 28 33 52 "over-card"
 expect_pixel target/shots/specials.png "$(px 375)" "$(px 250)" 150 112 72 "crate"
 # The prism core at (4,0).
 expect_pixel target/shots/specials.png "$(px 566)" "$(px 146)" 120 220 235 "prism-core"
+# The core at (5,0): a gold heart on the 2x2 power-up.
+expect_pixel target/shots/specials.png "$(px 626)" "$(px 146)" 255 198 75 "core-heart"
+# The sapphire carried under the pointer: same gem, one cell along its row.
+expect_pixel target/shots/drag.png "$(px 444)" "$(px 310)" 88 146 248 "drag-ghost"
 
 IW=$(sips -g pixelWidth target/shots/icon.png | awk '/pixelWidth/ {print $2}')
 IH=$(sips -g pixelHeight target/shots/icon.png | awk '/pixelHeight/ {print $2}')
@@ -152,5 +176,5 @@ ISCALE=$((IW / 512))
 [ "$IH" = "$((512 * ISCALE))" ] || { echo "run: icon height $IH, expected $((512 * ISCALE))" >&2; exit 1; }
 expect_pixel target/shots/icon.png "$((256 * ISCALE))" "$((256 * ISCALE))" 120 220 235 "icon-prism-core"
 
-echo "run: 7 pixel probes passed"
+echo "run: 9 pixel probes passed"
 echo "run: gemstorm acceptance ok"

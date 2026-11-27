@@ -446,6 +446,48 @@ fn storm_charges_stop_at_the_cap() {
     same(game.power, max_power())
 }
 
+@test
+fn a_2x2_block_makes_a_core_power_up() {
+    // Swapping (1,1) and (2,1) completes a 2x2 of colour 1 while making no run
+    // of three, so the block itself is the move.
+    let cells = [
+        1, 1, 2, 3, 4,
+        1, 4, 1, 5, 6,
+        3, 4, 5, 6, 2,
+        4, 5, 6, 2, 3,
+        5, 6, 2, 3, 4,
+    ]
+    let board = board_from_colors(5, 5, 6, cells)
+    same_bool(match_any(board), false)
+    let swapped = board_swap_indices(board, board_index(board, 1, 1), board_index(board, 2, 1))
+    same_bool(match_any(swapped), false)
+    same(square_cells(swapped, board_index(swapped, 1, 1)).len(), 4)
+    same(square_anchor(swapped, board_index(swapped, 1, 1), board_index(swapped, 2, 1)), board_index(swapped, 1, 1))
+
+    let game = game_new_board(board, 21, 10)
+    let after = game_swap_cells(game, 1, 1, 2, 1)
+    same(after.moves_spent, 1)
+    assert(after.specials_made >= 1)
+    var found = false
+    for cell in after.board.cells {
+        if gem_special(cell) == special_core() {
+            found = true
+        }
+    }
+    same_bool(found, true)
+}
+
+@test
+fn a_core_takes_its_row_and_column_when_caught() {
+    var board = board_three()
+    board = board_set(board, 2, 2, gem(1, special_core()))
+    let marks = effect_cells(board, board_index(board, 2, 2))
+    same(marks[board_index(board, 0, 2)], 1)
+    same(marks[board_index(board, 4, 2)], 1)
+    same(marks[board_index(board, 2, 0)], 1)
+    same(marks[board_index(board, 2, 4)], 1)
+}
+
 // ---------- obstacles ----------
 
 @test

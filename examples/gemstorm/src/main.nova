@@ -349,6 +349,14 @@ struct App {
     fx_rng: Int,
     anim: Anim,
     particles: List<Particle>,
+    // A gem held under the pointer: its index, and where the pointer is, so the
+    // gem can follow the cursor to the neighbour it is dropped on.
+    drag: Int,
+    drag_x: Int,
+    drag_y: Int,
+    // 0 until the pointer commits to a direction, then 1 for left/right and 2
+    // for up/down. A held gem only ever slides along this one axis.
+    drag_axis: Int,
 }
 
 fn app_new(seed: Int) -> App {
@@ -376,6 +384,10 @@ fn app_new(seed: Int) -> App {
         fx_rng: rng_seed(seed + 977),
         anim: Anim { active: false, ticks: 0, motions: [], pops: [] },
         particles: [],
+        drag: 0 - 1,
+        drag_x: 0,
+        drag_y: 0,
+        drag_axis: 0,
     }
 }
 
@@ -405,6 +417,8 @@ fn app_new_run(src: App) -> App {
     app.power_mode = false
     app.anim = Anim { active: false, ticks: 0, motions: [], pops: [] }
     app.particles = []
+    app.drag = 0 - 1
+    app.drag_axis = 0
     return app_notice(app, "run ${app.seed} · ${run_moves()} moves", 130)
 }
 
@@ -706,6 +720,8 @@ fn app_try_swap(src: App, a: Int, b: Int) -> App {
     app.hint_a = 0 - 1
     app.hint_b = 0 - 1
     app.power_mode = false
+    app.drag = 0 - 1
+    app.drag_axis = 0
     app.gain = after.score - before.score
     app.chain = after.depth
     if app.chain < 1 {
@@ -914,6 +930,8 @@ fn handle_key(src: App, code: Int, mods: Int) -> App {
         }
         app.screen = screen_pause()
         app.sel = 0 - 1
+        app.drag = 0 - 1
+        app.drag_axis = 0
         return app_cue(app, cue_ui())
     }
 
@@ -960,6 +978,8 @@ fn handle_key(src: App, code: Int, mods: Int) -> App {
     if code == 112 {
         app.screen = screen_pause()
         app.sel = 0 - 1
+        app.drag = 0 - 1
+        app.drag_axis = 0
         return app_cue(app, cue_ui())
     }
     if code == 32 || code == gui.key_enter() {
@@ -1026,6 +1046,210 @@ fn board_click(src: App, x: Int, y: Int) -> App {
     return app_cue(app, cue_select())
 }
 
+// A press on a gem either starts a drag or finishes a click-swap. Pressing a
+// gem that is already picked keeps it picked, because that press is the start
+// of dragging it to a neighbour rather than a second click on the same cell.
+fn board_press(src: App, x: Int, y: Int) -> App {
+    var app = src
+    let index = board_index_at(x, y)
+    if index < 0 || !board_is_open_index(app.game.board, index) {
+        return app
+    }
+    if app.power_mode || app.anim.active {
+        return board_click(app, x, y)
+    }
+    if app.sel >= 0 && app.sel != index && cells_adjacent(app.game.board, app.sel, index) {
+        return board_click(app, x, y)
+    }
+    app.drag = index
+    app.drag_axis = 0
+    app.drag_x = board_x() + (index % board_cols()) * cell() + cell() / 2
+    app.drag_y = board_y() + (index / board_cols()) * cell() + cell() / 2
+    app.hover = index
+    if app.sel != index {
+        app = board_click(app, x, y)
+    }
+    return app
+}
+
+// A dragged gem slides along one axis only: whichever of left/right or up/down
+// the pointer has travelled further. The other axis stays pinned to the source
+// cell, so the gem cannot be parked between cells or on a diagonal.
+fn drag_deadzone() -> Int {
+    return 9
+}
+
+fn drag_abs(value: Int) -> Int {
+    if value < 0 {
+        return 0 - value
+    }
+    return value
+}
+
+fn drag_origin_x(app: App) -> Int {
+    return board_x() + (app.drag % board_cols()) * cell() + cell() / 2
+}
+
+fn drag_origin_y(app: App) -> Int {
+    return board_y() + (app.drag / board_cols()) * cell() + cell() / 2
+}
+
+// 0 until the pointer leaves the deadzone, then 1 for left/right and 2 for
+// up/down. Once chosen the axis is kept for the whole drag, so a wobbling hand
+// cannot flip the gem between the two.
+fn drag_axis_for(app: App, x: Int, y: Int) -> Int {
+    if app.drag < 0 {
+        return 0
+    }
+    if app.drag_axis != 0 {
+        return app.drag_axis
+    }
+    let dx = drag_abs(x - drag_origin_x(app))
+    let dy = drag_abs(y - drag_origin_y(app))
+    if dx < drag_deadzone() && dy < drag_deadzone() {
+        return 0
+    }
+    if dx >= dy {
+        return 1
+    }
+    return 2
+}
+
+// How far along the locked axis the gem may travel: at most one cell, and only
+// toward a neighbour that can actually take it.
+fn drag_span(app: App, axis: Int, x: Int, y: Int) -> Int {
+    var delta = y - drag_origin_y(app)
+    if axis == 1 {
+        delta = x - drag_origin_x(app)
+    }
+    var dir = 0
+    if delta < 0 {
+        dir = 0 - 1
+    }
+    if delta > 0 {
+        dir = 1
+    }
+    var limit = cell()
+    if dir != 0 {
+        var nx = app.drag % board_cols()
+        var ny = app.drag / board_cols()
+        if axis == 1 {
+            nx = nx + dir
+        } else {
+            ny = ny + dir
+        }
+        var open = false
+        if nx >= 0 && ny >= 0 && nx < board_cols() && ny < board_rows() {
+            open = board_is_open_index(app.game.board, board_index(app.game.board, nx, ny))
+        }
+        if !open {
+            limit = 0
+        }
+    }
+    if delta > limit {
+        return limit
+    }
+    if delta < 0 - limit {
+        return 0 - limit
+    }
+    return delta
+}
+
+// The neighbour the pointer has crossed far enough to drop on, or -1 while the
+// gem is still in its own cell. The axis lock is what keeps a diagonal flick
+// from landing on a diagonal cell.
+fn drag_drop_target(app: App, axis: Int, x: Int, y: Int) -> Int {
+    if axis == 0 {
+        return 0 - 1
+    }
+    let span = drag_span(app, axis, x, y)
+    if drag_abs(span) < cell() / 2 {
+        return 0 - 1
+    }
+    var nx = app.drag % board_cols()
+    var ny = app.drag / board_cols()
+    if axis == 1 {
+        if span < 0 {
+            nx = nx - 1
+        } else {
+            nx = nx + 1
+        }
+    } else {
+        if span < 0 {
+            ny = ny - 1
+        } else {
+            ny = ny + 1
+        }
+    }
+    if nx < 0 || ny < 0 || nx >= board_cols() || ny >= board_rows() {
+        return 0 - 1
+    }
+    let target = board_index(app.game.board, nx, ny)
+    if !board_is_open_index(app.game.board, target) {
+        return 0 - 1
+    }
+    return target
+}
+
+// Dragging over a neighbour is the swap: the gem lands in the next cell along
+// its axis with no release needed, which is what a quick flick expects.
+fn handle_mouse_drag(src: App, x: Int, y: Int) -> App {
+    var app = src
+    if app.drag < 0 || app.anim.active || app.screen != screen_play() {
+        app.hover = board_index_at(x, y)
+        return app
+    }
+    let axis = drag_axis_for(app, x, y)
+    app.drag_axis = axis
+    if axis == 0 {
+        app.drag_x = drag_origin_x(app)
+        app.drag_y = drag_origin_y(app)
+        app.hover = app.drag
+        return app
+    }
+    let span = drag_span(app, axis, x, y)
+    if axis == 1 {
+        app.drag_x = drag_origin_x(app) + span
+        app.drag_y = drag_origin_y(app)
+    } else {
+        app.drag_x = drag_origin_x(app)
+        app.drag_y = drag_origin_y(app) + span
+    }
+    app.hover = board_index_at(app.drag_x, app.drag_y)
+    let target = drag_drop_target(app, axis, x, y)
+    if target < 0 {
+        return app
+    }
+    let from = app.drag
+    app.drag = 0 - 1
+    app.drag_axis = 0
+    app.sel = 0 - 1
+    return app_try_swap(app, from, target)
+}
+
+// Releasing over a neighbour still swaps if no drag event arrived (a very fast
+// flick can jump straight from press to release). Releasing in place leaves the
+// gem picked, so click-then-click keeps working.
+fn handle_mouse_up(src: App, x: Int, y: Int) -> App {
+    var app = src
+    if app.drag < 0 {
+        return app
+    }
+    let from = app.drag
+    let axis = drag_axis_for(app, x, y)
+    let target = drag_drop_target(app, axis, x, y)
+    app.drag = 0 - 1
+    app.drag_axis = 0
+    if app.anim.active || app.screen != screen_play() {
+        return app
+    }
+    if target < 0 || target == from {
+        return app
+    }
+    app.sel = 0 - 1
+    return app_try_swap(app, from, target)
+}
+
 fn handle_mouse_move(src: App, x: Int, y: Int) -> App {
     var app = src
     app.hover = board_index_at(x, y)
@@ -1055,6 +1279,8 @@ fn handle_mouse_down(src: App, x: Int, y: Int) -> App {
                 app.screen = screen_pause()
             }
             app.sel = 0 - 1
+            app.drag = 0 - 1
+            app.drag_axis = 0
             return app_cue(app, cue_ui())
         }
     }
@@ -1093,7 +1319,7 @@ fn handle_mouse_down(src: App, x: Int, y: Int) -> App {
     if gui.inside(left_x(), 512, left_w(), 40, x, y) {
         return app_new_run(app)
     }
-    return board_click(app, x, y)
+    return board_press(app, x, y)
 }
 
 // Printable keys arrive as composed text, not key events, so games must read
@@ -1111,6 +1337,12 @@ fn handle(src: App, event: Event) -> App {
     }
     if event.kind == gui.event_mouse_down() {
         return handle_mouse_down(src, event.x, event.y)
+    }
+    if event.kind == gui.event_mouse_up() {
+        return handle_mouse_up(src, event.x, event.y)
+    }
+    if event.kind == gui.event_drag() {
+        return handle_mouse_drag(src, event.x, event.y)
     }
     if event.kind == gui.event_mouse_move() {
         return handle_mouse_move(src, event.x, event.y)
@@ -1270,6 +1502,13 @@ fn draw_gem(x: Int, y: Int, size: Int, colour: Int, special: Int, s: Skin) {
         gui.triangle(cx - 4, cy, cx - 15, cy - 5, cx - 15, cy + 5, s.white)
         gui.triangle(cx + 4, cy, cx + 15, cy - 5, cx + 15, cy + 5, s.white)
         gui.round_rect(cx - 4, cy - 4, 8, 8, 3, s.white)
+    } else if special == special_core() {
+        // A core is a bright cross with a gold heart: the 2x2 block's cross
+        // blast, distinct from the burst's four-point box blast.
+        gui.rect(cx - 2, y + 8, 4, size - 16, s.white)
+        gui.rect(x + 8, cy - 2, size - 16, 4, s.white)
+        draw_diamond(cx, cy, 8, s.white)
+        draw_diamond(cx, cy, 5, s.gold)
     }
 }
 
@@ -1310,7 +1549,7 @@ fn draw_board(app: App, s: Skin) {
             gui.round_rect(x + 3, y + 3, cell() - 6, cell() - 6, 10, s.tile)
             if b.blocked[i] == 1 {
                 draw_crate(x, y, cell(), s)
-            } else if !app.anim.active {
+            } else if !app.anim.active && app.drag != i && !drag_vacated(app, i) {
                 if gem_is_prism(b.cells[i]) {
                     draw_gem(x, y, cell(), 0, special_prism(), s)
                 } else if b.cells[i] != 0 {
@@ -1373,15 +1612,98 @@ fn draw_board(app: App, s: Skin) {
         cell_frame(x, y, cell(), 1, s.accent)
     }
 
+    draw_drag(app, s, bx, by)
+
     if app.flash > 0 {
         gui.round_rect_alpha(bx, by, board_px(), board_px(), 14, s.white, app.flash * 7)
     }
+}
+
+// While a gem is being dragged along its axis, the neighbour it is over is
+// left empty so the ghost visibly slides into that slot instead of stacking on
+// top of the gem already there.
+fn drag_vacated(app: App, index: Int) -> Bool {
+    if app.drag < 0 || app.drag_axis == 0 {
+        return false
+    }
+    if index == app.drag {
+        return false
+    }
+    return app.hover == index
 }
 
 // Frost survives a hit and stays on its cell, so it is drawn over the moving
 // gems rather than with them.
 fn frost_visible(app: App, index: Int) -> Bool {
     return app.game.board.frost[index] > 0 && !app.anim.active
+}
+
+// The gem under the pointer, lifted off the board, with a slot on every
+// neighbour it can be dropped on. The source cell keeps its tile but loses its
+// gem, so the drag reads as picking the gem up rather than copying it.
+fn draw_drag(app: App, s: Skin, bx: Int, by: Int) {
+    if app.drag < 0 {
+        return
+    }
+    let b = app.game.board
+    if !board_is_open_index(b, app.drag) {
+        return
+    }
+    let col = app.drag % b.width
+    let row = app.drag / b.width
+
+    var d = 0
+    while d < 4 {
+        // Once the pointer has chosen an axis only that axis can receive the
+        // gem, so the two off-axis slots are not offered.
+        var show = true
+        if app.drag_axis == 1 && d > 1 {
+            show = false
+        }
+        if app.drag_axis == 2 && d < 2 {
+            show = false
+        }
+        if show {
+            var nc = col
+            var nr = row
+            if d == 0 {
+                nc = col - 1
+            } else if d == 1 {
+                nc = col + 1
+            } else if d == 2 {
+                nr = row - 1
+            } else {
+                nr = row + 1
+            }
+            if nc >= 0 && nr >= 0 && nc < b.width && nr < b.height {
+                let next = board_index(b, nc, nr)
+                if board_is_open_index(b, next) {
+                    let x = bx + nc * cell()
+                    let y = by + nr * cell()
+                    var alpha = 20
+                    if app.hover == next {
+                        alpha = 46
+                    }
+                    gui.round_rect_alpha(x + 4, y + 4, cell() - 8, cell() - 8, 10, s.accent, alpha)
+                    cell_frame(x, y, cell(), 4, s.accent)
+                }
+            }
+        }
+        d = d + 1
+    }
+
+    let value = board_cell_at(b, app.drag)
+    let gx = app.drag_x - cell() / 2
+    let gy = app.drag_y - cell() / 2 - 6
+    gui.clip(bx, by, board_px(), board_px())
+    gui.round_rect_alpha(gx + 6, gy + 12, cell(), cell(), 12, 0, 70)
+    if gem_is_prism(value) {
+        draw_gem(gx, gy, cell(), 0, special_prism(), s)
+    } else if value != 0 {
+        draw_gem(gx, gy, cell(), gem_color(value), gem_special(value), s)
+    }
+    cell_frame(gx, gy, cell(), 2, s.white)
+    gui.clip_reset()
 }
 
 fn draw_hint_cell(app: App, s: Skin, bx: Int, index: Int) {
@@ -1546,25 +1868,27 @@ fn draw_right(app: App, s: Skin) {
     gui.text(right_x() + 16, 286, "seed ${app.seed}", 10, s.faint)
     gui.text(right_x() + 16, 304, "${board_cols()}×${board_rows()} · ${gem_colours()} gems", 9, s.faint)
 
-    card(right_x(), 336, right_w(), 180, s)
-    gui.text(right_x() + 16, 352, "SPECIALS", 10, s.faint)
-    gui.text(right_x() + 16, 374, "BEAM", 10, s.accent)
-    gui.text(right_x() + 16, 388, "4 in a row · clears line", 9, s.muted)
-    gui.text(right_x() + 16, 408, "PRISM", 10, s.accent)
-    gui.text(right_x() + 16, 422, "5 straight · one colour", 9, s.muted)
-    gui.text(right_x() + 16, 442, "BURST", 10, s.accent)
-    gui.text(right_x() + 16, 456, "5 bent · blasts a box", 9, s.muted)
-    gui.text(right_x() + 16, 476, "COMBO", 10, s.accent)
-    gui.text(right_x() + 16, 490, "two specials · big clear", 9, s.muted)
+    card(right_x(), 336, right_w(), 200, s)
+    gui.text(right_x() + 16, 352, "POWER-UPS", 10, s.faint)
+    gui.text(right_x() + 16, 374, "BEAM · 4 across", 10, s.accent)
+    gui.text(right_x() + 16, 388, "clears the whole row", 9, s.muted)
+    gui.text(right_x() + 16, 408, "BEAM · 4 upright", 10, s.accent)
+    gui.text(right_x() + 16, 422, "clears the whole column", 9, s.muted)
+    gui.text(right_x() + 16, 442, "BURST · 5 bent", 10, s.accent)
+    gui.text(right_x() + 16, 456, "blasts a 3x3 box", 9, s.muted)
+    gui.text(right_x() + 16, 476, "PRISM · 5 straight", 10, s.accent)
+    gui.text(right_x() + 16, 490, "takes one colour", 9, s.muted)
+    gui.text(right_x() + 16, 510, "CORE · 2x2 block", 10, s.accent)
+    gui.text(right_x() + 16, 524, "clears row and column", 9, s.muted)
 
-    card(right_x(), 528, right_w(), 160, s)
-    gui.text(right_x() + 16, 544, "TIPS", 10, s.faint)
-    gui.text(right_x() + 16, 566, "Click a gem, then", 10, s.muted)
-    gui.text(right_x() + 16, 584, "a neighbour to swap.", 10, s.muted)
-    gui.text(right_x() + 16, 608, "Arrows steer. Space", 10, s.muted)
-    gui.text(right_x() + 16, 626, "picks. H hints.", 10, s.muted)
-    gui.text(right_x() + 16, 650, "Specials earn charges.", 10, s.muted)
-    gui.text(right_x() + 16, 668, "S then click to strike.", 10, s.muted)
+    card(right_x(), 556, right_w(), 150, s)
+    gui.text(right_x() + 16, 572, "TIPS", 10, s.faint)
+    gui.text(right_x() + 16, 594, "Drag along one axis,", 10, s.muted)
+    gui.text(right_x() + 16, 612, "or click, then click.", 10, s.muted)
+    gui.text(right_x() + 16, 630, "Arrows + Space too.", 10, s.muted)
+    gui.text(right_x() + 16, 654, "2x2 makes a core.", 10, s.muted)
+    gui.text(right_x() + 16, 672, "Specials earn charges.", 10, s.muted)
+    gui.text(right_x() + 16, 690, "S then click to strike.", 10, s.muted)
 }
 
 fn draw_status(app: App, s: Skin) {
@@ -1583,7 +1907,7 @@ fn draw_status(app: App, s: Skin) {
         gui.text(x + 15, 620, app.notice, 12, s.text)
         return
     }
-    var hint = "pick a gem · then a neighbour"
+    var hint = "drag a gem onto a neighbour · or click two"
     if app.screen == screen_pause() {
         hint = "paused · Space resumes"
     }
@@ -1632,7 +1956,7 @@ fn draw_menu(app: App, s: Skin) {
 
     panel_card(300, 396, 400, 212, s)
     gui.text(320, 414, "CONTROLS", 10, s.faint)
-    gui.text(320, 440, "Click    pick & swap", 11, s.muted)
+    gui.text(320, 440, "Drag     gem to neighbour", 11, s.muted)
     gui.text(320, 462, "← → ↑ ↓    steer", 11, s.muted)
     gui.text(320, 484, "Space    pick / confirm", 11, s.muted)
     gui.text(320, 506, "H    hint", 11, s.muted)
@@ -1824,7 +2148,7 @@ fn bool_text(value: Bool) -> String {
 
 fn state_line(app: App) -> String {
     let game = app.game
-    return "gemstorm: screen=${screen_name(app.screen)} seed=${app.seed} phase=${game.phase} score=${game.score} moves=${game.moves_left} spent=${game.moves_spent} cleared=${game.cleared} specials=${game.specials_made} combo=${game.best_combo} power=${game.power} rejected=${game.rejected} anim=${app.anim.ticks} hash=${board_hash(game.board)}"
+    return "gemstorm: screen=${screen_name(app.screen)} seed=${app.seed} phase=${game.phase} score=${game.score} moves=${game.moves_left} spent=${game.moves_spent} cleared=${game.cleared} specials=${game.specials_made} combo=${game.best_combo} power=${game.power} rejected=${game.rejected} anim=${app.anim.ticks} drag=${app.drag} axis=${app.drag_axis} gx=${app.drag_x} gy=${app.drag_y} hash=${board_hash(game.board)}"
 }
 
 // Hint-driven play, used for the soak and the determinism check: every move is
@@ -1882,7 +2206,8 @@ fn scenario_app(name: String) -> App {
         board = board_set(board, 2, 0, gem(3, special_beam_v()))
         board = board_set(board, 3, 0, gem(2, special_burst()))
         board = board_set(board, 4, 0, cell_prism())
-        board = board_set(board, 5, 0, gem(5, 0))
+        board = board_set(board, 5, 0, gem(5, special_core()))
+        board = board_set(board, 6, 0, gem(5, 0))
         var blocked = board.blocked
         let crate = board_index(board, 1, 2)
         blocked[crate] = 1
@@ -1896,7 +2221,7 @@ fn scenario_app(name: String) -> App {
         var game = app.game
         game.board = board
         app.game = game
-        return app_notice(app, "beams, burst, prism, crate and frost", 600)
+        return app_notice(app, "beams, burst, core, prism, crate and frost", 600)
     }
     if name == "hint" {
         app = app_hint(app)
@@ -1909,6 +2234,55 @@ fn scenario_app(name: String) -> App {
         app.cursor = board_index(app.game.board, 4, 4)
         app.hover = app.cursor
         return app_notice(app, "storm armed · click a gem", 600)
+    }
+    if name == "drag" {
+        // A held sapphire nudged toward the neighbour on its right: the ghost
+        // sits on that axis, the source cell is empty and the two horizontal
+        // drop slots are lit, so one capture covers the whole drag state.
+        var board = app.game.board
+        board = board_set(board, 2, 3, gem(4, 0))
+        var game = app.game
+        game.board = board
+        app.game = game
+        let from = board_index(app.game.board, 2, 3)
+        app.sel = from
+        app.cursor = from
+        app.drag = from
+        app.drag_axis = 1
+        app.drag_x = board_x() + 2 * cell() + cell() / 2 + 14
+        app.drag_y = board_y() + 3 * cell() + cell() / 2
+        app.hover = board_index(app.game.board, 3, 3)
+        return app_notice(app, "drag along one axis · release to swap", 600)
+    }
+    if name == "dragaxis" {
+        // A real press and a diagonal drag: the pointer has moved equally on
+        // both axes, so the lock keeps left/right and pins the ghost to the
+        // source row instead of letting it follow the diagonal.
+        let from = board_index(app.game.board, 2, 3)
+        app.sel = from
+        app.cursor = from
+        let ax = board_x() + 2 * cell() + cell() / 2
+        let ay = board_y() + 3 * cell() + cell() / 2
+        app = handle(app, Event { kind: gui.event_mouse_down(), code: 1, x: ax, y: ay, mods: 0, delta: 0 })
+        app = handle(app, Event { kind: gui.event_drag(), code: 0, x: ax + 16, y: ay + 16, mods: 0, delta: 0 })
+        return app_notice(app, "drag locked to one axis", 600)
+    }
+    if name == "dragswap" {
+        // Feeds the real pointer path: press on one gem of a legal pair, drag
+        // onto its neighbour, release. The rules must see exactly one move.
+        let hint = game_hint(app.game)
+        if hint.len() != 2 {
+            return app
+        }
+        let a = hint[0]
+        let b = hint[1]
+        let ax = board_x() + (a % board_cols()) * cell() + cell() / 2
+        let ay = board_y() + (a / board_cols()) * cell() + cell() / 2
+        let tx = board_x() + (b % board_cols()) * cell() + cell() / 2
+        let ty = board_y() + (b / board_cols()) * cell() + cell() / 2
+        app = handle(app, Event { kind: gui.event_mouse_down(), code: 1, x: ax, y: ay, mods: 0, delta: 0 })
+        app = handle(app, Event { kind: gui.event_drag(), code: 0, x: tx, y: ty, mods: 0, delta: 0 })
+        return handle(app, Event { kind: gui.event_mouse_up(), code: 0, x: tx, y: ty, mods: 0, delta: 0 })
     }
     if name == "slide" {
         let hint = game_hint(app.game)
