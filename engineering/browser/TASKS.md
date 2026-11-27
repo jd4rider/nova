@@ -164,6 +164,14 @@ Each task needs a reproducible acceptance check before it is marked done.
   re-applied on navigation) and publishes the find query and close control to
   the accessibility tree; the same test relaunches the profile and requires
   `zoom: host=127.0.0.1 applied=150 stored=150` plus both AX names (11 PASS).
+- **WB-03.015 — Private tabs.** DONE in 0.9.11. `--private` and Cmd+Shift+N
+  create a view on `WKWebsiteDataStore.nonPersistentDataStore`, so cookies and
+  cache end with the tab. `record_visit` refuses private tabs, `save_session`
+  skips them and writes nothing for a private-only session, and favicons are
+  not cached. Tabs are labelled **Private ·**. Not a separate window; there is
+  no permission prompt yet. Evidence: `browser/tests/private.sh` 5/5 —
+  `private: tabs=1 flag=1 persistent=0 visits=0`, no session/history line for
+  the private URL, and the normal-tab control run saves both.
 - **WB-03.014 — Page appearance.** DONE in 0.9.10. `nova_webview_set_appearance_all`
   sets every tab's `WKWebView.appearance` from the chrome theme, before the
   first load and on every theme change, so pages answer

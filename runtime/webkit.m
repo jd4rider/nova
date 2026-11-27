@@ -49,6 +49,7 @@ typedef struct {
 @property (nonatomic, strong) WKNavigation *currentNavigation;
 @property (nonatomic, assign) int64_t generation;
 @property (nonatomic, assign) int64_t findState; /* 0 cleared 1 found 2 not found 3 searching */
+@property (nonatomic, assign) BOOL privateView;
 @end
 
 @implementation NovaWebViewEntry
@@ -270,6 +271,11 @@ static void nova_webview_install_key_monitor(void) {
         if ([key isEqualToString:@"w"]) {
             nova_pending_shortcut = 119;
             nova_pending_mods = 1 | ((event.modifierFlags & NSEventModifierFlagShift) ? 2 : 0);
+            return nil;
+        }
+        if ([key isEqualToString:@"n"] && (event.modifierFlags & NSEventModifierFlagShift)) {
+            nova_pending_shortcut = 45;
+            nova_pending_mods = 1 | 2;
             return nil;
         }
         if (key.length == 1) {
@@ -577,8 +583,8 @@ int64_t nova_webview_apply_blocklist(nova_str rules) {
 /* Creates a WKWebView. parent_handle is a NovaGuiView pointer from
  * nova_gui_native_view(); 0 creates an offscreen host for tests. Coordinates
  * are Nova points from the top-left; AppKit uses a bottom-left origin. */
-int64_t nova_webview_create(int64_t parent_handle, int64_t x, int64_t y,
-                            int64_t width, int64_t height) {
+static int64_t nova_webview_create_store(int64_t parent_handle, int64_t x, int64_t y,
+                                         int64_t width, int64_t height, BOOL private) {
     if (width <= 0 || height <= 0) return 0;
     if (![NSThread isMainThread]) return 0;
     @autoreleasepool {
@@ -597,6 +603,12 @@ int64_t nova_webview_create(int64_t parent_handle, int64_t x, int64_t y,
         if (!container) return 0;
 
         WKWebViewConfiguration *configuration = [[WKWebViewConfiguration alloc] init];
+        /* A private tab gets WebKit's non-persistent store: cookies, cache and
+         * local storage live only as long as the view, and nothing is written
+         * to the normal browsing store. */
+        if (private) {
+            configuration.websiteDataStore = [WKWebsiteDataStore nonPersistentDataStore];
+        }
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = NO;
         WKUserContentController *userContent = configuration.userContentController;
         [userContent addScriptMessageHandler:[[NovaBlobSink alloc] init] name:@"novaBlob"];
@@ -628,6 +640,7 @@ int64_t nova_webview_create(int64_t parent_handle, int64_t x, int64_t y,
         NovaWebViewEntry *entry = [[NovaWebViewEntry alloc] init];
         entry.webView = web;
         entry.hostView = host;
+        entry.privateView = private;
         entry.state = NOVA_WEBVIEW_EMPTY;
         NovaWebViewDelegate *delegate = [[NovaWebViewDelegate alloc] init];
         delegate.entry = entry;
@@ -644,6 +657,16 @@ int64_t nova_webview_create(int64_t parent_handle, int64_t x, int64_t y,
         }
         return handle;
     }
+}
+
+int64_t nova_webview_create(int64_t parent_handle, int64_t x, int64_t y,
+                            int64_t width, int64_t height) {
+    return nova_webview_create_store(parent_handle, x, y, width, height, NO);
+}
+
+int64_t nova_webview_create_private(int64_t parent_handle, int64_t x, int64_t y,
+                                    int64_t width, int64_t height) {
+    return nova_webview_create_store(parent_handle, x, y, width, height, YES);
 }
 
 void nova_webview_set_bounds(int64_t handle, int64_t x, int64_t y,
@@ -754,6 +777,14 @@ int64_t nova_webview_zoom(int64_t handle) {
         return (int64_t)llround(entry.webView.pageZoom * 100.0);
     }
     return 100;
+}
+
+/* 1 when the tab writes cookies and cache to disk, 0 for a private tab. This
+ * reports WebKit's own store, not Nova's intent. */
+int64_t nova_webview_store_persistent(int64_t handle) {
+    NovaWebViewEntry *entry = nova_webview_entry(handle);
+    if (!entry || !entry.webView) return 0;
+    return entry.webView.configuration.websiteDataStore.isPersistent ? 1 : 0;
 }
 
 /* Pages follow the chrome's appearance through prefers-color-scheme. Setting

@@ -51,6 +51,10 @@ struct Tab {
     url: String,
     fixture: Bool,
     title: String,
+    // Private tabs use WKWebsiteDataStore's non-persistent store: cookies,
+    // cache and local storage end with the tab, and no visit or session entry
+    // is written for them.
+    private: Bool,
 }
 
 struct ClosedTab {
@@ -1488,18 +1492,23 @@ fn fixture_html() -> String {
     return "<!doctype html><html><head><title>Nova Browser</title></head><body style=\"background:#1d2021;color:#ebdbb2;font:20px -apple-system;padding:40px\"><h1>Nova Browser</h1><p>Fixture file not found. WebKit is still running.</p></body></html>"
 }
 
-fn tab_create(parent: Int, width: Int, height: Int, url: String, fixture: Bool) -> Tab {
+fn tab_create(parent: Int, width: Int, height: Int, url: String, fixture: Bool, private: Bool) -> Tab {
     var page_height = height - chrome_height(false)
     if page_height < 1 {
         page_height = 1
     }
-    let handle = engine.create(parent, 0, chrome_height(false), width, page_height)
+    let handle = if private {
+        engine.create_private(parent, 0, chrome_height(false), width, page_height)
+    } else {
+        engine.create(parent, 0, chrome_height(false), width, page_height)
+    }
     if handle <= 0 {
         return Tab {
             handle: 0,
             url: url,
             fixture: fixture,
             title: "",
+            private: private,
         }
     }
     if fixture {
@@ -1512,15 +1521,39 @@ fn tab_create(parent: Int, width: Int, height: Int, url: String, fixture: Bool) 
         url: url,
         fixture: fixture,
         title: "",
+        private: private,
     }
 }
 
 fn new_fixture_tab(parent: Int, width: Int, height: Int) -> Tab {
-    return tab_create(parent, width, height, "https://fixture.nova.invalid/", true)
+    return tab_create(parent, width, height, "https://fixture.nova.invalid/", true, false)
 }
 
 fn new_url_tab(parent: Int, width: Int, height: Int, url: String) -> Tab {
-    return tab_create(parent, width, height, url, false)
+    return tab_create(parent, width, height, url, false, false)
+}
+
+fn new_private_tab(parent: Int, width: Int, height: Int) -> Tab {
+    return tab_create(parent, width, height, "https://fixture.nova.invalid/", true, true)
+}
+
+fn new_private_url_tab(parent: Int, width: Int, height: Int, url: String) -> Tab {
+    return tab_create(parent, width, height, url, false, true)
+}
+
+// `--private` starts a window whose first tab is private instead of restoring
+// the normal session. Nothing about this run is written to the profile.
+fn open_private(vertical: Bool, rail: Bool, initial: String) -> Session {
+    let first = if initial.len() > 0 {
+        new_private_url_tab(gui.native_view(), gui.width(), gui.height(), initial)
+    } else {
+        new_private_tab(gui.native_view(), gui.width(), gui.height())
+    }
+    var tabs: List<Tab> = []
+    if first.handle > 0 {
+        tabs.push(first)
+    }
+    return Session { tabs: tabs, active: 0, closed: [], vertical: vertical, rail: rail, seen: "" }
 }
 
 fn active_handle(session: Session) -> Int {
@@ -2741,7 +2774,11 @@ fn draw_tabs(session: Session, theme: Chrome, fx: Fx, rail_open: Bool, store: St
                 }
             }
         }
-        gui.text(text_x, y + 7, tab_title(tab), 11, ink)
+        var shown_title = tab_title(tab)
+        if tab.private {
+            shown_title = "Private · " + shown_title
+        }
+        gui.text(text_x, y + 7, shown_title, 11, ink)
         gui.clip_reset()
         let close_heat = slot(fx, 50 + i)
         if close_heat > 0 {
@@ -3738,7 +3775,10 @@ fn ax_chrome(handle: Int, session: Session, address: Address, suggestions: List<
     var i = 0
     while i < count {
         let tab = session.tabs[i]
-        let shown = if tab.title.len() > 0 { tab.title } else if tab.fixture { "New Tab" } else { tab.url }
+        var shown = if tab.title.len() > 0 { tab.title } else if tab.fixture { "New Tab" } else { tab.url }
+        if tab.private {
+            shown = "Private · " + shown
+        }
         let selected = if i == session.active { 1 } else { 0 }
         if session.rail {
             gui.ax_tab(4, tab_box_y(i, true), rail_width() - 8, 30, shown, selected)
@@ -5383,6 +5423,15 @@ fn handle_key(handle: Int, code: Int, mods: Int, current: Address, session: Sess
         }, false)
     }
 
+    if command && shift && code == 45 {
+        let tab = new_private_tab(gui.native_view(), gui.width(), gui.height())
+        let next = append_tab(session, tab)
+        engine.focus_chrome(active_handle(next))
+        return key_action(next, address_idle(), store, Notice {
+            text: "Private tab · history and cookies leave when it closes",
+            until: gui.now() + 3400,
+        }, false)
+    }
     if command && code == 3 {
         // Cmd+F. The query is kept between openings the way Chrome keeps it.
         engine.focus_chrome(handle)
@@ -5624,7 +5673,9 @@ fn auto_close(session: Session, theme: Chrome, address: Address, store: Store) {
         let theme_name = resolved_theme_name(store)
         println("dark: theme=${theme_name} light=${flag(theme_is_light(theme_name))} media=${media}")
     }
-    ensure_favicon(store, engine.page_url(handle), engine.icon_url(handle))
+    if !session.tabs[session.active].private {
+        ensure_favicon(store, engine.page_url(handle), engine.icon_url(handle))
+    }
     if gui.env("NOVA_BROWSER_BLOCK_CHECK") == "1" {
         let tracker = engine.run_js(handle, "typeof window.__novaTracker")
         println("block: compiled=${compiled_rules} tracker=${tracker}")
@@ -5674,6 +5725,12 @@ fn auto_close(session: Session, theme: Chrome, address: Address, store: Store) {
     }
     if gui.env("NOVA_BROWSER_ZOOM_TRACE") == "1" {
         println("zoom: host=${library.host_of(engine.page_url(handle))} applied=${engine.zoom(handle)} stored=${stored_zoom(store, engine.page_url(handle))}")
+    }
+    if gui.env("NOVA_BROWSER_PRIVATE_CHECK") == "1" {
+        let tab = session.tabs[session.active]
+        let before = store.visits.len()
+        let after = record_visit(store, tab, engine.page_url(handle), "probe").visits.len()
+        println("private: tabs=${session.tabs.len()} flag=${flag(tab.private)} persistent=${flag(engine.store_persistent(handle))} visits=${after - before}")
     }
     var shown = store
     if gui.env("NOVA_BROWSER_FIND_OPEN") == "1" {
@@ -5772,7 +5829,9 @@ fn auto_close(session: Session, theme: Chrome, address: Address, store: Store) {
         println("voice: start=${started.text} bytes=${file_bytes(voice_model_path())} ready=${flag(speech.kokoro_ready())} path=${voice_model_path()} note=${result.text}")
     }
     gui.begin()
-    ensure_favicon(store, engine.page_url(handle), engine.icon_url(handle))
+    if !session.tabs[session.active].private {
+        ensure_favicon(store, engine.page_url(handle), engine.icon_url(handle))
+    }
     draw_chrome(handle, theme, address, session, suggestions, fx_new(), notice_idle(), shown, 0 - 1, downloads_view(shown), checked_tooltip(session), rail_open, panel_open, false, 0)
     gui.present()
     settle(24)
@@ -5829,6 +5888,19 @@ fn run_cli_import(argument: String) -> Bool {
     return summary.bookmarks > 0 || summary.history > 0
 }
 
+// One place decides whether a page may enter history: private tabs and the
+// bundled fixture never do, and a profile with history turned off writes
+// nothing.
+fn record_visit(store: Store, tab: Tab, url: String, title: String) -> Store {
+    if tab.private || url.contains("fixture.nova.invalid") || store.history_path.len() == 0 {
+        return store
+    }
+    var next = store
+    next.visits = library.add_visit(store.visits, url, title)
+    next.dirty_visits = true
+    return next
+}
+
 fn mark_active_url(session: Session, url: String) -> Session {
     if url.contains("fixture.nova.invalid") {
         return session
@@ -5843,6 +5915,7 @@ fn mark_active_url(session: Session, url: String) -> Session {
                 url: url,
                 fixture: false,
                 title: tab.title,
+                private: tab.private,
             })
         } else {
             tabs.push(tab)
@@ -5867,6 +5940,7 @@ fn refresh_titles(session: Session) -> Session {
             url: tab.url,
             fixture: tab.fixture,
             title: engine.page_title(tab.handle),
+            private: tab.private,
         })
     }
     return Session {
@@ -5897,7 +5971,7 @@ fn save_session(store: Store, session: Session) {
     var i = 0
     while i < session.tabs.len() {
         let tab = session.tabs[i]
-        if !tab.fixture {
+        if !tab.fixture && !tab.private {
             let live = engine.page_url(tab.handle)
             if live.len() > 0 {
                 urls.push(live)
@@ -5909,6 +5983,11 @@ fn save_session(store: Store, session: Session) {
             }
         }
         i = i + 1
+    }
+    // A private-only session writes nothing, so quitting it cannot erase the
+    // normal session that was there before it started.
+    if urls.len() == 0 {
+        return
     }
     gui.write(store.session_path, library.session_encode(urls, saved_active))
 }
@@ -6139,6 +6218,11 @@ fn main() {
         }
     }
 
+    var private_start = false
+    if gui.args_count() >= 2 && gui.arg(1) == "--private" {
+        private_start = true
+    }
+
     var store = load_store()
     engine.blocklist(blocklist_rules())
     // Test hook: open the shelf before the first frame so its accessibility
@@ -6181,11 +6265,11 @@ fn main() {
     }
 
     var initial = gui.env("NOVA_BROWSER_URL")
-    if initial.len() == 0 && gui.args_count() >= 2 {
+    if initial.len() == 0 && gui.args_count() >= 2 && gui.arg(1) != "--private" {
         initial = gui.arg(1)
     }
 
-    var session = open_session(store, vertical, rail, initial)
+    var session = if private_start { open_private(vertical, rail, initial) } else { open_session(store, vertical, rail, initial) }
     if session.tabs.len() == 0 {
         println("browser: could not create the WebKit view")
         gui.close()
@@ -6434,14 +6518,12 @@ fn main() {
         if state == 2 {
             if live.len() > 0 && live != session.seen {
                 session.seen = live
-                ensure_favicon(store, live, engine.icon_url(handle))
+                if !session.tabs[session.active].private {
+                    ensure_favicon(store, live, engine.icon_url(handle))
+                }
                 engine.set_zoom(handle, stored_zoom(store, live))
                 session = mark_active_url(session, live)
-                if !live.contains("fixture.nova.invalid") && store.history_path.len() > 0 {
-                    let title = engine.page_title(handle)
-                    store.visits = library.add_visit(store.visits, live, title)
-                    store.dirty_visits = true
-                }
+                store = record_visit(store, session.tabs[session.active], live, engine.page_title(handle))
             }
         } else if state == 3 {
             session.seen = ""

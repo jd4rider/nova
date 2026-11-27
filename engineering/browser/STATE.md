@@ -3,11 +3,11 @@
 Updated: 2026-11-27
 Branch: `main`
 Last known good compiler checkpoint: `cfa00e3` (before browser work)
-Browser: **0.9.10 installed at `/Applications/Nova Browser.app`**
-Browser working tree: clean after the 0.9.10 commit; see `git status`
+Browser: **0.9.11 installed at `/Applications/Nova Browser.app`**
+Browser working tree: clean after the 0.9.11 commit; see `git status`
 Active gate: G0 WebKit; G1 WebCore not started
-Active task: **WB-03.014 — page appearance** (0.9.10: pages request dark or
-light styles from the chrome theme, not from the macOS system setting)
+Active task: **WB-03.015 — private tabs** (0.9.11: non-persistent WebKit store,
+no history/session/favicon writes, Cmd+Shift+N and `--private`)
 
 ## Completed
 
@@ -324,6 +324,22 @@ light styles from the chrome theme, not from the macOS system setting)
     `lsregister -f`, `--set-default-browser` reports `set=1 state=1` and
     `NSWorkspace` resolves a web URL to `Nova Browser.app`. Revert in System
     Settings → Desktop & Dock → Default web browser.
+- **0.9.11 — private tabs**
+  - `--private` starts the window on a private tab and Cmd+Shift+N opens one in
+    the current strip. Private views use
+    `WKWebsiteDataStore.nonPersistentDataStore`, so cookies, cache and local
+    storage end with the tab.
+  - `record_visit` is the single history gate: private tabs, the fixture and a
+    profile with history off write nothing. `save_session` skips private tabs
+    and writes nothing at all for a private-only session, so quitting it cannot
+    erase the saved normal session. Favicons are not cached for private tabs.
+  - The tab strip and accessibility label prefix private tabs with
+    **Private ·**.
+  - Evidence: `browser/tests/private.sh` requires
+    `private: tabs=1 flag=1 persistent=0 visits=0`, no session or history line
+    for the private URL, and the normal-tab control run reporting
+    `flag=0 persistent=1 visits=1` with the session saved.
+
 - **0.9.10 — pages follow the chrome appearance**
   - Every WKWebView gets the appearance the chrome theme implies, before the
     first load and again on every theme change, so `prefers-color-scheme`
@@ -484,8 +500,10 @@ light styles from the chrome theme, not from the macOS system setting)
   not back/forward stacks, scroll offsets or form state.
 - Search has no suggestion feed or per-provider settings UI; only the three
   built-in providers, cycled with Cmd+Shift+S.
-- No private windows, permissions, inspector, Developer ID signing/notarization
-  or release. Find reports Found / No matches, not a match count; the bar's field
+- Private browsing is a tab, not a separate window: it shares the strip with
+  normal tabs, and a private tab is still visible in the strip while open. No
+  permission prompts, inspector, Developer ID signing/notarization or release.
+  Find reports Found / No matches, not a match count; the bar's field
   and close control are in the accessibility tree, its status text is not. Zoom
   is stored per host, so every tab showing that host shares one zoom level. The
   chrome accessibility tree covers tabs,

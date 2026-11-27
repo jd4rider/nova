@@ -109,6 +109,7 @@ blinking caret, and the loading bar follows WebKit's own estimate.
 | Cmd+Shift+S | cycle search provider (same order as the field's chip) |
 | Cmd+Shift+P | cycle theme (Gruvbox → Midnight → Light → Solarized → Nova Dark) |
 | Cmd+T / Cmd+W / Cmd+Shift+T | new / close / restore tab |
+| Cmd+Shift+N | open a private tab |
 | Cmd+1–6 | select a tab |
 
 These chords are forwarded from page focus through the same narrow host queue
@@ -127,7 +128,7 @@ open -a "/Applications/Nova Browser.app"
 ```
 
 The script rebuilds, renders the icon, assembles `Nova Browser.app`, ad-hoc
-signs it locally and replaces the installed copy. Version 0.9.8 is installed.
+signs it locally and replaces the installed copy. Version 0.9.11 is installed.
 Re-run it after every completed phase. This is not Developer ID signing or
 notarization.
 
@@ -300,6 +301,20 @@ that opens a link follow the choice. A bare binary has no bundle identifier and
 reports `state=0` rather than pretending; the commands only mean something for
 the installed app. This ad-hoc signed build is not notarized, so macOS may still
 show a confirmation for a link opened from another app.
+
+## Private tabs
+
+Cmd+Shift+N opens a private tab, and `nova-browser --private` starts the window
+with one. A private tab uses WebKit's `WKWebsiteDataStore.nonPersistentDataStore`,
+so its cookies, cache and local storage live only as long as the tab. Nova
+writes no history visit for it, saves no session entry for it, and caches no
+favicon for it; the tab is labelled **Private ·** so it is never mistaken for a
+normal one. Bookmarks still work, and downloads still go to the Downloads folder.
+
+This is a private *tab*, not a separate private window: it sits in the same tab
+strip as normal tabs, and closing it is how you leave. A private-only session
+never overwrites the saved session, so quitting it does not lose the tabs you
+had before.
 
 ## Bookmarks
 

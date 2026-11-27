@@ -38,6 +38,15 @@ fn create(parent: Int, x: Int, y: Int, width: Int, height: Int) -> Int {
     return view.wv_create(parent, x, y, width, height)
 }
 
+fn create_private(parent: Int, x: Int, y: Int, width: Int, height: Int) -> Int {
+    return view.wv_create_private(parent, x, y, width, height)
+}
+
+// WebKit's own answer about the tab's data store, not Nova's intent.
+fn store_persistent(handle: Int) -> Bool {
+    return view.wv_store_persistent(handle)
+}
+
 fn set_bounds(handle: Int, x: Int, y: Int, width: Int, height: Int) {
     view.wv_set_bounds(handle, x, y, width, height)
 }

@@ -6,6 +6,8 @@
 // document, style, layout or paint work to this module.
 
 extern "C" fn nova_webview_create(parent: Int, x: Int, y: Int, width: Int, height: Int) -> Int
+extern "C" fn nova_webview_create_private(parent: Int, x: Int, y: Int, width: Int, height: Int) -> Int
+extern "C" fn nova_webview_store_persistent(handle: Int) -> Int
 extern "C" fn nova_webview_set_bounds(handle: Int, x: Int, y: Int, width: Int, height: Int)
 extern "C" fn nova_webview_destroy(handle: Int)
 extern "C" fn nova_webview_focus_chrome(handle: Int)
@@ -54,6 +56,16 @@ fn wv_engine() -> String {
 
 fn wv_create(parent: Int, x: Int, y: Int, width: Int, height: Int) -> Int {
     return nova_webview_create(parent, x, y, width, height)
+}
+
+// A private view uses WKWebsiteDataStore's non-persistent store, so cookies
+// and cache disappear with the tab.
+fn wv_create_private(parent: Int, x: Int, y: Int, width: Int, height: Int) -> Int {
+    return nova_webview_create_private(parent, x, y, width, height)
+}
+
+fn wv_store_persistent(handle: Int) -> Bool {
+    return nova_webview_store_persistent(handle) == 1
 }
 
 fn wv_set_bounds(handle: Int, x: Int, y: Int, width: Int, height: Int) {

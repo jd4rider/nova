@@ -1358,3 +1358,34 @@ dark: pass=2 fail=0
 - Regressions: find 11/11, accessibility 17/17.
   Not tested: switching the macOS system appearance while Nova runs, and a
   page that only checks the query at load time.
+
+## 0.9.11 — private tabs
+
+- `nova_webview_create_store(..., private)` sets
+  `WKWebsiteDataStore.nonPersistentDataStore` before the view is created, so
+  cookies, cache and local storage belong to the tab and vanish with it.
+  `nova_webview_store_persistent` reports WebKit's own `isPersistent` answer
+  rather than Nova's intent.
+- `--private` opens the window on a private tab; Cmd+Shift+N appends one. The
+  tab strip and the accessibility tab name prefix it with `Private ·`.
+- History goes through one gate, `record_visit`, which refuses private tabs, the
+  bundled fixture and profiles with history off. `save_session` skips private
+  tabs and writes nothing when no persistable tab remains, so quitting a
+  private-only session leaves the saved normal session intact. Favicon caching
+  is skipped for private tabs.
+- Evidence: `browser/tests/private.sh` 5/5:
+
+```
+private: tabs=1 flag=1 persistent=0 visits=0
+PASS the launch tab is private with WebKit's non-persistent store
+PASS a private tab writes no session entry
+PASS a private page writes no history
+private: tabs=1 flag=0 persistent=1 visits=1
+PASS a normal tab uses the persistent store and records the visit
+PASS a normal tab still saves the session
+private: pass=5 fail=0
+```
+
+- Not tested: cookie isolation demonstrated by reading a cookie written in a
+  normal tab (WebKit's non-persistent store is the guarantee), the
+  Cmd+Shift+N keystroke in a live window, and private downloads.
