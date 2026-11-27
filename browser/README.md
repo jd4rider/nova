@@ -252,10 +252,15 @@ A profile folder also brings over the parts of Chrome that map onto Nova:
   Nova's start page in a new tab.
 - **Bookmarks.** Bookmark bar and Other bookmarks, as above.
 
-Not imported: extensions, passwords, cookies, site permissions, open tabs
-(the last session is not read), download history or themes. Passwords in
-particular stay in Chrome's Keychain-backed store; Nova reads no credential
-database.
+Extensions are listed, not run: `extensions.tsv` and `chrome-extensions.tsv`
+record what Chrome has (name from whichever `_locales` locale is installed,
+version, enabled state), but WebKit loads Safari web extensions and cannot load
+a Chrome `.crx` package.
+
+Not imported: passwords, cookies, site permissions, open tabs (the last session
+is not read) or themes. Completed downloads come over when the file still exists
+on disk. Passwords in particular stay in Chrome's Keychain-backed store; Nova
+reads no credential database.
 
 A dry run applies everything in memory and writes nothing, so you can see what
 would change first:
@@ -296,12 +301,26 @@ folder unless `NOVA_BROWSER_DOWNLOAD_DIR` says otherwise.
 pauses mid-transfer, resumes to 51,200 bytes, then downloads again into the same
 directory as `nova-fixture-1.bin`.
 
+Blob downloads — chatgpt.com's export button, for example — never go through
+`WKDownload`, because WebKit cannot download a `blob:` URL. A document-start
+script intercepts `<a download>` clicks on blob links, reads the blob as base64
+and posts it to the host, which writes the file into the same directory and
+records a finished row. `browser/tests/blob.sh` proves that path end to end.
+
 A finished download is recorded in the profile (`downloads.tsv`: bytes, time,
 path, name) once, and the last 20 come back as shelf rows after a restart. Their
 rows and Show-in-Finder buttons are in the accessibility tree too. Revealing a
 recorded file that was moved or deleted reports that it is gone instead of
 opening an empty Finder window. A Clear control in the shelf header forgets the
 finished rows and the record together.
+
+## Favicons
+
+Each tab draws the site's `/favicon.ico`, fetched once per host with `curl` into
+`favicons/` under the profile and painted with a new `gui.image` host primitive.
+Sites without one get a letter tile. The fetch is skipped with
+`NOVA_BROWSER_NO_FAVICONS=1`. `browser/tests/favicons.sh` serves a real PNG over
+loopback and requires the cached bytes to match it.
 
 ## Performance
 
