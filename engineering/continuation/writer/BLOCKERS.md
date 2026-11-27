@@ -20,7 +20,6 @@ clang, CoreText and the native GUI.
 |---|---|---|
 | App undo still uses serialized snapshots | compiler now supports `List<Document>`; app can switch later | DEC-WRI-006; not user-visible |
 | Index assignment through a struct field is rejected | session replacement goes through `wr_put` with a local list copy | compiler parity |
-| No native save panel | Save As cannot exist; Save writes the current path | WRI-07.004 |
 | No alert/confirmation bridge | recovery auto-restores without a prompt and has no discard command | WRI-07.005 |
 | No app-defined native menu model | only the fixed host app menu; commands live in the ribbon | host work |
 | No ZIP central directory/deflate | DOCX/ODT/native ZIP container blocked | WRI-10 prerequisite |
@@ -52,6 +51,9 @@ clang, CoreText and the native GUI.
 - **No incremental layout.** `layout.nova` caches measured paragraphs by ID and
   content; only changed/new paragraphs are reshaped. An 80-paragraph benchmark
   measured a one-paragraph edit at 56ms vs 2,265ms full.
+- **No native save panel.** The host exposes `nova_gui_save_panel`; Writer's
+  Save As uses the panel URL and suggested `.novadoc` name, and
+  `writer/tests/save-panel.sh` covers confirm and cancel.
 
 ## Known correctness limits
 
@@ -73,7 +75,5 @@ clang, CoreText and the native GUI.
   tab’s recovery file, but there is no “discard recovery” command.
 - IME composition is painted from a temporary document/layout, so it reflows
   while composing but is not part of the document until commit.
-- Save As uses a folder picker and never overwrites; choosing an existing file
-  name creates a new unique name instead.
 - AppKit prints a benign `ApplePersistenceIgnoreState` notice at launch; window
   state restoration is not managed.

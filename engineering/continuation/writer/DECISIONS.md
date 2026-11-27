@@ -136,8 +136,8 @@ Status: accepted.
 
 Every visible command executes real behavior. A command that cannot work yet
 is absent from the ribbon, or present but disabled with a visible reason and
-recorded in `BLOCKERS.md`. This applies to Save As (no save panel), DOCX
-export, PDF export, comments and collaboration until their slices land.
+recorded in `BLOCKERS.md`. This applies to DOCX export, PDF export, comments
+and collaboration until their slices land.
 
 ## DEC-WRI-006 — App undo history uses serialized snapshots
 
@@ -346,3 +346,36 @@ the paragraph, and measured line boxes with relative y positions.
   wrapping are avoided. The cache is in memory and is not persisted.
 - A future incremental paginator can keep page objects stable and repaint only
   visible pages without changing the cache API.
+
+## DEC-WRI-013 — Save As uses the native NSSavePanel
+
+Status: accepted.
+
+### Context
+
+The host exposed only `NSOpenPanel`. Writer's Save As used a folder picker and
+invented a unique filename, so it could never replace an existing document and
+the user could not name the file in the dialog.
+
+### Decision
+
+- `runtime/gui.m` exposes `nova_gui_save_panel(default_name, directory)`.
+  It opens a real `NSSavePanel`, suggests a `.novadoc` filename, starts in the
+  current document's folder when one exists, and returns the panel's URL or
+  `""` on cancel.
+- The panel owns overwrite confirmation and extension handling. Writer writes
+  to the returned path; it no longer appends a numeric suffix to avoid an
+  existing file.
+- Save As always opens the panel. Save on an untitled document opens it too;
+  Save on a document with a path writes that path directly.
+- `NOVA_GUI_SAVE_PANEL_PROBE` lets a test stop the real modal with confirm or
+  cancel; the chosen path still comes from `panel.URL`.
+
+### Consequences
+
+- A user can name a document and replace an existing file after the system's
+  overwrite confirmation.
+- Save As is machine-tested for both confirm and cancel in
+  `writer/tests/save-panel.sh`; the open panel remains a manual check.
+- The host still has no alert bridge, so the recovery prompt/discard flow
+  remains WRI-07.005.

@@ -28,10 +28,10 @@ rejection, and recovery save/load/list/newest/remove/reject.
 clang -fobjc-arc -O2 -c runtime/gui.m -o /tmp/nova-gui-check.o
 ```
 
-Result: exit 0. Two warnings: `accessibilityPerformPress` conflicts with the
-AppKit protocol declaration, and `LSCopyDefaultHandlerForURLScheme` is
-deprecated. The first is pre-existing; the second comes from unrelated Browser
-work. Neither is introduced by Writer.
+Result: exit 0. Three warnings: `accessibilityPerformPress` conflicts with the
+AppKit protocol declaration, `LSCopyDefaultHandlerForURLScheme` is deprecated,
+and `NSSavePanel.allowedFileTypes` is deprecated in macOS 12. The first two are
+pre-existing; the save-panel warning comes from the new bridge.
 
 ## 3. App build
 
@@ -253,6 +253,28 @@ edit_full_ms=2265 edit_incremental_ms=56 edit_measured=1 edit_reused=79
 The benchmark is opt-in via `NOVA_WRITER_LAYOUT_BENCH=1`; normal acceptance
 stays fast.
 
+## 16. Native Save As panel
+
+```sh
+sh writer/tests/save-panel.sh
+```
+
+Result: `PASS save panel wrote /tmp/nova-writer-save-panel/panel-save.novadoc`
+and `PASS save panel cancel left no file`, exit 0. The host opens a real
+`NSSavePanel`, sets the suggested name and directory, and returns the panel's
+URL. The test probe only stops the modal after 0.35s; it does not supply the
+result. A target named `panel-save` without an extension was returned as
+`panel-save.novadoc`, the saved file starts with `NOVADOC	4`, and cancel
+returned no path. Trace:
+
+```
+save panel response=1 cancelled=0 path=/tmp/nova-writer-save-panel/panel-save.novadoc
+save panel response=0 cancelled=1 path=
+```
+
+The native open panel is still a manual check; Save As is now automated through
+the real panel.
+
 ## Verified vs not verified
 
 Verified by machine: document model and edits, grapheme boundaries, undo/redo
@@ -262,11 +284,11 @@ incremental cache reuse/equivalence and timing, hit-testing, mixed-script
 fallback, auto/LTR/RTL paragraph direction, RTL caret geometry, CJK wrapping,
 recovery save/load/list/remove, a two-process crash,
 app startup restore, the first autosave write, IME marked-text composition and
-Escape cancellation through the host probe, native window launch and rendering,
-bundle signing and installation.
+Escape cancellation through the host probe, native Save As confirm/cancel,
+native window launch and rendering, bundle signing and installation.
 
 Not machine-verified: interactive typing, selection, clipboard, zoom, theme
-switching, save/open through the native panels, the sidebar direction control,
+switching, the native open panel, the sidebar direction control,
 a real Japanese/Chinese/Korean input source (the probe drives the same
 `NSTextInputClient` entry points), accessibility navigation, per-run bidi caret
 positions inside mixed-direction lines, hyphenation, the 4-second autosave

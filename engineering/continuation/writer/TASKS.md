@@ -120,9 +120,12 @@ Stable IDs are permanent. Statuses are evidence-based. See `EVIDENCE.md`.
   every 4 seconds under Application Support, epoch-named; startup restores up
   to six valid files as dirty tabs; save and clean close remove them. A
   two-process crash test and installed-app restore pass.
-- **WRI-07.004 — Save As dialog: BLOCKED.** No `NSSavePanel` bridge. Save
-  writes the current path; a new document uses the native folder picker and a
-  unique filename, never overwriting.
+- **WRI-07.004 — Save As dialog: VERIFIED.** `nova_gui_save_panel` opens a
+  native `NSSavePanel`, accepts a suggested filename and starting directory,
+  and returns the panel's URL or `""` on cancel. Writer's Save As and untitled
+  Save use it; the panel owns overwrite confirmation and appends `.novadoc`.
+  `writer/tests/save-panel.sh` opens the real panel, verifies the saved v4 file
+  and verifies that cancel writes nothing.
 - **WRI-07.005 — Recovery prompt/discard UI: TODO.** Startup auto-restores
   without a confirmation dialog because the host has no alert bridge. There
   is no “discard recovery” command.
@@ -147,9 +150,9 @@ Stable IDs are permanent. Statuses are evidence-based. See `EVIDENCE.md`.
 
 Recovery save/load, a two-process crash, app startup restore, the first
 autosave write, IME marked-text commit/cancel, mixed-script fallback, bidi
-caret geometry, CJK wrapping, inline run propagation and incremental layout
-cache counts/timing are machine-tested. Interactive typing, selection,
-clipboard, zoom, theme, native file panels, the sidebar direction control, the
-Bold/Italic buttons, the 4-second autosave cadence over a long session, and
-recovery cleanup after save are wired but not automated. Do not mark them
-VERIFIED until an automated GUI test exists.
+caret geometry, CJK wrapping, inline run propagation, incremental layout
+cache counts/timing and native Save As confirm/cancel are machine-tested.
+Interactive typing, selection, clipboard, zoom, theme, the native open panel,
+the sidebar direction control, the Bold/Italic buttons, the 4-second autosave
+cadence over a long session, and recovery cleanup after save are wired but not
+automated. Do not mark them VERIFIED until an automated GUI test exists.

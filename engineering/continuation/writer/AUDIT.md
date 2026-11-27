@@ -30,7 +30,7 @@ missing. Names and APIs below were read from source, not assumed.
 | Accessibility tree | verified | pushed elements, roles, labels, values, selection; `AXPress` maps to click |
 | Filesystem | verified | read/write text and bytes, exists, is_dir, mkdir, list, cwd, sha256 |
 | Native open panel | verified | `gui.pick_file`, `gui.pick_folder` (open only) |
-| Native save panel | **missing** | no `NSSavePanel` bridge; Writer must not pretend a save dialog exists |
+| Native save panel | verified | `gui.save_panel(name, dir)` wraps `NSSavePanel`; Writer Save As confirm/cancel passes in `writer/tests/save-panel.sh` |
 | Native application menu | partial | fixed app/file menu and tab context menu; no app-defined menu model |
 | Appearance | verified | light/dark switch for native chrome |
 | Multi-window | **missing** | one window per process |

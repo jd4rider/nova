@@ -115,6 +115,7 @@ extern "C" fn nova_fs_is_dir(path: String) -> Int
 extern "C" fn nova_fs_mkdir(path: String) -> Int
 extern "C" fn nova_fs_list(path: String) -> String
 extern "C" fn nova_gui_panel(mode: Int) -> String
+extern "C" fn nova_gui_save_panel(default_name: String, directory: String) -> String
 extern "C" fn nova_gui_clipboard_get() -> String
 extern "C" fn nova_gui_clipboard_set(text: String)
 extern "C" fn nova_term_start(command: String, cwd: String) -> Int
@@ -890,6 +891,12 @@ fn pick_file() -> String {
 
 fn pick_folder() -> String {
     return nova_gui_panel(1)
+}
+
+// Native macOS save panel. Returns the chosen path, or "" on cancel. The
+// suggested name may include the `.novadoc` extension; directory may be "".
+fn save_panel(default_name: String, directory: String) -> String {
+    return nova_gui_save_panel(default_name, directory)
 }
 
 // The system clipboard, shared with every other application.

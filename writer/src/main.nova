@@ -215,14 +215,27 @@ fn wr_slug(title: String) -> String {
     return out
 }
 
-fn wr_unique_path(dir: String, base: String) -> String {
-    var path = dir + "/" + base + ".novadoc"
-    var n = 2
-    while gui.exists(path) {
-        path = dir + "/" + base + " " + n.to_string() + ".novadoc"
-        n = n + 1
+fn wr_dir(path: String) -> String {
+    let chars = path.chars()
+    var cut = 0 - 1
+    var i = 0
+    while i < chars.len() {
+        if chars[i] == "/" {
+            cut = i
+        }
+        i = i + 1
     }
-    return path
+    if cut < 0 {
+        return ""
+    }
+    return tx.tx_slice(chars, 0, cut)
+}
+
+fn wr_save_name(s: Session) -> String {
+    if s.path.len() > 0 {
+        return wr_base(s.path)
+    }
+    return wr_slug(s.doc.title) + ".novadoc"
 }
 
 fn wr_no_text() -> List<String> {
@@ -1097,11 +1110,10 @@ fn wr_save(app: App, save_as: Bool) -> App {
     var s = app.sessions[app.active]
     var path = s.path
     if save_as || path.len() == 0 {
-        let dir = gui.pick_folder()
-        if dir.len() == 0 {
+        path = gui.save_panel(wr_save_name(s), wr_dir(path))
+        if path.len() == 0 {
             return app
         }
-        path = wr_unique_path(dir, wr_slug(s.doc.title))
     }
     let error = store.wd_save(s.doc, path)
     if error.len() == 0 {
@@ -2093,11 +2105,17 @@ fn main() {
     let snapshot = gui.env("NOVA_WRITER_SNAPSHOT")
     let snapshot_preedit = gui.env("NOVA_WRITER_SNAPSHOT_PREEDIT") == "1"
     let autoclose = gui.env("NOVA_WRITER_AUTOCLOSE")
+    let save_probe = gui.env("NOVA_WRITER_SAVE_PANEL_PROBE")
     let trace = gui.env("NOVA_WRITER_TRACE") == "1"
+    var save_probe_done = false
     var last_preedit = ""
     var snapshot_saved = false
     var running = true
     while running {
+        if save_probe.len() > 0 && !save_probe_done {
+            app = wr_save(app, true)
+            save_probe_done = true
+        }
         app = wr_autosave(app)
         app = wr_relayout(app)
         // Read the host composition before drawing so a snapshot taken after

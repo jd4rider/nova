@@ -3163,6 +3163,81 @@ nova_str nova_gui_panel(int64_t mode) {
     }
 }
 
+/* Native Save As panel. The caller supplies a suggested filename and an
+ * optional starting directory; the panel owns overwrite confirmation and
+ * returns "" when the user cancels. NOVA_GUI_SAVE_PANEL_PROBE auto-confirms a
+ * path (or cancels with "cancel") so the bridge and Writer's Save As path can
+ * be tested without a human. */
+nova_str nova_gui_save_panel(nova_str default_name, nova_str directory) {
+    @autoreleasepool {
+        if (!NSApp) return nova_gui_empty();
+        NSSavePanel *panel = [NSSavePanel savePanel];
+        [panel setTitle:@"Save Document"];
+        [panel setCanCreateDirectories:YES];
+        [panel setExtensionHidden:NO];
+        [panel setAllowsOtherFileTypes:NO];
+        [panel setAllowedFileTypes:@[@"novadoc"]];
+
+        char *name = nova_gui_cstr(default_name);
+        if (name && name[0]) {
+            [panel setNameFieldStringValue:[NSString stringWithUTF8String:name]];
+        }
+        free(name);
+
+        char *dir = nova_gui_cstr(directory);
+        if (dir && dir[0]) {
+            NSString *path = [NSString stringWithUTF8String:dir];
+            [panel setDirectoryURL:[NSURL fileURLWithPath:path isDirectory:YES]];
+        }
+        free(dir);
+
+        const char *probe = getenv("NOVA_GUI_SAVE_PANEL_PROBE");
+        int probe_cancel = probe && strcmp(probe, "cancel") == 0;
+        NSString *probe_path = nil;
+        NSTimer *probe_timer = nil;
+        if (probe && probe[0] && !probe_cancel) {
+            probe_path = [NSString stringWithUTF8String:probe];
+            if (probe_path.length > 0) {
+                [panel setDirectoryURL:[NSURL fileURLWithPath:[probe_path stringByDeletingLastPathComponent]
+                                                   isDirectory:YES]];
+                [panel setNameFieldStringValue:[probe_path lastPathComponent]];
+            }
+        }
+        if (probe && probe[0]) {
+            probe_timer = [NSTimer timerWithTimeInterval:0.35 repeats:NO block:^(NSTimer *timer) {
+                (void)timer;
+                [NSApp stopModalWithCode:(probe_cancel ? NSModalResponseCancel : NSModalResponseOK)];
+            }];
+            [[NSRunLoop mainRunLoop] addTimer:probe_timer forMode:NSModalPanelRunLoopMode];
+            [[NSRunLoop mainRunLoop] addTimer:probe_timer forMode:NSDefaultRunLoopMode];
+        }
+
+        /* A borderless Nova window can leave the app inactive, and an inactive
+         * app's modal panel never comes forward: activate first. */
+        [NSApp activateIgnoringOtherApps:YES];
+        nova_gui_own_modal = 1;
+        NSModalResponse panel_response = [panel runModal];
+        nova_gui_own_modal = 0;
+        if (probe_timer) [probe_timer invalidate];
+
+        NSString *chosen = nil;
+        if (!probe_cancel && panel_response == NSModalResponseOK) {
+            chosen = [[panel URL] path];
+        }
+        nova_gui_trace("save panel response=%lld cancelled=%d path=%s",
+                       (long long)panel_response, probe_cancel,
+                       chosen ? [chosen UTF8String] : "");
+        if (!chosen || chosen.length == 0) return nova_gui_empty();
+        const char *utf8 = [chosen UTF8String];
+        size_t len = strlen(utf8);
+        char *copy = (char *)malloc(len + 1);
+        if (!copy) return nova_gui_empty();
+        memcpy(copy, utf8, len + 1);
+        nova_str result = {copy, (int64_t)len};
+        return result;
+    }
+}
+
 nova_str nova_env(nova_str name) {
     char *key = nova_gui_cstr(name);
     if (!key) return nova_gui_empty();

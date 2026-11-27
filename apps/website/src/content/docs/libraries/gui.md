@@ -59,7 +59,7 @@ The handoff is an internal weak symbol, not a new Nova type: GUI-only programs s
 | Area | Calls |
 |---|---|
 | Window | `open(title, w, h)`, `close()`, `is_open()`, `width()`, `height()`, `set_title(text)` |
-| Pickers | `pick_file()`, `pick_folder()` — native `NSOpenPanel`, returns `""` on cancel |
+| Pickers | `pick_file()`, `pick_folder()` — native `NSOpenPanel`; `save_panel(name, dir)` — native `NSSavePanel`; all return `""` on cancel |
 | Clipboard | `clipboard()`, `set_clipboard(text)` — the system pasteboard |
 | Terminal | `term_start(cmd, dir)`, `term_poll()`, `term_running()`, `term_clear()` — a real PTY (libc `posix_openpt` + `fork`) read by a host thread, so a child program sees a terminal |
 | Terminal input | `term_send(code)` — write a byte (`13` Enter, `127` Backspace) to the running PTY |

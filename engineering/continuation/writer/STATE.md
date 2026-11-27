@@ -1,8 +1,8 @@
 # Nova Writer — current state
 
 Updated: 2026-11-27
-Branch: `main` (Writer landed; v4 inline runs and incremental layout are the
-current slice).
+Branch: `main` (Writer landed; v4 inline runs, incremental layout and native
+Save As are current).
 Installed app: `/Applications/Nova Writer.app` — version 0.1.0,
 `dev.nova.writer.native`, ad-hoc signed.
 
@@ -31,17 +31,18 @@ It is not a mock and not a browser canvas.
   restores valid snapshots as dirty tabs; save and clean close remove them.
 - **Host** (`runtime/gui.m`, `libraries/nova-gui`): styled CoreText runs
   (sans/serif/mono, bold/italic/underline), measured advances, atomic rename,
-  epoch time and file deletion.
+  epoch time, file deletion and a native save panel.
 - **App** (`writer/src/main.nova`): tabs, ribbon with Bold/Italic, ruler,
   styles/direction and outline sidebar, pages, caret, selection, keyboard/mouse
-  editing, clipboard, IME composition, undo/redo, save/open, autosave, crash
-  restore, zoom, themes, paper size, accessibility labels, autoclose/snapshot
-  hooks.
+  editing, clipboard, IME composition, undo/redo, native Save As, save/open,
+  autosave, crash restore, zoom, themes, paper size, accessibility labels,
+  autoclose/snapshot hooks.
 - **Packaging** (`writer/scripts/install-macos.sh`): builds, renders the icon,
   creates and signs `Nova Writer.app`, installs to `/Applications`.
 - **Tests**: `writer/tests/core.sh` (156 assertions, headless),
   `writer/tests/recovery.sh` (two-process crash recovery),
-  `writer/tests/ime.sh` (14 IME composition assertions) and
+  `writer/tests/ime.sh` (14 IME composition assertions),
+  `writer/tests/save-panel.sh` (native Save As confirm/cancel) and
   `writer/tests/smoke.sh` (real window + PNG snapshot).
 
 ## Evidence (latest run)
@@ -70,12 +71,17 @@ It is not a mock and not a browser canvas.
   one-paragraph edit in an 80-paragraph fixture; cached output matches full
   layout. Ten iterations took 2,265ms full vs 56ms incremental (2,499ms vs
   30ms when nothing changed) on this host.
+- Native Save As: the real `NSSavePanel` returned the chosen path, appended
+  `.novadoc` to a name without an extension, and wrote a valid v4 document.
+  Cancel returned no path and left no file; both cases pass in
+  `writer/tests/save-panel.sh`.
 - Typography: mixed Latin/Hebrew/Arabic/CJK/emoji measures through CoreText;
   auto direction detects Hebrew, explicit LTR overrides it, an RTL paragraph
   is right-aligned with a right-to-left caret, and a CJK paragraph wraps with
   every line inside the column.
-- Host: `clang -fobjc-arc -O2 -c runtime/gui.m` exit 0; one pre-existing
-  `accessibilityPerformPress` warning.
+- Host: `clang -fobjc-arc -O2 -c runtime/gui.m` exit 0; three warnings: two
+  pre-existing AppKit/LaunchServices deprecations and the deprecated
+  `NSSavePanel.allowedFileTypes` API.
 - App build: `built .../writer/target/nova/nova-writer`, exit 0.
 - Smoke: `PASS writer window rendered`, exit 0.
 - Install: `Installed /Applications/Nova Writer.app`, exit 0;
@@ -96,8 +102,6 @@ It is not a mock and not a browser canvas.
   kinsoku; there is no hyphenation dictionary.
 - IME composition is painted from a temporary document/layout; the real
   document is unchanged until the input method commits.
-- Save As has no native save panel; Save writes the current path and a new
-  document uses the folder picker with a unique filename.
 - No recovery prompt or discard command: startup auto-restores every valid
   recovery file (up to six) as a dirty tab. Saving removes that tab’s file.
 - Autosave rewrites the whole document every 4 seconds; no incremental save,
@@ -111,13 +115,14 @@ It is not a mock and not a browser canvas.
 
 ## Active slice
 
-**WRI-07.004 — native save panel** is next (host work). WRI-05.005 landed:
-`layout.nova` caches measured paragraphs by stable ID and content, the app
-reuses unchanged lines after every edit, and an 80-paragraph benchmark measured
-a one-paragraph update at 56ms versus 2,265ms for a full relayout.
+**WRI-07.005 — recovery prompt/discard** is next. WRI-07.004 landed: the host
+exposes `NSSavePanel`, Writer's Save As uses the panel URL and suggested
+`.novadoc` name, and `writer/tests/save-panel.sh` verifies confirm and cancel.
+WRI-05.005 landed earlier: `layout.nova` caches measured paragraphs by stable
+ID and content, and an 80-paragraph benchmark measured a one-paragraph update
+at 56ms versus 2,265ms for a full relayout.
 
-After that: WRI-07.005 recovery prompt/discard, WRI-06.002 list numbering,
-WRI-05.002 sections/columns.
+After that: WRI-06.002 list numbering, WRI-05.002 sections/columns.
 
 ## Working-tree state
 

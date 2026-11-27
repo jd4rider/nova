@@ -8,10 +8,10 @@ that wraps AppKit/CoreText, which the directive permits as a native OS service.
 ## Status
 
 Version 0.1.0 — real document model, measured typography with mixed-script
-fallback, bidi paragraph direction, inline bold/italic and incremental
-layout, paginated A4 pages,
-editing, selection, IME composition, undo/redo, save/open, autosave, crash
-recovery, zoom, themes and an installable app. DOCX/ODT/PDF, tables, images,
+fallback, bidi paragraph direction, inline bold/italic, incremental layout,
+native Save As, paginated A4 pages, editing, selection, IME composition,
+undo/redo, save/open, autosave, crash recovery, zoom, themes and an
+installable app. DOCX/ODT/PDF, tables, images,
 headers and character styles are not implemented yet. See
 `engineering/continuation/writer/` for the ledger.
 
@@ -29,6 +29,9 @@ sh writer/tests/recovery.sh
 
 # IME marked text: commit and Escape cancellation
 sh writer/tests/ime.sh
+
+# Native Save As: confirm and cancel
+sh writer/tests/save-panel.sh
 
 # Build the app
 (cd writer && ../examples/nova-tool/target/nova/nova-tool build)
@@ -124,6 +127,7 @@ loader dispatches on the header.
 - `writer/tests/core.sh` — headless acceptance (156 assertions).
 - `writer/tests/recovery.sh` — crash recovery across two processes.
 - `writer/tests/ime.sh` — IME commit and Escape cancellation (14 assertions).
+- `writer/tests/save-panel.sh` — native Save As confirm and cancel.
 - `writer/tests/smoke.sh` — native window launch/render.
 - `writer/scripts/install-macos.sh` — bundle and install.
 
@@ -131,10 +135,10 @@ loader dispatches on the header.
 
 No DOCX/ODT/RTF/HTML/PDF, tables, images, headers/footers, footnotes,
 sections, character styles, list numbering, comments, revisions, or
-accessibility text ranges. Save As has no native save panel; a new document
-uses the folder picker and a unique name. Autosave rewrites the whole document
-every four seconds, with no external-change detection or encryption, and
-recovery auto-restores without a prompt or discard command. Unchanged
-paragraphs keep their measured lines; only edited or new paragraphs are
-reshaped, though pagination still copies line boxes. These are tracked in
+accessibility text ranges. Save As uses the native macOS save panel; recovery
+still auto-restores without a prompt or discard command. Autosave rewrites the
+whole document every four seconds, with no external-change detection or
+encryption. Unchanged paragraphs keep their measured lines; only edited or new
+paragraphs are reshaped, though pagination still copies line boxes. These are
+tracked in
 `engineering/continuation/writer/BLOCKERS.md`, not hidden.
