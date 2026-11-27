@@ -8,10 +8,10 @@ that wraps AppKit/CoreText, which the directive permits as a native OS service.
 ## Status
 
 Version 0.1.0 — real document model, measured typography with mixed-script
-fallback and bidi paragraph direction, paginated A4 pages, editing, selection,
-IME composition, undo/redo, save/open, autosave, crash recovery, zoom, themes
-and an installable app. DOCX/ODT/PDF, tables, images, headers and inline
-formatting are not implemented yet. See
+fallback, bidi paragraph direction and inline bold/italic, paginated A4 pages,
+editing, selection, IME composition, undo/redo, save/open, autosave, crash
+recovery, zoom, themes and an installable app. DOCX/ODT/PDF, tables, images,
+headers and character styles are not implemented yet. See
 `engineering/continuation/writer/` for the ledger.
 
 ## Build, test, install
@@ -20,7 +20,7 @@ formatting are not implemented yet. See
 # Compiler (if not already built)
 (cd examples/nova-tool && ../../bootstrap/nova build)
 
-# Headless core: 124 assertions
+# Headless core: 147 assertions
 sh writer/tests/core.sh
 
 # Two-process crash recovery
@@ -90,6 +90,7 @@ automated test drives the same `NSTextInputClient` entry points with
 | New / Open / Save | Cmd+N / Cmd+O / Cmd+S |
 | Save As | Cmd+Shift+S |
 | Undo / Redo | Cmd+Z / Cmd+Shift+Z |
+| Bold / Italic | Cmd+B / Cmd+I |
 | Select all / Copy / Cut / Paste | Cmd+A / Cmd+C / Cmd+X / Cmd+V |
 | Move by grapheme / line | Left/Right / Up/Down |
 | Line start/end | Home / End |
@@ -100,18 +101,16 @@ automated test drives the same `NSTextInputClient` entry points with
 Shift extends the selection. Click and drag selects; Shift-click extends from
 the caret.
 
-## Native format
-
-`.novadoc` v3 is a deterministic UTF-8 container: magic header, version,
+## Native format`.novadoc` v4 is a deterministic UTF-8 container: magic header, version,
 title, language, next paragraph ID, tab-separated paragraph records (ID, kind,
-alignment, direction, escaped text) and a 31-based polynomial body checksum.
-Version 1 migrates with language `en` and auto direction; version 2 keeps its
-language and gains auto direction. Both are rewritten as v3 on the next save.
-Save writes
-`<path>.tmp`, verifies it, then renames atomically. Unknown records, bad
-checksums, missing v3 fields and malformed data are rejected. A ZIP container
-with styles and media is a later migration; the loader dispatches on the
-header.
+alignment, direction, escaped text), inline run records and a 31-based
+polynomial body checksum. Version 1 migrates with language `en` and auto
+direction; version 2 keeps its language and gains auto direction; version 3
+keeps direction and starts with no inline runs. All are rewritten as v4 on the
+next save. Save writes `<path>.tmp`, verifies it, then renames atomically.
+Unknown records, bad checksums, missing v4 fields and malformed data are
+rejected. A ZIP container with styles and media is a later migration; the
+loader dispatches on the header.
 
 ## Packages
 
@@ -119,7 +118,7 @@ header.
   `store.nova`, `recovery.nova`. GUI-independent and reusable by future Nova
   Office apps.
 - `writer/src/main.nova` — the application.
-- `writer/tests/core.sh` — headless acceptance (124 assertions).
+- `writer/tests/core.sh` — headless acceptance (147 assertions).
 - `writer/tests/recovery.sh` — crash recovery across two processes.
 - `writer/tests/ime.sh` — IME commit and Escape cancellation (14 assertions).
 - `writer/tests/smoke.sh` — native window launch/render.
@@ -128,8 +127,8 @@ header.
 ## Limits
 
 No DOCX/ODT/RTF/HTML/PDF, tables, images, headers/footers, footnotes,
-sections, inline runs, list numbering, comments, revisions, or accessibility
-text ranges. Save As has no native save panel; a new document
+sections, character styles, list numbering, comments, revisions, or
+accessibility text ranges. Save As has no native save panel; a new document
 uses the folder picker and a unique name. Autosave rewrites the whole document
 every four seconds, with no external-change detection or encryption, and
 recovery auto-restores without a prompt or discard command. The editor

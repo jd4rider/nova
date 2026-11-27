@@ -132,14 +132,14 @@ fn main() -> Int {
     let serialized = wd.wd_serialize(saved)
     let loaded = wd.wd_parse(serialized)
     failures = failures + check("serialized document loads", loaded.ok)
-    failures = failures + check("serialize writes version 3", serialized.starts_with("NOVADOC\t3\n"))
+    failures = failures + check("serialize writes version 4", serialized.starts_with("NOVADOC\t4\n"))
     failures = failures + check("serialize writes the language", serialized.contains("lang\ten\n"))
     failures = failures + check("title survives escaping", loaded.doc.title == "A\tB")
     failures = failures + check("paragraph count survives", loaded.doc.paragraphs.len() == saved.paragraphs.len())
     failures = failures + check("text survives", loaded.doc.paragraphs[0].text == "The quick")
     failures = failures + check("kind survives", loaded.doc.paragraphs[1].kind == wd.wd_heading2())
     failures = failures + check("next_id survives", loaded.doc.next_id == saved.next_id)
-    failures = failures + check("loaded document is version 3", loaded.doc.version == 3)
+    failures = failures + check("loaded document is version 4", loaded.doc.version == 4)
     failures = failures + check("language survives", loaded.doc.language == "en")
     let empty_round = wd.wd_parse(wd.wd_serialize(wd.wd_empty()))
     failures = failures + check("empty paragraph round trips", empty_round.ok && empty_round.doc.paragraphs[0].text == "")
@@ -150,25 +150,36 @@ fn main() -> Int {
     let v1_text = v1_body + "CK\t" + wd.wd_checksum(v1_body).to_string() + "\n"
     let migrated = wd.wd_parse(v1_text)
     failures = failures + check("v1 file loads", migrated.ok)
-    failures = failures + check("v1 file migrates to v3", migrated.doc.version == 3)
+    failures = failures + check("v1 file migrates to v4", migrated.doc.version == 4)
     failures = failures + check("v1 gets the default language", migrated.doc.language == "en")
     failures = failures + check("v1 text survives migration", migrated.doc.paragraphs[0].text == "Old text")
     failures = failures + check("v1 doc id survives", migrated.doc.doc_id == 7)
     failures = failures + check("v1 gets auto direction", migrated.doc.paragraphs[0].dir == wd.wd_dir_auto())
-    failures = failures + check("migrated document serializes as v3", wd.wd_serialize(migrated.doc).starts_with("NOVADOC\t3\n"))
+    failures = failures + check("migrated document serializes as v4", wd.wd_serialize(migrated.doc).starts_with("NOVADOC\t4\n"))
     failures = failures + check("v1 header is recognized", store.wd_has_native_header(v1_text))
-    failures = failures + check("v3 header is recognized", store.wd_has_native_header(serialized))
+    failures = failures + check("v4 header is recognized", store.wd_has_native_header(serialized))
 
     // Version 2 already had a language but no paragraph direction.
     let v2_body = "NOVADOC\t2\nid\t8\ntitle\tV2 Legacy\nlang\tfr\nnext\t2\np\t1\t0\t0\tBonjour\nEND\n"
     let v2_text = v2_body + "CK\t" + wd.wd_checksum(v2_body).to_string() + "\n"
     let migrated2 = wd.wd_parse(v2_text)
     failures = failures + check("v2 file loads", migrated2.ok)
-    failures = failures + check("v2 file migrates to v3", migrated2.doc.version == 3)
+    failures = failures + check("v2 file migrates to v4", migrated2.doc.version == 4)
     failures = failures + check("v2 language survives", migrated2.doc.language == "fr")
     failures = failures + check("v2 gets auto direction", migrated2.doc.paragraphs[0].dir == wd.wd_dir_auto())
     failures = failures + check("v2 text survives", migrated2.doc.paragraphs[0].text == "Bonjour")
     failures = failures + check("v2 header is recognized", store.wd_has_native_header(v2_text))
+
+    // Version 3 already had direction but no inline runs.
+    let v3_body = "NOVADOC\t3\nid\t9\ntitle\tV3 Legacy\nlang\ten\nnext\t2\np\t1\t0\t0\t0\tTrois\nEND\n"
+    let v3_text = v3_body + "CK\t" + wd.wd_checksum(v3_body).to_string() + "\n"
+    let migrated3 = wd.wd_parse(v3_text)
+    failures = failures + check("v3 file loads", migrated3.ok)
+    failures = failures + check("v3 file migrates to v4", migrated3.doc.version == 4)
+    failures = failures + check("v3 keeps direction", migrated3.doc.paragraphs[0].dir == wd.wd_dir_auto())
+    failures = failures + check("v3 starts with no runs", migrated3.doc.paragraphs[0].runs.len() == 0)
+    failures = failures + check("v3 text survives", migrated3.doc.paragraphs[0].text == "Trois")
+    failures = failures + check("v3 header is recognized", store.wd_has_native_header(v3_text))
 
     let no_lang_body = "NOVADOC\t2\nid\t1\ntitle\tNo Lang\nnext\t2\np\t1\t0\t0\tx\nEND\n"
     let no_lang = no_lang_body + "CK\t" + wd.wd_checksum(no_lang_body).to_string() + "\n"
@@ -179,6 +190,9 @@ fn main() -> Int {
     let bad_dir_body = "NOVADOC\t3\nid\t1\ntitle\tBad Dir\nlang\ten\nnext\t2\np\t1\t0\t0\t3\tx\nEND\n"
     let bad_dir = bad_dir_body + "CK\t" + wd.wd_checksum(bad_dir_body).to_string() + "\n"
     failures = failures + check("unknown direction is rejected", !wd.wd_parse(bad_dir).ok)
+    let bad_run_body = "NOVADOC\t4\nid\t1\ntitle\tBad Run\nlang\ten\nnext\t2\np\t1\t0\t0\t0\tx\nr\t1\t1\t1\nEND\n"
+    let bad_run = bad_run_body + "CK\t" + wd.wd_checksum(bad_run_body).to_string() + "\n"
+    failures = failures + check("invalid inline run is rejected", !wd.wd_parse(bad_run).ok)
     let v9_body = "NOVADOC\t9\nEND\n"
     let v9 = v9_body + "CK\t" + wd.wd_checksum(v9_body).to_string() + "\n"
     failures = failures + check("unknown version is rejected", !wd.wd_parse(v9).ok)
@@ -194,6 +208,37 @@ fn main() -> Int {
     rtl_split = wd.wd_set_dir(rtl_split, 0, wd.wd_dir_rtl())
     rtl_split = wd.wd_split(rtl_split, 0, 1)
     failures = failures + check("split preserves direction", rtl_split.paragraphs[1].dir == wd.wd_dir_rtl())
+
+    // ---------- inline runs ----------
+    var inline_doc = wd.wd_insert(wd.wd_empty(), 0, 0, "Hello brave world")
+    inline_doc = wd.wd_toggle_style(inline_doc, 0, 6, 11, wd.wd_style_bold())
+    failures = failures + check("bold run is stored", inline_doc.paragraphs[0].runs.len() == 1)
+    failures = failures + check("bold style at range", wd.wd_style_at(inline_doc.paragraphs[0], 6) == wd.wd_style_bold())
+    failures = failures + check("plain style outside range", wd.wd_style_at(inline_doc.paragraphs[0], 0) == 0)
+    let inline_loaded = wd.wd_parse(wd.wd_serialize(inline_doc))
+    failures = failures + check("inline style survives save", inline_loaded.ok && wd.wd_style_at(inline_loaded.doc.paragraphs[0], 6) == wd.wd_style_bold())
+    let unbold = wd.wd_toggle_style(inline_doc, 0, 6, 11, wd.wd_style_bold())
+    failures = failures + check("toggle removes bold", wd.wd_style_at(unbold.paragraphs[0], 6) == 0)
+    let italic = wd.wd_toggle_style(inline_doc, 0, 6, 11, wd.wd_style_italic())
+    failures = failures + check("italic combines with bold", wd.wd_style_at(italic.paragraphs[0], 6) == 3)
+    let shifted = wd.wd_insert(inline_doc, 0, 0, "X")
+    failures = failures + check("insert before run shifts it", wd.wd_style_at(shifted.paragraphs[0], 7) == wd.wd_style_bold())
+    failures = failures + check("inserted text is plain at start", wd.wd_style_at(shifted.paragraphs[0], 0) == 0)
+    let inside = wd.wd_insert(inline_doc, 0, 8, "Z")
+    failures = failures + check("insert inside run inherits bold", wd.wd_style_at(inside.paragraphs[0], 8) == wd.wd_style_bold())
+    failures = failures + check("run grows after insert", wd.wd_style_at(inside.paragraphs[0], 11) == wd.wd_style_bold())
+    let deleted = wd.wd_delete_range(inline_doc, 0, 0, 0, 3)
+    failures = failures + check("delete before run shifts it", wd.wd_style_at(deleted.paragraphs[0], 3) == wd.wd_style_bold())
+    let split_inline = wd.wd_split(inline_doc, 0, 8)
+    failures = failures + check("split keeps left style", wd.wd_style_at(split_inline.paragraphs[0], 6) == wd.wd_style_bold())
+    failures = failures + check("split moves right style", wd.wd_style_at(split_inline.paragraphs[1], 0) == wd.wd_style_bold())
+    let merged_inline = wd.wd_merge(split_inline, 0)
+    failures = failures + check("merge keeps inline style", wd.wd_style_at(merged_inline.paragraphs[0], 6) == wd.wd_style_bold())
+    let inline_layout = wl.wl_layout(inline_doc, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
+    failures = failures + check("layout emits styled runs", inline_layout.lines[0].runs.len() > 0)
+    let bold_x0 = wl.wl_x_at(inline_doc, inline_layout.lines[0], 6)
+    let bold_x1 = wl.wl_x_at(inline_doc, inline_layout.lines[0], 11)
+    failures = failures + check("bold range has width", bold_x1 > bold_x0)
 
     let corrupted = serialized.replace("quick", "quack")
     failures = failures + check("checksum rejects corruption", !wd.wd_parse(corrupted).ok)

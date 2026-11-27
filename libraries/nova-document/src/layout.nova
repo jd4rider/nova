@@ -9,6 +9,13 @@ import "../../nova-gui/src/gui.nova" as gui
 import "document.nova" as wd
 import "text.nova" as tx
 
+struct LineRun {
+    start: Int,
+    end: Int,
+    style: Int,
+    text: String,
+}
+
 struct LineBox {
     para: Int,
     start: Int,
@@ -24,6 +31,7 @@ struct LineBox {
     prefix: String,
     indent: Int,
     dir: Int,
+    runs: List<LineRun>,
 }
 
 struct Layout {
@@ -194,10 +202,83 @@ fn wl_emit(lines: List<LineBox>, page: Int, y: Int, page_h: Int, margin: Int, li
         prefix: line.prefix,
         indent: line.indent,
         dir: line.dir,
+        runs: line.runs,
     }
     out.push(placed)
     yy = yy + lh
     return EmitResult { lines: out, page: p, y: yy }
+}
+
+fn wl_slice(p: wd.Paragraph, from: Int, to: Int) -> String {
+    let text = p.text
+    let chars = text.chars()
+    let starts = tx.tx_starts(text)
+    let count = starts.len() - 1
+    let a = tx.tx_clamp(from, count)
+    let b = tx.tx_clamp(to, count)
+    if b <= a {
+        return ""
+    }
+    return tx.tx_slice(chars, starts[a], starts[b])
+}
+
+fn wl_measure_range(p: wd.Paragraph, from: Int, to: Int, size: Int, family: Int, base_style: Int) -> Int {
+    if to <= from {
+        return 0
+    }
+    var out = 0
+    var cursor = from
+    for r in p.runs {
+        if r.end > from && r.start < to {
+            let a = wd.wd_max(from, r.start)
+            let b = wd.wd_min(to, r.end)
+            if a > cursor {
+                out = out + gui.text_fmt_width(wl_slice(p, cursor, a), size, family, base_style)
+            }
+            if b > a {
+                out = out + gui.text_fmt_width(wl_slice(p, a, b), size, family, wd.wd_style_add(base_style, r.style))
+            }
+            cursor = b
+        }
+    }
+    if cursor < to {
+        out = out + gui.text_fmt_width(wl_slice(p, cursor, to), size, family, base_style)
+    }
+    return out
+}
+
+fn wl_line_runs(p: wd.Paragraph, from: Int, to: Int, size: Int, family: Int, base_style: Int) -> List<LineRun> {
+    var out: List<LineRun> = []
+    if to <= from {
+        return out
+    }
+    var cursor = from
+    for r in p.runs {
+        if r.end > from && r.start < to {
+            let a = wd.wd_max(from, r.start)
+            let b = wd.wd_min(to, r.end)
+            if a > cursor {
+                out.push(LineRun {
+                    start: cursor, end: a, style: base_style,
+                    text: wl_slice(p, cursor, a),
+                })
+            }
+            if b > a {
+                out.push(LineRun {
+                    start: a, end: b, style: wd.wd_style_add(base_style, r.style),
+                    text: wl_slice(p, a, b),
+                })
+            }
+            cursor = b
+        }
+    }
+    if cursor < to {
+        out.push(LineRun {
+            start: cursor, end: to, style: base_style,
+            text: wl_slice(p, cursor, to),
+        })
+    }
+    return out
 }
 
 // Wraps one paragraph into visual lines, breaking on spaces and hard-breaking a
@@ -218,7 +299,7 @@ fn wl_wrap(doc: wd.Document, index: Int, page: Int, y: Int, page_w: Int, page_h:
         let e = wl_emit(lines, page, y, page_h, margin, LineBox {
             para: index, start: 0, end: 0, page: 0,
             x: margin, y: 0, w: 0, size: size, style: style, family: family,
-            text: "", prefix: prefix, indent: indent, dir: dir,
+            text: "", prefix: prefix, indent: indent, dir: dir, runs: wl_line_runs(p, 0, 0, size, family, style),
         })
         return WrapResult { lines: e.lines, page: e.page, y: e.y }
     }
@@ -249,9 +330,9 @@ fn wl_wrap(doc: wd.Document, index: Int, page: Int, y: Int, page_w: Int, page_h:
         if line_text.len() > 0 {
             let candidate = line_text + " " + word
             let pad = if first { indent } else { 0 }
-            let cw = gui.text_fmt_width(candidate, size, family, style) + pad
+            let cw = wl_measure_range(p, line_start, word_end, size, family, style) + pad
             if cw > content_w {
-                let lw = gui.text_fmt_width(line_text, size, family, style) + pad
+                let lw = wl_measure_range(p, line_start, line_end, size, family, style) + pad
                 let x = wl_align_x(p.align, dir, margin, content_w, lw)
                 let pre = if first { prefix } else { "" }
                 let pin = if first { indent } else { 0 }
@@ -259,6 +340,7 @@ fn wl_wrap(doc: wd.Document, index: Int, page: Int, y: Int, page_w: Int, page_h:
                     para: index, start: line_start, end: line_end, page: 0,
                     x: x, y: 0, w: lw, size: size, style: style, family: family,
                     text: line_text, prefix: pre, indent: pin, dir: dir,
+                    runs: wl_line_runs(p, line_start, line_end, size, family, style),
                 })
                 lines = e.lines
                 page = e.page
@@ -272,7 +354,7 @@ fn wl_wrap(doc: wd.Document, index: Int, page: Int, y: Int, page_w: Int, page_h:
             line_start = word_start
             line_end = word_end
             let pad = if first { indent } else { 0 }
-            if gui.text_fmt_width(word, size, family, style) + pad > content_w {
+            if wl_measure_range(p, word_start, word_end, size, family, style) + pad > content_w {
                 var rest = word
                 var rest_g = word_start
                 while rest.len() > 0 {
@@ -282,7 +364,7 @@ fn wl_wrap(doc: wd.Document, index: Int, page: Int, y: Int, page_w: Int, page_h:
                     while k <= total {
                         let chunk = tx.tx_slice(rest.chars(), 0, tx.tx_scalar_at(rest, k))
                         let pad2 = if first { indent } else { 0 }
-                        if gui.text_fmt_width(chunk, size, family, style) + pad2 <= content_w {
+                        if wl_measure_range(p, rest_g, rest_g + k, size, family, style) + pad2 <= content_w {
                             best = k
                             k = k + 1
                         } else {
@@ -290,7 +372,7 @@ fn wl_wrap(doc: wd.Document, index: Int, page: Int, y: Int, page_w: Int, page_h:
                         }
                     }
                     let chunk = tx.tx_slice(rest.chars(), 0, tx.tx_scalar_at(rest, best))
-                    let lw = gui.text_fmt_width(chunk, size, family, style) + (if first { indent } else { 0 })
+                    let lw = wl_measure_range(p, rest_g, rest_g + best, size, family, style) + (if first { indent } else { 0 })
                     let x = wl_align_x(p.align, dir, margin, content_w, lw)
                     let pre = if first { prefix } else { "" }
                     let pin = if first { indent } else { 0 }
@@ -298,6 +380,7 @@ fn wl_wrap(doc: wd.Document, index: Int, page: Int, y: Int, page_w: Int, page_h:
                         para: index, start: rest_g, end: rest_g + best, page: 0,
                         x: x, y: 0, w: lw, size: size, style: style, family: family,
                         text: chunk, prefix: pre, indent: pin, dir: dir,
+                        runs: wl_line_runs(p, rest_g, rest_g + best, size, family, style),
                     })
                     lines = e.lines
                     page = e.page
@@ -316,7 +399,7 @@ fn wl_wrap(doc: wd.Document, index: Int, page: Int, y: Int, page_w: Int, page_h:
     }
     if line_text.len() > 0 {
         let pad = if first { indent } else { 0 }
-        let lw = gui.text_fmt_width(line_text, size, family, style) + pad
+        let lw = wl_measure_range(p, line_start, line_end, size, family, style) + pad
         let x = wl_align_x(p.align, dir, margin, content_w, lw)
         let pre = if first { prefix } else { "" }
         let pin = if first { indent } else { 0 }
@@ -324,6 +407,7 @@ fn wl_wrap(doc: wd.Document, index: Int, page: Int, y: Int, page_w: Int, page_h:
             para: index, start: line_start, end: line_end, page: 0,
             x: x, y: 0, w: lw, size: size, style: style, family: family,
             text: line_text, prefix: pre, indent: pin, dir: dir,
+            runs: wl_line_runs(p, line_start, line_end, size, family, style),
         })
         lines = e.lines
         page = e.page
@@ -361,10 +445,11 @@ fn wl_layout(doc: wd.Document, page_w: Int, page_h: Int, margin: Int) -> Layout 
         i = i + 1
     }
     if lines.len() == 0 {
+        var no_runs: List<LineRun> = []
         lines.push(LineBox {
             para: 0, start: 0, end: 0, page: 0,
             x: margin, y: margin, w: 0, size: 11, style: 0, family: 2,
-            text: "", prefix: "", indent: 0, dir: wd.wd_dir_ltr(),
+            text: "", prefix: "", indent: 0, dir: wd.wd_dir_ltr(), runs: no_runs,
         })
     }
     return Layout { lines: lines, pages: page + 1, page_w: page_w, page_h: page_h, margin: margin }
@@ -395,14 +480,11 @@ fn wl_x_at(doc: wd.Document, line: LineBox, offset: Int) -> Int {
         }
         return line.x + line.indent
     }
-    let text = doc.paragraphs[line.para].text
-    let starts = tx.tx_starts(text)
-    let count = starts.len() - 1
+    let p = doc.paragraphs[line.para]
+    let count = tx.tx_count(p.text)
     let g0 = tx.tx_clamp(line.start, count)
     let g1 = tx.tx_clamp(offset, count)
-    let chars = text.chars()
-    let pre = tx.tx_slice(chars, starts[g0], starts[g1])
-    let pw = gui.text_fmt_width(pre, line.size, line.family, line.style)
+    let pw = wl_measure_range(p, g0, g1, line.size, line.family, line.style)
     if line.dir == wd.wd_dir_rtl() {
         return line.x + line.w - line.indent - pw
     }

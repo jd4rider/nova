@@ -9,17 +9,18 @@ Silicon). Commands are reproducible from the repository root.
 sh writer/tests/core.sh
 ```
 
-Result: exit 0; 124 `PASS` lines; final line `failures=0`.
+Result: exit 0; 147 `PASS` lines; final line `failures=0`.
 
 Covers: grapheme segmentation (combining marks, skin tones, flags, ZWJ),
 insert/delete, escaping, word count, find, document validation, stable IDs,
 split/merge, cross-paragraph delete, styles/alignment, outline, Document-based
-undo/redo and the 100-entry bound, `.novadoc` v3 serialize/parse, checksum,
-v1/v2-to-v3 migration, missing-field and unknown-version rejection, measured
-layout, line-width bound, caret geometry, hit-testing, long-word and CJK hard
-breaks, RTL alignment and caret direction, mixed-script fallback measurement,
-multi-page pagination, atomic save, reopen, corrupt-file rejection, and
-recovery save/load/list/newest/remove/reject.
+undo/redo and the 100-entry bound, `.novadoc` v4 serialize/parse, checksum,
+v1/v2/v3-to-v4 migration, missing-field and unknown-version rejection, inline
+run toggle/save/edit propagation, measured layout, line-width bound, caret
+geometry, hit-testing, long-word and CJK hard breaks, RTL alignment and caret
+direction, mixed-script fallback measurement, multi-page pagination, atomic
+save, reopen, corrupt-file rejection, and recovery
+save/load/list/newest/remove/reject.
 
 ## 2. Host compile
 
@@ -52,7 +53,7 @@ The snapshot shows the real window: A4 page, serif body text, bold headings,
 italic quote, mixed-script typography, ruler, tabs, styles/direction list,
 outline, caret and status counts.
 
-Artifact: `writer/dist/snapshot.png` (2360×1640, 344,420 bytes). `dist/` is
+Artifact: `writer/dist/snapshot.png` (2360×1640, 343,002 bytes). `dist/` is
 generated and gitignored; regenerate with the smoke test.
 
 ## 5. Crash recovery across processes
@@ -124,7 +125,7 @@ Result: exit 0 (`SIGN_OK`).
 
 ## 9. Installed bundle launch and restore
 
-Normal launch with an empty recovery directory: exit 0; 344,420-byte snapshot.
+Normal launch with an empty recovery directory: exit 0; 343,002-byte snapshot.
 
 Installed recovery launch with a seeded crash file: exit 0; snapshot showing
 “Crash Report” and “Recovered 1 unsaved document”. This
@@ -146,7 +147,7 @@ The host probe drove the same two `NSTextInputClient` entry points AppKit uses:
 `insertText:replacementRange:` for the commit. The app logged
 `writer: preedit=にほ` while composing, then `writer: committed=日本` and
 `writer: paragraph=日本Nova Writer` after the commit. The commit line appeared
-exactly once. The preedit snapshot (347,973 bytes) shows “にほ” underlined
+exactly once. The preedit snapshot shows “にほ” underlined
 inline with “Nova Writer” pushed to the right.
 
 The same test ran a cancellation pass: `ime: cancelled has=0`, then
@@ -184,19 +185,21 @@ core test now declares `struct DocStack { docs: List<wd.Document> }`, writes
 through `stack.docs[0]`, and passes. The standalone fixture lives at
 `examples/nova-tool/tests/codegen-list-qualified.nova`.
 
-## 12. Schema migration v1/v2 → v3
+## 12. Schema migration v1/v2/v3 → v4
 
 ```sh
 sh writer/tests/core.sh
 ```
 
-A hand-built `NOVADOC\t1` fixture with a valid checksum loads as version 3,
+A hand-built `NOVADOC\t1` fixture with a valid checksum loads as version 4,
 gets language `en` and auto direction, and keeps its doc id and text. A
 `NOVADOC\t2` fixture keeps its `fr` language, gains auto direction, and keeps
-its text. V3 requires `lang` and `dir`; a body without either, an unknown
-direction and a `NOVADOC\t9` body are rejected. `store.wd_has_native_header`
-accepts v1, v2 and v3 headers. The next save writes v3, so opening an old file
-and saving it completes the migration on disk.
+its text. A `NOVADOC\t3` fixture keeps direction and starts with no inline
+runs. V4 requires `lang` and `dir`; a body without either, an unknown
+direction, a malformed run and a `NOVADOC\t9` body are rejected.
+`store.wd_has_native_header` accepts v1 through v4 headers. The next save
+writes v4, so opening an old file and saving it completes the migration on
+disk.
 
 ## 13. Fallback, bidi and CJK fixtures
 
@@ -212,16 +215,31 @@ near the right edge maps to offset 0. Explicit LTR overrides Hebrew auto
 direction. A long Japanese paragraph wraps to more than one line and every
 line stays within the text column.
 
+## 14. Inline bold/italic runs
+
+```sh
+sh writer/tests/core.sh
+```
+
+The core suite toggles bold on `brave`, checks the style at and outside the
+range, serializes and reloads it, toggles it off, combines italic with bold,
+and inserts/deletes/splits/merges around the run. The style shifts to offset 7
+after inserting at the start, an insert inside the run inherits bold, a delete
+before the run shifts it, and split/merge preserve both sides. Layout emits a
+styled segment and the bold range has measurable width. The app renders the
+demo sentence “Inline **bold** and *italic* runs are real.” in the refreshed
+snapshot.
+
 ## Verified vs not verified
 
 Verified by machine: document model and edits, grapheme boundaries, undo/redo
-invariants, serialization/checksum, v1/v2-to-v3 migration, atomic store, layout
-measurement and pagination, hit-testing, mixed-script fallback, auto/LTR/RTL
-paragraph direction, RTL caret geometry, CJK wrapping, recovery
-save/load/list/remove, a two-process crash, app startup restore, the first
-autosave write, IME marked-text composition and Escape cancellation through the
-host probe, native window launch and rendering, bundle signing and
-installation.
+invariants, serialization/checksum, v1/v2/v3-to-v4 migration, inline run
+toggle/save/edit propagation, atomic store, layout measurement and pagination,
+hit-testing, mixed-script fallback, auto/LTR/RTL paragraph direction, RTL caret
+geometry, CJK wrapping, recovery save/load/list/remove, a two-process crash,
+app startup restore, the first autosave write, IME marked-text composition and
+Escape cancellation through the host probe, native window launch and rendering,
+bundle signing and installation.
 
 Not machine-verified: interactive typing, selection, clipboard, zoom, theme
 switching, save/open through the native panels, the sidebar direction control,
@@ -233,5 +251,6 @@ wired to real code but require manual or future automated GUI tests; they are
 not claimed as tested.
 
 Not implemented: DOCX/ODT/RTF/HTML/PDF, tables, images, headers/footers,
-footnotes, inline runs, comments/revisions, recovery prompt/discard UI,
-external-change detection, encryption, performance baselines.
+footnotes, character styles, underline UI, comments/revisions, recovery
+prompt/discard UI, external-change detection, encryption, performance
+baselines.

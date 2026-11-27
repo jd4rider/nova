@@ -37,10 +37,10 @@ directive and impossible to index cheaply in this language today.
 - A rope or piece table can replace the internal text storage without changing
   the public position type.
 
-## DEC-WRI-002 — `.novadoc` v3 is a deterministic text container
+## DEC-WRI-002 — `.novadoc` v4 is a deterministic text container
 
-Status: accepted for WRI-07.001/WRI-02.005/WRI-04.002; ZIP container is a
-later migration.
+Status: accepted for WRI-07.001/WRI-02.005/WRI-04.002/WRI-06.003; ZIP
+container is a later migration.
 
 ### Context
 
@@ -51,19 +51,21 @@ block the first vertical slice and risk a half-valid container.
 
 ### Decision
 
-- v3 is a UTF-8, line-oriented container with a magic header, version,
+- v4 is a UTF-8, line-oriented container with a magic header, version,
   document metadata including a BCP-47 language, paragraph records with a
-  direction, and a 31-based polynomial body checksum. It detects truncation
-  and corruption, not tampering; the format makes no cryptographic claim.
+  direction, inline run records, and a 31-based polynomial body checksum. It
+  detects truncation and corruption, not tampering; the format makes no
+  cryptographic claim.
 - Version 1 files migrate on load: language defaults to `en`, direction to
-  auto, and the next save writes v3.
+  auto, and the next save writes v4.
 - Version 2 files keep their language and gain auto direction.
+- Version 3 files keep direction and start with no inline runs.
 - Records are escaped, bounded and validated on load; unknown record kinds,
-  missing v3 fields and unknown versions are rejected rather than silently
+  missing v4 fields and unknown versions are rejected rather than silently
   ignored.
 - Writes go to `<path>.tmp`, are verified, then renamed atomically.
-- A later v4 may wrap the same parts in a ZIP container; the loader dispatches
-  on the magic header, so v1, v2 and v3 files remain readable.
+- A later v5 may wrap the same parts in a ZIP container; the loader dispatches
+  on the magic header, so v1, v2, v3 and v4 files remain readable.
 
 ### Consequences
 
@@ -248,6 +250,35 @@ without leaving text behind.
   this is acceptable for ordinary documents and measurable later.
 - A cancelled composition leaves no recovery or document artifact.
 
+## DEC-WRI-011 — Inline runs are non-overlapping grapheme ranges
+
+Status: accepted.
+
+### Context
+
+Bold and italic must survive editing and save/reopen without becoming a
+parallel copy of the text. Splitting a paragraph or deleting across a run must
+not leave stale offsets.
+
+### Decision
+
+- A paragraph owns `runs`: sorted, non-overlapping ranges with a style bitmask
+  (1 bold, 2 italic, 4 underline). Text remains the canonical content.
+- Toggling splits runs at the selection boundaries and merges adjacent runs
+  with the same style. Insert, delete, split and merge clip or shift ranges.
+- `.novadoc` v4 writes one `r` record after its paragraph; v1/v2/v3 files load
+  with no runs.
+- Layout emits styled `LineRun` segments with final paragraph + inline style
+  bits. The app paints each segment with CoreText.
+
+### Consequences
+
+- Bold/italic survive editing and persistence, and undo snapshots restore the
+  exact run ranges.
+- Underline is modelled but has no toolbar control yet.
+- Runs are painted as separate CoreText segments, so kerning across a style
+  boundary and mixed bidi plus inline styling remain approximate.
+
 ## DEC-WRI-010 — Paragraph direction is explicit, with auto fallback
 
 Status: accepted.
@@ -261,7 +292,7 @@ correctly.
 
 ### Decision
 
-- Every paragraph stores `dir`: 0 auto, 1 LTR, 2 RTL. `.novadoc` v3 persists
+- Every paragraph stores `dir`: 0 auto, 1 LTR, 2 RTL. `.novadoc` v4 persists
   it; v1/v2 migrate to auto.
 - Auto uses the first strong character (Hebrew, Arabic and related RTL
   ranges); digits, spaces and punctuation are skipped. If no strong character

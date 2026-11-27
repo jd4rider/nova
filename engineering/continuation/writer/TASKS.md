@@ -29,7 +29,7 @@ Stable IDs are permanent. Statuses are evidence-based. See `EVIDENCE.md`.
 - **WRI-01.003 — Command routing and shortcuts: VERIFIED.** Every visible
   command executes real document behavior; unsupported commands are absent.
 - **WRI-01.004 — Headless test target: VERIFIED.** `writer/tests/core.sh`
-  runs 124 assertions without a window and exits non-zero on failure.
+  runs 147 assertions without a window and exits non-zero on failure.
 
 ## WRI-02 — Document core
 
@@ -42,11 +42,11 @@ Stable IDs are permanent. Statuses are evidence-based. See `EVIDENCE.md`.
   serialized snapshots (DEC-WRI-006).
 - **WRI-02.004 — Structural validation: VERIFIED.** Rejects invalid
   positions, empty paragraph IDs, duplicate IDs and unknown records.
-- **WRI-02.005 — Schema migration: VERIFIED.** `.novadoc` v3 adds a
-  persisted document language and paragraph direction. Version 1 migrates
-  with language `en` and auto direction; version 2 keeps its language and
-  gains auto direction. Both rewrite as v3 on save; missing fields and
-  unknown versions are rejected.
+- **WRI-02.005 — Schema migration: VERIFIED.** `.novadoc` v4 adds persisted
+  inline runs. Version 1 migrates with language `en` and auto direction;
+  version 2 keeps its language and gains auto direction; version 3 keeps
+  direction and starts with no runs. All rewrite as v4 on save; missing
+  fields and unknown versions are rejected.
 
 ## WRI-03 — Text editing
 
@@ -69,7 +69,7 @@ Stable IDs are permanent. Statuses are evidence-based. See `EVIDENCE.md`.
 - **WRI-04.001 — Styled CoreText runs: VERIFIED.** Sans/serif/mono, bold,
   italic and underline shape and measure through CoreText; rendered in the
   snapshot.
-- **WRI-04.002 — Fallback/bidi fixtures: VERIFIED.** `.novadoc` v3 stores
+- **WRI-04.002 — Fallback/bidi fixtures: VERIFIED.** `.novadoc` v4 stores
   auto/LTR/RTL per paragraph; auto uses the first strong character. Layout
   aligns and maps the caret from the paragraph direction, CoreText falls back
   per glyph, and CJK text wraps at grapheme boundaries without overflowing.
@@ -95,17 +95,21 @@ Stable IDs are permanent. Statuses are evidence-based. See `EVIDENCE.md`.
   Heading 2, Body, Quote and List with real metrics. No character styles,
   inheritance or style sets.
 - **WRI-06.002 — Lists and numbering: TODO.**
-- **WRI-06.003 — Inline bold/italic runs: TODO.** Styled drawing exists; the
-  document model has no inline run ranges yet.
+- **WRI-06.003 — Inline bold/italic runs: VERIFIED.** Paragraphs store
+  non-overlapping grapheme ranges with style bits. Bold/Italic toggle a
+  selection or set the style for the next typed text; insert/delete/split/
+  merge preserve runs; `.novadoc` v4 persists them. Layout measures and draws
+  styled segments, and the core suite covers save/reopen, toggle, combination
+  and edit propagation.
 
 ## WRI-07 — Native persistence
 
-- **WRI-07.001 — `.novadoc` v3 save/open: VERIFIED.** Deterministic UTF-8
+- **WRI-07.001 — `.novadoc` v4 save/open: VERIFIED.** Deterministic UTF-8
   format, checksum, validation, atomic temp-then-rename write, reopen and
-  corrupt-file rejection tested. Version 1 and 2 files migrate on load.
-- **WRI-07.002 — Migration: VERIFIED.** See WRI-02.005: v1 and v2 fixtures
-  migrate to v3, v3 requires `lang` and `dir`, and unknown versions are
-  rejected.
+  corrupt-file rejection tested. Version 1, 2 and 3 files migrate on load.
+- **WRI-07.002 — Migration: VERIFIED.** See WRI-02.005: v1, v2 and v3
+  fixtures migrate to v4, v4 requires `lang` and `dir`, and unknown versions
+  are rejected.
 - **WRI-07.003 — Autosave and crash recovery: VERIFIED.** Atomic snapshots
   every 4 seconds under Application Support, epoch-named; startup restores up
   to six valid files as dirty tabs; save and clean close remove them. A
@@ -137,8 +141,8 @@ Stable IDs are permanent. Statuses are evidence-based. See `EVIDENCE.md`.
 
 Recovery save/load, a two-process crash, app startup restore, the first
 autosave write, IME marked-text commit/cancel, mixed-script fallback, bidi
-caret geometry and CJK wrapping are machine-tested. Interactive typing,
-selection, clipboard, zoom, theme, native file panels, the sidebar direction
-control, the 4-second autosave cadence over a long session, and recovery
-cleanup after save are wired but not automated. Do not mark them VERIFIED
-until an automated GUI test exists.
+caret geometry, CJK wrapping and inline run propagation are machine-tested.
+Interactive typing, selection, clipboard, zoom, theme, native file panels, the
+sidebar direction control, the Bold/Italic buttons, the 4-second autosave
+cadence over a long session, and recovery cleanup after save are wired but not
+automated. Do not mark them VERIFIED until an automated GUI test exists.

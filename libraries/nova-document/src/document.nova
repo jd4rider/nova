@@ -2,9 +2,9 @@
 //
 // This module is GUI-independent and file-format-independent: it owns the
 // typed paragraph tree, stable IDs, grapheme positions, pure transactions,
-// bounded undo history and the versioned `.novadoc` v3 container. It imports
-// no GUI or filesystem code; `store.nova` handles disk access. Version 1 and 2
-// files are migrated on load and rewritten as version 3 on the next save.
+// bounded undo history and the versioned `.novadoc` v4 container. It imports
+// no GUI or filesystem code; `store.nova` handles disk access. Version 1, 2 and
+// 3 files are migrated on load and rewritten as version 4 on the next save.
 //
 // A position is a paragraph index plus a grapheme offset. Edits are pure
 // functions that return a new Document, which is what makes snapshot undo and
@@ -114,11 +114,57 @@ fn wd_dir_name(dir: Int) -> String {
     return "Auto"
 }
 
+// Inline style bits. A run is a non-overlapping grapheme range with one or
+// more bits set; text remains the canonical content.
+fn wd_style_bold() -> Int {
+    return 1
+}
+
+fn wd_style_italic() -> Int {
+    return 2
+}
+
+fn wd_style_underline() -> Int {
+    return 4
+}
+
+fn wd_style_has(style: Int, bit: Int) -> Bool {
+    return (style / bit) % 2 == 1
+}
+
+fn wd_style_add(base: Int, extra: Int) -> Int {
+    var style = base
+    if wd_style_has(extra, 1) && !wd_style_has(style, 1) {
+        style = style + 1
+    }
+    if wd_style_has(extra, 2) && !wd_style_has(style, 2) {
+        style = style + 2
+    }
+    if wd_style_has(extra, 4) && !wd_style_has(style, 4) {
+        style = style + 4
+    }
+    return style
+}
+
+fn wd_style_remove(style: Int, bit: Int) -> Int {
+    if wd_style_has(style, bit) {
+        return style - bit
+    }
+    return style
+}
+
+struct Run {
+    start: Int,
+    end: Int,
+    style: Int,
+}
+
 struct Paragraph {
     id: Int,
     kind: Int,
     align: Int,
     dir: Int,
+    runs: List<Run>,
     text: String,
 }
 
@@ -145,11 +191,12 @@ struct UndoResult {
 }
 
 fn wd_para(id: Int, kind: Int, text: String) -> Paragraph {
-    return Paragraph { id: id, kind: kind, align: wd_left(), dir: wd_dir_auto(), text: text }
+    var runs: List<Run> = []
+    return Paragraph { id: id, kind: kind, align: wd_left(), dir: wd_dir_auto(), runs: runs, text: text }
 }
 
 fn wd_format_version() -> Int {
-    return 3
+    return 4
 }
 
 fn wd_empty() -> Document {
@@ -202,6 +249,23 @@ fn wd_valid(doc: Document) -> String {
         if p.dir < 0 || p.dir > 2 {
             return "unknown paragraph direction"
         }
+        let text_count = tx.tx_count(p.text)
+        var prev_end = 0
+        var k = 0
+        while k < p.runs.len() {
+            let r = p.runs[k]
+            if r.start < 0 || r.end <= r.start || r.end > text_count {
+                return "invalid inline run range"
+            }
+            if r.style < 1 || r.style > 7 {
+                return "unknown inline style"
+            }
+            if r.start < prev_end {
+                return "overlapping inline runs"
+            }
+            prev_end = r.end
+            k = k + 1
+        }
         var j = 0
         while j < i {
             if doc.paragraphs[j].id == p.id {
@@ -242,6 +306,166 @@ fn wd_count(doc: Document) -> Int {
     return doc.paragraphs.len()
 }
 
+// ---------- inline runs ----------
+
+fn wd_min(a: Int, b: Int) -> Int {
+    if a < b {
+        return a
+    }
+    return b
+}
+
+fn wd_max(a: Int, b: Int) -> Int {
+    if a > b {
+        return a
+    }
+    return b
+}
+
+// Appends a run, merging it with the previous one when both are contiguous and
+// have the same style. Style 0 is implicit and is never stored.
+fn wd_push_run(out: List<Run>, start: Int, end: Int, style: Int) -> List<Run> {
+    var result = out
+    if end <= start || style <= 0 || style > 7 {
+        return result
+    }
+    if result.len() > 0 {
+        let last = result[result.len() - 1]
+        if last.end == start && last.style == style {
+            var merged = last
+            merged.end = end
+            result[result.len() - 1] = merged
+            return result
+        }
+    }
+    result.push(Run { start: start, end: end, style: style })
+    return result
+}
+
+fn wd_clip_runs(runs: List<Run>, from: Int, to: Int, shift: Int) -> List<Run> {
+    var out: List<Run> = []
+    for r in runs {
+        let a = wd_max(r.start, from)
+        let b = wd_min(r.end, to)
+        if b > a {
+            out = wd_push_run(out, a + shift, b + shift, r.style)
+        }
+    }
+    return out
+}
+
+fn wd_combine_runs(first: List<Run>, second: List<Run>) -> List<Run> {
+    var out = first
+    for r in second {
+        out = wd_push_run(out, r.start, r.end, r.style)
+    }
+    return out
+}
+
+fn wd_style_at(p: Paragraph, offset: Int) -> Int {
+    var style = 0
+    for r in p.runs {
+        if offset >= r.start && offset < r.end {
+            style = r.style
+        }
+    }
+    return style
+}
+
+fn wd_style_segment(out: List<Run>, start: Int, end: Int, style: Int, a: Int, b: Int, bit: Int, add: Bool) -> List<Run> {
+    var result = out
+    if end <= start {
+        return result
+    }
+    let pre_end = wd_min(end, a)
+    if pre_end > start {
+        result = wd_push_run(result, start, pre_end, style)
+    }
+    let ov_start = wd_max(start, a)
+    let ov_end = wd_min(end, b)
+    if ov_end > ov_start {
+        var s = style
+        if add {
+            s = wd_style_add(s, bit)
+        } else {
+            s = wd_style_remove(s, bit)
+        }
+        result = wd_push_run(result, ov_start, ov_end, s)
+    }
+    let post_start = wd_max(start, b)
+    if end > post_start {
+        result = wd_push_run(result, post_start, end, style)
+    }
+    return result
+}
+
+fn wd_update_style_range(doc: Document, index: Int, start: Int, end: Int, bit: Int, add: Bool) -> Document {
+    var d = doc
+    if index < 0 || index >= d.paragraphs.len() || (bit != 1 && bit != 2 && bit != 4) {
+        return d
+    }
+    var p = d.paragraphs[index]
+    let count = tx.tx_count(p.text)
+    let a = tx.tx_clamp(start, count)
+    let b = tx.tx_clamp(end, count)
+    if b <= a {
+        return d
+    }
+    var out: List<Run> = []
+    var cursor = 0
+    for r in p.runs {
+        out = wd_style_segment(out, cursor, r.start, 0, a, b, bit, add)
+        out = wd_style_segment(out, r.start, r.end, r.style, a, b, bit, add)
+        cursor = r.end
+    }
+    out = wd_style_segment(out, cursor, count, 0, a, b, bit, add)
+    p.runs = out
+    var ps = d.paragraphs
+    ps[index] = p
+    d.paragraphs = ps
+    return d
+}
+
+fn wd_toggle_style(doc: Document, index: Int, start: Int, end: Int, bit: Int) -> Document {
+    if index < 0 || index >= doc.paragraphs.len() || (bit != 1 && bit != 2 && bit != 4) {
+        return doc
+    }
+    let p = doc.paragraphs[index]
+    let count = tx.tx_count(p.text)
+    let a = tx.tx_clamp(start, count)
+    let b = tx.tx_clamp(end, count)
+    if b <= a {
+        return doc
+    }
+    var all = true
+    var g = a
+    while g < b {
+        if !wd_style_has(wd_style_at(p, g), bit) {
+            all = false
+        }
+        g = g + 1
+    }
+    return wd_update_style_range(doc, index, a, b, bit, !all)
+}
+
+fn wd_toggle_range(doc: Document, p0: Int, o0: Int, p1: Int, o1: Int, bit: Int) -> Document {
+    var d = doc
+    if p0 < 0 || p1 >= d.paragraphs.len() || p0 > p1 {
+        return d
+    }
+    if p0 == p1 {
+        return wd_toggle_style(d, p0, o0, o1, bit)
+    }
+    d = wd_toggle_style(d, p0, o0, tx.tx_count(d.paragraphs[p0].text), bit)
+    var i = p0 + 1
+    while i < p1 {
+        d = wd_toggle_style(d, i, 0, tx.tx_count(d.paragraphs[i].text), bit)
+        i = i + 1
+    }
+    d = wd_toggle_style(d, p1, 0, o1, bit)
+    return d
+}
+
 // ---------- transactions ----------
 
 fn wd_insert(doc: Document, index: Int, offset: Int, value: String) -> Document {
@@ -250,7 +474,43 @@ fn wd_insert(doc: Document, index: Int, offset: Int, value: String) -> Document 
         return d
     }
     var p = d.paragraphs[index]
-    p.text = tx.tx_insert_at(p.text, offset, value)
+    let count = tx.tx_count(p.text)
+    let g = tx.tx_clamp(offset, count)
+    let added = tx.tx_count(value)
+    if added == 0 {
+        return d
+    }
+    let at = if g > 0 && g >= count { count - 1 } else { g }
+    let inherit = wd_style_at(p, at)
+    var runs: List<Run> = []
+    var inserted = false
+    for r in p.runs {
+        if r.end <= g {
+            runs = wd_push_run(runs, r.start, r.end, r.style)
+        } else if r.start >= g {
+            if !inserted {
+                runs = wd_push_run(runs, g, g + added, inherit)
+                inserted = true
+            }
+            runs = wd_push_run(runs, r.start + added, r.end + added, r.style)
+        } else {
+            if r.start < g {
+                runs = wd_push_run(runs, r.start, g, r.style)
+            }
+            if !inserted {
+                runs = wd_push_run(runs, g, g + added, inherit)
+                inserted = true
+            }
+            if g < r.end {
+                runs = wd_push_run(runs, g + added, r.end + added, r.style)
+            }
+        }
+    }
+    if !inserted {
+        runs = wd_push_run(runs, g, g + added, inherit)
+    }
+    p.runs = runs
+    p.text = tx.tx_insert_at(p.text, g, value)
     var ps = d.paragraphs
     ps[index] = p
     d.paragraphs = ps
@@ -276,6 +536,9 @@ fn wd_delete_range(doc: Document, p0: Int, o0: Int, p1: Int, o1: Int) -> Documen
         let chars = p.text.chars()
         var np = p
         np.text = tx.tx_slice(chars, 0, starts[a]) + tx.tx_slice(chars, starts[b], chars.len())
+        let left_runs = wd_clip_runs(p.runs, 0, a, 0)
+        let right_runs = wd_clip_runs(p.runs, b, count, a - b)
+        np.runs = wd_combine_runs(left_runs, right_runs)
         var ps = d.paragraphs
         ps[p0] = np
         d.paragraphs = ps
@@ -292,6 +555,9 @@ fn wd_delete_range(doc: Document, p0: Int, o0: Int, p1: Int, o1: Int) -> Documen
     let b = tx.tx_clamp(o1, lcount)
     var np = first
     np.text = tx.tx_slice(first.text.chars(), 0, fstarts[a]) + tx.tx_slice(lchars, lstarts[b], lchars.len())
+    let left_runs = wd_clip_runs(first.runs, 0, a, 0)
+    let right_runs = wd_clip_runs(last.runs, b, lcount, a)
+    np.runs = wd_combine_runs(left_runs, right_runs)
     var ps: List<Paragraph> = []
     var i = 0
     while i < d.paragraphs.len() {
@@ -321,9 +587,11 @@ fn wd_split(doc: Document, index: Int, offset: Int) -> Document {
     let chars = p.text.chars()
     var left = p
     left.text = tx.tx_slice(chars, 0, scalar)
+    left.runs = wd_clip_runs(p.runs, 0, g, 0)
     var right = wd_para(d.next_id, p.kind, tx.tx_slice(chars, scalar, chars.len()))
     right.align = p.align
     right.dir = p.dir
+    right.runs = wd_clip_runs(p.runs, g, count, 0 - g)
     if right.kind == wd_title_style() {
         right.kind = wd_body()
     }
@@ -352,6 +620,8 @@ fn wd_merge(doc: Document, index: Int) -> Document {
     let b = d.paragraphs[index + 1]
     var np = a
     np.text = a.text + b.text
+    let left_count = tx.tx_count(a.text)
+    np.runs = wd_combine_runs(a.runs, wd_clip_runs(b.runs, 0, tx.tx_count(b.text), left_count))
     var ps: List<Paragraph> = []
     var i = 0
     while i < d.paragraphs.len() {
@@ -513,7 +783,7 @@ fn wd_redo(undo: List<Document>, redo: List<Document>, current: Document) -> Und
     return UndoResult { ok: true, doc: next_doc, undo: next_undo, redo: next_redo }
 }
 
-// ---------- native container v3 ----------
+// ---------- native container v4 ----------
 
 // A 31-based polynomial checksum modulo 2^31-1. It detects truncation and
 // corruption, not tampering; the format makes no cryptographic claim.
@@ -569,6 +839,12 @@ fn wd_body_text(doc: Document) -> String {
     while i < doc.paragraphs.len() {
         let p = doc.paragraphs[i]
         out = out + "p\t" + p.id.to_string() + "\t" + p.kind.to_string() + "\t" + p.align.to_string() + "\t" + p.dir.to_string() + "\t" + tx.tx_escape(p.text) + "\n"
+        var ri = 0
+        while ri < p.runs.len() {
+            let r = p.runs[ri]
+            out = out + "r\t" + r.start.to_string() + "\t" + r.end.to_string() + "\t" + r.style.to_string() + "\n"
+            ri = ri + 1
+        }
         i = i + 1
     }
     out = out + "END\n"
@@ -681,7 +957,26 @@ fn wd_parse(text: String) -> LoadResult {
             if dir < 0 || dir > 2 {
                 return wd_load_fail("line " + (i + 1).to_string() + ": unknown paragraph direction")
             }
-            paragraphs.push(Paragraph { id: id, kind: kind, align: align, dir: dir, text: value })
+            var runs: List<Run> = []
+            paragraphs.push(Paragraph { id: id, kind: kind, align: align, dir: dir, runs: runs, text: value })
+        } else if key == "r" {
+            if source_version < 4 {
+                return wd_load_fail("line " + (i + 1).to_string() + ": inline runs require version 4")
+            }
+            if fields.len() < 4 || paragraphs.len() == 0 {
+                return wd_load_fail("line " + (i + 1).to_string() + ": malformed inline run")
+            }
+            let start = wd_parse_int(fields[1])
+            let end = wd_parse_int(fields[2])
+            let style = wd_parse_int(fields[3])
+            if start < 0 || end <= start || style < 1 || style > 7 {
+                return wd_load_fail("line " + (i + 1).to_string() + ": invalid inline run")
+            }
+            var last = paragraphs[paragraphs.len() - 1]
+            var runs = last.runs
+            runs.push(Run { start: start, end: end, style: style })
+            last.runs = runs
+            paragraphs[paragraphs.len() - 1] = last
         } else {
             return wd_load_fail("line " + (i + 1).to_string() + ": unknown record " + key)
         }
@@ -705,7 +1000,7 @@ fn wd_parse(text: String) -> LoadResult {
     doc.paragraphs = paragraphs
     if source_version == 1 {
         // Version 1 had no language field. Migrate it in memory; the next save
-        // writes version 3.
+        // writes version 4.
         doc.language = "en"
     }
     doc.version = wd_format_version()

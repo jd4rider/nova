@@ -93,6 +93,7 @@ struct Session {
     selecting: Bool,
     scroll: Int,
     zoom: Int,
+    inline: Int,
     // The app keeps bounded serialized snapshots. The compiler now supports a
     // List<Document> field, but this path is already tested; the core library's
     // Document-based history remains separately tested.
@@ -255,6 +256,7 @@ fn wr_session(doc: wd.Document, path: String, dirty: Bool, recovery_path: String
         selecting: false,
         scroll: 0,
         zoom: 100,
+        inline: 0,
         undo: wr_no_text(),
         redo: wr_no_text(),
         recovery_path: recovery_path,
@@ -318,6 +320,10 @@ fn wr_demo() -> wd.Document {
     d = wr_add(d, wd.wd_bullet(), "Select with a drag or Shift+arrows. Copy, cut and paste use the system clipboard.")
     d = wr_add(d, wd.wd_bullet(), "Undo and redo restore whole document snapshots, not just the last character.")
     d = wr_add(d, wd.wd_bullet(), "Apply Title, Heading, Body, Quote or List from the Styles panel; align left, centre or right from the ribbon, and set paragraph direction in the panel.")
+    d = wr_add(d, wd.wd_body(), "Inline bold and italic runs are real. Select a range and use Bold or Italic.")
+    let inline_para = d.paragraphs.len() - 1
+    d = wd.wd_toggle_style(d, inline_para, 7, 11, wd.wd_style_bold())
+    d = wd.wd_toggle_style(d, inline_para, 16, 22, wd.wd_style_italic())
     d = wr_add(d, wd.wd_quote(), "Every visible command executes real document behavior. Features that are not implemented are absent, not painted as fake controls.")
     d = wr_add(d, wd.wd_heading1(), "Layout")
     d = wr_add(d, wd.wd_body(), "CoreText shapes each line and reports its advance width; Nova decides where the line breaks and where the page ends. Pages are A4 with one-inch margins, and zoom scales the canvas without reflowing the document.")
@@ -633,7 +639,11 @@ fn wr_insert_lines(app: App, value: String) -> App {
     var app = app
     let lines = value.split("\n")
     var s = app.sessions[app.active]
+    let first_at = s.cursor_off
     s.doc = wd.wd_insert(s.doc, s.cursor_para, s.cursor_off, lines[0])
+    if s.inline > 0 {
+        s.doc = wr_typing_style(s.doc, s.cursor_para, first_at, tx.tx_count(lines[0]), s.inline)
+    }
     s.cursor_off = s.cursor_off + tx.tx_count(lines[0])
     var i = 1
     while i < lines.len() {
@@ -641,6 +651,9 @@ fn wr_insert_lines(app: App, value: String) -> App {
         s.cursor_para = s.cursor_para + 1
         s.cursor_off = 0
         s.doc = wd.wd_insert(s.doc, s.cursor_para, 0, lines[i])
+        if s.inline > 0 {
+            s.doc = wr_typing_style(s.doc, s.cursor_para, 0, tx.tx_count(lines[i]), s.inline)
+        }
         s.cursor_off = tx.tx_count(lines[i])
         i = i + 1
     }
@@ -674,7 +687,11 @@ fn wr_insert(app: App, value: String) -> App {
     if value.contains("\n") {
         app = wr_insert_lines(app, value)
     } else {
+        let start_off = s.cursor_off
         s.doc = wd.wd_insert(s.doc, s.cursor_para, s.cursor_off, value)
+        if s.inline > 0 {
+            s.doc = wr_typing_style(s.doc, s.cursor_para, start_off, tx.tx_count(value), s.inline)
+        }
         s.cursor_off = s.cursor_off + tx.tx_count(value)
         s.anchor_para = s.cursor_para
         s.anchor_off = s.cursor_off
@@ -1186,6 +1203,42 @@ fn wr_apply_dir(app: App, dir: Int) -> App {
     return app
 }
 
+fn wr_apply_inline(app: App, bit: Int) -> App {
+    var app = app
+    var s = app.sessions[app.active]
+    let sel = wr_sel(s)
+    let label = if bit == wd.wd_style_bold() { "Bold" } else { "Italic" }
+    if sel.active {
+        app = wr_snapshot(app)
+        s = app.sessions[app.active]
+        s.doc = wd.wd_toggle_range(s.doc, sel.p0, sel.o0, sel.p1, sel.o1, bit)
+        app = wr_put(app, app.active, s)
+        app = wr_changed(app)
+        app.status = label + " toggled"
+        return app
+    }
+    if wd.wd_style_has(s.inline, bit) {
+        s.inline = wd.wd_style_remove(s.inline, bit)
+        app.status = label + " off for typing"
+    } else {
+        s.inline = wd.wd_style_add(s.inline, bit)
+        app.status = label + " on for typing"
+    }
+    app = wr_put(app, app.active, s)
+    return app
+}
+
+fn wr_typing_style(doc: wd.Document, para: Int, start: Int, count: Int, style: Int) -> wd.Document {
+    var d = doc
+    if wd.wd_style_has(style, wd.wd_style_bold()) {
+        d = wd.wd_update_style_range(d, para, start, start + count, wd.wd_style_bold(), true)
+    }
+    if wd.wd_style_has(style, wd.wd_style_italic()) {
+        d = wd.wd_update_style_range(d, para, start, start + count, wd.wd_style_italic(), true)
+    }
+    return d
+}
+
 fn wr_zoom(app: App, delta: Int) -> App {
     var app = app
     var s = app.sessions[app.active]
@@ -1277,6 +1330,11 @@ fn wr_ribbon(w: Int) -> List<HitBox> {
     x = x + wr_box_w("Center") + gap
     out.push(HitBox { id: "align_right", label: "Right", x: x, y: y, w: wr_box_w("Right"), h: h })
     x = x + wr_box_w("Right") + 16
+    // Inline style
+    out.push(HitBox { id: "bold", label: "Bold", x: x, y: y, w: wr_box_w("Bold"), h: h })
+    x = x + wr_box_w("Bold") + gap
+    out.push(HitBox { id: "italic", label: "Italic", x: x, y: y, w: wr_box_w("Italic"), h: h })
+    x = x + wr_box_w("Italic") + 16
     // Zoom
     out.push(HitBox { id: "zoom_out", label: "−", x: x, y: y, w: wr_box_w("−"), h: h })
     x = x + wr_box_w("−") + gap
@@ -1324,6 +1382,12 @@ fn wr_command(app: App, id: String) -> App {
     }
     if id == "align_right" {
         return wr_apply_align(app, wd.wd_right())
+    }
+    if id == "bold" {
+        return wr_apply_inline(app, wd.wd_style_bold())
+    }
+    if id == "italic" {
+        return wr_apply_inline(app, wd.wd_style_italic())
     }
     if id == "zoom_out" {
         return wr_zoom(app, 0 - 10)
@@ -1394,9 +1458,15 @@ fn wr_key(app: App, code: Int, mods: Int) -> App {
             return wr_cycle_paper(app)
         }
         if code == 98 {
-            var next = app
-            next.sidebar = !next.sidebar
-            return next
+            if shift {
+                var next = app
+                next.sidebar = !next.sidebar
+                return next
+            }
+            return wr_apply_inline(app, wd.wd_style_bold())
+        }
+        if code == 105 {
+            return wr_apply_inline(app, wd.wd_style_italic())
         }
         if code == 119 {
             return wr_close(app)
@@ -1880,7 +1950,22 @@ fn wr_draw_pages(app: App, w: Int, h: Int) {
                 ink = wr_ink_muted()
             }
         }
-        gui.text_fmt(text_x, ly, l.text, size, ink, l.family, l.style)
+        if l.runs.len() == 0 {
+            gui.text_fmt(text_x, ly, l.text, size, ink, l.family, l.style)
+        } else if l.dir == wd.wd_dir_rtl() {
+            var rx = left + (l.x + l.w - l.indent) * s.zoom / 100
+            for run in l.runs {
+                let rw = gui.text_fmt_width(run.text, size, l.family, run.style) * s.zoom / 100
+                rx = rx - rw
+                gui.text_fmt(rx, ly, run.text, size, ink, l.family, run.style)
+            }
+        } else {
+            var rx = text_x
+            for run in l.runs {
+                gui.text_fmt(rx, ly, run.text, size, ink, l.family, run.style)
+                rx = rx + gui.text_fmt_width(run.text, size, l.family, run.style) * s.zoom / 100
+            }
+        }
         // The preedit is part of the temporary document, so underline only its
         // range. A long composition can span more than one visual line.
         if marked.len() > 0 && l.para == comp_para {

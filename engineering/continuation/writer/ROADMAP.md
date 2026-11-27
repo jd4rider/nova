@@ -34,15 +34,15 @@ not a single session.
 ## Current slice
 
 The vertical slice, autosave/crash recovery, IME marked-text composition,
-`.novadoc` v3 migration and mixed-script typography are landed and installed:
-a native Writer window over a GUI-independent document core with measured
-pagination, editable paragraphs, bounded undo, a checksummed v3 round trip
-with v1/v2 migration, per-paragraph bidi direction, CJK wrapping, recovery
-files that survive a process crash, and inline composition that commits once
-or cancels on Escape.
+`.novadoc` v4 migration, mixed-script typography and inline bold/italic are
+landed and installed: a native Writer window over a GUI-independent document
+core with measured pagination, editable paragraphs, bounded undo, a checksummed
+v4 round trip with v1/v2/v3 migration, per-paragraph bidi direction, styled
+runs, CJK wrapping, recovery files that survive a process crash, and inline
+composition that commits once or cancels on Escape.
 
-Next: **WRI-06.003 inline bold/italic runs**. Then WRI-05.005 incremental
-layout, WRI-07.004 save panel, WRI-07.005 recovery prompt/discard.
+Next: **WRI-05.005 incremental layout**. Then WRI-07.004 save panel,
+WRI-07.005 recovery prompt/discard, WRI-06.002 list numbering.
 
 ## Critical path
 
