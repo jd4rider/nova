@@ -1060,7 +1060,11 @@ Evidence from `browser/tests/history.sh` (exit 0):
 - `history.tsv` holds exactly two `visit` lines and `settings.tsv` holds
   `search=duckduckgo`;
 - the second run prints `new=0 bookmarks=2 history=0 search=duckduckgo`, so the
-  import is idempotent for history as well as bookmarks.
+  import is idempotent for history as well as bookmarks;
+- auto-discovery is covered too: with `HOME` pointed at a fixture home holding
+  `Library/Application Support/Google/Chrome/Default`, `--import` with no path
+  prints the same `files=1 found=2 new=2 bookmarks=2 history=2
+  search=duckduckgo`. The real Chrome profile is never read by the test.
 
 Not evidenced: an import from this user's real Chrome profile (only the format
 was checked above; no page data was read), Chrome running while the import

@@ -75,3 +75,17 @@ OUT5=$(cd "$ROOT" && NOVA_BROWSER_PROFILE="$SETTINGS_PROFILE" \
     "$ROOT/browser/target/nova/nova-browser" --import "$CHROME/Default" 2>&1)
 echo "$OUT5"
 echo "$OUT5" | grep -q 'new=0 bookmarks=2 history=0 search=duckduckgo'
+
+# Cmd+Shift+I discovers profiles under the home directory. Point HOME at the
+# fixture so the real Chrome profile is never touched.
+echo "--- profile discovery (HOME override) ---"
+FAKEHOME=$(mktemp -d /tmp/nova-fakehome.XXXXXX)
+mkdir -p "$FAKEHOME/Library/Application Support/Google/Chrome/Default"
+cp "$CHROME/Default/Bookmarks" "$CHROME/Default/Preferences" "$CHROME/Default/History" \
+    "$FAKEHOME/Library/Application Support/Google/Chrome/Default/"
+DISCOVERED=$(mktemp -d /tmp/nova-browser-profile.XXXXXX)
+trap 'rm -rf "$PROFILE" "$CHROME" "$SETTINGS_PROFILE" "$FAKEHOME" "$DISCOVERED"' EXIT
+OUT6=$(cd "$ROOT" && HOME="$FAKEHOME" NOVA_BROWSER_PROFILE="$DISCOVERED" \
+    "$ROOT/browser/target/nova/nova-browser" --import 2>&1)
+echo "$OUT6"
+echo "$OUT6" | grep -q 'files=1 found=2 new=2 bookmarks=2 history=2 search=duckduckgo'
