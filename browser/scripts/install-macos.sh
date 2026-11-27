@@ -96,6 +96,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSCameraUsageDescription</key><string>Sites can use the camera when you allow them in Nova Browser.</string>
+  <key>NSMicrophoneUsageDescription</key><string>Sites can use the microphone when you allow them in Nova Browser.</string>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>NSHumanReadableCopyright</key><string>Nova Browser — built with the self-hosted Nova compiler</string>
 </dict>

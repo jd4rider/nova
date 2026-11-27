@@ -129,7 +129,7 @@ open -a "/Applications/Nova Browser.app"
 ```
 
 The script rebuilds, renders the icon, assembles `Nova Browser.app`, ad-hoc
-signs it locally and replaces the installed copy. Version 0.9.14 is installed.
+signs it locally and replaces the installed copy. Version 0.9.15 is installed.
 Re-run it after every completed phase. This is not Developer ID signing or
 notarization.
 
@@ -308,6 +308,20 @@ reports `state=0` rather than pretending; the commands only mean something for
 the installed app. This ad-hoc signed build is not notarized, so macOS may still
 show a confirmation for a link opened from another app.
 
+## Site permissions
+
+When a page asks for the camera or microphone, Nova draws a card naming the
+site and the device and holds WebKit's request until you press **Allow** or
+**Block**. The answer is remembered per host and device in `settings.tsv` as
+`permission:<host>:<kind>`, so the card appears once. Allowing here only lets
+WebKit start the capture; macOS still controls the device itself in System
+Settings → Privacy & Security, with the usage strings the bundle declares.
+Private tabs deny capture requests without showing the card.
+
+Web notifications are not offered. WebKit exposes no public `WKUIDelegate` hook
+for `Notification.requestPermission()` — only private SPI — so Nova does not
+pretend to grant a permission it cannot deliver.
+
 ## Private tabs
 
 Cmd+Shift+N opens a private tab, and `nova-browser --private` starts the window
@@ -338,9 +352,10 @@ existing Nova login is never replaced, and without the key the import prints
 `chrome key locked` and imports none rather than writing blank passwords.
 
 One login is kept per host. Cmd+Shift+O opens the passwords panel: every saved
-host with its username, newest state read from the keychain, and a **Remove**
-button on each row. Escape or the × closes it. Removing one without opening the
-window is still a command:
+host with its username, a **Show** button that reads the password from the
+keychain only when you press it (and turns into **Hide**), and **Remove**.
+Escape or the × closes it. Removing one without opening the window is still a
+command:
 
 ```sh
 browser/target/nova/nova-browser --forget-login example.com

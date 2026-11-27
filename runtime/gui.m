@@ -442,6 +442,11 @@ static int64_t nova_gui_key_code(NSEvent *event, int64_t mods) {
         default: break;
     }
     NSString *text = (mods & NOVA_MOD_COMMAND) ? event.charactersIgnoringModifiers : event.characters;
+    /* Command chords are compared against the lowercase letters the app
+     * documents (Cmd+Shift+I, Cmd+Shift+L, ...). charactersIgnoringModifiers
+     * still applies Shift, so without this every shifted chord arrived as an
+     * uppercase scalar the app never matched. */
+    if (mods & NOVA_MOD_COMMAND) text = text.lowercaseString;
     if (text.length == 0) return 0;
     unichar first = [text characterAtIndex:0];
     if (first >= 0xD800 && first <= 0xDBFF && text.length > 1) {
@@ -1617,6 +1622,46 @@ void nova_gui_line(int64_t x0, int64_t y0, int64_t x1, int64_t y1, int64_t rgb) 
     CGContextMoveToPoint(nova_ctx, (CGFloat)x0 + 0.5, (CGFloat)y0 + 0.5);
     CGContextAddLineToPoint(nova_ctx, (CGFloat)x1 + 0.5, (CGFloat)y1 + 0.5);
     CGContextStrokePath(nova_ctx);
+    CGColorRelease(color);
+}
+
+/* Filled triangle. Faceted art (gems, bevels, chevrons) is a fan of these;
+ * the primitive exists so an app never has to fake a polygon out of
+ * rectangles. Points are top-left, like every other draw call. */
+void nova_gui_triangle(int64_t x0, int64_t y0, int64_t x1, int64_t y1,
+                       int64_t x2, int64_t y2, int64_t rgb) {
+    if (!nova_ctx) return;
+    CGColorRef color = nova_gui_color(rgb);
+    CGContextSetFillColorWithColor(nova_ctx, color);
+    CGContextBeginPath(nova_ctx);
+    CGContextMoveToPoint(nova_ctx, (CGFloat)x0, (CGFloat)y0);
+    CGContextAddLineToPoint(nova_ctx, (CGFloat)x1, (CGFloat)y1);
+    CGContextAddLineToPoint(nova_ctx, (CGFloat)x2, (CGFloat)y2);
+    CGContextClosePath(nova_ctx);
+    CGContextFillPath(nova_ctx);
+    CGColorRelease(color);
+}
+
+void nova_gui_triangle_alpha(int64_t x0, int64_t y0, int64_t x1, int64_t y1,
+                             int64_t x2, int64_t y2, int64_t rgb, int64_t alpha) {
+    if (!nova_ctx) return;
+    CGFloat a = (CGFloat)(alpha < 0 ? 0 : (alpha > 255 ? 255 : alpha)) / 255.0;
+    CGFloat components[4] = {
+        (CGFloat)((rgb >> 16) & 0xFF) / 255.0,
+        (CGFloat)((rgb >> 8) & 0xFF) / 255.0,
+        (CGFloat)(rgb & 0xFF) / 255.0,
+        a,
+    };
+    CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    CGColorRef color = CGColorCreate(space, components);
+    CGColorSpaceRelease(space);
+    CGContextSetFillColorWithColor(nova_ctx, color);
+    CGContextBeginPath(nova_ctx);
+    CGContextMoveToPoint(nova_ctx, (CGFloat)x0, (CGFloat)y0);
+    CGContextAddLineToPoint(nova_ctx, (CGFloat)x1, (CGFloat)y1);
+    CGContextAddLineToPoint(nova_ctx, (CGFloat)x2, (CGFloat)y2);
+    CGContextClosePath(nova_ctx);
+    CGContextFillPath(nova_ctx);
     CGColorRelease(color);
 }
 

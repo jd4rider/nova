@@ -96,6 +96,11 @@ struct Store {
     // Keychain is read when the panel opens, never while drawing.
     passwords_open: Bool,
     password_entries: List<String>,
+    // A page's pending camera/microphone request. The card is shown only when
+    // no saved decision exists for that origin and kind.
+    permission_on: Bool,
+    permission_origin: String,
+    permission_kind: String,
     // The find bar is chrome state, not page state: the query lives here so
     // typing, redraws and the next/previous commands share one source.
     find_open: Bool,
@@ -1826,6 +1831,9 @@ fn load_store() -> Store {
         bookmarks_open: false,
         passwords_open: false,
         password_entries: [],
+        permission_on: false,
+        permission_origin: "",
+        permission_kind: "",
         find_open: false,
         find_text: "",
         find_found: 0,
@@ -3388,9 +3396,31 @@ fn read_saved_logins() -> List<String> {
     var out: List<String> = []
     for host in login.hosts() {
         let saved = login.lookup(host)
-        out.push(host + "\t" + library.escape(saved.user))
+        // The password stays empty until the panel's Show reads it; the last
+        // field is 1 once it is visible.
+        out.push(host + "\t" + library.escape(saved.user) + "\t\t0")
     }
     return out
+}
+
+fn login_entry(host: String, user: String, pass: String, shown: Bool) -> String {
+    let mark = if shown { "1" } else { "0" }
+    return host + "\t" + library.escape(user) + "\t" + library.escape(pass) + "\t" + mark
+}
+
+fn password_shown(record: String) -> Bool {
+    return library.field(record, 3) == "1"
+}
+
+fn password_secret(record: String) -> String {
+    if !password_shown(record) {
+        return "••••••"
+    }
+    let pass = library.field(record, 2)
+    if pass.len() == 0 {
+        return "(not read)"
+    }
+    return pass
 }
 
 fn password_rows(store: Store) -> Int {
@@ -3427,6 +3457,11 @@ fn password_remove_box(session: Session, store: Store, index: Int) -> Box {
     return Box { x: row.x + row.w - 76, y: row.y + 8, w: 68, h: 24 }
 }
 
+fn password_show_box(session: Session, store: Store, index: Int) -> Box {
+    let remove = password_remove_box(session, store, index)
+    return Box { x: remove.x - 56, y: remove.y, w: 52, h: 24 }
+}
+
 fn draw_passwords(session: Session, theme: Chrome, store: Store, fx: Fx) {
     if !store.passwords_open {
         return
@@ -3458,9 +3493,14 @@ fn draw_passwords(session: Session, theme: Chrome, store: Store, fx: Fx) {
         gui.clip(row.x + 10, row.y + 2, row.w - 100, 20)
         gui.text(row.x + 10, row.y + 4, library.field(record, 0), 11, theme.fg_bright)
         gui.clip_reset()
-        gui.clip(row.x + 10, row.y + 19, row.w - 100, 14)
-        gui.text(row.x + 10, row.y + 19, library.field(record, 1), 9, theme.muted)
+        gui.clip(row.x + 10, row.y + 19, row.w - 160, 14)
+        gui.text(row.x + 10, row.y + 19, library.field(record, 1) + " · " + password_secret(record), 9, theme.muted)
         gui.clip_reset()
+        let show = password_show_box(session, store, i)
+        if slot(fx, 250 + i) > 0 {
+            gui.round_rect(show.x, show.y, show.w, show.h, 6, blend(theme.elevated, theme.border_strong, slot(fx, 250 + i)))
+        }
+        gui.text(show.x + 10, show.y + 5, if password_shown(record) { "Hide" } else { "Show" }, 10, theme.muted)
         let remove = password_remove_box(session, store, i)
         if slot(fx, 240 + i) > 0 {
             gui.round_rect(remove.x, remove.y, remove.w, remove.h, 6, blend(theme.elevated, theme.red, slot(fx, 240 + i)))
@@ -3472,6 +3512,81 @@ fn draw_passwords(session: Session, theme: Chrome, store: Store, fx: Fx) {
         gui.text(panel.x + 14, panel.y + panel.h - 18, "${store.password_entries.len() - rows} more not shown", 10, theme.faint)
     }
     gui.overlay(panel.x, panel.y, panel.w, panel.h, true)
+}
+
+// ---------- site permissions ----------
+
+fn permission_label(kind: String) -> String {
+    if kind == "microphone" {
+        return "microphone"
+    }
+    if kind == "camera" {
+        return "camera"
+    }
+    return "camera and microphone"
+}
+
+fn permission_key(origin: String, kind: String) -> String {
+    return "permission:" + origin + ":" + kind
+}
+
+fn permission_box(session: Session) -> Box {
+    let w = 440
+    let left = page_left(session)
+    var x = left + (gui.width() - left - w) / 2
+    if x < left + 8 {
+        x = left + 8
+    }
+    return Box { x: x, y: page_top(session) + 12, w: w, h: 104 }
+}
+
+fn permission_allow_box(session: Session) -> Box {
+    let box = permission_box(session)
+    return Box { x: box.x + box.w - 172, y: box.y + 64, w: 76, h: 28 }
+}
+
+fn permission_block_box(session: Session) -> Box {
+    let box = permission_box(session)
+    return Box { x: box.x + box.w - 88, y: box.y + 64, w: 76, h: 28 }
+}
+
+fn draw_permission(theme: Chrome, session: Session, store: Store, fx: Fx) {
+    if !store.permission_on {
+        return
+    }
+    let box = permission_box(session)
+    gui.rect_alpha(box.x + 3, box.y + 6, box.w, box.h, 0, 90)
+    gui.round_rect(box.x, box.y, box.w, box.h, 12, theme.elevated)
+    gui.stroke(box.x, box.y, box.w, box.h, theme.border_strong)
+    gui.clip(box.x + 16, box.y + 8, box.w - 32, 24)
+    gui.text(box.x + 16, box.y + 14, "Allow " + store.permission_origin + " to use your " + permission_label(store.permission_kind) + "?", 12, theme.fg_bright)
+    gui.clip_reset()
+    gui.text(box.x + 16, box.y + 38, "The site asks WebKit; macOS may ask again for the device itself.", 10, theme.faint)
+    let allow = permission_allow_box(session)
+    let block = permission_block_box(session)
+    if slot(fx, 260) > 0 {
+        gui.round_rect(allow.x, allow.y, allow.w, allow.h, 7, blend(theme.elevated, theme.green, slot(fx, 260)))
+    }
+    if slot(fx, 261) > 0 {
+        gui.round_rect(block.x, block.y, block.w, block.h, 7, blend(theme.elevated, theme.border_strong, slot(fx, 261)))
+    }
+    gui.text(allow.x + 20, allow.y + 7, "Allow", 11, theme.fg_bright)
+    gui.text(block.x + 19, block.y + 7, "Block", 11, theme.muted)
+    gui.overlay(box.x, box.y, box.w, box.h, true)
+}
+
+fn decide_permission(handle: Int, session: Session, current: Address, store: Store, allow: Bool, notice: Notice) -> ClickAction {
+    engine.permission_decide(handle, allow)
+    var next = store
+    next.permission_on = false
+    if store.permission_origin.len() > 0 {
+        save_setting(store, permission_key(store.permission_origin, store.permission_kind), if allow { "allow" } else { "block" })
+    }
+    let verb = if allow { "Allowed" } else { "Blocked" }
+    return click_action(session, current, next, Notice {
+        text: verb + " " + permission_label(store.permission_kind) + " for " + store.permission_origin,
+        until: gui.now() + 2800,
+    })
 }
 
 // ---------- find in page ----------
@@ -4156,6 +4271,7 @@ fn draw_chrome(handle: Int, theme: Chrome, address: Address, session: Session, s
     draw_downloads(theme, store, downloads, fx)
     draw_bookmarks(session, theme, store, fx)
     draw_passwords(session, theme, store, fx)
+    draw_permission(theme, session, store, fx)
     draw_find(theme, session, store, fx)
     draw_suggestions(theme, address, session, suggestions, fx)
     draw_reader_panel(theme, store, reader_open, fetching, received, hover)
@@ -4198,6 +4314,20 @@ fn hover_target(x: Int, y: Int, session: Session, address: Address, suggestions:
             return 221
         }
     }
+    if store.permission_on {
+        let box = permission_box(session)
+        if gui.inside(box.x, box.y, box.w, box.h, x, y) {
+            let allow = permission_allow_box(session)
+            if gui.inside(allow.x, allow.y, allow.w, allow.h, x, y) {
+                return 260
+            }
+            let block = permission_block_box(session)
+            if gui.inside(block.x, block.y, block.w, block.h, x, y) {
+                return 261
+            }
+            return 0 - 1
+        }
+    }
     if store.passwords_open {
         let panel = passwords_box(session, store)
         if gui.inside(panel.x, panel.y, panel.w, panel.h, x, y) {
@@ -4207,6 +4337,10 @@ fn hover_target(x: Int, y: Int, session: Session, address: Address, suggestions:
             }
             var i = 0
             while i < password_rows(store) {
+                let show = password_show_box(session, store, i)
+                if gui.inside(show.x, show.y, show.w, show.h, x, y) {
+                    return 250 + i
+                }
                 let remove = password_remove_box(session, store, i)
                 if gui.inside(remove.x, remove.y, remove.w, remove.h, x, y) {
                     return 240 + i
@@ -4571,6 +4705,23 @@ fn handle_click(handle: Int, x: Int, y: Int, clicks: Int, current: Address, sess
         }
     }
 
+    // A pending permission card owns its rectangle: the page underneath must
+    // not get a press that was meant for Allow or Block.
+    if store.permission_on {
+        let box = permission_box(session)
+        if gui.inside(box.x, box.y, box.w, box.h, x, y) {
+            let allow = permission_allow_box(session)
+            if gui.inside(allow.x, allow.y, allow.w, allow.h, x, y) {
+                return decide_permission(handle, session, current, store, true, notice)
+            }
+            let block = permission_block_box(session)
+            if gui.inside(block.x, block.y, block.w, block.h, x, y) {
+                return decide_permission(handle, session, current, store, false, notice)
+            }
+            return click_action(session, current, store, notice)
+        }
+    }
+
     // The passwords panel floats over the page too, and its rows take presses
     // before anything underneath them.
     if store.passwords_open {
@@ -4584,6 +4735,26 @@ fn handle_click(handle: Int, x: Int, y: Int, clicks: Int, current: Address, sess
             }
             var i = 0
             while i < password_rows(store) {
+                let show = password_show_box(session, store, i)
+                if gui.inside(show.x, show.y, show.w, show.h, x, y) {
+                    let record = store.password_entries[i]
+                    let host = library.field(record, 0)
+                    var entry = login_entry(host, library.field(record, 1), "", false)
+                    if !password_shown(record) {
+                        let saved = login.lookup(host)
+                        entry = login_entry(host, saved.user, saved.pass, true)
+                    }
+                    var rows: List<String> = []
+                    var j = 0
+                    while j < store.password_entries.len() {
+                        let row_value = if j == i { entry } else { store.password_entries[j] }
+                        rows.push(row_value)
+                        j = j + 1
+                    }
+                    var next = store
+                    next.password_entries = rows
+                    return click_action(session, current, next, notice)
+                }
                 let remove = password_remove_box(session, store, i)
                 if gui.inside(remove.x, remove.y, remove.w, remove.h, x, y) {
                     let host = library.field(store.password_entries[i], 0)
@@ -5606,7 +5777,7 @@ fn handle_key(handle: Int, code: Int, mods: Int, current: Address, session: Sess
             until: gui.now() + 2400,
         }, false)
     }
-    if command && shift && code == 37 {
+    if command && shift && code == 108 {
         // Reads or stops, and keeps the panel in view either way.
         return key_reader(session, current, store, toggle_listen(handle, store), 1, false)
     }
@@ -5621,7 +5792,7 @@ fn handle_key(handle: Int, code: Int, mods: Int, current: Address, session: Sess
         }
         return key_reader(session, current, store, toggle_listen(handle, store), 1, false)
     }
-    if command && shift && code == 9 {
+    if command && shift && code == 118 {
         return key_action(session, current, store, cycle_voice(store), false)
     }
     if command && shift && code == 105 {
@@ -5653,7 +5824,7 @@ fn handle_key(handle: Int, code: Int, mods: Int, current: Address, session: Sess
         }, false)
     }
 
-    if command && shift && code == 45 {
+    if command && shift && code == 110 {
         let tab = new_private_tab(gui.native_view(), gui.width(), gui.height())
         let next = append_tab(session, tab)
         engine.focus_chrome(active_handle(next))
@@ -5662,20 +5833,20 @@ fn handle_key(handle: Int, code: Int, mods: Int, current: Address, session: Sess
             until: gui.now() + 3400,
         }, false)
     }
-    if command && code == 3 {
+    if command && code == 102 {
         // Cmd+F. The query is kept between openings the way Chrome keeps it.
         engine.focus_chrome(handle)
         var opened = store
         opened.find_open = true
         return key_action(session, current, opened, notice_idle(), false)
     }
-    if command && code == 24 {
+    if command && code == 61 {
         return key_action(session, current, store, zoom_step(handle, 10, store), false)
     }
-    if command && code == 27 {
+    if command && code == 45 {
         return key_action(session, current, store, zoom_step(handle, 0 - 10, store), false)
     }
-    if command && code == 29 {
+    if command && code == 48 {
         engine.set_zoom(handle, 100)
         save_zoom(store, engine.page_url(handle), 100)
         return key_action(session, current, store, Notice { text: "Zoom: 100%", until: gui.now() + 1600 }, false)
@@ -5813,7 +5984,7 @@ fn handle_key(handle: Int, code: Int, mods: Int, current: Address, session: Sess
         return key_action(session, current, store, notice_idle(), false)
     }
 
-    if command && shift && code == 79 {
+    if command && shift && code == 111 {
         // Cmd+Shift+O. With Command held the host reports the uppercase scalar
         // from charactersIgnoringModifiers, so this is 'O', not 'o'.
         // Saved logins: the list is read here, once, so the panel draws from
@@ -6012,13 +6183,42 @@ fn auto_close(session: Session, theme: Chrome, address: Address, store: Store) {
             first_host = library.field(entries[0], 0)
             first_user = library.field(entries[0], 1)
         }
+        var revealed = ""
+        if entries.len() > 0 {
+            // The panel's Show path reads the password only when pressed; this
+            // is the same lookup and formatting that click uses.
+            let saved_first = login.lookup(first_host)
+            let shown_entry = login_entry(first_host, first_user, saved_first.pass, true)
+            revealed = password_secret(shown_entry)
+        }
         var opened = store
         opened.passwords_open = true
         opened.password_entries = entries
         let panel = passwords_box(session, opened)
         let removed = login.forget(first_host)
         let remaining = read_saved_logins().len()
-        println("passwords: seeded=${flag(seeded.len() > 0)} rows=${entries.len()} host=${first_host} user=${first_user} panel=${panel.w}x${panel.h} removed=${flag(removed)} remaining=${remaining}")
+        println("passwords: seeded=${flag(seeded.len() > 0)} rows=${entries.len()} host=${first_host} user=${first_user} revealed=${revealed} panel=${panel.w}x${panel.h} removed=${flag(removed)} remaining=${remaining}")
+    }
+    // Headless permission check: a page's getUserMedia reaches WebKit's
+    // delegate, Nova reads the origin and kind, and a deny clears the request
+    // without touching TCC.
+    if gui.env("NOVA_BROWSER_PERMISSION_CHECK") == "1" {
+        engine.run_js(handle, "navigator.mediaDevices.getUserMedia({audio:true}).then(function(){return 'ok';}).catch(function(e){return 'denied';})")
+        var waited_permissions = 0
+        while !engine.permission_pending(handle) && waited_permissions < 3000 {
+            gui.pump()
+            gui.sleep(20)
+            waited_permissions = waited_permissions + 20
+        }
+        let pending = engine.permission_pending(handle)
+        let origin = engine.permission_origin(handle)
+        let kind = engine.permission_kind(handle)
+        engine.permission_decide(handle, false)
+        var after_deny = 0
+        if engine.permission_pending(handle) {
+            after_deny = 1
+        }
+        println("permission: pending=${flag(pending)} origin=${origin} kind=${kind} remaining=${after_deny}")
     }
     if gui.env("NOVA_BROWSER_LOGIN_CHECK") == "1" {
         engine.run_js(handle, "document.querySelector('#u').value='ada';document.querySelector('#p').value='hunter2';document.querySelector('form').requestSubmit();'submitted'")
@@ -6694,6 +6894,7 @@ fn main() {
     var drawn_bookmarks = 0 - 1
     var drawn_shelf = 0 - 1
     var drawn_bookmarks_open = 0 - 1
+    var drawn_permission = 0 - 1
     var drawn_rail_open = 0 - 1
     var drawn_speaking = 0 - 1
     var last_login_key = ""
@@ -6732,6 +6933,23 @@ fn main() {
         let width = gui.width()
         let height = gui.height()
         let handle = active_handle(session)
+        // A page's camera/microphone request is held by the host until Nova
+        // answers. A saved decision answers immediately; otherwise the card is
+        // shown and its Allow/Block calls back into the same handler.
+        if !store.permission_on && engine.permission_pending(handle) {
+            let origin = engine.permission_origin(handle)
+            let kind = engine.permission_kind(handle)
+            let remembered = if store.settings_path.len() > 0 { library.setting_value(gui.read(store.settings_path), permission_key(origin, kind)) } else { "" }
+            if remembered == "allow" {
+                engine.permission_decide(handle, true)
+            } else if remembered == "block" {
+                engine.permission_decide(handle, false)
+            } else {
+                store.permission_origin = origin
+                store.permission_kind = kind
+                store.permission_on = true
+            }
+        }
         // The saved engine is applied here, so a settings change or a shortcut
         // reaches the host before the next reading without per-frame churn.
         // Re-applied every pass: AppKit restores the buttons to the window's top
@@ -6968,6 +7186,7 @@ fn main() {
                     flag(address.editing) != drawn_editing || address.text != drawn_text ||
                     address.cursor != drawn_cursor || address.highlight != drawn_highlight ||
                     store.bookmarks.len() != drawn_bookmarks || flag(store.downloads_open) != drawn_shelf || flag(store.bookmarks_open) != drawn_bookmarks_open ||
+                    flag(store.permission_on) != drawn_permission ||
                     flag(session.vertical) != drawn_vertical || flag(rail_hover) != drawn_rail_open ||
                     flag(speech.speaking()) != drawn_speaking || flag(speech.paused()) != drawn_paused ||
                     flag(reader_open) != drawn_reader || flag(store.find_open) != drawn_find ||
@@ -7003,6 +7222,7 @@ fn main() {
             drawn_bookmarks = store.bookmarks.len()
             drawn_shelf = flag(store.downloads_open)
             drawn_bookmarks_open = flag(store.bookmarks_open)
+            drawn_permission = flag(store.permission_on)
             drawn_rail_open = flag(rail_hover)
             drawn_speaking = flag(speech.speaking())
             drawn_paused = flag(speech.paused())

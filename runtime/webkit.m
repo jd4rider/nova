@@ -33,6 +33,7 @@ typedef struct {
 #define NOVA_WEBVIEW_INVALID (-1)
 
 @class NovaWebViewEntry;
+@class NovaUIDelegate;
 
 @interface NovaWebViewDelegate : NSObject <WKNavigationDelegate>
 @property (nonatomic, weak) NovaWebViewEntry *entry;
@@ -57,6 +58,12 @@ typedef struct {
 @property (nonatomic, copy) NSString *loginOrigin;
 @property (nonatomic, copy) NSString *loginUser;
 @property (nonatomic, copy) NSString *loginPass;
+/* A camera/microphone request WebKit is holding open until Nova answers. The
+ * handler is called once, on the main thread, with Grant or Deny. */
+@property (nonatomic, strong) NovaUIDelegate *uiDelegate;
+@property (nonatomic, copy) NSString *permissionOrigin;
+@property (nonatomic, copy) NSString *permissionKind;
+@property (nonatomic, copy) void (^permissionHandler)(WKPermissionDecision);
 @end
 
 @implementation NovaWebViewEntry
@@ -590,6 +597,44 @@ static NSString *nova_login_script(void) {
 }
 @end
 
+/* Camera and microphone requests. WebKit holds the page's promise while the
+ * embedder decides; Nova polls the request and answers from its own card.
+ * Notifications have no public WKUIDelegate method (only private SPI), so this
+ * delegate deliberately says nothing about them. */
+@interface NovaUIDelegate : NSObject <WKUIDelegate>
+@property (nonatomic, weak) NovaWebViewEntry *entry;
+@end
+
+@implementation NovaUIDelegate
+- (void)webView:(WKWebView *)webView
+    requestMediaCapturePermissionForOrigin:(WKSecurityOrigin *)origin
+                          initiatedByFrame:(WKFrameInfo *)frame
+                                      type:(WKMediaCaptureType)type
+                           decisionHandler:(void (^)(WKPermissionDecision))decisionHandler API_AVAILABLE(macos(12.0)) {
+    (void)webView;
+    (void)frame;
+    NovaWebViewEntry *entry = self.entry;
+    if (!entry || entry.privateView) {
+        decisionHandler(WKPermissionDecisionDeny);
+        return;
+    }
+    if (entry.permissionHandler) {
+        void (^previous)(WKPermissionDecision) = entry.permissionHandler;
+        entry.permissionHandler = nil;
+        previous(WKPermissionDecisionDeny);
+    }
+    entry.permissionOrigin = origin.host.length > 0 ? origin.host : @"";
+    if (type == WKMediaCaptureTypeMicrophone) {
+        entry.permissionKind = @"microphone";
+    } else if (type == WKMediaCaptureTypeCamera) {
+        entry.permissionKind = @"camera";
+    } else {
+        entry.permissionKind = @"camera and microphone";
+    }
+    entry.permissionHandler = [decisionHandler copy];
+}
+@end
+
 @interface NovaBlockList : NSObject
 @end
 
@@ -700,6 +745,10 @@ static int64_t nova_webview_create_store(int64_t parent_handle, int64_t x, int64
         delegate.entry = entry;
         entry.delegate = delegate;
         web.navigationDelegate = delegate;
+        NovaUIDelegate *uiDelegate = [[NovaUIDelegate alloc] init];
+        uiDelegate.entry = entry;
+        entry.uiDelegate = uiDelegate;
+        web.UIDelegate = uiDelegate;
 
         [container addSubview:web];
         int64_t handle = nova_next_handle++;
@@ -858,8 +907,15 @@ void nova_webview_destroy(int64_t handle) {
     NovaWebViewEntry *entry = nova_webview_entry(handle);
     if (!entry) return;
     @autoreleasepool {
+        if (entry.permissionHandler) {
+            void (^handler)(WKPermissionDecision) = entry.permissionHandler;
+            entry.permissionHandler = nil;
+            handler(WKPermissionDecisionDeny);
+        }
         [entry.webView stopLoading];
         entry.webView.navigationDelegate = nil;
+        entry.webView.UIDelegate = nil;
+        entry.uiDelegate = nil;
         [entry.webView removeFromSuperview];
         entry.delegate.entry = nil;
         [nova_webviews removeObjectForKey:@(handle)];
@@ -1275,6 +1331,35 @@ int64_t nova_webview_fill_login(int64_t handle, nova_str user, nova_str pass) {
         nova_js_quote(nova_webview_string(pass))];
     NSString *result = nova_webview_eval_sync(entry, script, 2.0);
     return [result isEqualToString:@"filled"] ? 1 : 0;
+}
+
+/* Camera/microphone permission polling. A request stays pending until Nova
+ * calls decide; private views and a second request deny the earlier one. */
+int64_t nova_webview_permission_pending(int64_t handle) {
+    if (![NSThread isMainThread]) return 0;
+    NovaWebViewEntry *entry = nova_webview_entry(handle);
+    return (entry && entry.permissionHandler) ? 1 : 0;
+}
+
+nova_str nova_webview_permission_origin(int64_t handle) {
+    if (![NSThread isMainThread]) return nova_webview_empty();
+    NovaWebViewEntry *entry = nova_webview_entry(handle);
+    return nova_webview_copy(entry.permissionOrigin ?: @"");
+}
+
+nova_str nova_webview_permission_kind(int64_t handle) {
+    if (![NSThread isMainThread]) return nova_webview_empty();
+    NovaWebViewEntry *entry = nova_webview_entry(handle);
+    return nova_webview_copy(entry.permissionKind ?: @"");
+}
+
+void nova_webview_permission_decide(int64_t handle, int64_t allow) {
+    if (![NSThread isMainThread]) return;
+    NovaWebViewEntry *entry = nova_webview_entry(handle);
+    if (!entry || !entry.permissionHandler) return;
+    void (^handler)(WKPermissionDecision) = entry.permissionHandler;
+    entry.permissionHandler = nil;
+    handler(allow == 1 ? WKPermissionDecisionGrant : WKPermissionDecisionDeny);
 }
 
 /* One generic-password item per host in the login keychain, under Nova's own

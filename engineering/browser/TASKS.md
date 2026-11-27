@@ -178,14 +178,32 @@ Each task needs a reproducible acceptance check before it is marked done.
   tabs do neither. `--forget-login <host>` removes an entry. 0.9.14 adds the
   panel list (WB-03.018); still open: editing or revealing a password and sync.
   Evidence: `browser/tests/login.sh` 3/3.
-- **WB-03.018 — Passwords panel.** DONE in 0.9.14. Cmd+Shift+O lists every
-  saved host and username (sorted, read from the keychain once when the panel
-  opens) with a per-row **Remove** that deletes the item and refreshes the
-  list. `nova_keychain_list` enumerates the login service's accounts. Escape
-  or × closes the panel; it is registered above the page. Not done: edit,
-  reveal, rename, and showing notes. Evidence: `browser/tests/passwords.sh`
-  2/2 — one captured login listed as `host=127.0.0.1 user=ada`, the panel
-  `380x100`, `removed=1 remaining=0`, and no keychain item left.
+- **WB-03.018 — Passwords panel.** DONE in 0.9.14, reveal added in 0.9.15.
+  Cmd+Shift+O lists every saved host and username (sorted, read from the
+  keychain once when the panel opens) with per-row **Show/Hide** and
+  **Remove**. Show reads only that host's password on press. Remove deletes the
+  item and refreshes the list. `nova_keychain_list` enumerates the login
+  service's accounts. Escape or × closes the panel; it is registered above the
+  page. Not done: editing or renaming a login, and notes. Evidence:
+  `browser/tests/passwords.sh` 2/2 — one captured login listed as
+  `host=127.0.0.1 user=ada revealed=hunter2`, the panel `380x100`,
+  `removed=1 remaining=0`, and no keychain item left.
+- **WB-03.019 — Camera and microphone prompts.** DONE in 0.9.15. A WKUIDelegate
+  holds `requestMediaCapturePermissionForOrigin:...` until Nova answers; the
+  app draws an Allow/Block card naming the origin and device and remembers the
+  answer as `permission:<host>:<kind>` in `settings.tsv`. Private views deny
+  without a card. Camera and microphone usage strings are in the bundle.
+  Not done: notifications and geolocation — WebKit exposes no public hook for
+  either, and Nova does not shim a permission it cannot deliver. Evidence:
+  `browser/tests/permissions.sh` 1/1 — a microphone request reports
+  `pending=1 origin=127.0.0.1 kind=microphone remaining=0` after a deny.
+- **WB-03.020 — Keyboard chord mapping.** DONE in 0.9.15. The host lowercases
+  the scalar from `charactersIgnoringModifiers` while Command is held, so
+  shifted chords reach the branches the README documents instead of uppercase
+  scalars. Read-aloud, voice cycle, zoom and find branches were corrected from
+  key codes to the scalars the host actually emits. Not done: no automated key
+  injection test for chords; the change is covered by inspection and by the
+  headless feature probes.
 - **WB-03.015 — Private tabs.** DONE in 0.9.11. `--private` and Cmd+Shift+N
   create a view on `WKWebsiteDataStore.nonPersistentDataStore`, so cookies and
   cache end with the tab. `record_visit` refuses private tabs, `save_session`

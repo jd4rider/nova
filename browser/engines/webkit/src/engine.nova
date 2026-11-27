@@ -288,3 +288,21 @@ fn login_clear(handle: Int) {
 fn fill_login(handle: Int, user: String, pass: String) -> Int {
     return view.wv_fill_login(handle, user, pass)
 }
+
+// Camera/microphone requests held by WebKit until the app answers. The app
+// draws the card and decides; this adapter only forwards.
+fn permission_pending(handle: Int) -> Bool {
+    return view.wv_permission_pending(handle)
+}
+
+fn permission_origin(handle: Int) -> String {
+    return view.wv_permission_origin(handle)
+}
+
+fn permission_kind(handle: Int) -> String {
+    return view.wv_permission_kind(handle)
+}
+
+fn permission_decide(handle: Int, allow: Bool) {
+    view.wv_permission_decide(handle, allow)
+}

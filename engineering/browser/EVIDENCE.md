@@ -1456,9 +1456,8 @@ chrome-logins: pass=6 fail=0
   closes it, Escape closes it, and it is registered with `gui.overlay` so it
   paints above the WebView. Each row draws the host and username; its
   **Remove** box calls `login.forget(host)` and re-reads the list.
-- The chord is Cmd+Shift+O because `charactersIgnoringModifiers` reports the
-  uppercase scalar while Command is held; a branch comparing lowercase 'o'
-  would be dead code.
+- Cmd+Shift+O: 0.9.15 made the host lowercase Command chords, so the branch
+  compares lowercase 'o' like every other documented chord.
 - Evidence: `browser/tests/passwords.sh` 2/2. The probe captures a real login
   through the page, reads the panel's list, removes it, and re-reads:
 
@@ -1473,3 +1472,40 @@ passwords: pass=2 fail=0
 - Not tested: the panel's pixels (no screenshot of the open panel), more than
   ten saved hosts (the remainder is only counted), and keyboard navigation
   inside the panel (there is none).
+
+## 0.9.15 — chords, password reveal, capture permissions
+
+- `nova_gui_key_code` lowercases the text from `charactersIgnoringModifiers`
+  when Command is held. That function still applies Shift, so Cmd+Shift+I
+  arrived as 'I' (73) while `handle_key` compared 105; the same mismatch hit
+  E/H/P/S/L/V/T/N/O. The app now sees the lowercase scalar it documents. The
+  read-aloud branch moved from 37 to 108 and the voice cycle from 9 to 118;
+  zoom in/out/reset moved from 24/27/29 to '='/'-'/'0' (61/45/48), and find
+  from 3 to 'f' (102).
+- **Show/Hide** in the passwords panel reads that host's password at press
+  time; opening the list still reads usernames only. `password_secret` masks an
+  unrevealed entry as `••••••`. No screenshot of the open panel was taken.
+- Camera/microphone: `NovaUIDelegate` implements
+  `requestMediaCapturePermissionForOrigin:initiatedByFrame:type:decisionHandler:`
+  (macOS 12+). It stores the handler, host and kind on the entry; Nova polls
+  `nova_webview_permission_*`, draws its own card, and answers with Grant or
+  Deny. A second request denies the first, a private view is denied at once, and
+  destroy denies anything still pending. Remembered answers live in
+  `settings.tsv` as `permission:<host>:<kind>`.
+- Notifications: no public `WKUIDelegate` method exists for
+  `Notification.requestPermission()` — the only WebKit hook is private SPI
+  (`WKUIDelegatePrivate.h`). Nova therefore does not shim or claim them.
+- Evidence: `browser/tests/permissions.sh` 1/1:
+
+```
+permission: pending=1 origin=127.0.0.1 kind=microphone remaining=0
+PASS a microphone request reaches the permission card
+permissions: pass=1 fail=0
+```
+
+  The probe denies, so TCC was never reached. `browser/tests/passwords.sh`
+  reports `revealed=hunter2` in the same 2/2 run. Build clean; installed 0.9.15
+  ad-hoc signed with both usage strings in the plist.
+- Not tested: an allowed capture (that would invoke TCC and needs a person at
+  the machine), the remembered-decision path across relaunch, and the card's
+  pixels.

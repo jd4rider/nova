@@ -304,3 +304,26 @@ fn wv_login_clear(handle: Int) {
 fn wv_fill_login(handle: Int, user: String, pass: String) -> Int {
     return nova_webview_fill_login(handle, user, pass)
 }
+
+// Camera and microphone requests. The host holds WebKit's decision until Nova
+// polls the request and answers; private views deny without asking.
+extern "C" fn nova_webview_permission_pending(handle: Int) -> Int
+extern "C" fn nova_webview_permission_origin(handle: Int) -> String
+extern "C" fn nova_webview_permission_kind(handle: Int) -> String
+extern "C" fn nova_webview_permission_decide(handle: Int, allow: Int)
+
+fn wv_permission_pending(handle: Int) -> Bool {
+    return nova_webview_permission_pending(handle) == 1
+}
+
+fn wv_permission_origin(handle: Int) -> String {
+    return nova_webview_permission_origin(handle)
+}
+
+fn wv_permission_kind(handle: Int) -> String {
+    return nova_webview_permission_kind(handle)
+}
+
+fn wv_permission_decide(handle: Int, allow: Bool) {
+    nova_webview_permission_decide(handle, if allow { 1 } else { 0 })
+}

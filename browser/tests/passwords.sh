@@ -27,7 +27,7 @@ absent(){ if security find-generic-password -s dev.nova.browser.login -a 127.0.0
 # keychain holds; removing it from the panel path deletes the item again.
 OUT=$(env "$PENV=$PROFILE" NOVA_BROWSER_PASSWORDS_CHECK=1 NOVA_BROWSER_URL="$URL" NOVA_BROWSER_AUTOCLOSE=1 "$BIN" 2>&1)
 echo "$OUT" | grep 'passwords:' || true
-match "the panel lists a saved login by host and user" "$OUT" "passwords: seeded=1 rows=1 host=127.0.0.1 user=ada panel=380x100 removed=1 remaining=0"
+match "the panel lists a saved login and reveals it on request" "$OUT" "passwords: seeded=1 rows=1 host=127.0.0.1 user=ada revealed=hunter2 panel=380x100 removed=1 remaining=0"
 absent "removing the row deletes the keychain item" ""
 echo "passwords: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
