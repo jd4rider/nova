@@ -1,32 +1,52 @@
 ---
 title: Nova Engine Studio
-description: A native Unity-first editor shell written in Nova, with real World state, editable transforms and undo/redo, a Game Camera view, persisted panel layout, an offscreen Metal viewport, and a signed macOS app.
+description: A native Unity-first editor shell written in Nova, with real World state, working toolbar and menus, viewport transform tools, editable transforms and undo/redo, a Game Camera view, persisted panel layout, an offscreen Metal viewport, and a signed macOS app.
 ---
 
 export const base = import.meta.env.BASE_URL
 
-**Status: phase-0 vertical slice, macOS arm64.** Nova Engine Studio is the native editor shell for Nova Engine. It is not a Unity wrapper, an Electron app or a mock layout: hierarchy, resizable and hideable panels, Scene/Game views, editable inspector and console all read the same live `World` value. The centre viewport is an offscreen Metal render composited into the same Nova GUI bitmap as the editor chrome.
+**Status: phase-0 vertical slice, macOS arm64.** Nova Engine Studio is the native editor shell for Nova Engine. It is not a Unity wrapper, an Electron app or a mock layout: hierarchy, resizable and hideable panels, Scene/Game views, toolbar commands, editable inspector and console all read the same live `World` value. The centre viewport is an offscreen Metal render composited into the same Nova GUI bitmap as the editor chrome.
 
 Every panel is drawn by [nova-gui](../../libraries/gui/) from Nova code. The project is the first editor-facing slice of the engine, not a finished product.
 
 <img
   src={`${base}engine/engine-scene.png`}
-  alt="Nova Engine Studio Scene tab with a lit Metal viewport, hierarchy, inspector and console"
+  alt="Nova Engine Studio Scene tab with a lit Metal viewport, hierarchy, inspector, working toolbar and console"
   style="width:100%;border:1px solid var(--sl-color-hairline);border-radius:10px;margin:14px 0 6px"
 />
 <p style="font-size:13px;color:var(--sl-color-gray-3);margin:0 0 28px">
-  Scene tab: seven live entities including the Game Camera, selected Player <code>3:1</code>, hierarchy, editable transform rows, panel chips and console. Captured from the signed 0.5.0 app at 2880×1800 and shown at 1440×900.
+  Scene tab: seven live entities including the Game Camera, selected Player <code>3:1</code>, hierarchy, editable transform rows, panel chips and console. The toolbar has transport, Select/Move/Rotate/Scale, snap, grid and Add/Dup/Del. Captured from the signed 0.6.0 app at 2880×1800 and shown at 1440×900.
 </p>
 
 ## What is real
 
-- **One World.** The hierarchy lists live entity slots and their generation handles. Selection, inspector fields, play/pause/step and the console all read the same `world.nova` value. The demo has seven entities: ground, two crates, Player, Key Light, Pedestal and Game Camera.
-- **Editable transforms with undo.** Click Position, Rotation or Scale, type comma-separated decimal values and press Enter. The inspector parses them to Q16.16 and commits through the same `world_set_position/rotation/scale` APIs. A 16-entry editor-only command stack records before/after values; Undo/Redo buttons and ⌘Z/⇧⌘Z replay it. Invalid input keeps the field active, and a new edit truncates redo. The runtime owns no undo state.
+- **One World.** The hierarchy lists live entity slots and their generation handles. Selection, inspector fields, toolbar commands, play/pause/step and the console all read the same `world.nova` value. The demo has seven entities: ground, two crates, Player, Key Light, Pedestal and Game Camera.
+- **A working toolbar and menus.** Play, pause and step run the fixed 1/60 s tick. Select, Move, Rotate and Scale are real viewport tools, with `Q`/`W`/`E`/`R` shortcuts and active states. Snap toggles 0.5 m / 15° / 0.1 scale, Grid toggles the 1 m overlay, and Add/Dup/Del create, duplicate or despawn real World entities. File, Edit, Assets, GameObject, Component, Window and Help open dropdowns and execute commands; unavailable asset and component systems report that instead of pretending.
+- **Viewport drag transforms with undo.** With Move, drag the selected entity in Scene to change X/Z. Rotate turns it around Y; Scale changes all three axes uniformly. Snapping is applied while dragging. Releasing records one before/after `EditCommand`, so the same Undo/Redo path restores a drag exactly like a typed inspector edit. `Esc` cancels the drag; it no longer quits the editor.
+- **Editable transforms with undo.** Click Position, Rotation or Scale, type comma-separated decimal values and press Enter. The inspector parses them to Q16.16 and commits through the same `world_set_position/rotation/scale` APIs. A 16-entry editor-only command stack records before/after values; Undo/Redo buttons and ⌘Z/⇧⌘Z replay it. Invalid input keeps the field active, and a new edit truncates redo.
 - **Persistent panel layout.** Drag the splitter beside Hierarchy, Inspector or the bottom drawer to resize it, or use the `Hier`/`Insp`/`Draw` chips in the menu bar to hide and restore it. The editor writes `layout.txt` under `~/Library/Application Support/Nova Engine Studio/`; a restart loads the same sizes and visibility before the first frame. Hiding a panel never clears the World or the selection.
 - **A Metal viewport.** The Scene/Game centre is an offscreen Metal render, not a CPU wireframe. Studio builds one Q16.16 model-view-projection matrix per live entity and submits a bounded draw list to `runtime/metal.m`; the host renders depth-tested lit checker meshes with one directional light. The frame is read back at the display's backing scale and composited into the same sRGB bitmap as the panels, so `gui.save_png` captures the viewport and the editor together. It is an offscreen render, not an embedded `MTKView`.
 - **Scene and Game Camera.** Scene uses a fixed editor perspective and draws the grid, selected-player box and entity label. Game renders through the tagged `Game Camera` entity: its World position and rotation become the eye and look direction, the camera entity itself is hidden from its own view, and editor overlays stay off. Selecting the Game Camera and editing its transform changes Game immediately.
-- **Real time controls.** `Space` plays or pauses, `S` advances one fixed 1/60 s tick, `Tab` cycles live entities, `Delete` despawns the selection, and `R` resets the demo world. Clicking a transform row focuses it; Enter applies and Escape cancels.
+- **Keyboard controls.** `Space` plays or pauses, `S` advances one fixed tick, `Shift+S` toggles snapping, `G` toggles the grid, `Q`/`W`/`E`/`R` select the four tools, `Tab` cycles live entities, `Delete` despawns the selection, `⌘D` duplicates it, `⌘R` resets the demo and `⌘Q` quits. `Esc` closes a menu, cancels a drag or returns to Select.
 - **A native shell.** The installer produces `Nova Engine Studio.app` with an icon and an ad-hoc signature. There is no web view, Electron or JavaScript runtime.
+
+<img
+  src={`${base}engine/engine-toolbar.png`}
+  alt="Nova Engine Studio Move tool active, Player dragged to 4.00, 1.40, 0.00 and one undo command recorded"
+  style="width:100%;border:1px solid var(--sl-color-hairline);border-radius:10px;margin:14px 0 6px"
+/>
+<p style="font-size:13px;color:var(--sl-color-gray-3);margin:0 0 28px">
+  Move tool: the Player was dragged to <code>4.00, 1.40, 0.00</code> with snapping on. The toolbar shows the active tool, the inspector reads the changed World position, and <code>history=1/1</code> means the drag can be undone. Captured from the signed 0.6.0 app.
+</p>
+
+<img
+  src={`${base}engine/engine-add.png`}
+  alt="Nova Engine Studio after Add created a selected Crate 7 at 0.00, 0.50, 0.00"
+  style="width:100%;border:1px solid var(--sl-color-hairline);border-radius:10px;margin:14px 0 6px"
+/>
+<p style="font-size:13px;color:var(--sl-color-gray-3);margin:0 0 28px">
+  Add created a real tag-2 cube as entity <code>7:1</code>, selected it in the hierarchy and switched to Move. Nothing here is a placeholder row; the new entity is in the same World the viewport and inspector read. Captured from the signed 0.6.0 app.
+</p>
 
 <img
   src={`${base}engine/engine-game.png`}
@@ -34,7 +54,7 @@ Every panel is drawn by [nova-gui](../../libraries/gui/) from Nova code. The pro
   style="width:100%;border:1px solid var(--sl-color-hairline);border-radius:10px;margin:14px 0 6px"
 />
 <p style="font-size:13px;color:var(--sl-color-gray-3);margin:0 0 28px">
-  Game tab: the World seen through the Game Camera, not the editor perspective. The grid, selection box, labels and the camera entity itself are hidden. Captured from the signed 0.5.0 app.
+  Game tab: the World seen through the Game Camera, not the editor perspective. The grid, selection box, labels and the camera entity itself are hidden. Captured from the signed 0.6.0 app.
 </p>
 
 <img
@@ -52,7 +72,7 @@ Every panel is drawn by [nova-gui](../../libraries/gui/) from Nova code. The pro
   style="width:100%;border:1px solid var(--sl-color-hairline);border-radius:10px;margin:14px 0 6px"
 />
 <p style="font-size:13px;color:var(--sl-color-gray-3);margin:0 0 28px">
-  Position edited to <code>2.50, 1.40, 1.00</code>. The Player moved in the Metal viewport, the inspector and console read the same World, and Undo is enabled. Captured from the signed 0.5.0 app.
+  Position edited to <code>2.50, 1.40, 1.00</code>. The Player moved in the Metal viewport, the inspector and console read the same World, and Undo is enabled. Captured from the signed 0.6.0 app.
 </p>
 
 ## Run it
@@ -84,7 +104,11 @@ cd examples/scene-gui
 sh tests/shell.sh
 ```
 
-The test captures both tabs at 2880×1800, checks the traffic-light row through `NOVA_GUI_TRACE`, enters Game through the same mouse-down hit test as the window, and samples 13 pixels: panel surfaces, both active-tab states, the selected hierarchy row, the Metal clear colour, two checker-texture colours, the inspector and the drawer. It compares Scene and Game viewport crops, then selects the Game Camera, moves it through the inspector and requires the Game viewport to change. It also focuses Position through the inspector row hit test, sends `2.5, 1.4, 1`, and captures edit, undo and redo; the output must step `history=1/1 → 0/1 → 1/1`, undo must restore the base viewport and redo the edit. Layout acceptance uses the real splitter hit test and visibility chips, then launches a second process from the same file and requires a byte-identical full capture with `layout=320,260,150 h=1 i=0 d=0`. Finally it runs five live frames through `NOVA_SCENE_FRAMES` and requires `live=stopped frames=5 viewport=metal`. All captures are left in `target/` for review.
+The test captures both tabs at 2880×1800, checks the traffic-light row through `NOVA_GUI_TRACE`, enters Game through the same mouse-down hit test as the window, and samples 13 pixels: panel surfaces, both active-tab states, the selected hierarchy row, the Metal clear colour, two checker-texture colours, the inspector and the drawer. It compares Scene and Game viewport crops, then selects the Game Camera, moves it through the inspector and requires the Game viewport to change.
+
+The toolbar and menu checks click the real rectangles through `handle_mouse_down`. Play and Step must change state; Move, Rotate and Scale drags must change the selected transform and record one undo command; Add, Duplicate and Delete must change the live entity count and selection; Snap and Grid must toggle; the GameObject menu must create a cube; the Window menu must hide the inspector. Grid-off must change the viewport crop. A painted button that lost its hit test fails the suite.
+
+Inspector editing still focuses Position through the row hit test, sends `2.5, 1.4, 1`, and captures edit, undo and redo; the output must step `history=1/1 → 0/1 → 1/1`, undo must restore the base viewport and redo the edit. Layout acceptance uses the real splitter hit test and visibility chips, then launches a second process from the same file and requires a byte-identical full capture with `layout=320,260,150 h=1 i=0 d=0`. Finally it runs five live frames through `NOVA_SCENE_FRAMES` and requires `live=stopped frames=5 viewport=metal`.
 
 The title strip calls `gui.place_traffic_lights(14)` and reserves 84 points on the left, so AppKit's close/minimize/zoom buttons do not overlap the title or menu. AppKit's own event delivery is still a manual check; the capture test verifies the handler below it.
 
@@ -92,7 +116,8 @@ The title strip calls `gui.place_traffic_lights(14)` and reserves 84 points on t
 
 - **The Scene camera is fixed.** Studio's editor perspective does not orbit, pan or zoom yet. The Game Camera is an editable World entity, but it has no runtime controls or player input; orbit/pan/zoom remain verified only in `examples/metal-lab`.
 - **Panels resize and hide, but do not freely dock.** Hierarchy, Inspector and the drawer are three fixed regions with persisted sizes and visibility. There is no floating, tabbed or reordered panel system, and no multi-window editor.
-- **History is per-session and single-field.** The inspector edits one whole Position, Rotation or Scale vector at a time. There is no multi-select, grouped command, gizmo, persisted undo, prefab or scene save/load. Add Component still reports that no component types are registered yet.
+- **The tools are drag tools, not gizmos.** There is no axis handle, rotation ring, scale handle, local/world toggle, multi-select or grouped command. A drag edits the whole Position, Rotation or Scale vector, and history is per-session.
+- **The menus are minimal.** Assets and Component open, but the asset pipeline and component registry do not exist yet. There is no menu keyboard navigation, context menu, prefab or scene save/load.
 - **Game is a camera view, not a build.** It uses the Game Camera entity and hides editor overlays, but it does not package a player, simulate separate runtime input or isolate play state.
 - **No scene save/load.** The seven-entity demo world is created in code each launch; only the editor panel layout is persisted.
 - **No GPU timing or advanced renderer.** The viewport has one directional light, one texture slot, no MSAA, shadows, normal mapping, mipmaps or asset pipeline.
@@ -100,7 +125,7 @@ The title strip calls `gui.place_traffic_lights(14)` and reserves 84 points on t
 
 ## Source
 
-- [`examples/scene-gui`](https://github.com/jd4rider/nova/tree/main/examples/scene-gui) — shell, Game Camera, persisted layout, Metal viewport, tests and installer
+- [`examples/scene-gui`](https://github.com/jd4rider/nova/tree/main/examples/scene-gui) — shell, working toolbar and menus, viewport tools, Game Camera, persisted layout, Metal viewport, tests and installer
 - [`libraries/nova-engine`](https://github.com/jd4rider/nova/tree/main/libraries/nova-engine) — Q16.16 math, generational handles, fixed tick and World storage
 - [`libraries/nova-render`](https://github.com/jd4rider/nova/tree/main/libraries/nova-render) — Metal FFI, offscreen frame and scene draw list
 - [`examples/metal-lab`](https://github.com/jd4rider/nova/tree/main/examples/metal-lab) — native Metal cube, camera and physics acceptance

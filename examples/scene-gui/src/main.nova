@@ -23,7 +23,7 @@ fn window_h() -> Int {
 }
 
 fn app_version() -> String {
-    return "0.5.0"
+    return "0.6.0"
 }
 
 fn menu_h() -> Int {
@@ -144,6 +144,53 @@ fn step_x(p: Panels) -> Int {
     return centre_x(p) + 84
 }
 
+// The transform tools follow Godot's Q/W/E/R muscle memory. They are real
+// viewport drag tools, not labels: Move changes X/Z, Rotate turns around Y and
+// Scale changes all three axes uniformly.
+fn toolbar_group_x(p: Panels) -> Int {
+    return step_x(p) + 44
+}
+
+fn select_tool_x(p: Panels) -> Int {
+    return toolbar_group_x(p)
+}
+
+fn move_tool_x(p: Panels) -> Int {
+    return toolbar_group_x(p) + 30
+}
+
+fn rotate_tool_x(p: Panels) -> Int {
+    return toolbar_group_x(p) + 60
+}
+
+fn scale_tool_x(p: Panels) -> Int {
+    return toolbar_group_x(p) + 90
+}
+
+fn snap_x(p: Panels) -> Int {
+    return toolbar_group_x(p) + 124
+}
+
+fn grid_x(p: Panels) -> Int {
+    return toolbar_group_x(p) + 172
+}
+
+fn add_cube_x(p: Panels) -> Int {
+    return toolbar_group_x(p) + 218
+}
+
+fn duplicate_x(p: Panels) -> Int {
+    return toolbar_group_x(p) + 248
+}
+
+fn delete_x(p: Panels) -> Int {
+    return toolbar_group_x(p) + 278
+}
+
+fn tool_button_w() -> Int {
+    return 26
+}
+
 fn tool_button_y() -> Int {
     return body_y() + tabs_h() + 6
 }
@@ -230,6 +277,38 @@ struct EditParse {
     values: EditValues,
 }
 
+// Editor-only tool state. None of this belongs in the World: the active tool,
+// snapping, grid visibility, an open menu and an in-flight viewport drag are
+// shell concerns. A drag records one EditCommand when the mouse is released, so
+// moving an entity with the toolbar is undoable exactly like typing a value.
+struct ToolState {
+    mode: Int,
+    snap: Bool,
+    grid: Bool,
+    menu: Int,
+    drag: Bool,
+    drag_x: Int,
+    drag_y: Int,
+    drag_entity: EntityId,
+    drag_field: Int,
+    drag_before: EditValues,
+}
+
+fn default_tool() -> ToolState {
+    return ToolState {
+        mode: 0,
+        snap: true,
+        grid: true,
+        menu: 0 - 1,
+        drag: false,
+        drag_x: 0,
+        drag_y: 0,
+        drag_entity: entity_none(),
+        drag_field: 0 - 1,
+        drag_before: EditValues { w: 0, x: 0, y: 0, z: 0 },
+    }
+}
+
 struct App {
     world: World,
     selected: EntityId,
@@ -245,6 +324,7 @@ struct App {
     quit: Bool,
     metal: Int,
     panels: Panels,
+    tool: ToolState,
 }
 
 fn app_set_world(app: App, world: World) -> App {
@@ -263,6 +343,7 @@ fn app_set_world(app: App, world: World) -> App {
         history: app.history,
         history_at: app.history_at,
         panels: app.panels,
+        tool: app.tool,
     }
 }
 
@@ -282,6 +363,7 @@ fn app_set_selected(app: App, selected: EntityId) -> App {
         history: app.history,
         history_at: app.history_at,
         panels: app.panels,
+        tool: app.tool,
     }
 }
 
@@ -301,6 +383,7 @@ fn app_set_playing(app: App, playing: Bool) -> App {
         history: app.history,
         history_at: app.history_at,
         panels: app.panels,
+        tool: app.tool,
     }
 }
 
@@ -320,6 +403,7 @@ fn app_set_tab(app: App, tab: Int) -> App {
         history: app.history,
         history_at: app.history_at,
         panels: app.panels,
+        tool: app.tool,
     }
 }
 
@@ -339,6 +423,7 @@ fn app_set_drawer(app: App, drawer: Int) -> App {
         history: app.history,
         history_at: app.history_at,
         panels: app.panels,
+        tool: app.tool,
     }
 }
 
@@ -358,6 +443,7 @@ fn app_set_notice(app: App, notice: String) -> App {
         history: app.history,
         history_at: app.history_at,
         panels: app.panels,
+        tool: app.tool,
     }
 }
 
@@ -377,6 +463,7 @@ fn app_set_edit(app: App, field: Int, text: String, fresh: Bool) -> App {
         quit: app.quit,
         metal: app.metal,
         panels: app.panels,
+        tool: app.tool,
     }
 }
 
@@ -396,6 +483,7 @@ fn app_set_history(app: App, history: List<EditCommand>, at: Int) -> App {
         quit: app.quit,
         metal: app.metal,
         panels: app.panels,
+        tool: app.tool,
     }
 }
 
@@ -420,6 +508,7 @@ fn app_set_metal(app: App, metal: Int) -> App {
         history: app.history,
         history_at: app.history_at,
         panels: app.panels,
+        tool: app.tool,
     }
 }
 
@@ -439,7 +528,34 @@ fn app_set_panels(app: App, panels: Panels) -> App {
         history: app.history,
         history_at: app.history_at,
         panels: panels,
+        tool: app.tool,
     }
+}
+
+fn app_set_tool(app: App, tool: ToolState) -> App {
+    return App {
+        world: app.world,
+        selected: app.selected,
+        playing: app.playing,
+        tab: app.tab,
+        drawer: app.drawer,
+        notice: app.notice,
+        quit: app.quit,
+        metal: app.metal,
+        edit_field: app.edit_field,
+        edit_text: app.edit_text,
+        edit_fresh: app.edit_fresh,
+        history: app.history,
+        history_at: app.history_at,
+        panels: app.panels,
+        tool: tool,
+    }
+}
+
+fn app_set_menu(app: App, menu: Int) -> App {
+    var tool = app.tool
+    tool.menu = menu
+    return app_set_tool(app, tool)
 }
 
 fn app_quit(app: App) -> App {
@@ -458,6 +574,7 @@ fn app_quit(app: App) -> App {
         history: app.history,
         history_at: app.history_at,
         panels: app.panels,
+        tool: app.tool,
     }
 }
 
@@ -542,6 +659,306 @@ fn next_live(world: World, id: EntityId) -> EntityId {
         i = i + 1
     }
     return first_live(world)
+}
+
+// ---------- editor commands ----------
+
+fn has_selection(app: App) -> Bool {
+    return !entity_is_none(app.selected) && world_has(app.world, app.selected)
+}
+
+fn tool_mode_name(mode: Int) -> String {
+    if mode == 1 {
+        return "MOVE"
+    }
+    if mode == 2 {
+        return "ROTATE"
+    }
+    if mode == 3 {
+        return "SCALE"
+    }
+    return "SELECT"
+}
+
+fn tool_field(mode: Int) -> Int {
+    if mode == 1 {
+        return 0
+    }
+    if mode == 2 {
+        return 1
+    }
+    if mode == 3 {
+        return 2
+    }
+    return 0 - 1
+}
+
+fn snap_fixed(value: Int, step: Int) -> Int {
+    if step <= 0 {
+        return value
+    }
+    if value >= 0 {
+        return ((value + step / 2) / step) * step
+    }
+    return 0 - (((0 - value + step / 2) / step) * step)
+}
+
+fn snap_degrees(value: Int) -> Int {
+    if value >= 0 {
+        return ((value + 7) / 15) * 15
+    }
+    return 0 - (((0 - value + 7) / 15) * 15)
+}
+
+fn tool_set_mode(app: App, mode: Int) -> App {
+    var tool = app.tool
+    tool.mode = mode
+    tool.menu = 0 - 1
+    tool.drag = false
+    var notice = "Select tool · click an entity in Scene or the hierarchy"
+    if mode == 1 {
+        notice = "Move tool · drag in Scene · W"
+    }
+    if mode == 2 {
+        notice = "Rotate tool · drag horizontally · E"
+    }
+    if mode == 3 {
+        notice = "Scale tool · drag horizontally · R"
+    }
+    return app_set_notice(app_set_tool(app, tool), notice)
+}
+
+fn tool_toggle_snap(app: App) -> App {
+    var tool = app.tool
+    tool.snap = !tool.snap
+    var notice = "Snapping off"
+    if tool.snap {
+        notice = "Snapping on · 0.5 m · 15° · 0.1 scale"
+    }
+    return app_set_notice(app_set_tool(app, tool), notice)
+}
+
+fn tool_toggle_grid(app: App) -> App {
+    var tool = app.tool
+    tool.grid = !tool.grid
+    var notice = "Grid hidden"
+    if tool.grid {
+        notice = "Grid shown · 1 m"
+    }
+    return app_set_notice(app_set_tool(app, tool), notice)
+}
+
+fn tool_begin_drag(app: App, x: Int, y: Int) -> App {
+    let field = tool_field(app.tool.mode)
+    if field < 0 || !has_selection(app) {
+        return app
+    }
+    var tool = app.tool
+    tool.drag = true
+    tool.drag_x = x
+    tool.drag_y = y
+    tool.drag_entity = app.selected
+    tool.drag_field = field
+    tool.drag_before = edit_values_for(app.world, app.selected, field)
+    return app_set_notice(app_set_tool(app, tool), "${tool_mode_name(tool.mode)} drag · release to apply · Esc cancels")
+}
+
+fn tool_update_drag(app: App, x: Int, y: Int) -> App {
+    if !app.tool.drag {
+        return app
+    }
+    let dx = x - app.tool.drag_x
+    let dy = y - app.tool.drag_y
+    let before = app.tool.drag_before
+    var values = before
+    if app.tool.drag_field == 0 {
+        var nx = before.x + fx_ratio(dx, 20)
+        var nz = before.z + fx_ratio(dy, 20)
+        if app.tool.snap {
+            nx = snap_fixed(nx, fx_ratio(1, 2))
+            nz = snap_fixed(nz, fx_ratio(1, 2))
+        }
+        values = EditValues { w: 0, x: nx, y: before.y, z: nz }
+    }
+    if app.tool.drag_field == 1 {
+        var degrees = dx * 2
+        if app.tool.snap {
+            degrees = snap_degrees(degrees)
+        }
+        let delta = quat_axis_angle(vec3(0, fx(1), 0), radians(degrees))
+        let rotation = quat_mul(delta, Quat { w: before.w, x: before.x, y: before.y, z: before.z })
+        values = EditValues { w: rotation.w, x: rotation.x, y: rotation.y, z: rotation.z }
+    }
+    if app.tool.drag_field == 2 {
+        let factor = fx_clamp(fx(1) + fx_ratio(dx, 120), fx_ratio(1, 10), fx(10))
+        var sx = fx_mul(before.x, factor)
+        var sy = fx_mul(before.y, factor)
+        var sz = fx_mul(before.z, factor)
+        if app.tool.snap {
+            sx = snap_fixed(sx, fx_ratio(1, 10))
+            sy = snap_fixed(sy, fx_ratio(1, 10))
+            sz = snap_fixed(sz, fx_ratio(1, 10))
+        }
+        values = EditValues {
+            w: 0,
+            x: fx_clamp(sx, fx_ratio(1, 10), fx(10)),
+            y: fx_clamp(sy, fx_ratio(1, 10), fx(10)),
+            z: fx_clamp(sz, fx_ratio(1, 10), fx(10)),
+        }
+    }
+    let command = EditCommand { entity: app.tool.drag_entity, field: app.tool.drag_field, before: before, after: values }
+    return app_set_world(app, edit_apply(app.world, command, true))
+}
+
+fn tool_finish_drag(app: App) -> App {
+    if !app.tool.drag {
+        return app
+    }
+    var tool = app.tool
+    tool.drag = false
+    if !world_has(app.world, tool.drag_entity) {
+        return app_set_tool(app, tool)
+    }
+    let after = edit_values_for(app.world, tool.drag_entity, tool.drag_field)
+    if edit_values_equal(tool.drag_before, after) {
+        return app_set_notice(app_set_tool(app, tool), "No transform change")
+    }
+    let command = EditCommand { entity: tool.drag_entity, field: tool.drag_field, before: tool.drag_before, after: after }
+    let history = history_record(app.history, app.history_at, command)
+    let notice = "Applied ${edit_field_name(tool.drag_field)} · ⌘Z undoes"
+    return app_set_history(app_set_notice(app_set_tool(app, tool), notice), history, history.len())
+}
+
+fn new_scene_world() -> World {
+    var world = world_new(0)
+    let ground = world_spawn(world, 1)
+    world = ground.world
+    world = world_set_position(world, ground.id, vec3(0, fx_ratio(0 - 2, 5), 0))
+    world = world_set_scale(world, ground.id, vec3(fx(9), fx_ratio(1, 5), fx(9)))
+    return world
+}
+
+fn new_scene(app: App) -> App {
+    let world = new_scene_world()
+    var next = app_set_selected(app_set_world(app, world), first_live(world))
+    next = app_clear_history(next)
+    next = tool_set_mode(next, 0)
+    return app_set_notice(next, "New Scene · use GameObject > Create Cube or Add")
+}
+
+fn reset_demo(app: App) -> App {
+    let world = demo_world()
+    var next = app_set_selected(app_set_world(app, world), find_tag(world, 3))
+    next = app_clear_history(next)
+    next = tool_set_mode(next, 0)
+    return app_set_notice(next, "Demo Scene reset")
+}
+
+fn create_cube(app: App) -> App {
+    let spawned = world_spawn(app.world, 2)
+    var world = spawned.world
+    world = world_set_position(world, spawned.id, vec3(0, fx_ratio(1, 2), 0))
+    world = world_set_scale(world, spawned.id, vec3(fx(1), fx(1), fx(1)))
+    var next = app_set_selected(app_set_world(app, world), spawned.id)
+    next = app_clear_history(next)
+    next = tool_set_mode(next, 1)
+    return app_set_notice(next, "Created Cube · drag to move · ⌘Z undoes")
+}
+
+fn create_camera(app: App) -> App {
+    let spawned = world_spawn(app.world, 6)
+    var world = spawned.world
+    world = world_set_position(world, spawned.id, vec3(0, fx_ratio(13, 5), fx_ratio(15, 2)))
+    world = world_set_rotation(world, spawned.id, quat_axis_angle(vec3(fx(1), 0, 0), radians(0 - 12)))
+    world = world_set_scale(world, spawned.id, vec3(fx_ratio(1, 2), fx_ratio(1, 2), fx_ratio(1, 2)))
+    var next = app_set_selected(app_set_world(app, world), spawned.id)
+    next = app_clear_history(next)
+    next = tool_set_mode(next, 1)
+    return app_set_notice(next, "Created Game Camera · Game renders through it")
+}
+
+fn duplicate_selected(app: App) -> App {
+    if !has_selection(app) {
+        return app_set_notice(app, "Select an entity to duplicate")
+    }
+    let tag = world_tag(app.world, app.selected)
+    let position = world_position(app.world, app.selected)
+    let rotation = world_rotation(app.world, app.selected)
+    let scale = world_scale(app.world, app.selected)
+    let spawned = world_spawn(app.world, tag)
+    var world = spawned.world
+    world = world_set_position(world, spawned.id, vec3(position.x + fx_ratio(3, 5), position.y, position.z))
+    world = world_set_rotation(world, spawned.id, rotation)
+    world = world_set_scale(world, spawned.id, scale)
+    var next = app_set_selected(app_set_world(app, world), spawned.id)
+    next = app_clear_history(next)
+    next = tool_set_mode(next, 1)
+    return app_set_notice(next, "Duplicated ${entity_name(world, spawned.id)} · drag to move")
+}
+
+fn delete_selected(app: App) -> App {
+    if !has_selection(app) {
+        return app_set_notice(app, "Select an entity to delete")
+    }
+    let name = entity_name(app.world, app.selected)
+    let world = world_despawn(app.world, app.selected)
+    var next = app_set_selected(app_set_world(app, world), first_live(world))
+    next = app_clear_history(next)
+    next = tool_set_mode(next, 0)
+    return app_set_notice(next, "Deleted ${name}")
+}
+
+fn menu_apply(app: App, menu: Int, item: Int) -> App {
+    var next = app_set_menu(app, 0 - 1)
+    if menu == 0 {
+        if item == 0 {
+            return new_scene(next)
+        }
+        if item == 1 {
+            return reset_demo(next)
+        }
+        return app_quit(next)
+    }
+    if menu == 1 {
+        if item == 0 {
+            return edit_undo(next)
+        }
+        if item == 1 {
+            return edit_redo(next)
+        }
+        if item == 2 {
+            return duplicate_selected(next)
+        }
+        return delete_selected(next)
+    }
+    if menu == 2 {
+        return app_set_notice(next, "Asset pipeline is not implemented yet")
+    }
+    if menu == 3 {
+        if item == 0 {
+            return create_cube(next)
+        }
+        if item == 1 {
+            return create_camera(next)
+        }
+        if item == 2 {
+            return duplicate_selected(next)
+        }
+        return delete_selected(next)
+    }
+    if menu == 4 {
+        return app_set_notice(next, "No component types registered yet")
+    }
+    if menu == 5 {
+        if item == 0 {
+            return panel_toggle(next, 0)
+        }
+        if item == 1 {
+            return panel_toggle(next, 1)
+        }
+        return panel_toggle(next, 2)
+    }
+    return app_set_notice(next, "Nova Engine Studio ${app_version()} · pure Nova editor")
 }
 
 // ---------- formatting ----------
@@ -1300,6 +1717,215 @@ fn draw_tool_button(x: Int, y: Int, w: Int, active: Bool, theme: gui.Theme, kind
     }
 }
 
+fn draw_text_tool(x: Int, y: Int, w: Int, label: String, active: Bool, enabled: Bool, theme: gui.Theme) {
+    var fill = theme.panel
+    var border = theme.border
+    var colour = theme.muted
+    if active {
+        fill = theme.selection
+        border = theme.border_strong
+        colour = theme.fg_bright
+    }
+    if !enabled {
+        fill = theme.bg_hard
+        colour = theme.faint
+    }
+    gui.round_rect(x, y, w, 24, 5, fill)
+    gui.stroke(x, y, w, 24, border)
+    gui.text(x + (w - gui.text_width(label, 9)) / 2, y + 7, label, 9, colour)
+}
+
+// ---------- menu bar ----------
+
+fn menu_count() -> Int {
+    return 7
+}
+
+fn menu_label(index: Int) -> String {
+    if index == 0 {
+        return "File"
+    }
+    if index == 1 {
+        return "Edit"
+    }
+    if index == 2 {
+        return "Assets"
+    }
+    if index == 3 {
+        return "GameObject"
+    }
+    if index == 4 {
+        return "Component"
+    }
+    if index == 5 {
+        return "Window"
+    }
+    return "Help"
+}
+
+fn menu_start_x() -> Int {
+    let brand_x = traffic_inset()
+    let engine_x = brand_x + gui.text_width("Nova", 13) + 5
+    return engine_x + gui.text_width("Engine", 13) + 28
+}
+
+fn menu_label_x(index: Int) -> Int {
+    var x = menu_start_x()
+    var i = 0
+    while i < index && i < menu_count() {
+        x = x + gui.text_width(menu_label(i), 11) + 18
+        i = i + 1
+    }
+    return x
+}
+
+fn menu_label_w(index: Int) -> Int {
+    return gui.text_width(menu_label(index), 11) + 12
+}
+
+fn menu_at(x: Int, y: Int) -> Int {
+    if y < 0 || y >= menu_h() {
+        return 0 - 1
+    }
+    var i = 0
+    while i < menu_count() {
+        let left = menu_label_x(i) - 6
+        if x >= left && x < left + menu_label_w(i) {
+            return i
+        }
+        i = i + 1
+    }
+    return 0 - 1
+}
+
+fn menu_drop_x(menu: Int) -> Int {
+    return menu_label_x(menu) - 8
+}
+
+fn menu_drop_y() -> Int {
+    return menu_h() + 2
+}
+
+fn menu_drop_w() -> Int {
+    return 220
+}
+
+fn menu_item_h() -> Int {
+    return 26
+}
+
+fn menu_item_count(menu: Int) -> Int {
+    if menu == 0 {
+        return 3
+    }
+    if menu == 1 || menu == 3 {
+        return 4
+    }
+    if menu == 5 {
+        return 3
+    }
+    if menu == 2 || menu == 4 || menu == 6 {
+        return 1
+    }
+    return 0
+}
+
+fn menu_item_label(menu: Int, item: Int) -> String {
+    if menu == 0 {
+        if item == 0 {
+            return "New Scene"
+        }
+        if item == 1 {
+            return "Reset Demo"
+        }
+        return "Quit"
+    }
+    if menu == 1 {
+        if item == 0 {
+            return "Undo"
+        }
+        if item == 1 {
+            return "Redo"
+        }
+        if item == 2 {
+            return "Duplicate"
+        }
+        return "Delete"
+    }
+    if menu == 2 {
+        return "Asset pipeline not available"
+    }
+    if menu == 3 {
+        if item == 0 {
+            return "Create Cube"
+        }
+        if item == 1 {
+            return "Create Camera"
+        }
+        if item == 2 {
+            return "Duplicate"
+        }
+        return "Delete"
+    }
+    if menu == 4 {
+        return "Add Component not available"
+    }
+    if menu == 5 {
+        if item == 0 {
+            return "Hierarchy"
+        }
+        if item == 1 {
+            return "Inspector"
+        }
+        return "Drawer"
+    }
+    return "About Nova Engine Studio"
+}
+
+fn menu_item_shortcut(menu: Int, item: Int) -> String {
+    if menu == 0 && item == 2 {
+        return "⌘Q"
+    }
+    if menu == 1 {
+        if item == 0 {
+            return "⌘Z"
+        }
+        if item == 1 {
+            return "⇧⌘Z"
+        }
+        if item == 2 {
+            return "⌘D"
+        }
+        return "⌫"
+    }
+    if menu == 3 {
+        if item == 2 {
+            return "⌘D"
+        }
+        if item == 3 {
+            return "⌫"
+        }
+    }
+    return ""
+}
+
+fn menu_item_at(app: App, x: Int, y: Int) -> Int {
+    let menu = app.tool.menu
+    if menu < 0 {
+        return 0 - 1
+    }
+    let left = menu_drop_x(menu)
+    let top = menu_drop_y() + 4
+    if x < left || x >= left + menu_drop_w() || y < top {
+        return 0 - 1
+    }
+    let item = (y - top) / menu_item_h()
+    if item < 0 || item >= menu_item_count(menu) {
+        return 0 - 1
+    }
+    return item
+}
+
 // ---------- top chrome ----------
 
 fn draw_panel_chip(x: Int, y: Int, label: String, on: Bool, theme: gui.Theme) {
@@ -1325,8 +1951,15 @@ fn draw_top(app: App, theme: gui.Theme) {
     gui.text(brand_x, 7, "Nova", 13, theme.fg_bright)
     let engine_x = brand_x + gui.text_width("Nova", 13) + 5
     gui.text(engine_x, 7, "Engine", 13, theme.accent)
-    let items = "File    Edit    Assets    GameObject    Component    Window    Help"
-    gui.text(engine_x + gui.text_width("Engine", 13) + 28, 8, items, 11, theme.muted)
+    var menu_index = 0
+    while menu_index < menu_count() {
+        let menu_x = menu_label_x(menu_index)
+        if app.tool.menu == menu_index {
+            gui.round_rect(menu_x - 6, 2, menu_label_w(menu_index), 24, 3, theme.selection)
+        }
+        gui.text(menu_x, 8, menu_label(menu_index), 11, if app.tool.menu == menu_index { theme.fg_bright } else { theme.muted })
+        menu_index = menu_index + 1
+    }
     draw_panel_chip(panel_chip_x(0), panel_chip_y(), "Hier", app.panels.hierarchy, theme)
     draw_panel_chip(panel_chip_x(1), panel_chip_y(), "Insp", app.panels.inspector, theme)
     draw_panel_chip(panel_chip_x(2), panel_chip_y(), "Draw", app.panels.drawer_open, theme)
@@ -1343,6 +1976,31 @@ fn draw_top(app: App, theme: gui.Theme) {
     gui.text(window_w() - 18 - gui.text_width(rate, 10), menu_h() + 11, rate, 10, theme.faint)
     gui.text(window_w() - 34 - gui.text_width(rate, 10) - gui.text_width(live, 10), menu_h() + 11, live, 10, theme.muted)
     gui.line(0, menu_h() + strip_h() - 1, window_w(), menu_h() + strip_h() - 1, theme.border)
+}
+
+fn draw_menu(app: App, theme: gui.Theme) {
+    let menu = app.tool.menu
+    if menu < 0 {
+        return
+    }
+    let x = menu_drop_x(menu)
+    let y = menu_drop_y()
+    let w = menu_drop_w()
+    let h = menu_item_count(menu) * menu_item_h() + 8
+    gui.round_rect(x + 3, y + 3, w, h, 6, theme.bg_hard)
+    gui.round_rect(x, y, w, h, 6, theme.elevated)
+    gui.stroke(x, y, w, h, theme.border_strong)
+    var item = 0
+    while item < menu_item_count(menu) {
+        let row_y = y + 4 + item * menu_item_h()
+        let label = menu_item_label(menu, item)
+        gui.text(x + 12, row_y + 7, label, 11, theme.fg)
+        let shortcut = menu_item_shortcut(menu, item)
+        if shortcut.len() > 0 {
+            gui.text(x + w - 12 - gui.text_width(shortcut, 9), row_y + 8, shortcut, 9, theme.faint)
+        }
+        item = item + 1
+    }
 }
 
 // ---------- hierarchy ----------
@@ -1499,7 +2157,7 @@ fn draw_selected_overlay(app: App, view: View3D, theme: gui.Theme) {
 }
 
 fn draw_cpu_scene(app: App, view: View3D, theme: gui.Theme, editor: Bool) {
-    if editor {
+    if editor && app.tool.grid {
         draw_grid(view, theme)
     }
     var pass = 0
@@ -1532,7 +2190,9 @@ fn draw_viewport(app: App, theme: gui.Theme) {
     let metal_drawn = draw_metal_scene(app, view, editor)
     if metal_drawn {
         if editor {
-            draw_grid(view, theme)
+            if app.tool.grid {
+                draw_grid(view, theme)
+            }
             draw_selected_overlay(app, view, theme)
         }
     } else {
@@ -1576,23 +2236,39 @@ fn draw_centre(app: App, theme: gui.Theme) {
 
     gui.rect(x, body_y() + tabs_h(), centre_w(app.panels), toolbar_h(), theme.panel)
     gui.line(x, body_y() + tabs_h() + toolbar_h() - 1, x + centre_w(app.panels), body_y() + tabs_h() + toolbar_h() - 1, theme.border_strong)
+    let ready = has_selection(app)
     draw_tool_button(play_x(app.panels), tool_button_y(), 30, app.playing, theme, 0)
     draw_tool_button(pause_x(app.panels), tool_button_y(), 30, false, theme, 1)
     draw_tool_button(step_x(app.panels), tool_button_y(), 30, false, theme, 2)
     gui.line(step_x(app.panels) + 42, tool_button_y() + 3, step_x(app.panels) + 42, tool_button_y() + 20, theme.border)
-    var tool_label = "Grid 1m"
-    if app.tab == 1 {
-        tool_label = "Game camera"
+    draw_text_tool(select_tool_x(app.panels), tool_button_y(), tool_button_w(), "Sel", app.tool.mode == 0, true, theme)
+    draw_text_tool(move_tool_x(app.panels), tool_button_y(), tool_button_w(), "Mov", app.tool.mode == 1, true, theme)
+    draw_text_tool(rotate_tool_x(app.panels), tool_button_y(), tool_button_w(), "Rot", app.tool.mode == 2, true, theme)
+    draw_text_tool(scale_tool_x(app.panels), tool_button_y(), tool_button_w(), "Scl", app.tool.mode == 3, true, theme)
+    gui.line(scale_tool_x(app.panels) + 30, tool_button_y() + 3, scale_tool_x(app.panels) + 30, tool_button_y() + 20, theme.border)
+    var snap_label = "Snap off"
+    if app.tool.snap {
+        snap_label = "Snap 0.5"
     }
-    gui.text(step_x(app.panels) + 54, tool_button_y() + 5, tool_label, 11, theme.muted)
-    var mode = "EDIT MODE"
+    draw_text_tool(snap_x(app.panels), tool_button_y(), 44, snap_label, app.tool.snap, true, theme)
+    draw_text_tool(grid_x(app.panels), tool_button_y(), 38, "Grid", app.tool.grid, true, theme)
+    gui.line(grid_x(app.panels) + 42, tool_button_y() + 3, grid_x(app.panels) + 42, tool_button_y() + 20, theme.border)
+    draw_text_tool(add_cube_x(app.panels), tool_button_y(), tool_button_w(), "Add", false, true, theme)
+    draw_text_tool(duplicate_x(app.panels), tool_button_y(), tool_button_w(), "Dup", false, ready, theme)
+    draw_text_tool(delete_x(app.panels), tool_button_y(), tool_button_w(), "Del", false, ready, theme)
+    var mode = tool_mode_name(app.tool.mode)
+    var snap_state = "SNAP OFF"
+    if app.tool.snap {
+        snap_state = "SNAP 0.5"
+    }
+    var status = mode + " · " + snap_state
     if app.tab == 1 {
-        mode = "GAME VIEW"
+        status = "GAME VIEW"
     }
     if app.playing {
-        mode = "PLAYING"
+        status = "PLAYING"
     }
-    gui.text(x + centre_w(app.panels) - 16 - gui.text_width(mode, 10), tool_button_y() + 6, mode, 10, theme.faint)
+    gui.text(x + centre_w(app.panels) - 16 - gui.text_width(status, 10), tool_button_y() + 6, status, 10, theme.faint)
 
     draw_viewport(app, theme)
 }
@@ -1740,6 +2416,7 @@ fn draw(app: App) {
         draw_drawer(app, theme)
     }
     draw_splitters(app, theme)
+    draw_menu(app, theme)
 }
 
 // ---------- input ----------
@@ -1817,26 +2494,51 @@ fn handle_key(app: App, code: Int, mods: Int) -> App {
         return app
     }
     if code == gui.key_escape() {
-        return app_quit(app)
+        if app.tool.menu >= 0 {
+            return app_set_menu(app, 0 - 1)
+        }
+        if app.tool.drag {
+            var tool = app.tool
+            tool.drag = false
+            return app_set_notice(app_set_tool(app, tool), "Drag cancelled")
+        }
+        return tool_set_mode(app, 0)
     }
     if code == 32 {
         return app_set_playing(app, !app.playing)
     }
+    if command && code == 100 {
+        return duplicate_selected(app)
+    }
+    if command && code == 114 {
+        return reset_demo(app)
+    }
+    if shift && code == 115 {
+        return tool_toggle_snap(app)
+    }
     if code == 115 {
         return app_set_world(app_set_playing(app, false), world_tick(app.world, fx_ratio(1, 60)))
     }
+    if code == 113 {
+        return tool_set_mode(app, 0)
+    }
+    if code == 119 {
+        return tool_set_mode(app, 1)
+    }
+    if code == 101 {
+        return tool_set_mode(app, 2)
+    }
     if code == 114 {
-        let world = demo_world()
-        var next = app_set_selected(app_set_world(app, world), find_tag(world, 3))
-        return app_clear_history(next)
+        return tool_set_mode(app, 3)
+    }
+    if code == 103 {
+        return tool_toggle_grid(app)
     }
     if code == gui.key_tab() {
         return app_set_selected(app, next_live(app.world, app.selected))
     }
     if code == gui.key_backspace() || code == gui.key_delete() {
-        let world = world_despawn(app.world, app.selected)
-        var next = app_set_selected(app_set_world(app, world), first_live(world))
-        return app_clear_history(next)
+        return delete_selected(app)
     }
     return app
 }
@@ -2004,6 +2706,85 @@ fn layout_test_hide_spec(app: App, spec: String) -> App {
     return next
 }
 
+// These hooks click the real toolbar/menu rectangles. They do not call the
+// command functions directly, so a painted button that lost its hit test fails
+// the acceptance test.
+fn toolbar_test_action(app: App, action: String) -> App {
+    let y = tool_button_y() + 8
+    if action == "play" {
+        return handle_mouse_down(app, play_x(app.panels) + 15, y)
+    }
+    if action == "pause" {
+        return handle_mouse_down(app, pause_x(app.panels) + 15, y)
+    }
+    if action == "step" {
+        return handle_mouse_down(app, step_x(app.panels) + 15, y)
+    }
+    if action == "select" {
+        return handle_mouse_down(app, select_tool_x(app.panels) + 15, y)
+    }
+    if action == "move" {
+        return handle_mouse_down(app, move_tool_x(app.panels) + 15, y)
+    }
+    if action == "rotate" {
+        return handle_mouse_down(app, rotate_tool_x(app.panels) + 15, y)
+    }
+    if action == "scale" {
+        return handle_mouse_down(app, scale_tool_x(app.panels) + 15, y)
+    }
+    if action == "snap" {
+        return handle_mouse_down(app, snap_x(app.panels) + 25, y)
+    }
+    if action == "grid" {
+        return handle_mouse_down(app, grid_x(app.panels) + 22, y)
+    }
+    if action == "add" {
+        return handle_mouse_down(app, add_cube_x(app.panels) + 15, y)
+    }
+    if action == "duplicate" {
+        return handle_mouse_down(app, duplicate_x(app.panels) + 15, y)
+    }
+    if action == "delete" {
+        return handle_mouse_down(app, delete_x(app.panels) + 15, y)
+    }
+    return app
+}
+
+fn menu_test(app: App, spec: String) -> App {
+    let parts = spec.split(":")
+    if parts.len() != 2 {
+        return app
+    }
+    let menu = parse_int(parts[0])
+    let item = parse_int(parts[1])
+    if menu < 0 || menu >= menu_count() || item < 0 || item >= menu_item_count(menu) {
+        return app
+    }
+    var next = handle_mouse_down(app, menu_label_x(menu) + 4, 10)
+    return handle_mouse_down(next, menu_drop_x(menu) + 20, menu_drop_y() + 4 + item * menu_item_h() + 8)
+}
+
+fn drag_test(app: App, spec: String) -> App {
+    let parts = spec.split(",")
+    if parts.len() != 2 || !has_selection(app) {
+        return app
+    }
+    let view = view_for(app, centre_x(app.panels), view_y(), centre_w(app.panels), view_h(app.panels))
+    let point = project(view, world_position(app.world, app.selected))
+    var start_x = centre_x(app.panels) + centre_w(app.panels) / 2
+    var start_y = view_y() + view_h(app.panels) / 2
+    if project_ok(point) {
+        start_x = point.x
+        start_y = point.y
+    }
+    var next = handle_mouse_down(app, start_x, start_y)
+    if !next.tool.drag {
+        return next
+    }
+    next = tool_update_drag(next, start_x + parse_int(parts[0]), start_y + parse_int(parts[1]))
+    return tool_finish_drag(next)
+}
+
 fn handle_mouse_down(app: App, x: Int, y: Int) -> App {
     var app = app
     if app.edit_field >= 0 && !edit_hit(app, x, y) {
@@ -2011,6 +2792,22 @@ fn handle_mouse_down(app: App, x: Int, y: Int) -> App {
         if app.edit_field >= 0 {
             return app
         }
+    }
+    if app.tool.menu >= 0 {
+        let item = menu_item_at(app, x, y)
+        if item >= 0 {
+            return menu_apply(app, app.tool.menu, item)
+        }
+    }
+    let clicked_menu = menu_at(x, y)
+    if clicked_menu >= 0 {
+        if app.tool.menu == clicked_menu {
+            return app_set_menu(app, 0 - 1)
+        }
+        return app_set_menu(app, clicked_menu)
+    }
+    if app.tool.menu >= 0 {
+        app = app_set_menu(app, 0 - 1)
     }
     let chip = panel_chip_at(x, y)
     if chip >= 0 {
@@ -2034,6 +2831,33 @@ fn handle_mouse_down(app: App, x: Int, y: Int) -> App {
     if x >= step_x(app.panels) && x < step_x(app.panels) + 30 && y >= tool_button_y() && y < tool_button_y() + 24 {
         let world = world_tick(app.world, fx_ratio(1, 60))
         return app_set_playing(app_set_world(app, world), false)
+    }
+    if x >= select_tool_x(app.panels) && x < select_tool_x(app.panels) + tool_button_w() && y >= tool_button_y() && y < tool_button_y() + 24 {
+        return tool_set_mode(app, 0)
+    }
+    if x >= move_tool_x(app.panels) && x < move_tool_x(app.panels) + tool_button_w() && y >= tool_button_y() && y < tool_button_y() + 24 {
+        return tool_set_mode(app, 1)
+    }
+    if x >= rotate_tool_x(app.panels) && x < rotate_tool_x(app.panels) + tool_button_w() && y >= tool_button_y() && y < tool_button_y() + 24 {
+        return tool_set_mode(app, 2)
+    }
+    if x >= scale_tool_x(app.panels) && x < scale_tool_x(app.panels) + tool_button_w() && y >= tool_button_y() && y < tool_button_y() + 24 {
+        return tool_set_mode(app, 3)
+    }
+    if x >= snap_x(app.panels) && x < snap_x(app.panels) + 44 && y >= tool_button_y() && y < tool_button_y() + 24 {
+        return tool_toggle_snap(app)
+    }
+    if x >= grid_x(app.panels) && x < grid_x(app.panels) + 38 && y >= tool_button_y() && y < tool_button_y() + 24 {
+        return tool_toggle_grid(app)
+    }
+    if x >= add_cube_x(app.panels) && x < add_cube_x(app.panels) + tool_button_w() && y >= tool_button_y() && y < tool_button_y() + 24 {
+        return create_cube(app)
+    }
+    if x >= duplicate_x(app.panels) && x < duplicate_x(app.panels) + tool_button_w() && y >= tool_button_y() && y < tool_button_y() + 24 {
+        return duplicate_selected(app)
+    }
+    if x >= delete_x(app.panels) && x < delete_x(app.panels) + tool_button_w() && y >= tool_button_y() && y < tool_button_y() + 24 {
+        return delete_selected(app)
     }
     if y >= history_button_y() && y < history_button_y() + 18 {
         if x >= undo_x(app.panels) && x < undo_x(app.panels) + 38 {
@@ -2068,7 +2892,14 @@ fn handle_mouse_down(app: App, x: Int, y: Int) -> App {
         }
     }
     if x >= centre_x(app.panels) && x < centre_x(app.panels) + centre_w(app.panels) && y >= view_y() && y < view_y() + view_h(app.panels) {
-        return app_set_selected(app, scene_pick(app, x, y))
+        let picked = scene_pick(app, x, y)
+        if app.tool.mode == 0 {
+            return app_set_selected(app, picked)
+        }
+        if !entity_is_none(picked) {
+            app = app_set_selected(app, picked)
+        }
+        return tool_begin_drag(app, x, y)
     }
     return app
 }
@@ -2087,9 +2918,15 @@ fn handle(app: App, event: gui.Event) -> App {
         return handle_mouse_down(app, event.x, event.y)
     }
     if event.kind == gui.event_drag() {
+        if app.tool.drag {
+            return tool_update_drag(app, event.x, event.y)
+        }
         return panel_drag_update(app, event.x, event.y)
     }
     if event.kind == gui.event_mouse_up() {
+        if app.tool.drag {
+            return tool_finish_drag(app)
+        }
         return panel_drag_finish(app)
     }
     return app
@@ -2113,6 +2950,7 @@ fn main() {
         quit: false,
         metal: 0,
         panels: load_panels(),
+        tool: default_tool(),
     }
     app = app_set_selected(app, find_tag(app.world, 3))
     if gui.env("NOVA_SCENE_SELECT") == "camera" {
@@ -2146,6 +2984,21 @@ fn main() {
         if gui.env("NOVA_SCENE_REDO") == "1" {
             app = handle_mouse_down(app, redo_x(app.panels) + 10, history_button_y() + 8)
         }
+        let action = gui.env("NOVA_SCENE_ACTION")
+        if action.len() > 0 {
+            app = toolbar_test_action(app, action)
+        }
+        let menu_spec = gui.env("NOVA_SCENE_MENU")
+        if menu_spec.len() > 0 {
+            app = menu_test(app, menu_spec)
+        }
+        let drag_spec = gui.env("NOVA_SCENE_DRAG")
+        if drag_spec.len() > 0 {
+            app = drag_test(app, drag_spec)
+        }
+        if gui.env("NOVA_SCENE_UNDO_AFTER") == "1" {
+            app = handle_mouse_down(app, undo_x(app.panels) + 10, history_button_y() + 8)
+        }
         if gui.open("Nova Engine Studio", window_w(), window_h()) {
             app = app_set_metal(app, start_metal(app.panels))
             gui.begin()
@@ -2161,7 +3014,9 @@ fn main() {
                 viewport = "metal"
             }
             let position = world_position(app.world, app.selected)
-            println("scene-gui: shell=captured saved=${saved} entities=${world_live_count(app.world)} selected=${app.selected.index}:${app.selected.generation} tab=${tab_label} viewport=${viewport} drawer=console history=${app.history_at}/${app.history.len()} position=${fixed2(position.x)}, ${fixed2(position.y)}, ${fixed2(position.z)} layout=${app.panels.left},${app.panels.right},${app.panels.drawer} h=${bool_value(app.panels.hierarchy)} i=${bool_value(app.panels.inspector)} d=${bool_value(app.panels.drawer_open)}")
+            let rotation = world_rotation(app.world, app.selected)
+            let scale = world_scale(app.world, app.selected)
+            println("scene-gui: shell=captured saved=${saved} entities=${world_live_count(app.world)} selected=${app.selected.index}:${app.selected.generation} tab=${tab_label} viewport=${viewport} drawer=console history=${app.history_at}/${app.history.len()} position=${fixed2(position.x)}, ${fixed2(position.y)}, ${fixed2(position.z)} rotation=${fixed2(rotation.w)}, ${fixed2(rotation.x)}, ${fixed2(rotation.y)}, ${fixed2(rotation.z)} scale=${fixed2(scale.x)}, ${fixed2(scale.y)}, ${fixed2(scale.z)} layout=${app.panels.left},${app.panels.right},${app.panels.drawer} h=${bool_value(app.panels.hierarchy)} i=${bool_value(app.panels.inspector)} d=${bool_value(app.panels.drawer_open)} tool=${tool_mode_name(app.tool.mode)} snap=${bool_value(app.tool.snap)} grid=${bool_value(app.tool.grid)} playing=${bool_value(app.playing)} step=${world_step(app.world)} menu=${app.tool.menu}")
             if app.metal != 0 {
                 metal_shutdown(app.metal)
             }

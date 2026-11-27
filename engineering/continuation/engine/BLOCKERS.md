@@ -50,6 +50,10 @@
 - **No free panel docking or multi-window editor.** Hierarchy, Inspector and the
   drawer resize/hide and persist their layout, but cannot float, reorder or
   split into additional windows.
+- **The transform tools are drag-only.** Select/Move/Rotate/Scale work in the
+  Scene viewport with snapping, but there are no gizmo handles, local/world
+  toggle, multi-select or grouped undo. Menus are minimal and have no keyboard
+  navigation or context menus.
 - **No asset database, importer, UUID store or scene serialization.** ENG-03 is
   greenfield. Inspector history is per-session and single-field; multi-select,
   grouped commands, gizmos and persisted undo remain open.

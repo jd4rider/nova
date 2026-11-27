@@ -3,8 +3,9 @@
 # Unity-first shell from real World state, with the Metal viewport composited
 # into the same bitmap. Asserts the shell regions, selected hierarchy row,
 # traffic-light clearance, distinct Scene/Game tabs, a real lit Metal frame,
-# editable inspector history, persisted panel layout, and a clean live loop.
-# Leaves target/engine-*.png for review.
+# editable inspector history, working toolbar/menu commands, viewport drag
+# transforms, persisted panel layout, and a clean live loop. Leaves
+# target/engine-*.png for review.
 set -eu
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -27,6 +28,19 @@ GAME_CAM=target/engine-game-camera.png
 EDIT=target/engine-edit.png
 UNDO=target/engine-undo.png
 REDO=target/engine-redo.png
+PLAY=target/editor-play.png
+STEP=target/editor-step.png
+MOVE=target/editor-move.png
+MOVE_UNDO=target/editor-move-undo.png
+ROTATE=target/editor-rotate.png
+SCALE=target/editor-scale.png
+ADD=target/editor-add.png
+DUPLICATE=target/editor-duplicate.png
+DELETE=target/editor-delete.png
+SNAP=target/editor-snap.png
+GRID_OFF=target/editor-grid-off.png
+MENU_CUBE=target/editor-menu-cube.png
+MENU_WINDOW=target/editor-menu-window.png
 LAYOUT_CHANGE=target/engine-layout-change.png
 LAYOUT_RESTORED=target/engine-layout-restored.png
 TRACE=target/shell-traffic.log
@@ -154,6 +168,64 @@ if cmp -s target/base-view.bmp target/edit-view.bmp; then echo "shell: edit did 
 cmp -s target/edit-view.bmp target/redo-view.bmp || { echo "shell: redo did not restore the edited viewport" >&2; exit 1; }
 echo "shell: Game camera and edit/undo/redo viewport checks passed"
 
+# The toolbar and menu are clicked through handle_mouse_down. A painted button
+# that lost its hit test, or a command that only changes a label, fails here.
+PLAY_OUT=$(NOVA_SCENE_LAYOUT="$LAYOUT" NOVA_SCENE_ACTION=play NOVA_SCENE_SHOT="$PLAY" ./target/nova/scene-gui)
+echo "$PLAY_OUT"
+echo "$PLAY_OUT" | grep -q "playing=1"
+STEP_OUT=$(NOVA_SCENE_LAYOUT="$LAYOUT" NOVA_SCENE_ACTION=step NOVA_SCENE_SHOT="$STEP" ./target/nova/scene-gui)
+echo "$STEP_OUT"
+echo "$STEP_OUT" | grep -q "step=1"
+
+MOVE_OUT=$(NOVA_SCENE_LAYOUT="$LAYOUT" NOVA_SCENE_ACTION=move NOVA_SCENE_DRAG="80,-20" NOVA_SCENE_SHOT="$MOVE" ./target/nova/scene-gui)
+echo "$MOVE_OUT"
+echo "$MOVE_OUT" | grep -q "history=1/1 position=4.00, 1.40, 0.00"
+echo "$MOVE_OUT" | grep -q "tool=MOVE"
+MOVE_UNDO_OUT=$(NOVA_SCENE_LAYOUT="$LAYOUT" NOVA_SCENE_ACTION=move NOVA_SCENE_DRAG="80,-20" NOVA_SCENE_UNDO_AFTER=1 NOVA_SCENE_SHOT="$MOVE_UNDO" ./target/nova/scene-gui)
+echo "$MOVE_UNDO_OUT"
+echo "$MOVE_UNDO_OUT" | grep -q "history=0/1 position=0.00, 1.40, 1.00"
+
+ROTATE_OUT=$(NOVA_SCENE_LAYOUT="$LAYOUT" NOVA_SCENE_ACTION=rotate NOVA_SCENE_DRAG="45,0" NOVA_SCENE_SHOT="$ROTATE" ./target/nova/scene-gui)
+echo "$ROTATE_OUT"
+echo "$ROTATE_OUT" | grep -q "history=1/1 position=0.00, 1.40, 1.00 rotation=0.71, 0.00, 0.71, 0.00"
+SCALE_OUT=$(NOVA_SCENE_LAYOUT="$LAYOUT" NOVA_SCENE_ACTION=scale NOVA_SCENE_DRAG="60,0" NOVA_SCENE_SHOT="$SCALE" ./target/nova/scene-gui)
+echo "$SCALE_OUT"
+echo "$SCALE_OUT" | grep -q "scale=1.20, 2.60, 1.20"
+echo "$SCALE_OUT" | grep -q "tool=SCALE"
+
+ADD_OUT=$(NOVA_SCENE_LAYOUT="$LAYOUT" NOVA_SCENE_ACTION=add NOVA_SCENE_SHOT="$ADD" ./target/nova/scene-gui)
+echo "$ADD_OUT"
+echo "$ADD_OUT" | grep -q "entities=8 selected=7:1 tab=scene"
+echo "$ADD_OUT" | grep -q "position=0.00, 0.50, 0.00"
+echo "$ADD_OUT" | grep -q "tool=MOVE"
+DUPLICATE_OUT=$(NOVA_SCENE_LAYOUT="$LAYOUT" NOVA_SCENE_ACTION=duplicate NOVA_SCENE_SHOT="$DUPLICATE" ./target/nova/scene-gui)
+echo "$DUPLICATE_OUT"
+echo "$DUPLICATE_OUT" | grep -q "entities=8 selected=7:1 tab=scene"
+echo "$DUPLICATE_OUT" | grep -q "position=0.60, 1.40, 1.00"
+DELETE_OUT=$(NOVA_SCENE_LAYOUT="$LAYOUT" NOVA_SCENE_ACTION=delete NOVA_SCENE_SHOT="$DELETE" ./target/nova/scene-gui)
+echo "$DELETE_OUT"
+echo "$DELETE_OUT" | grep -q "entities=6 selected=0:1 tab=scene"
+echo "$DELETE_OUT" | grep -q "tool=SELECT"
+
+SNAP_OUT=$(NOVA_SCENE_LAYOUT="$LAYOUT" NOVA_SCENE_ACTION=snap NOVA_SCENE_SHOT="$SNAP" ./target/nova/scene-gui)
+echo "$SNAP_OUT"
+echo "$SNAP_OUT" | grep -q "snap=0"
+GRID_OUT=$(NOVA_SCENE_LAYOUT="$LAYOUT" NOVA_SCENE_ACTION=grid NOVA_SCENE_SHOT="$GRID_OFF" ./target/nova/scene-gui)
+echo "$GRID_OUT"
+echo "$GRID_OUT" | grep -q "grid=0"
+
+MENU_CUBE_OUT=$(NOVA_SCENE_LAYOUT="$LAYOUT" NOVA_SCENE_MENU="3:0" NOVA_SCENE_SHOT="$MENU_CUBE" ./target/nova/scene-gui)
+echo "$MENU_CUBE_OUT"
+echo "$MENU_CUBE_OUT" | grep -q "entities=8 selected=7:1 tab=scene"
+echo "$MENU_CUBE_OUT" | grep -q "tool=MOVE"
+MENU_WINDOW_OUT=$(NOVA_SCENE_LAYOUT="$LAYOUT" NOVA_SCENE_MENU="5:1" NOVA_SCENE_SHOT="$MENU_WINDOW" ./target/nova/scene-gui)
+echo "$MENU_WINDOW_OUT"
+echo "$MENU_WINDOW_OUT" | grep -q "layout=252,304,196 h=1 i=0 d=1"
+
+crop_view "$GRID_OFF" target/grid-off-view
+if cmp -s target/base-view.bmp target/grid-off-view.bmp; then echo "shell: Grid toggle did not change the viewport" >&2; exit 1; fi
+echo "shell: toolbar, menu, drag and grid checks passed"
+
 # Layout changes use the real splitter hit test and visibility chips, then a
 # second process loads the same file. The full capture must match, proving the
 # panels, sizes and World data all survived the restart.
@@ -176,4 +248,4 @@ LIVE=$(NOVA_SCENE_LAYOUT="$LAYOUT" NOVA_SCENE_FRAMES=5 ./target/nova/scene-gui)
 echo "$LIVE"
 echo "$LIVE" | grep -q "live=stopped frames=5 viewport=metal"
 
-echo "shell: 13 panel checks, Game camera and layout checks passed"
+echo "shell: 13 panel checks, toolbar/menu/drag, Game camera and layout checks passed"

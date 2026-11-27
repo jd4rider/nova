@@ -121,8 +121,9 @@
   a Unity skin over mock state.
 - Decision: the editor shell follows Unity's information architecture:
   - left column: hierarchy/tree and, when relevant, project/assets;
-  - centre: scene view with a compact toolbar (play, pause, step, local/world,
-    grid/snap) and a game view tab;
+  - centre: scene view with a compact toolbar (play, pause, step,
+    select/move/rotate/scale, grid/snap, add/duplicate/delete) and a game view
+    tab;
   - right column: inspector with component sections and add-component entry;
   - bottom: project/console drawer, collapsible;
   - top: menu bar plus a scene-identity strip, not a second toolbar;
@@ -135,11 +136,11 @@
   Every editor slice must be capturable as a PNG through Nova GUI for review.
 - Consequences: ENG-04 panels are designed against this layout before styling;
   if a feature cannot be wired to real state it is not shown yet.
-- Status note: Studio 0.5.0 implements this layout as a real shell over one
-  `World` value (ENG-04.002/ENG-04.003/ENG-04.004/ENG-11.003/ENG-11.004).
-  Editable transforms, undo/redo and persisted panel sizes/visibility are
-  verified; free docking and editor camera controls remain open before ENG-04
-  is complete.
+- Status note: Studio 0.6.0 implements this layout as a real shell over one
+  `World` value (ENG-04.002/ENG-04.003/ENG-04.004/ENG-04.006/ENG-11.003/
+  ENG-11.004). Editable transforms, undo/redo, persisted panel sizes/visibility,
+  working toolbar/menus and viewport drag tools are verified; free docking,
+  gizmos and editor camera controls remain open before ENG-04 is complete.
 
 ## ADR-ENG-010 — Studio composites an offscreen Metal frame
 - Status: accepted (ENG-11.003).

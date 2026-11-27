@@ -1,6 +1,6 @@
 # Nova Engine evidence
 
-Date: 2026-11-27 (session 15; earlier evidence 2026-11-26)
+Date: 2026-11-27 (session 16; earlier evidence 2026-11-26)
 Platform: macOS ARM64, LLVM/Clang, self-hosted Nova compiler, `main` branch,
 uncommitted working tree.
 
@@ -579,6 +579,65 @@ eb5bfc2527450417ff8db1528de7ba66d22d11af  engine-edit.png
 5c00f4a41166b7b5fb707c556ce0d632a2058c1f  engine-layout.png
 ```
 
+## Working toolbar, menus and scene editing (ENG-04.006)
+
+```
+$ sh examples/scene-gui/tests/shell.sh
+scene-gui: shell=captured ... playing=1 step=0 ... tool=SELECT snap=1 grid=1
+scene-gui: shell=captured ... playing=0 step=1 ... tool=SELECT snap=1 grid=1
+scene-gui: shell=captured ... history=1/1 position=4.00, 1.40, 0.00 ... tool=MOVE
+scene-gui: shell=captured ... history=0/1 position=0.00, 1.40, 1.00 ... tool=MOVE
+scene-gui: shell=captured ... history=1/1 position=0.00, 1.40, 1.00 rotation=0.71, 0.00, 0.71, 0.00 ... tool=ROTATE
+scene-gui: shell=captured ... history=1/1 ... scale=1.20, 2.60, 1.20 ... tool=SCALE
+scene-gui: shell=captured ... entities=8 selected=7:1 ... position=0.00, 0.50, 0.00 ... tool=MOVE
+scene-gui: shell=captured ... entities=8 selected=7:1 ... position=0.60, 1.40, 1.00
+scene-gui: shell=captured ... entities=6 selected=0:1 ... tool=SELECT
+scene-gui: shell=captured ... snap=0 grid=1
+scene-gui: shell=captured ... snap=1 grid=0
+scene-gui: shell=captured ... entities=8 selected=7:1 ... tool=MOVE   # GameObject > Create Cube
+scene-gui: shell=captured ... layout=252,304,196 h=1 i=0 d=1        # Window > Inspector
+shell: toolbar, menu, drag and grid checks passed
+shell: 13 panel checks, toolbar/menu/drag, Game camera and layout checks passed
+```
+
+`ToolState` lives in the editor `App`, separate from the World: mode, snap,
+grid, open menu and the in-flight drag. The toolbar's Play/Pause/Step,
+Select/Move/Rotate/Scale, Snap/Grid and Add/Dup/Del buttons all have real hit
+tests in `handle_mouse_down`. Move changes X/Z from the screen delta, Rotate
+composes a yaw quaternion around Y, and Scale applies a uniform factor; snapping
+rounds to 0.5 m, 15° and 0.1 scale. Releasing records one `EditCommand`, so the
+same Undo path restores the pre-drag transform (`history=1/1 → 0/1`).
+
+The menu bar is no longer a painted string: File, Edit, Assets, GameObject,
+Component, Window and Help open dropdowns and execute the same command
+functions as the toolbar. Add spawns a tag-2 cube at `(0, 0.50, 0)`, selects it
+as entity `7:1`, and switches to Move; Duplicate offsets the copy by 0.6 m;
+Delete despawns the selection and selects the first live entity. Escape now
+closes a menu, cancels a drag or returns to Select instead of quitting.
+
+Installed as 0.6.0:
+
+```
+$ sh examples/scene-gui/install-macos.sh
+Installed /Applications/Nova Engine Studio.app
+Version 0.6.0 · dev.nova.engine.studio · ad-hoc signed
+
+$ codesign --verify --strict "/Applications/Nova Engine Studio.app"   # clean
+$ plutil -extract CFBundleShortVersionString raw .../Info.plist
+0.6.0
+```
+
+All six installed captures are byte-identical to their local counterparts:
+
+```
+084b60a4b5240331b83face852b798b0eedf30d4abf3fc5ad98ea6fd10b1efd3  engine-scene.png
+d65430f087939933590d4d213426c7fe8fc25aac038fd7f76ddb51598368aa11  engine-game.png
+fee318511184b96542922f11d09b1d75fe7b40f1505276239e3cd5496409aaa6  engine-edit.png
+c0a5f44586eac6d4c8292b58cdb896b29e92200e0e5efa23c20129fb0a7cbf9d  engine-layout.png
+242c67358b240a5c4a792494271ef28e10f4a9d33d2ab032fa094bf8ee977ea4  engine-toolbar.png
+565574b4b0b16706310da3fd46347bcc4294e872d4c454566045459d9ee50d14  engine-add.png
+```
+
 ## Not measured
 
 - No frame-time breakdown, allocation count or throughput profile inside the
@@ -587,12 +646,18 @@ eb5bfc2527450417ff8db1528de7ba66d22d11af  engine-edit.png
   asset pipeline yet. One Depth32Float attachment and one texture slot.
 - Inspector history is per-session and single-field. No multi-select, grouped
   commands, persisted undo, gizmo, prefab or scene save/load yet.
+- Transform tools are drag-only: no gizmo handles, local/world toggle,
+  multi-select or grouped undo. Menus are minimal; no keyboard navigation or
+  context menus.
 - Scene uses a fixed editor camera. Game uses the tag-6 Game Camera entity's
   World transform, but neither view polls the Metal lab's orbit/pan/zoom slots
-  yet. The shell test drives layout splitter/chip handlers and inspector text,
-  not synthesized AppKit mouse events.
+  yet. The shell test drives toolbar/menu rectangles, layout splitter/chip
+  handlers, inspector text and drag coordinates, not synthesized AppKit mouse
+  events.
 - Panel layout persists sizes and visibility for three fixed regions; there is
   no free docking, floating/reordered panel or multi-window editor.
+- The toolbar is drawn by nova-gui and hit-tested in Nova, not a native
+  `NSToolbar`; there are no icons, tooltips or overflow menu yet.
 - The Game Camera is a tag convention, not a component type. FOV, near/far and
   runtime input are fixed or absent.
 - Float is codegen- and full-build-verified on macOS arm64; wasm float has no

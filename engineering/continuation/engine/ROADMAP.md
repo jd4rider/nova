@@ -13,7 +13,7 @@ never a session.
 | ENG-01 | Runtime core and math | done | math, handles, timestep, storage, tick, interpolation, 1k gate and 10k×10k soak measured |
 | ENG-02 | Native graphics foundation | done | textured quad, PNG load, depth-tested perspective cube, resize, capture, pixel checks and teardown verified |
 | ENG-03 | Scene and asset system | planned | save/reopen, stable UUIDs, incremental import |
-| ENG-04 | Editor shell | partial | Unity-first layout, real hierarchy/selection, editable inspector with undo/redo and persisted panel sizes/visibility verified; free docking and editor camera controls remain |
+| ENG-04 | Editor shell | partial | Unity-first layout, real hierarchy/selection, editable inspector with undo/redo, persisted panel sizes/visibility and working toolbar/menu/drag tools verified; free docking, gizmos and editor camera controls remain |
 | ENG-05 | 2D vertical slice | partial | Breakout exists as a game; no standalone export pipeline yet |
 | ENG-06 | Shared scripting ABI | planned | reflected properties, lifecycle, cross-mode values |
 | ENG-07 | Compiled Nova scripting | planned | gameplay component runs in editor and export |
@@ -48,12 +48,13 @@ never a session.
   physics-driven cube, resize, offscreen PNG capture, a bounded editor draw
   list and a shared frame for GUI compositing; `examples/metal-lab` is its
   acceptance.
-- `examples/scene-gui` — Nova Engine Studio 0.5.0: Unity-first shell over a real
+- `examples/scene-gui` — Nova Engine Studio 0.6.0: Unity-first shell over a real
   seven-entity `world.nova` world, with hierarchy, persisted resizable/hideable
-  panels, Scene and Game Camera views, editable Position/Rotation/Scale
-  inspector and 16-entry undo/redo, play/pause/step, project/console drawer and
-  an offscreen Metal viewport composited into the same 2880×1800 capture;
-  installs with an icon.
+  panels, working toolbar and menus, Select/Move/Rotate/Scale drag tools with
+  snap/grid, Add/Dup/Del, Scene and Game Camera views, editable
+  Position/Rotation/Scale inspector and 16-entry undo/redo, play/pause/step,
+  project/console drawer and an offscreen Metal viewport composited into the
+  same 2880×1800 capture; installs with an icon.
 - `libraries/nova-gui` — native macOS window, events, immediate-mode drawing,
   PNG capture, Metal-frame compositing and accessibility bridge.
 - Nova compiler — self-hosted, LLVM/Clang, macOS ARM64. Float is verified
@@ -70,5 +71,7 @@ polled 3D camera with a physics-driven cube, and ENG-11.003 puts that Metal
 scene inside Studio's capture path. ENG-04.003 adds editable transform rows
 with an editor-only undo/redo stack. ENG-04.004 persists panel sizes and
 visibility; ENG-11.004 renders Game through the tagged Game Camera entity.
-Next is ENG-04.005, wiring Studio's Scene camera to the existing GUI input
-slots. Editor panels must be built against real runtime APIs; no mock state.
+ENG-04.006 makes the toolbar and menus execute real commands, including
+Select/Move/Rotate/Scale drags with snap/grid and Add/Duplicate/Delete. Next is
+ENG-04.005, wiring Studio's Scene camera to the existing GUI input slots.
+Editor panels must be built against real runtime APIs; no mock state.

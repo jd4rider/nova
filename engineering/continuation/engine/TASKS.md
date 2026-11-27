@@ -136,6 +136,18 @@ reproducible acceptance check before it is marked done. Stable identifiers are  
   hit test, launches a second process and gets a byte-identical full capture
   with `layout=320,260,150 h=1 i=0 d=0`, seven entities and Player `3:1`.
   Installed as Studio 0.5.0.
+- **ENG-04.006 — Working toolbar, menus and scene editing.** DONE. The centre
+  toolbar now has working Play/Pause/Step, Select/Move/Rotate/Scale, Snap/Grid
+  and Add/Dup/Del controls; File/Edit/Assets/GameObject/Component/Window/Help
+  open real dropdowns. Move/Rotate/Scale drag in Scene with snapping and record
+  one undo command on release; Add/Duplicate/Delete spawn or despawn real World
+  entities. `Q`/`W`/`E`/`R`, `G`, `Shift+S`, `⌘D`, `⌘R`, `⌘Q` and `Escape`
+  share the same command path, and Escape no longer quits the editor.
+  Acceptance: `sh examples/scene-gui/tests/shell.sh` clicks the real toolbar
+  and menu rectangles, drags Player to `4.00, 1.40, 0.00`, rotates 90°, scales
+  to `1.20, 2.60, 1.20`, creates entity `7:1`, duplicates, deletes, toggles
+  snap/grid, opens GameObject and Window menus, and checks drag undo. Installed
+  as Studio 0.6.0.
 - **ENG-04.005 — Editor camera controls.** READY. Wire the existing
   orbit/pan/zoom input slots to Studio's Scene camera through GUI events; keep
   the Game Camera entity independent. Acceptance: synthesized drags change
@@ -183,6 +195,7 @@ reproducible acceptance check before it is marked done. Stable identifiers are  
 
 ## Next action
 
-ENG-04.005: wire Studio's Scene orbit/pan/zoom through GUI events. Then extend
-the inspector beyond one field at a time: multi-select, gizmos and grouped
-commands. Scene save/load and free panel docking remain later editor work.
+ENG-04.005: wire Studio's Scene orbit/pan/zoom through GUI events. Then add
+gizmo handles, local/world space and multi-select/grouped undo on top of the
+working drag tools. Scene save/load and free panel docking remain later editor
+work.

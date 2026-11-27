@@ -1,6 +1,6 @@
 # Nova Engine checkpoint
 
-Updated: 2026-11-27 (Persisted panels and Game Camera)
+Updated: 2026-11-27 (Working toolbar, menus and scene editing)
 Branch: `main`
 Master directive: owner-supplied 2026-11-26; tracked by `ROADMAP.md`.
 Working tree: uncommitted. Unrelated browser/GUI changes were present before
@@ -12,7 +12,9 @@ Status: **ENG-01 DONE** (measured soak); **ENG-02 DONE** (device host, textured
 quad, depth-tested cube, resize, capture, pixel checks and teardown verified);
 **ENG-04.002 DONE** (Unity-first shell over real `World` state); **ENG-04.003
 DONE** (editable transform inspector with undo/redo); **ENG-04.004 DONE**
-(persisted panel sizes and visibility, installed as 0.5.0); **ENG-11.001
+(persisted panel sizes and visibility); **ENG-04.006 DONE** (working toolbar
+and menus, viewport drag tools, create/duplicate/delete, installed as 0.6.0);
+**ENG-11.001
 DONE** (lit textured cube); **ENG-11.002 DONE** (orbit/pan/zoom camera and
 physics-driven cube in the Metal lab); **ENG-11.003 DONE** (offscreen Metal
 viewport composited into Studio); **ENG-11.004 DONE** (Game Camera view).
@@ -31,8 +33,8 @@ viewport composited into Studio); **ENG-11.004 DONE** (Game Camera view).
 | Metal lit cube | `sh examples/metal-lab/tests/lit.sh` | lit textured cube, 19 face/texture/light checks, both sizes, exit 0 |
 | Metal camera/physics | `sh examples/metal-lab/tests/physics.sh` | 2 camera poses, 2 simulation states, 11 checks, exit 0 |
 | Metal teardown | `sh examples/metal-lab/tests/shutdown.sh` | 5/5 open/draw/capture/close cycles clean |
-| Editor shell, layout + history | `sh examples/scene-gui/tests/shell.sh` | 7 entities, selected `3:1`, 13 pixel checks, Scene/Game and moved-camera crops, edit/undo/redo (`1/1 → 0/1 → 1/1`), layout restart `320,260,150 h=1 i=0 d=0`, 5-frame live loop, nested `save_png` path, exit 0 |
-| Studio install | `sh examples/scene-gui/install-macos.sh` | `/Applications/Nova Engine Studio.app` 0.5.0, signature verified |
+| Editor shell, toolbar, layout + history | `sh examples/scene-gui/tests/shell.sh` | 7 entities, selected `3:1`, 13 pixel checks, toolbar/menu/drag checks, Add/Dup/Del, Scene/Game and moved-camera crops, edit/undo/redo (`1/1 → 0/1 → 1/1`), layout restart `320,260,150 h=1 i=0 d=0`, 5-frame live loop, nested `save_png` path, exit 0 |
+| Studio install | `sh examples/scene-gui/install-macos.sh` | `/Applications/Nova Engine Studio.app` 0.6.0, signature verified |
 
 Physics output:
 
@@ -79,11 +81,12 @@ Studio installer. Replacing `bootstrap/nova` remains the BOOT-02 gate
   idempotent shutdown and a shared BGRA frame for nova-gui.
 - `examples/metal-lab` — quad, colour cube, lit cube and physics-camera
   acceptances with captures and sampled pixels.
-- `examples/scene-gui` — Studio 0.5.0 Unity-first shell with a traffic-light-safe
-  title strip, persisted resizable/hideable panels, Scene and Game Camera views,
-  an offscreen Metal viewport composited into the same GUI bitmap, and editable
-  Position/Rotation/Scale rows with a 16-entry undo/redo stack; capture test and
-  signed installer.
+- `examples/scene-gui` — Studio 0.6.0 Unity-first shell with a traffic-light-safe
+  title strip, persisted resizable/hideable panels, working toolbar and menus,
+  Select/Move/Rotate/Scale viewport drag tools with snap/grid, Add/Dup/Del,
+  Scene and Game Camera views, an offscreen Metal viewport composited into the
+  same GUI bitmap, and editable Position/Rotation/Scale rows with a 16-entry
+  undo/redo stack; capture test and signed installer.
 - `examples/engine-lab` — 27-test engine suite; `examples/engine-soak` — 10k
   measured run.
 
@@ -91,8 +94,8 @@ Studio installer. Replacing `bootstrap/nova` remains the BOOT-02 gate
 
 1. **ENG-04.005:** wire Studio's Scene orbit/pan/zoom through GUI events before
    calling the viewport interactive. Keep the Game Camera entity independent.
-2. Extend the inspector beyond one field at a time: multi-select, gizmos and
-   grouped undo are later editor work.
+2. Add gizmo handles, local/world space and multi-select/grouped undo on top of
+   the working drag tools.
 3. Add scene save/load and a component camera type; the current Game Camera is
    a tag-6 convention over existing World transforms.
 4. Keep `runtime/metal.m` to Int handles/scalars; no callback or event struct
@@ -101,10 +104,13 @@ Studio installer. Replacing `bootstrap/nova` remains the BOOT-02 gate
 ## Limits
 
 - The shell window is fixed at 1440×900 points. Hierarchy, Inspector and drawer
-  resize and hide, but there is no free docking, floating/reordered panel,
-  menu command handling or multi-window editor yet.
+  resize and hide, but there is no free docking, floating/reordered panel or
+  multi-window editor yet.
+- The transform tools are drag-only: no gizmo handles, local/world toggle,
+  multi-select or grouped undo. Menus are minimal and have no keyboard
+  navigation or context menus.
 - Inspector history is per-session and single-field. It is not persisted, does
-  not group multi-select edits, and has no gizmo, prefab or scene save/load.
+  not group multi-select edits, and has no prefab or scene save/load.
 - Studio's Scene view uses a fixed Q16.16 editor camera. Game uses the tagged
   Game Camera entity's World transform, but neither view polls the Metal lab's
   orbit/pan/zoom slots yet.
