@@ -128,7 +128,7 @@ open -a "/Applications/Nova Browser.app"
 ```
 
 The script rebuilds, renders the icon, assembles `Nova Browser.app`, ad-hoc
-signs it locally and replaces the installed copy. Version 0.9.11 is installed.
+signs it locally and replaces the installed copy. Version 0.9.12 is installed.
 Re-run it after every completed phase. This is not Developer ID signing or
 notarization.
 
@@ -276,7 +276,8 @@ an unreadable file imports nothing rather than reporting a guess.
 Not imported: passwords, cookies, site permissions, open tabs (the last session
 is not read) or themes. Completed downloads come over when the file still exists
 on disk. Passwords in particular stay in Chrome's Keychain-backed store; Nova
-reads no credential database.
+reads no credential database. The logins Nova saves itself (above) are a
+separate store, not a copy of Chrome's.
 
 A dry run applies everything in memory and writes nothing, so you can see what
 would change first:
@@ -315,6 +316,26 @@ This is a private *tab*, not a separate private window: it sits in the same tab
 strip as normal tabs, and closing it is how you leave. A private-only session
 never overwrites the saved session, so quitting it does not lose the tabs you
 had before.
+
+## Saved logins
+
+When you sign in on a normal tab, Nova stores that username and password for the
+host in the login keychain, under its own `dev.nova.browser.login` service, and
+says **Saved login for example.com**. The next time the host shows a password
+form, Nova fills it; it never submits the form for you. Private tabs neither
+save nor fill a login.
+
+One login is kept per host. There is no password list yet, so removing one is a
+command:
+
+```sh
+browser/target/nova/nova-browser --forget-login example.com
+```
+
+This is Nova's own store. Passwords saved in Chrome or Safari are not imported,
+and logins are not synced anywhere. While the app is ad-hoc signed, a rebuilt
+binary can look like a different app to the keychain, so macOS may ask once
+before Nova reads an entry it wrote before the rebuild.
 
 ## Bookmarks
 

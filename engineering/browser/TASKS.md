@@ -164,6 +164,13 @@ Each task needs a reproducible acceptance check before it is marked done.
   re-applied on navigation) and publishes the find query and close control to
   the accessibility tree; the same test relaunches the profile and requires
   `zoom: host=127.0.0.1 applied=150 stored=150` plus both AX names (11 PASS).
+- **WB-03.016 — Saved logins.** DONE in 0.9.12. Submitted password forms on
+  normal tabs are captured through WebKit's `novaLogin` bridge and stored in
+  the login keychain under `dev.nova.browser.login`, one item per host. A later
+  load of that host fills the page's own form; Nova never submits it. Private
+  tabs do neither. `--forget-login <host>` removes an entry. Not done: a
+  password list/editor UI, importing Chrome's passwords, and sync.
+  Evidence: `browser/tests/login.sh` 3/3.
 - **WB-03.015 — Private tabs.** DONE in 0.9.11. `--private` and Cmd+Shift+N
   create a view on `WKWebsiteDataStore.nonPersistentDataStore`, so cookies and
   cache end with the tab. `record_visit` refuses private tabs, `save_session`

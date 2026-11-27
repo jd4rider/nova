@@ -260,3 +260,31 @@ fn zoom(handle: Int) -> Int {
 fn apply_page_appearance(dark: Bool) {
     view.wv_set_appearance(dark)
 }
+
+// A submitted password form WebKit captured for this tab, waiting to be
+// stored. Private tabs are refused in the runtime, not here.
+fn login_pending(handle: Int) -> Bool {
+    return view.wv_login_pending(handle)
+}
+
+fn login_origin(handle: Int) -> String {
+    return view.wv_login_origin(handle)
+}
+
+fn login_user(handle: Int) -> String {
+    return view.wv_login_user(handle)
+}
+
+fn login_pass(handle: Int) -> String {
+    return view.wv_login_pass(handle)
+}
+
+fn login_clear(handle: Int) {
+    view.wv_login_clear(handle)
+}
+
+// Fills the page's own login form without submitting it. 1 when a field was
+// filled, 0 when the page has no password field or it already has a value.
+fn fill_login(handle: Int, user: String, pass: String) -> Int {
+    return view.wv_fill_login(handle, user, pass)
+}

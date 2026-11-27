@@ -12,6 +12,7 @@
 
 #import <AppKit/AppKit.h>
 #import <WebKit/WebKit.h>
+#import <Security/Security.h>
 
 #include <math.h>
 #include <stdint.h>
@@ -50,6 +51,11 @@ typedef struct {
 @property (nonatomic, assign) int64_t generation;
 @property (nonatomic, assign) int64_t findState; /* 0 cleared 1 found 2 not found 3 searching */
 @property (nonatomic, assign) BOOL privateView;
+/* The last password form the page submitted, held until Nova polls it into
+ * the Keychain. Nothing is written for a private view. */
+@property (nonatomic, copy) NSString *loginOrigin;
+@property (nonatomic, copy) NSString *loginUser;
+@property (nonatomic, copy) NSString *loginPass;
 @end
 
 @implementation NovaWebViewEntry
@@ -540,6 +546,49 @@ static NSString *nova_icon_script(void) {
            "})();";
 }
 
+/* A page reports a submitted password form. The value goes to the host, which
+ * stores it in the macOS Keychain; a private tab is refused before it is kept. */
+static NSString *nova_login_script(void) {
+    return @"(function(){"
+           "if(window.__novaLoginCapture)return;window.__novaLoginCapture=true;"
+           "function userOf(f){"
+           "var u=f.querySelector(\"input[autocomplete~='username'],input[type='email'],input[type='text'],input[type='tel']\");"
+           "return u&&u.value?u.value:'';}"
+           "document.addEventListener('submit',function(ev){"
+           "var f=ev.target;if(!f||f.tagName!=='FORM')return;"
+           "var p=f.querySelector(\"input[type='password']\");"
+           "if(!p||!p.value)return;"
+           "var l=location;if(l.protocol!=='https:'&&l.protocol!=='http:')return;"
+           "window.webkit.messageHandlers.novaLogin.postMessage({origin:l.origin,user:userOf(f),pass:p.value});"
+           "},true);})();";
+}
+
+@interface NovaLoginSink : NSObject <WKScriptMessageHandler>
+@end
+
+@implementation NovaLoginSink
+- (void)userContentController:(WKUserContentController *)controller
+      didReceiveScriptMessage:(WKScriptMessage *)message {
+    (void)controller;
+    NSDictionary *body = [message.body isKindOfClass:[NSDictionary class]] ? message.body : nil;
+    NSString *origin = body[@"origin"];
+    NSString *user = body[@"user"];
+    NSString *pass = body[@"pass"];
+    if (![origin isKindOfClass:[NSString class]] || origin.length == 0) return;
+    if (![pass isKindOfClass:[NSString class]] || pass.length == 0) return;
+    if (![user isKindOfClass:[NSString class]]) user = @"";
+    for (NSNumber *key in nova_webviews) {
+        NovaWebViewEntry *entry = nova_webviews[key];
+        if (entry.webView != message.webView) continue;
+        if (entry.privateView) return;
+        entry.loginOrigin = origin;
+        entry.loginUser = user;
+        entry.loginPass = pass;
+        return;
+    }
+}
+@end
+
 @interface NovaBlockList : NSObject
 @end
 
@@ -617,6 +666,10 @@ static int64_t nova_webview_create_store(int64_t parent_handle, int64_t x, int64
                                                         forMainFrameOnly:YES]];
         [userContent addScriptMessageHandler:[[NovaIconSink alloc] init] name:@"novaIcon"];
         [userContent addUserScript:[[WKUserScript alloc] initWithSource:nova_icon_script()
+                                                           injectionTime:WKUserScriptInjectionTimeAtDocumentStart
+                                                        forMainFrameOnly:YES]];
+        [userContent addScriptMessageHandler:[[NovaLoginSink alloc] init] name:@"novaLogin"];
+        [userContent addUserScript:[[WKUserScript alloc] initWithSource:nova_login_script()
                                                            injectionTime:WKUserScriptInjectionTimeAtDocumentStart
                                                         forMainFrameOnly:YES]];
         if (nova_content_rules) [userContent addContentRuleList:nova_content_rules];
@@ -1147,4 +1200,127 @@ int64_t nova_webview_snapshot(int64_t handle, nova_str path) {
 nova_str nova_webview_icon_url(int64_t handle) {
     NSString *href = nova_icon_urls ? nova_icon_urls[@(handle)] : nil;
     return nova_webview_copy(href);
+}
+
+/* ---------- saved logins ---------- */
+
+int64_t nova_webview_login_pending(int64_t handle) {
+    NovaWebViewEntry *entry = nova_webview_entry(handle);
+    return (entry && entry.loginPass.length > 0) ? 1 : 0;
+}
+
+nova_str nova_webview_login_origin(int64_t handle) {
+    NovaWebViewEntry *entry = nova_webview_entry(handle);
+    return nova_webview_copy(entry ? entry.loginOrigin : nil);
+}
+
+nova_str nova_webview_login_user(int64_t handle) {
+    NovaWebViewEntry *entry = nova_webview_entry(handle);
+    return nova_webview_copy(entry ? entry.loginUser : nil);
+}
+
+nova_str nova_webview_login_pass(int64_t handle) {
+    NovaWebViewEntry *entry = nova_webview_entry(handle);
+    return nova_webview_copy(entry ? entry.loginPass : nil);
+}
+
+void nova_webview_login_clear(int64_t handle) {
+    NovaWebViewEntry *entry = nova_webview_entry(handle);
+    if (!entry) return;
+    entry.loginOrigin = nil;
+    entry.loginUser = nil;
+    entry.loginPass = nil;
+}
+
+static NSString *nova_js_quote(NSString *value) {
+    NSMutableString *out = [NSMutableString stringWithString:@"'"];
+    for (NSUInteger i = 0; i < value.length; i++) {
+        unichar ch = [value characterAtIndex:i];
+        if (ch == '\\') {
+            [out appendString:@"\\\\"];
+        } else if (ch == '\'') {
+            [out appendString:@"\\'"];
+        } else if (ch == '\n') {
+            [out appendString:@"\\n"];
+        } else if (ch == '\r') {
+            [out appendString:@"\\r"];
+        } else {
+            [out appendFormat:@"%C", ch];
+        }
+    }
+    [out appendString:@"'"];
+    return out;
+}
+
+/* Fills the page's own password form from the Keychain. Only the visible
+ * fields change: Nova never submits on the user's behalf, and an already
+ * filled form is left alone so a page's own manager wins. */
+int64_t nova_webview_fill_login(int64_t handle, nova_str user, nova_str pass) {
+    NovaWebViewEntry *entry = nova_webview_entry(handle);
+    if (!entry || entry.privateView) return 0;
+    NSString *script = [NSString stringWithFormat:
+        @"(function(u,p){"
+         "var pf=document.querySelector(\"input[type='password']\");"
+         "if(!pf)return 'nofield';if(pf.value)return 'already';"
+         "var f=pf.form||document;var ui=null;var list=f.querySelectorAll('input');"
+         "for(var i=0;i<list.length;i++){if(list[i]===pf)break;"
+         "if(/^(text|email|tel)$/.test(list[i].type))ui=list[i];}"
+         "function set(el,v){if(!el)return;var d=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value');"
+         "if(d&&d.set)d.set.call(el,v);else el.value=v;"
+         "el.dispatchEvent(new Event('input',{bubbles:true}));"
+         "el.dispatchEvent(new Event('change',{bubbles:true}));}"
+         "set(ui,u);set(pf,p);return 'filled';})(%@,%@)",
+        nova_js_quote(nova_webview_string(user)),
+        nova_js_quote(nova_webview_string(pass))];
+    NSString *result = nova_webview_eval_sync(entry, script, 2.0);
+    return [result isEqualToString:@"filled"] ? 1 : 0;
+}
+
+/* One generic-password item per host in the login keychain, under Nova's own
+ * service. The value is Nova's escaped `user<TAB>password`. */
+static NSString * const NOVA_LOGIN_SERVICE = @"dev.nova.browser.login";
+
+int64_t nova_keychain_set(nova_str account, nova_str secret) {
+    NSString *acct = nova_webview_string(account);
+    NSData *data = [nova_webview_string(secret) dataUsingEncoding:NSUTF8StringEncoding];
+    if (acct.length == 0 || !data) return 0;
+    NSDictionary *query = @{(__bridge id)kSecClass:(__bridge id)kSecClassGenericPassword,
+                            (__bridge id)kSecAttrService:NOVA_LOGIN_SERVICE,
+                            (__bridge id)kSecAttrAccount:acct};
+    NSDictionary *update = @{(__bridge id)kSecValueData:data};
+    OSStatus status = SecItemUpdate((__bridge CFDictionaryRef)query,
+                                    (__bridge CFDictionaryRef)update);
+    if (status == errSecItemNotFound) {
+        NSMutableDictionary *add = [query mutableCopy];
+        add[(__bridge id)kSecValueData] = data;
+        add[(__bridge id)kSecAttrAccessible] = (__bridge id)kSecAttrAccessibleWhenUnlocked;
+        status = SecItemAdd((__bridge CFDictionaryRef)add, NULL);
+    }
+    return status == errSecSuccess ? 1 : 0;
+}
+
+nova_str nova_keychain_get(nova_str account) {
+    NSString *acct = nova_webview_string(account);
+    if (acct.length == 0) return nova_webview_empty();
+    NSDictionary *query = @{(__bridge id)kSecClass:(__bridge id)kSecClassGenericPassword,
+                            (__bridge id)kSecAttrService:NOVA_LOGIN_SERVICE,
+                            (__bridge id)kSecAttrAccount:acct,
+                            (__bridge id)kSecReturnData:@YES,
+                            (__bridge id)kSecMatchLimit:(__bridge id)kSecMatchLimitOne};
+    CFTypeRef found = NULL;
+    OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &found);
+    if (status != errSecSuccess || !found) return nova_webview_empty();
+    NSData *data = (__bridge_transfer NSData *)found;
+    NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    return nova_webview_copy(text);
+}
+
+int64_t nova_keychain_delete(nova_str account) {
+    NSString *acct = nova_webview_string(account);
+    if (acct.length == 0) return 0;
+    NSDictionary *query = @{(__bridge id)kSecClass:(__bridge id)kSecClassGenericPassword,
+                            (__bridge id)kSecAttrService:NOVA_LOGIN_SERVICE,
+                            (__bridge id)kSecAttrAccount:acct};
+    OSStatus status = SecItemDelete((__bridge CFDictionaryRef)query);
+    return (status == errSecSuccess || status == errSecItemNotFound) ? 1 : 0;
 }

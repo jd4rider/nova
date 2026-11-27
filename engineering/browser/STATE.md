@@ -3,11 +3,11 @@
 Updated: 2026-11-27
 Branch: `main`
 Last known good compiler checkpoint: `cfa00e3` (before browser work)
-Browser: **0.9.11 installed at `/Applications/Nova Browser.app`**
-Browser working tree: clean after the 0.9.11 commit; see `git status`
+Browser: **0.9.12 installed at `/Applications/Nova Browser.app`**
+Browser working tree: clean after the 0.9.12 commit; see `git status`
 Active gate: G0 WebKit; G1 WebCore not started
-Active task: **WB-03.015 — private tabs** (0.9.11: non-persistent WebKit store,
-no history/session/favicon writes, Cmd+Shift+N and `--private`)
+Active task: **WB-03.016 — saved logins** (0.9.12: login keychain store for
+submitted password forms, host-scoped autofill, `--forget-login`)
 
 ## Completed
 
@@ -324,6 +324,21 @@ no history/session/favicon writes, Cmd+Shift+N and `--private`)
     `lsregister -f`, `--set-default-browser` reports `set=1 state=1` and
     `NSWorkspace` resolves a web URL to `Nova Browser.app`. Revert in System
     Settings → Desktop & Dock → Default web browser.
+- **0.9.12 — saved logins**
+  - A normal tab's submitted password form is reported through WebKit's
+    `novaLogin` message bridge. `save_captured_login` stores it as a
+    generic-password item in the login keychain under
+    `dev.nova.browser.login`, one item per host, value `user<TAB>password`
+    escaped with the same encoder history uses.
+  - On a completed navigation Nova fills the site's own form from that entry,
+    once per URL. It never submits. Private tabs neither capture nor fill, in
+    the runtime sink and in the app gate.
+  - `--forget-login <host>` deletes an entry. The browser says
+    **Saved login for <host>** when it stores one.
+  - Evidence: `browser/tests/login.sh` 3/3 — `login: captured=1 host=127.0.0.1
+    user=ada saved=1 filled=1 fields=ada|hunter2`, no keychain item left after
+    the probe, and the `--private` control reporting `captured=0 ... filled=0`.
+
 - **0.9.11 — private tabs**
   - `--private` starts the window on a private tab and Cmd+Shift+N opens one in
     the current strip. Private views use
@@ -514,6 +529,8 @@ no history/session/favicon writes, Cmd+Shift+N and `--private`)
 - Private browsing is a tab, not a separate window: it shares the strip with
   normal tabs, and a private tab is still visible in the strip while open. No
   permission prompts, inspector, Developer ID signing/notarization or release.
+  Saved logins are one per host with no list, edit or rename UI, are not
+  imported from Chrome or Safari, and are not synced; there is no account.
   Find reports Found / No matches, not a match count; the bar's field
   and close control are in the accessibility tree, its status text is not. Zoom
   is stored per host, so every tab showing that host shares one zoom level. The

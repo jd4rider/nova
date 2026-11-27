@@ -1389,3 +1389,28 @@ private: pass=5 fail=0
 - Not tested: cookie isolation demonstrated by reading a cookie written in a
   normal tab (WebKit's non-persistent store is the guarantee), the
   Cmd+Shift+N keystroke in a live window, and private downloads.
+
+## 0.9.12 — saved logins
+
+- WebKit reports a submitted password form on a normal tab through the
+  `novaLogin` message bridge. `save_captured_login` stores it in the login
+  keychain (`dev.nova.browser.login`, one generic-password item per host) and
+  says **Saved login for <host>**. Private views are refused in the sink.
+- `nova_webview_fill_login` fills the page's own username/password fields with
+  property setters and input/change events. It returns 0 when the page has no
+  password field or the field already has a value, and never submits.
+- `--forget-login <host>` deletes an item. There is no password list UI yet.
+- Evidence: `browser/tests/login.sh` 3/3:
+
+```
+login: captured=1 host=127.0.0.1 user=ada saved=1 filled=1 fields=ada|hunter2
+PASS a submitted login is stored and filled back
+PASS the probe leaves no credential behind
+login: captured=0 host= user= saved=0 filled=0 fields=ada|
+PASS a private tab neither stores nor fills a login
+login: pass=3 fail=0
+```
+
+- Not tested: a live Keychain prompt after a rebuild (ad-hoc signing can change
+  the app identity macOS associates with the item), multi-account logins (the
+  store keeps one per host), and password-change forms.

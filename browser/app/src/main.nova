@@ -5,6 +5,7 @@ import "../../address/src/address.nova" as address_edit
 import "../../history/src/history.nova" as library
 import "../../status/src/status.nova" as status
 import "../../../libraries/nova-speech/src/speech.nova" as speech
+import "../../login/src/login.nova" as login
 
 // The Nova Browser shell. Nova owns the window, tabs, toolbar, address
 // autocomplete, history/bookmarks and engine lifecycle. Each tab owns one
@@ -5732,6 +5733,26 @@ fn auto_close(session: Session, theme: Chrome, address: Address, store: Store) {
         let after = record_visit(store, tab, engine.page_url(handle), "probe").visits.len()
         println("private: tabs=${session.tabs.len()} flag=${flag(tab.private)} persistent=${flag(engine.store_persistent(handle))} visits=${after - before}")
     }
+    // Headless saved-login check: the page submits a form, the runtime hands
+    // the values over, the Keychain stores them, and the same host's form is
+    // filled from what was stored. The entry is removed again so the probe
+    // leaves nothing behind.
+    if gui.env("NOVA_BROWSER_LOGIN_CHECK") == "1" {
+        engine.run_js(handle, "document.querySelector('#u').value='ada';document.querySelector('#p').value='hunter2';document.querySelector('form').requestSubmit();'submitted'")
+        var waited_login = 0
+        while !engine.login_pending(handle) && waited_login < 2000 {
+            gui.pump()
+            gui.sleep(20)
+            waited_login = waited_login + 20
+        }
+        let saved_host = save_captured_login(session.tabs[session.active], handle)
+        let looked = login.lookup(saved_host)
+        engine.run_js(handle, "document.querySelector('#p').value=''")
+        let filled = engine.fill_login(handle, looked.user, looked.pass)
+        let fields = engine.run_js(handle, "document.querySelector('#u').value+'|'+document.querySelector('#p').value")
+        println("login: captured=${flag(saved_host.len() > 0)} host=${saved_host} user=${looked.user} saved=${flag(looked.found)} filled=${filled} fields=${fields}")
+        login.forget(saved_host)
+    }
     var shown = store
     if gui.env("NOVA_BROWSER_FIND_OPEN") == "1" {
         shown.find_open = true
@@ -5899,6 +5920,40 @@ fn record_visit(store: Store, tab: Tab, url: String, title: String) -> Store {
     next.visits = library.add_visit(store.visits, url, title)
     next.dirty_visits = true
     return next
+}
+
+// A submitted password form WebKit captured, moved into the Keychain. Returns
+// the host that was saved, or "" when there was nothing to save, the tab is
+// private, or the Keychain refused the write.
+fn save_captured_login(tab: Tab, handle: Int) -> String {
+    if !engine.login_pending(handle) {
+        return ""
+    }
+    let host = login.origin(engine.login_origin(handle))
+    let user = engine.login_user(handle)
+    let pass = engine.login_pass(handle)
+    engine.login_clear(handle)
+    if tab.private || host.len() == 0 || pass.len() == 0 {
+        return ""
+    }
+    if login.save(host, user, pass) {
+        return host
+    }
+    return ""
+}
+
+// Fills a site's own login form from the Keychain. Private tabs never autofill,
+// and an already-filled form is left alone.
+fn autofill_login(handle: Int, url: String) -> Bool {
+    let host = login.origin(url)
+    if host.len() == 0 {
+        return false
+    }
+    let saved = login.lookup(host)
+    if !saved.found {
+        return false
+    }
+    return engine.fill_login(handle, saved.user, saved.pass) == 1
 }
 
 fn mark_active_url(session: Session, url: String) -> Session {
@@ -6199,6 +6254,16 @@ fn main() {
             run_cli_import(target)
             return
         }
+        if argument == "--forget-login" {
+            var target = ""
+            if gui.args_count() >= 3 {
+                target = gui.arg(2)
+            }
+            let host = login.origin(target)
+            let removed = login.forget(host)
+            println("login: host=${host} removed=${flag(removed)}")
+            return
+        }
         if argument == "--set-default-browser" {
             let set = gui.set_default_browser()
             println("default: set=${flag(set)} state=${flag(gui.is_default_browser())}")
@@ -6347,6 +6412,7 @@ fn main() {
     var drawn_bookmarks_open = 0 - 1
     var drawn_rail_open = 0 - 1
     var drawn_speaking = 0 - 1
+    var last_login_key = ""
     var drawn_paused = 0 - 1
     var drawn_reader = 0 - 1
     var drawn_find = 0 - 1
@@ -6524,9 +6590,19 @@ fn main() {
                 engine.set_zoom(handle, stored_zoom(store, live))
                 session = mark_active_url(session, live)
                 store = record_visit(store, session.tabs[session.active], live, engine.page_title(handle))
+                let login_key = "${handle}|${live}"
+                if !session.tabs[session.active].private && login_key != last_login_key {
+                    last_login_key = login_key
+                    autofill_login(handle, live)
+                }
             }
         } else if state == 3 {
             session.seen = ""
+            last_login_key = ""
+        }
+        let captured_login = save_captured_login(session.tabs[session.active], handle)
+        if captured_login.len() > 0 {
+            notice = Notice { text: "Saved login for " + captured_login, until: gui.now() + 3000 }
         }
         store = save_store(store)
         if store.theme != drawn_theme {

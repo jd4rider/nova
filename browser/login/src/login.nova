@@ -1,0 +1,57 @@
+// Saved website logins. One macOS Keychain item per host, under Nova's own
+// service, so the value is encrypted by the login keychain rather than by a
+// file Nova writes. The secret is Nova's escaped `user<TAB>password`, which
+// survives tabs and newlines in either field.
+
+import "../../history/src/history.nova" as library
+
+extern "C" fn nova_keychain_get(account: String) -> String
+extern "C" fn nova_keychain_set(account: String, secret: String) -> Int
+extern "C" fn nova_keychain_delete(account: String) -> Int
+
+struct SavedLogin {
+    user: String,
+    pass: String,
+    found: Bool,
+}
+
+// The keychain account is the site's host, so every scheme and port of one
+// site share a login. A bare host may be passed for the forget command.
+fn origin(url: String) -> String {
+    let host = library.host_of(url)
+    if host.len() > 0 {
+        return host
+    }
+    let plain = url.trim().lower()
+    if plain.contains("/") || plain.contains(" ") {
+        return ""
+    }
+    return plain
+}
+
+fn save(host: String, user: String, pass: String) -> Bool {
+    if host.len() == 0 || pass.len() == 0 {
+        return false
+    }
+    let value = library.escape(user) + "\t" + library.escape(pass)
+    return nova_keychain_set(host, value) == 1
+}
+
+fn lookup(host: String) -> SavedLogin {
+    let secret = nova_keychain_get(host)
+    if secret.len() == 0 {
+        return SavedLogin { user: "", pass: "", found: false }
+    }
+    return SavedLogin {
+        user: library.field(secret, 0),
+        pass: library.field(secret, 1),
+        found: true,
+    }
+}
+
+fn forget(host: String) -> Bool {
+    if host.len() == 0 {
+        return false
+    }
+    return nova_keychain_delete(host) == 1
+}

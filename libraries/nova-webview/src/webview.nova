@@ -271,3 +271,36 @@ fn wv_set_zoom(handle: Int, percent: Int) {
 fn wv_zoom(handle: Int) -> Int {
     return nova_webview_zoom(handle)
 }
+
+// Saved logins. WebKit reports a submitted password form through a message
+// bridge; the host stores it in the Keychain and can fill the page's own form.
+extern "C" fn nova_webview_login_pending(handle: Int) -> Int
+extern "C" fn nova_webview_login_origin(handle: Int) -> String
+extern "C" fn nova_webview_login_user(handle: Int) -> String
+extern "C" fn nova_webview_login_pass(handle: Int) -> String
+extern "C" fn nova_webview_login_clear(handle: Int)
+extern "C" fn nova_webview_fill_login(handle: Int, user: String, pass: String) -> Int
+
+fn wv_login_pending(handle: Int) -> Bool {
+    return nova_webview_login_pending(handle) == 1
+}
+
+fn wv_login_origin(handle: Int) -> String {
+    return nova_webview_login_origin(handle)
+}
+
+fn wv_login_user(handle: Int) -> String {
+    return nova_webview_login_user(handle)
+}
+
+fn wv_login_pass(handle: Int) -> String {
+    return nova_webview_login_pass(handle)
+}
+
+fn wv_login_clear(handle: Int) {
+    nova_webview_login_clear(handle)
+}
+
+fn wv_fill_login(handle: Int, user: String, pass: String) -> Int {
+    return nova_webview_fill_login(handle, user, pass)
+}

@@ -857,7 +857,7 @@ fn nt_build_source(path: String, source: String, target: String) -> Int {
         command = command + " " + nt_shell_quote(gui_object) + " -framework Cocoa -framework CoreText -framework CoreGraphics -framework ImageIO -framework QuartzCore"
     }
     if wants_webkit {
-        command = command + " " + nt_shell_quote(webkit_object) + " -framework WebKit -framework Cocoa"
+        command = command + " " + nt_shell_quote(webkit_object) + " -framework WebKit -framework Cocoa -framework Security"
     }
     if wants_speech {
         command = command + " " + nt_shell_quote(speech_object) + " -framework AVFoundation -framework Cocoa"
