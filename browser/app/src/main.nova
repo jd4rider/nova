@@ -172,6 +172,7 @@ struct ProfileImport {
     startup_mode: Int,
     homepage: String,
     extensions: List<String>,
+    downloads: List<String>,
 }
 
 struct ImportSummary {
@@ -182,6 +183,7 @@ struct ImportSummary {
     startup: Int,
     homepage: String,
     extensions: Int,
+    downloads: Int,
 }
 
 fn gruvbox_theme() -> Chrome {
@@ -1921,6 +1923,109 @@ fn read_pref_json(path: String, key: String) -> String {
     return value.trim()
 }
 
+// The first glyph of a host, used when a site has no favicon to show.
+fn host_first(host: String) -> String {
+    let chars = host.chars()
+    if chars.len() == 0 {
+        return "?"
+    }
+    return chars[0].upper()
+}
+
+// Where the cached icon for a URL lives. Colons and dots become underscores so
+// the host is one file name.
+fn favicon_path(store: Store, url: String) -> String {
+    var host = library.host_of(url)
+    // One icon per host, not per port: the cache key drops :port.
+    let colon = host.split(":")
+    if colon.len() > 1 {
+        host = colon[0]
+    }
+    if host.len() == 0 {
+        return ""
+    }
+    var safe = ""
+    for ch in host.chars() {
+        if ch == "." || ch == ":" {
+            safe = safe + "_"
+        } else {
+            safe = safe + ch
+        }
+    }
+    return sibling_path(store.bookmarks_path, "favicons") + "/" + safe + ".img"
+}
+
+// scheme://authority, which keeps the port the icon request needs.
+fn origin_of(url: String) -> String {
+    let parts = url.split("/")
+    if parts.len() >= 3 {
+        return parts[0] + "//" + parts[2]
+    }
+    return ""
+}
+
+// Fetches `/favicon.ico` once per host into the profile. A site without one
+// leaves no file, and the tab falls back to a letter tile.
+fn ensure_favicon(store: Store, url: String) {
+    if gui.env("NOVA_BROWSER_NO_FAVICONS") == "1" {
+        return
+    }
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return
+    }
+    let path = favicon_path(store, url)
+    if gui.env("NOVA_BROWSER_FAVICON_TRACE") == "1" {
+        println("favicon: url=${url} path=${path} exists=${flag(gui.exists(path))}")
+    }
+    if path.len() == 0 || gui.exists(path) {
+        return
+    }
+    let host = library.host_of(url)
+    if host.len() == 0 {
+        return
+    }
+    gui.mkdir(sibling_path(store.bookmarks_path, "favicons"))
+    let command = "curl -sL --max-time 4 -o '" + path + "' '" + origin_of(url) + "/favicon.ico'"
+    let output = gui.run(command, "/")
+    if gui.env("NOVA_BROWSER_FAVICON_TRACE") == "1" {
+        println("favicon: curl=${command} status=${gui.exit_status()} out=${output} exists=${flag(gui.exists(path))}")
+    }
+}
+
+fn base_name(path: String) -> String {
+    let parts = path.split("/")
+    if parts.len() == 0 {
+        return path
+    }
+    return parts[parts.len() - 1]
+}
+
+// Chrome's completed downloads whose file is still on disk. Nova's shelf stores
+// `bytes, time, path, name`, so an imported row can be revealed like any other.
+fn import_chrome_downloads(path: String) -> List<String> {
+    let query = "select target_path, tab_url, total_bytes from downloads where state = 1 and target_path != '' order by start_time desc limit 100"
+    let command = "sqlite3 -readonly -separator '\t' 'file:" + path + "?immutable=1' \"" + query + "\""
+    let dump = gui.run(command, "/")
+    if gui.exit_status() != 0 {
+        return []
+    }
+    var out: List<String> = []
+    var i = 0
+    let lines = dump.split("\n")
+    while i < lines.len() {
+        let parts = lines[i].split("\t")
+        if parts.len() >= 3 {
+            let target = parts[0].trim()
+            if target.len() > 0 && gui.exists(target) {
+                let bytes = library.number_of(parts[2].trim())
+                out.push("${bytes}\t0\t" + library.escape(target) + "\t" + library.escape(base_name(target)))
+            }
+        }
+        i = i + 1
+    }
+    return out
+}
+
 // One string field of a small JSON document, read from quote-split pieces.
 fn json_field(text: String, name: String) -> String {
     let parts = text.split("\"")
@@ -1989,8 +2094,19 @@ fn chrome_extension_name(root: String, id: String) -> String {
     if !name.starts_with("__MSG_") {
         return if name.len() > 0 { name } else { id }
     }
-    let resolved = json_message(gui.read(path + "/_locales/en/messages.json"), trim_affixes(name, "__MSG_", "__"))
-    return if resolved.len() > 0 { resolved } else { id }
+    let key = trim_affixes(name, "__MSG_", "__")
+    for line in gui.list(path + "/_locales").split("\n") {
+        if line.starts_with("d\t") {
+            let parts = line.split("\t")
+            if parts.len() > 1 {
+                let resolved = json_message(gui.read(path + "/_locales/" + parts[1] + "/messages.json"), key)
+                if resolved.len() > 0 {
+                    return resolved
+                }
+            }
+        }
+    }
+    return id
 }
 
 // What Chrome had installed, as `id<TAB>name`. Nova cannot run these: WebKit
@@ -2039,6 +2155,10 @@ fn import_profile(dir: String) -> ProfileImport {
         history = import_history(dir + "/History")
     }
     let extensions = import_chrome_extensions(dir)
+    var downloads: List<String> = []
+    if gui.exists(dir + "/History") {
+        downloads = import_chrome_downloads(dir + "/History")
+    }
     var search = ""
     var startup: List<String> = []
     var startup_mode = 0
@@ -2076,6 +2196,7 @@ fn import_profile(dir: String) -> ProfileImport {
         startup_mode: startup_mode,
         homepage: homepage,
         extensions: extensions,
+        downloads: downloads,
     }
 }
 
@@ -2084,6 +2205,7 @@ fn empty_profile_import() -> ProfileImport {
     var history: List<String> = []
     var startup: List<String> = []
     var extensions: List<String> = []
+    var downloads: List<String> = []
     return ProfileImport {
         profiles: 0,
         bookmarks: bookmarks,
@@ -2093,6 +2215,7 @@ fn empty_profile_import() -> ProfileImport {
         startup_mode: 0,
         homepage: "",
         extensions: extensions,
+        downloads: downloads,
     }
 }
 
@@ -2106,6 +2229,7 @@ fn profile_import_merge(first: ProfileImport, more: ProfileImport) -> ProfileImp
         startup_mode: if first.startup_mode > 0 { first.startup_mode } else { more.startup_mode },
         homepage: if first.homepage.len() > 0 { first.homepage } else { more.homepage },
         extensions: library.merge(first.extensions, more.extensions),
+        downloads: library.merge(first.downloads, more.downloads),
     }
 }
 
@@ -2207,6 +2331,35 @@ fn apply_profile_import(store: Store, found: ProfileImport, write: Bool) -> Impo
         next.homepage = found.homepage
         home = found.homepage
     }
+    var added_downloads = 0
+    if found.downloads.len() > 0 {
+        var listed: List<String> = []
+        var paths: List<String> = []
+        for line in next.download_history {
+            listed.push(line)
+            paths.push(library.field(line, 2))
+        }
+        for line in found.downloads {
+            let target = library.field(line, 2)
+            var known = false
+            var j = 0
+            while j < paths.len() {
+                if paths[j] == target {
+                    known = true
+                }
+                j = j + 1
+            }
+            if !known {
+                paths.push(target)
+                listed.push(line)
+                added_downloads = added_downloads + 1
+            }
+        }
+        if added_downloads > 0 {
+            next.download_history = listed
+            next.dirty_downloads = true
+        }
+    }
     var extensions = 0
     if found.extensions.len() > 0 {
         extensions = found.extensions.len()
@@ -2226,6 +2379,7 @@ fn apply_profile_import(store: Store, found: ProfileImport, write: Bool) -> Impo
         startup: added_startup,
         homepage: home,
         extensions: extensions,
+        downloads: added_downloads,
     }
 }
 
@@ -2445,7 +2599,7 @@ fn draw_icon_button(x: Int, y: Int, kind: Int, theme: Chrome, heat: Int, enabled
     draw_glyph(kind, x, y, ink)
 }
 
-fn draw_tabs(session: Session, theme: Chrome, fx: Fx, rail_open: Bool) {
+fn draw_tabs(session: Session, theme: Chrome, fx: Fx, rail_open: Bool, store: Store) {
     let vertical = session.vertical
     let width = gui.width()
     let count = session.tabs.len()
@@ -2491,8 +2645,24 @@ fn draw_tabs(session: Session, theme: Chrome, fx: Fx, rail_open: Bool) {
             gui.rect(x + 8, y + box_h - 2, box_w - 16, 2, theme.orange)
         }
         let ink = if active { theme.fg_bright } else { blend(theme.muted, theme.fg, heat) }
-        gui.clip(x + 10, y + 4, box_w - 34, box_h - 8)
-        gui.text(x + 10, y + 7, tab_title(tab), 11, ink)
+        gui.clip(x + 8, y + 4, box_w - 32, box_h - 8)
+        // The site's own icon when it served one; otherwise a letter tile, so a
+        // tab never depends on a network fetch to be identifiable.
+        var text_x = x + 10
+        if tab.url.len() > 0 {
+            let icon = favicon_path(store, tab.url)
+            if icon.len() > 0 && gui.image(icon, x + 10, y + 7, 14, 14) {
+                text_x = x + 28
+            } else {
+                let host = library.host_of(tab.url)
+                if host.len() > 0 {
+                    gui.round_rect(x + 10, y + 7, 14, 14, 4, theme.border_strong)
+                    gui.text(x + 13, y + 9, host_first(host), 9, theme.fg_bright)
+                    text_x = x + 28
+                }
+            }
+        }
+        gui.text(text_x, y + 7, tab_title(tab), 11, ink)
         gui.clip_reset()
         let close_heat = slot(fx, 50 + i)
         if close_heat > 0 {
@@ -3502,7 +3672,7 @@ fn ax_reader(store: Store, open: Bool) {
 fn draw_chrome(handle: Int, theme: Chrome, address: Address, session: Session, suggestions: List<String>, fx: Fx, notice: Notice, store: Store, hover: Int, downloads: Downloads, tooltip: Tooltip, rail_open: Bool, reader_open: Bool, fetching: Bool, received: Int) {
     gui.clear(theme.bg_hard)
     gui.overlay_begin()
-    draw_tabs(session, theme, fx, rail_open)
+    draw_tabs(session, theme, fx, rail_open, store)
     draw_toolbar(handle, theme, address, session, fx, store, downloads)
     let state = engine.page_state(handle)
     if state == 1 {
@@ -4981,8 +5151,32 @@ fn auto_close(session: Session, theme: Chrome, address: Address, store: Store) {
         println("startup: mode=${store.startup} tabs=${session.tabs.len()} first=${first}")
     }
     speech.use_engine(stored_engine(store))
+    // A headless run starts at the URL it was given, the same one the window
+    // would open.
+    let initial = gui.env("NOVA_BROWSER_URL")
+    if initial.len() > 0 {
+        engine.navigate(handle, initial)
+    }
     let final_state = engine.wait(handle, 8000)
     sync_visibility(session)
+    // Headless blob-download check: the page builds a Blob, clicks a download
+    // link, and the host must yield the same bytes plus a finished shelf row.
+    if gui.env("NOVA_BROWSER_BLOB_CHECK") == "1" {
+        let script = "(function(){var b=new Blob(['nova blob'],{type:'text/plain'});var a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='nova-blob.txt';document.body.appendChild(a);a.click();return 'clicked';})()"
+        let clicked = engine.run_js(handle, script)
+        var waited = 0
+        while engine.download_count() == 0 && waited < 5000 {
+            gui.pump()
+            gui.sleep(50)
+            waited = waited + 50
+        }
+        if engine.download_count() > 0 {
+            let ident = engine.download_id(0)
+            println("blob: clicked=${clicked} count=${engine.download_count()} state=${engine.download_state(ident)} name=${engine.download_name(ident)} path=${engine.download_path(ident)}")
+        } else {
+            println("blob: clicked=${clicked} count=0")
+        }
+    }
     let merged = library.merge(store.bookmarks, store.visits)
     let suggestions = if address.editing { with_search_row(library.suggest(merged, address.text, sug_rows()), address.text, store.search) } else { library.empty() }
     let rail_open = session.rail && gui.env("NOVA_BROWSER_RAIL_OPEN") == "1"
@@ -5053,6 +5247,7 @@ fn auto_close(session: Session, theme: Chrome, address: Address, store: Store) {
         println("voice: start=${started.text} bytes=${file_bytes(voice_model_path())} ready=${flag(speech.kokoro_ready())} path=${voice_model_path()} note=${result.text}")
     }
     gui.begin()
+    ensure_favicon(store, engine.page_url(handle))
     draw_chrome(handle, theme, address, session, suggestions, fx_new(), notice_idle(), store, 0 - 1, downloads_view(store), checked_tooltip(session), rail_open, panel_open, false, 0)
     gui.present()
     settle(24)
@@ -5105,7 +5300,7 @@ fn run_cli_import(argument: String) -> Bool {
     let summary = apply_profile_import(store, found, !dry)
     let saved = if dry { summary.store } else { save_store(summary.store) }
     let prefix = if dry { "import(dry)" } else { "import" }
-    println("${prefix}: files=${profiles.len() + files.len()} found=${found.bookmarks.len()} new=${summary.bookmarks} bookmarks=${library.bookmark_count(saved.bookmarks)} history=${summary.history} startup=${summary.startup} homepage=${summary.homepage} search=${summary.search} extensions=${summary.extensions} path=${saved.bookmarks_path}")
+    println("${prefix}: files=${profiles.len() + files.len()} found=${found.bookmarks.len()} new=${summary.bookmarks} bookmarks=${library.bookmark_count(saved.bookmarks)} history=${summary.history} startup=${summary.startup} homepage=${summary.homepage} search=${summary.search} extensions=${summary.extensions} downloads=${summary.downloads} path=${saved.bookmarks_path}")
     return summary.bookmarks > 0 || summary.history > 0
 }
 
@@ -5491,6 +5686,7 @@ fn main() {
     }
 
     if gui.env("NOVA_BROWSER_AUTOCLOSE") == "1" {
+        ensure_favicon(store, engine.page_url(active_handle(session)))
         auto_close(session, theme, address, store)
         destroy_session(session)
         gui.close()
@@ -5688,6 +5884,7 @@ fn main() {
         if state == 2 {
             if live.len() > 0 && live != session.seen {
                 session.seen = live
+                ensure_favicon(store, live)
                 session = mark_active_url(session, live)
                 if !live.contains("fixture.nova.invalid") && store.history_path.len() > 0 {
                     let title = engine.page_title(handle)

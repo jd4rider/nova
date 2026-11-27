@@ -148,6 +148,10 @@ fn page_label(handle: Int) -> String {
     return contract.label(view.wv_state(handle))
 }
 
+fn run_js(handle: Int, script: String) -> String {
+    return wv_run_js(handle, script)
+}
+
 fn body_text(handle: Int) -> String {
     return view.wv_body_text(handle)
 }

@@ -64,6 +64,11 @@ insert into urls (url, title, visit_count, last_visit_time) values
   ('https://example.com/two', 'Two', 1, 2),
   ('chrome://settings', 'Settings', 9, 1);
 SQL
+# A completed Chrome download whose file still exists on disk is imported; the
+# row points at the real path, so the shelf can reveal it.
+printf 'report' > "$CHROME/Default/Downloaded Report.pdf"
+sqlite3 "$CHROME/Default/History" "create table downloads (id integer primary key, target_path text, tab_url text, total_bytes integer, state integer, start_time integer default 0); insert into downloads (target_path, tab_url, total_bytes, state) values ('$CHROME/Default/Downloaded Report.pdf', 'https://example.com/one', 6, 1);"
+
 # Chrome extensions are reported, not run: the same profile carries two
 # installed extensions, one with a literal name and one behind an i18n key.
 mkdir -p "$CHROME/Default/Extensions/clearcache/1.0" \
@@ -90,6 +95,8 @@ grep -q '^homepage=https://example.com/home$' "$SETTINGS_PROFILE/settings.tsv"
 echo "$OUT4" | grep -q 'extensions=2'
 grep -q 'Clear Cache' "$SETTINGS_PROFILE/chrome-extensions.tsv"
 grep -q 'Reading List Helper' "$SETTINGS_PROFILE/chrome-extensions.tsv"
+echo "$OUT4" | grep -q 'downloads=1'
+grep -q 'Downloaded Report.pdf' "$SETTINGS_PROFILE/downloads.tsv"
 [ "$(grep -c '^visit' "$SETTINGS_PROFILE/history.tsv")" = "2" ] || { echo "history: expected two visits" >&2; exit 1; }
 # Startup pages keep Chrome's order; the mailto: entry is skipped.
 grep -q 'tab\thttps://fixture.nova.invalid/start$' "$SETTINGS_PROFILE/startup.tsv"

@@ -116,6 +116,24 @@ Each task needs a reproducible acceptance check before it is marked done.
   replacements: `WKContentRuleList` for ad/tracker blocking, userscripts for
   page tweaks, and native features instead of extension for things Nova already
   does (reader, downloads, voice).
+- **WB-03.011 — Tab favicons.** DONE in 0.9.6. Tabs draw the site's
+  `/favicon.ico`, fetched once per host into `favicons/` under the profile and
+  painted with a new `gui.image` host primitive; a letter tile covers sites with
+  no icon and `NOVA_BROWSER_NO_FAVICONS=1` turns the fetch off. Evidence:
+  `browser/tests/favicons.sh` serves a real icon over loopback and requires the
+  cached bytes to equal the served file.
+- **WB-04.002.a — Blob downloads.** DONE in 0.9.6. `WKWebView` cannot turn a
+  `blob:` URL into a `WKDownload`; a document-start script intercepts
+  `<a download>` clicks on `blob:` links, reads the blob as base64 and posts it
+  to a message handler that writes the file and registers a finished download.
+  `blob:` navigations are no longer treated as a blocked scheme. Evidence:
+  `browser/tests/blob.sh` builds a blob in the page, clicks it, and requires the
+  bytes on disk and a `state=2` row; `downloads.sh` still passes untouched.
+- **WB-04.011 — Chrome download history and locale names.** DONE in 0.9.6.
+  Completed Chrome downloads whose `target_path` still exists become shelf rows
+  (`downloads=N`), and extension names resolve through every installed
+  `_locales/*` directory instead of English only. Evidence: the fixture profile
+  carries a real download row and the import reports `downloads=1`.
 - **WB-04.002 — Downloads.** DONE. `WKDownloadDelegate` registry, attachment/
   MIME response policy, Nova shelf with cancel/reveal, `--download`, loopback
   test writing a real file. 0.7.3 adds pause/resume: clicking a running row

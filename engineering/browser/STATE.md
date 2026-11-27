@@ -3,7 +3,7 @@
 Updated: 2026-11-26
 Branch: `main`
 Last known good compiler checkpoint: `cfa00e3` (before browser work)
-Browser: **0.9.5 installed at `/Applications/Nova Browser.app`**
+Browser: **0.9.6 installed at `/Applications/Nova Browser.app`**
 Browser working tree: uncommitted; see `git status`
 Active gate: G0 WebKit; G1 WebCore not started
 Active task: **WB-04.002 — downloads** (0.7.5 persisted completed downloads;
@@ -324,6 +324,17 @@ Active task: **WB-04.002 — downloads** (0.7.5 persisted completed downloads;
     `lsregister -f`, `--set-default-browser` reports `set=1 state=1` and
     `NSWorkspace` resolves a web URL to `Nova Browser.app`. Revert in System
     Settings → Desktop & Dock → Default web browser.
+- **0.9.6 — favicons, blob downloads, more Chrome import**
+  - Tabs draw the site's `/favicon.ico` from `favicons/` in the profile, or a
+    letter tile when a site has none. `gui.image` paints a decoded image file
+    into the framebuffer; `NOVA_BROWSER_NO_FAVICONS=1` disables the fetch.
+  - Blob downloads work: a page-side bridge reads `blob:` links (`<a download>`)
+    and hands the bytes to the host, which writes the file and lists it as a
+    finished download. That is the chatgpt.com export path.
+  - Chrome's completed downloads whose file still exists are imported into the
+    shelf; extension i18n names resolve from whichever locale is installed.
+  - `NOVA_BROWSER_URL` now loads in the headless `AUTOCLOSE` path too, which is
+    what lets the favicon test drive a real HTTP page.
 - **0.9.1 — window buttons back on the strip, whole chrome drags**
   - The three traffic lights had been placed from the window's height while
     AppKit keeps them in its own 32 pt titlebar view, so they landed hundreds of

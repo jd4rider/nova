@@ -1194,6 +1194,38 @@ revert: System Settings → Desktop & Dock → Default web browser, or Chrome's 
 opening Nova — there is no safe way to drive that here; the handler resolution
 above is the system's recorded answer.
 
+## 0.9.6 — favicons, blob downloads, more import
+
+Favicons: a new host primitive, `gui.image`, decodes a file with `NSImage` and
+paints it into the framebuffer (locally flipped, high interpolation). The app
+requests `<origin>/favicon.ico` once per host with `curl`, caches the bytes in
+`favicons/` inside the profile and draws them in the tab; a host with no icon
+gets a letter tile, so a tab is identifiable without a network round trip.
+`browser/tests/favicons.sh` (6/6, exit 0) serves a real PNG as `/favicon.ico`
+over loopback and requires the cached file to be byte-identical to it, and that
+`NOVA_BROWSER_NO_FAVICONS=1` fetches nothing.
+
+Blob downloads: `WKWebView` cannot make a `WKDownload` from a `blob:` URL, which
+is the shape of chatgpt.com's export button (a Blob plus `<a download>`). A
+document-start script intercepts those clicks, reads the blob with `FileReader`
+and posts base64 through `novaBlob`; the host writes the bytes to the download
+directory and registers a finished `state=2` row. `blob:` navigations return
+`WKNavigationActionPolicyDownload` instead of failing as a blocked scheme.
+`browser/tests/blob.sh` (7/7, exit 0) builds a blob in the page, clicks it, and
+requires `count=1 state=2 name=nova-blob.txt` and the file content `nova blob`.
+`downloads.sh` (real `WKDownload` pause/resume/clear) still passes, so the
+refactor that shares the destination helper did not change that path.
+
+Import: completed Chrome downloads whose `target_path` still exists become shelf
+rows, and extension names resolve from any installed `_locales/*` rather than
+English only. The fixture profile reports `downloads=1` and both extension
+names; the dry run writes nothing.
+
+Not evidenced: a real ChatGPT export (the path is proven with an equivalent blob
+page, not an authenticated session), icon discovery through `<link rel="icon">`
+(only `/favicon.ico` is requested), and favicon rendering in a real window
+(snapshots cannot show the native page or assess glyph alignment).
+
 ## Not yet evidenced
 
 - hosted CI run of the browser address/lifecycle steps;

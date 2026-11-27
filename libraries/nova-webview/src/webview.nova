@@ -30,6 +30,7 @@ extern "C" fn nova_webview_url(handle: Int) -> String
 extern "C" fn nova_webview_error(handle: Int) -> String
 extern "C" fn nova_webview_error_url(handle: Int) -> String
 extern "C" fn nova_webview_progress(handle: Int) -> Int
+extern "C" fn nova_webview_run_js(handle: Int, script: String) -> String
 extern "C" fn nova_webview_body_text(handle: Int) -> String
 extern "C" fn nova_webview_engine() -> String
 extern "C" fn nova_webview_download_count() -> Int
@@ -150,6 +151,11 @@ fn wv_error_url(handle: Int) -> String {
 // WebKit's own load estimate, 0..1000.
 fn wv_progress(handle: Int) -> Int {
     return nova_webview_progress(handle)
+}
+
+// Runs a script in the page and returns its value as text.
+fn wv_run_js(handle: Int, script: String) -> String {
+    return nova_webview_run_js(handle, script)
 }
 
 fn wv_body_text(handle: Int) -> String {

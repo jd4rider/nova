@@ -55,6 +55,7 @@ extern "C" fn nova_gui_begin() -> Unit
 extern "C" fn nova_gui_clear(rgb: Int) -> Unit
 extern "C" fn nova_gui_rect(x: Int, y: Int, w: Int, h: Int, rgb: Int) -> Unit
 extern "C" fn nova_gui_rect_alpha(x: Int, y: Int, w: Int, h: Int, rgb: Int, alpha: Int) -> Unit
+extern "C" fn nova_gui_image(path: String, x: Int, y: Int, w: Int, h: Int) -> Int
 extern "C" fn nova_gui_round_rect(x: Int, y: Int, w: Int, h: Int, radius: Int, rgb: Int) -> Unit
 extern "C" fn nova_gui_round_rect_alpha(x: Int, y: Int, w: Int, h: Int, radius: Int, rgb: Int, alpha: Int) -> Unit
 extern "C" fn nova_gui_stroke_rect(x: Int, y: Int, w: Int, h: Int, rgb: Int) -> Unit
@@ -621,6 +622,12 @@ fn pump() {
 
 fn clear(color: Int) {
     nova_gui_clear(color)
+}
+
+// Paints an image file (PNG, JPEG, ICO) into a rectangle, scaled to fit.
+// Returns true when the file decoded, so callers can fall back to a glyph.
+fn image(path: String, x: Int, y: Int, w: Int, h: Int) -> Bool {
+    return nova_gui_image(path, x, y, w, h) == 1
 }
 
 fn rect(x: Int, y: Int, w: Int, h: Int, color: Int) {

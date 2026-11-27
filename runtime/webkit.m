@@ -56,6 +56,10 @@ typedef struct {
 /* One real WebKit download. The destination is a unique file in the download
  * directory, and progress is read from that file so the ABI never needs a
  * callback: Nova polls these accessors in its frame loop. */
+static NSString *nova_download_directory(void);
+static NSString *nova_download_target(NSString *suggested);
+static void nova_webview_register_saved(NSString *path, int64_t bytes);
+
 @interface NovaWebDownload : NSObject <WKDownloadDelegate>
 @property (nonatomic, assign) int64_t ident;
 @property (nonatomic, strong) WKDownload *download;
@@ -79,27 +83,7 @@ typedef struct {
         completionHandler([NSURL fileURLWithPath:self.path]);
         return;
     }
-    NSString *name = suggestedFilename.lastPathComponent;
-    if (name.length == 0) name = @"download";
-    name = [name stringByReplacingOccurrencesOfString:@"/" withString:@"_"];
-    const char *dir_env = getenv("NOVA_BROWSER_DOWNLOAD_DIR");
-    NSString *dir = (dir_env && *dir_env) ? [NSString stringWithUTF8String:dir_env]
-                                           : [NSHomeDirectory() stringByAppendingPathComponent:@"Downloads"];
-    [[NSFileManager defaultManager] createDirectoryAtPath:dir
-                              withIntermediateDirectories:YES
-                                               attributes:nil
-                                                    error:NULL];
-    NSString *target = [dir stringByAppendingPathComponent:name];
-    NSString *base = name.stringByDeletingPathExtension;
-    NSString *ext = name.pathExtension;
-    int suffix = 1;
-    while ([[NSFileManager defaultManager] fileExistsAtPath:target]) {
-        NSString *candidate = ext.length > 0
-            ? [NSString stringWithFormat:@"%@-%d.%@", base, suffix, ext]
-            : [NSString stringWithFormat:@"%@-%d", base, suffix];
-        target = [dir stringByAppendingPathComponent:candidate];
-        suffix = suffix + 1;
-    }
+    NSString *target = nova_download_target(suggestedFilename);
     self.name = target.lastPathComponent;
     self.path = target;
     self.expected = response.expectedContentLength > 0 ? response.expectedContentLength : -1;
@@ -129,6 +113,91 @@ typedef struct {
 static NSMutableDictionary<NSNumber *, NovaWebViewEntry *> *nova_webviews = nil;
 static NSMutableArray<NovaWebDownload *> *nova_downloads = nil;
 static int64_t nova_next_download = 1;
+
+/* The Downloads folder, and a unique file name inside it. Shared by real
+ * WKDownloads and by the blob bridge below. */
+static NSString *nova_download_directory(void) {
+    const char *dir_env = getenv("NOVA_BROWSER_DOWNLOAD_DIR");
+    return (dir_env && *dir_env) ? [NSString stringWithUTF8String:dir_env]
+                                 : [NSHomeDirectory() stringByAppendingPathComponent:@"Downloads"];
+}
+
+static NSString *nova_download_target(NSString *suggested) {
+    NSString *name = suggested.lastPathComponent;
+    if (name.length == 0) name = @"download";
+    name = [name stringByReplacingOccurrencesOfString:@"/" withString:@"_"];
+    NSString *dir = nova_download_directory();
+    [[NSFileManager defaultManager] createDirectoryAtPath:dir
+                              withIntermediateDirectories:YES
+                                               attributes:nil
+                                                    error:NULL];
+    NSString *target = [dir stringByAppendingPathComponent:name];
+    NSString *base = name.stringByDeletingPathExtension;
+    NSString *ext = name.pathExtension;
+    int suffix = 1;
+    while ([[NSFileManager defaultManager] fileExistsAtPath:target]) {
+        NSString *candidate = ext.length > 0
+            ? [NSString stringWithFormat:@"%@-%d.%@", base, suffix, ext]
+            : [NSString stringWithFormat:@"%@-%d", base, suffix];
+        target = [dir stringByAppendingPathComponent:candidate];
+        suffix = suffix + 1;
+    }
+    return target;
+}
+
+/* A finished file that did not come through WKDownload: the page built a Blob
+ * and clicked a download link, and the bytes arrived over the message bridge. */
+static void nova_webview_register_saved(NSString *path, int64_t bytes) {
+    if (!nova_downloads) nova_downloads = [NSMutableArray array];
+    NovaWebDownload *entry = [[NovaWebDownload alloc] init];
+    entry.ident = nova_next_download++;
+    entry.name = path.lastPathComponent;
+    entry.path = path;
+    entry.expected = bytes;
+    entry.state = 2;
+    [nova_downloads addObject:entry];
+}
+
+/* Chrome's download button on chatgpt.com and similar apps builds a Blob and
+ * clicks an <a download>. WKWebView cannot turn a blob: URL into a WKDownload,
+ * so the page hands the bytes over instead: fetch the blob, read it as base64,
+ * and let the host write the file and list it like any other download. */
+static NSString *nova_blob_script(void) {
+    return @"(function(){"
+           "function closest(a){return a&&a.closest?a.closest('a[download]'):null;}"
+           "document.addEventListener('click',function(ev){"
+           "var a=closest(ev.target);if(!a)return;"
+           "var href=a.href||'';if(href.indexOf('blob:')!==0)return;"
+           "ev.preventDefault();ev.stopPropagation();"
+           "fetch(href).then(function(r){return r.blob();}).then(function(b){"
+           "var fr=new FileReader();"
+           "fr.onload=function(){var s=String(fr.result);var i=s.indexOf(',');"
+           "window.webkit.messageHandlers.novaBlob.postMessage({name:a.getAttribute('download')||'download',data:s.slice(i+1)});};"
+           "fr.readAsDataURL(b);});"
+           "},true);"
+           "})();";
+}
+
+@interface NovaBlobSink : NSObject <WKScriptMessageHandler>
+@end
+
+@implementation NovaBlobSink
+- (void)userContentController:(WKUserContentController *)controller
+      didReceiveScriptMessage:(WKScriptMessage *)message {
+    (void)controller;
+    NSDictionary *body = [message.body isKindOfClass:[NSDictionary class]] ? message.body : nil;
+    NSString *name = body[@"name"];
+    NSString *encoded = body[@"data"];
+    if (![name isKindOfClass:[NSString class]]) name = @"download";
+    if (![encoded isKindOfClass:[NSString class]] || encoded.length == 0) return;
+    NSData *data = [[NSData alloc] initWithBase64EncodedString:encoded
+                                                       options:NSDataBase64DecodingIgnoreUnknownCharacters];
+    if (!data) return;
+    NSString *target = nova_download_target(name);
+    if (![data writeToFile:target atomically:YES]) return;
+    nova_webview_register_saved(target, (int64_t)data.length);
+}
+@end
 
 static void nova_webview_register_download(WKWebView *webView, WKDownload *download) {
     if (!download) return;
@@ -352,6 +421,13 @@ decidePolicyForNavigationAction:(WKNavigationAction *)navigationAction
 decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler {
     (void)webView;
     NSString *scheme = navigationAction.request.URL.scheme;
+    /* A blob: link has no response to load; WebKit cancels it as a scheme it
+     * does not render. Treat it as a download request and let the page-side
+     * bridge deliver the bytes. */
+    if ([scheme.lowercaseString isEqualToString:@"blob"]) {
+        decisionHandler(WKNavigationActionPolicyDownload);
+        return;
+    }
     if (!nova_webview_scheme_allowed(scheme)) {
         NSString *message = [NSString stringWithFormat:@"blocked unsupported scheme: %@", scheme ?: @"(none)"];
         nova_webview_fail(self.entry, message);
@@ -414,6 +490,11 @@ int64_t nova_webview_create(int64_t parent_handle, int64_t x, int64_t y,
 
         WKWebViewConfiguration *configuration = [[WKWebViewConfiguration alloc] init];
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = NO;
+        WKUserContentController *userContent = configuration.userContentController;
+        [userContent addScriptMessageHandler:[[NovaBlobSink alloc] init] name:@"novaBlob"];
+        [userContent addUserScript:[[WKUserScript alloc] initWithSource:nova_blob_script()
+                                                           injectionTime:WKUserScriptInjectionTimeAtDocumentStart
+                                                        forMainFrameOnly:YES]];
         WKWebView *web = [[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, width, height)
                                           configuration:configuration];
         if (!web) return 0;
@@ -682,6 +763,22 @@ int64_t nova_webview_progress(int64_t handle) {
     if (progress < 0.0) progress = 0.0;
     if (progress > 1.0) progress = 1.0;
     return (int64_t)lround(progress * 1000.0);
+}
+
+static NSString *nova_ns_string(nova_str value) {
+    if (!value.ptr || value.len <= 0) return @"";
+    NSString *text = [[NSString alloc] initWithBytes:value.ptr
+                                              length:(NSUInteger)value.len
+                                            encoding:NSUTF8StringEncoding];
+    return text ?: @"";
+}
+
+/* Runs a script in a page and returns its value as text. Used by the blob
+ * check and by any headless probe that needs the page's own JS. */
+nova_str nova_webview_run_js(int64_t handle, nova_str script) {
+    NovaWebViewEntry *entry = nova_webview_entry(handle);
+    if (!entry) return nova_webview_empty();
+    return nova_webview_copy(nova_webview_eval_sync(entry, nova_ns_string(script), 4.0));
 }
 
 nova_str nova_webview_body_text(int64_t handle) {
