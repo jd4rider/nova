@@ -32,6 +32,16 @@ GAME_OUT=$(NOVA_SCENE_CLICK=game NOVA_SCENE_SHOT="$GAME" ./target/nova/scene-gui
 echo "$GAME_OUT"
 echo "$GAME_OUT" | grep -q "shell=captured saved=true entities=6 selected=3:1 tab=game"
 
+# gui.save_png owns parent-directory creation; do not mkdir this path here.
+NESTED=target/nested/capture/shell.png
+rm -rf target/nested
+NESTED_OUT=$(NOVA_SCENE_SHOT="$NESTED" ./target/nova/scene-gui)
+echo "$NESTED_OUT"
+echo "$NESTED_OUT" | grep -q "shell=captured saved=true"
+[ -f "$NESTED" ] || { echo "shell: save_png did not create $NESTED" >&2; exit 1; }
+echo "shell: save_png created nested capture without mkdir"
+rm -rf target/nested
+
 WIDTH=$(sips -g pixelWidth "$SHOT" | awk '/pixelWidth/ {print $2}')
 HEIGHT=$(sips -g pixelHeight "$SHOT" | awk '/pixelHeight/ {print $2}')
 [ "$WIDTH" = "2880" ] || { echo "shell: expected width 2880, got $WIDTH" >&2; exit 1; }

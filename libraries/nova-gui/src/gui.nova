@@ -529,8 +529,38 @@ fn set_appearance(light: Bool) {
     nova_gui_set_appearance(if light { 1 } else { 0 })
 }
 
-// Saves the current frame as a PNG. Handy in tests and for bug reports.
+// Creates every missing directory before a PNG path. `nova_fs_mkdir` treats an
+// existing directory as success, so this is safe for every capture.
+fn save_png_parent(path: String) {
+    let parts = path.split("/")
+    if parts.len() < 2 {
+        return
+    }
+    var current = ""
+    if path.starts_with("/") {
+        current = "/"
+    }
+    var i = 0
+    while i < parts.len() - 1 {
+        let part = parts[i]
+        if part.len() > 0 {
+            if current.len() == 0 {
+                current = part
+            } else if current == "/" {
+                current = "/" + part
+            } else {
+                current = current + "/" + part
+            }
+            nova_fs_mkdir(current)
+        }
+        i = i + 1
+    }
+}
+
+// Saves the current frame as a PNG. Handy in tests and for bug reports. The
+// parent path is created here so headless captures do not need a shell mkdir.
 fn save_png(path: String) -> Bool {
+    save_png_parent(path)
     return nova_gui_save_png(path) == 1
 }
 

@@ -13,6 +13,10 @@
 - **`min`/`max` builtin collision.** `gui.min(a, b)` was claimed by the
   `List.min()` builtin. The builtin now applies only with zero arguments and a
   list receiver, so typed user helpers resolve normally.
+- **`gui.save_png` parent directories.** Fixed 2026-11-26 in nova-gui:
+  `save_png` creates each missing parent through `nova_fs_mkdir` before writing.
+  `tests/shell.sh` captures into `target/nested/capture/shell.png` without a
+  prior `mkdir`, and the file is present afterwards.
 
 ## Open
 
@@ -43,8 +47,6 @@
   triangle proves the device path only.
 - **No asset database, importer, UUID store or scene serialization.** ENG-03 is
   greenfield.
-- **`gui.save_png` does not create directories.** Screenshot tests must
-  `mkdir -p` the target first; otherwise the call returns `saved=false`.
 
 ## Process
 

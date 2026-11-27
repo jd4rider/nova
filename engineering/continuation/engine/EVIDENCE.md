@@ -319,6 +319,12 @@ still checked by hand. Probes cover both active-tab states, a Scene grid-line
 pixel (`52,52,52`) that becomes plain background (`30,30,30`) in Game, and the
 traffic-light trace.
 
+The first shell test had to `mkdir -p target` because `gui.save_png` returned
+`saved=false` for a missing parent. The nova-gui wrapper now creates each
+missing directory through `nova_fs_mkdir` before writing. `tests/shell.sh`
+proves it by saving `target/nested/capture/shell.png` with no pre-created
+`nested` or `capture` folder, then checking the file exists.
+
 ## Lit textured cube (ENG-11.001)
 
 ```

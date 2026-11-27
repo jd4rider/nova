@@ -27,7 +27,7 @@ physics-driven cube in the Metal lab).
 | Metal lit cube | `sh examples/metal-lab/tests/lit.sh` | lit textured cube, 19 face/texture/light checks, both sizes, exit 0 |
 | Metal camera/physics | `sh examples/metal-lab/tests/physics.sh` | 2 camera poses, 2 simulation states, 11 checks, exit 0 |
 | Metal teardown | `sh examples/metal-lab/tests/shutdown.sh` | 5/5 open/draw/capture/close cycles clean |
-| Editor shell | `sh examples/scene-gui/tests/shell.sh` | 6 entities, selected `3:1`, Scene/Game active-tab capture, traffic-light trace, 12 panel checks, exit 0 |
+| Editor shell | `sh examples/scene-gui/tests/shell.sh` | 6 entities, selected `3:1`, Scene/Game captures, traffic-light trace, 12 panel checks, nested `save_png` path, exit 0 |
 | Studio install | `sh examples/scene-gui/install-macos.sh` | `/Applications/Nova Engine Studio.app` 0.2.0, signature verified |
 
 Physics output:

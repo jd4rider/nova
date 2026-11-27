@@ -97,6 +97,11 @@ reproducible acceptance check before it is marked done. Stable identifiers are
 - **ENG-X.003 — Refresh stage-0 bootstrap.** BLOCKED on BOOT-02. The checked-in
   `bootstrap/nova` predates the codegen fixes. Acceptance: self-build IR
   equality plus the full suite, then replace the binary.
+- **ENG-X.004 — `gui.save_png` parent directories.** DONE. The nova-gui wrapper
+  now creates each missing parent with `nova_fs_mkdir` before writing, so a
+  headless capture can target a new nested folder without a shell `mkdir`.
+  Acceptance: `tests/shell.sh` saves `target/nested/capture/shell.png`, asserts
+  `saved=true` and the file exists; the Scene/Game checks remain green.
 
 ## ENG-04 — Editor shell
 
