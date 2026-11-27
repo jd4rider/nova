@@ -1,8 +1,7 @@
 # Nova Engine tasks
 
 Statuses: done / in-progress / ready / blocked / planned. Every task records a
-reproducible acceptance check before it is marked done. Stable identifiers are
-`ENG-<milestone>.<slice>`; sub-slices append `.a`, `.b`.
+reproducible acceptance check before it is marked done. Stable identifiers are  `ENG-<milestone>.<slice>`; sub-slices append `.a`, `.b`.
 
 ## ENG-00 — Audit and architecture
 
@@ -11,7 +10,7 @@ reproducible acceptance check before it is marked done. Stable identifiers are
   `docs/engineering/ecosystem-audit.md`.
 - **ENG-00.002 — Engine continuation state.** DONE. This directory, registered
   in root `AGENTS.md`.
-- **ENG-00.003 — Architecture decision records.** PARTIAL. ADR-ENG-001..009
+- **ENG-00.003 — Architecture decision records.** PARTIAL. ADR-ENG-001..013
   recorded; renderer, scripting VM, physics backend and asset format ADRs are
   still open. Acceptance: each subsystem has an ADR before its first line of
   code.
@@ -127,8 +126,20 @@ reproducible acceptance check before it is marked done. Stable identifiers are
   and redo, checks `history=1/1 → 0/1 → 1/1`, and compares Scene viewport
   crops so undo restores the base image and redo restores the edit exactly.
   Installed as Studio 0.4.0.
-- **ENG-04.004 — Dockable panels.** PLANNED. Persisted panel sizes and
-  visibility; acceptance: restart restores layout and no panel loses live data.
+- **ENG-04.004 — Persisted panel layout.** DONE. Hierarchy, Inspector and the
+  bottom drawer resize through splitters and hide/show through menu-bar chips.
+  A `Panels` value lives in the editor `App`; `layout.txt` stores sizes and
+  visibility under `~/Library/Application Support/Nova Engine Studio/` (or
+  `NOVA_SCENE_LAYOUT` for tests). Hiding a panel never clears the World or the
+  selection. Acceptance: `sh examples/scene-gui/tests/shell.sh` drags the
+  splitters to `320,260,150`, hides Inspector and drawer through the real chip
+  hit test, launches a second process and gets a byte-identical full capture
+  with `layout=320,260,150 h=1 i=0 d=0`, seven entities and Player `3:1`.
+  Installed as Studio 0.5.0.
+- **ENG-04.005 — Editor camera controls.** READY. Wire the existing
+  orbit/pan/zoom input slots to Studio's Scene camera through GUI events; keep
+  the Game Camera entity independent. Acceptance: synthesized drags change
+  Scene framing and leave Game unchanged.
 
 ## ENG-11 — 3D vertical slice
 
@@ -161,11 +172,17 @@ reproducible acceptance check before it is marked done. Stable identifiers are
   pixel checks including Metal clear/texture and grid/Game differences, and
   completes a 5-frame live loop. Both captures are 2880×1800; installed as
   Studio 0.3.0, signature verified.
+- **ENG-11.004 — Studio Game Camera view.** DONE. The demo world adds a tag-6
+  Game Camera at `(0, 2.60, 7.50)` with a -12° pitch. Game derives eye,
+  forward and up from its World position/rotation, hides the camera entity and
+  editor overlays, and leaves Scene on the fixed editor view. Moving the
+  camera through the inspector changes Game without a runtime camera API.
+  Acceptance: the shell test compares Scene and Game crops, then selects the
+  camera, edits Position to `(0, 2.20, 4.00)` and requires the Game crop to
+  change; `selected=6:1 history=1/1`.
 
 ## Next action
 
-ENG-04.004: persisted dockable panel sizes and visibility; acceptance: restart
-restores the layout with live data. Then wire Studio's editor camera
-orbit/pan/zoom through GUI events. ENG-04.003's history is per-session and
-single-field; multi-select, gizmos and grouped commands remain later editor
-work.
+ENG-04.005: wire Studio's Scene orbit/pan/zoom through GUI events. Then extend
+the inspector beyond one field at a time: multi-select, gizmos and grouped
+commands. Scene save/load and free panel docking remain later editor work.

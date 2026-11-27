@@ -1,6 +1,6 @@
 # Nova Engine evidence
 
-Date: 2026-11-27 (session 14; earlier evidence 2026-11-26)
+Date: 2026-11-27 (session 15; earlier evidence 2026-11-26)
 Platform: macOS ARM64, LLVM/Clang, self-hosted Nova compiler, `main` branch,
 uncommitted working tree.
 
@@ -519,6 +519,66 @@ first build of this slice failed with `in handle_mouse_down: cannot assign to
 immutable binding app`; the click-commit path now uses a local `var app = app`.
 No runtime or GUI-host change was needed.
 
+## Persisted panels and Game Camera (ENG-04.004 / ENG-11.004)
+
+```
+$ sh examples/scene-gui/tests/shell.sh
+scene-gui: shell=captured saved=true entities=7 selected=3:1 tab=scene viewport=metal drawer=console history=0/0 position=0.00, 1.40, 1.00 layout=252,304,196 h=1 i=1 d=1
+shell: traffic lights placed at y=14
+scene-gui: shell=captured saved=true entities=7 selected=3:1 tab=game viewport=metal drawer=console history=0/0 position=0.00, 1.40, 1.00 layout=252,304,196 h=1 i=1 d=1
+shell: save_png created nested capture without mkdir
+shell: capture 2880x1800
+scene-gui: shell=captured saved=true entities=7 selected=3:1 tab=scene viewport=metal drawer=console history=1/1 position=2.50, 1.40, 1.00 layout=252,304,196 h=1 i=1 d=1
+scene-gui: shell=captured saved=true entities=7 selected=3:1 tab=scene viewport=metal drawer=console history=0/1 position=0.00, 1.40, 1.00 layout=252,304,196 h=1 i=1 d=1
+scene-gui: shell=captured saved=true entities=7 selected=3:1 tab=scene viewport=metal drawer=console history=1/1 position=2.50, 1.40, 1.00 layout=252,304,196 h=1 i=1 d=1
+scene-gui: shell=captured saved=true entities=7 selected=6:1 tab=game viewport=metal drawer=console history=1/1 position=0.00, 2.20, 4.00 layout=252,304,196 h=1 i=1 d=1
+shell: Game camera and edit/undo/redo viewport checks passed
+scene-gui: shell=captured saved=true entities=7 selected=3:1 tab=scene viewport=metal drawer=console history=0/0 position=0.00, 1.40, 1.00 layout=320,260,150 h=1 i=0 d=0
+scene-gui: shell=captured saved=true entities=7 selected=3:1 tab=scene viewport=metal drawer=console history=0/0 position=0.00, 1.40, 1.00 layout=320,260,150 h=1 i=0 d=0
+shell: layout restart restored panels and live data
+scene-gui: live=stopped frames=5 viewport=metal
+shell: 13 panel checks, Game camera and layout checks passed
+```
+
+Panel state is a `Panels` value in the editor `App`: left/right/drawer sizes,
+three visibility flags, drag state and a layout path. Splitter presses start a
+drag through the same `handle_mouse_down` path a mouse uses; `event_drag` updates
+clamped sizes and mouse-up writes the file. The chips use their real hit test and
+toggle hierarchy, inspector or drawer without touching the World. The layout
+file is plain text under `~/Library/Application Support/Nova Engine Studio/`, or
+`NOVA_SCENE_LAYOUT` for the test. A second process loads
+`320,260,150 h=1 i=0 d=0`, and its full BMP is byte-equal to the changed-layout
+capture; both report seven entities and selected Player `3:1`.
+
+Game now spawns a tag-6 Game Camera at `(0, 2.60, 7.50)` with a -12° pitch.
+`make_game_view` derives eye, forward and up from `world_position` and
+`world_rotation`; the Metal and CPU paths skip tag 6 in Game, while Scene still
+draws the camera marker. The default Scene and Game viewport crops differ, and
+moving the selected camera to `(0, 2.20, 4.00)` changes the Game crop again.
+The camera is hidden from its own view, so the Game frame contains the same six
+visible scene entities plus the new camera entity only in the hierarchy.
+
+Installed as 0.5.0:
+
+```
+$ sh examples/scene-gui/install-macos.sh
+Installed /Applications/Nova Engine Studio.app
+Version 0.5.0 · dev.nova.engine.studio · ad-hoc signed
+
+$ codesign --verify --strict "/Applications/Nova Engine Studio.app"   # clean
+$ plutil -extract CFBundleShortVersionString raw .../Info.plist
+0.5.0
+```
+
+The four installed captures are byte-identical to the local test captures:
+
+```
+8f5e4bc7dceb189446ab7c68faa1b6c34ce8effb  engine-scene.png
+e08207c314e7d7a6a2208ac58f0b5dcb9bbdf76e  engine-game.png
+eb5bfc2527450417ff8db1528de7ba66d22d11af  engine-edit.png
+5c00f4a41166b7b5fb707c556ce0d632a2058c1f  engine-layout.png
+```
+
 ## Not measured
 
 - No frame-time breakdown, allocation count or throughput profile inside the
@@ -527,8 +587,13 @@ No runtime or GUI-host change was needed.
   asset pipeline yet. One Depth32Float attachment and one texture slot.
 - Inspector history is per-session and single-field. No multi-select, grouped
   commands, persisted undo, gizmo, prefab or scene save/load yet.
-- The camera is orbit/pan/zoom around a target in the Metal lab. Studio uses a
-  fixed editor camera and does not poll those input slots yet. Its mouse events
-  are not synthesized by the acceptance test.
+- Scene uses a fixed editor camera. Game uses the tag-6 Game Camera entity's
+  World transform, but neither view polls the Metal lab's orbit/pan/zoom slots
+  yet. The shell test drives layout splitter/chip handlers and inspector text,
+  not synthesized AppKit mouse events.
+- Panel layout persists sizes and visibility for three fixed regions; there is
+  no free docking, floating/reordered panel or multi-window editor.
+- The Game Camera is a tag convention, not a component type. FOV, near/far and
+  runtime input are fixed or absent.
 - Float is codegen- and full-build-verified on macOS arm64; wasm float has no
   measurement yet.

@@ -135,10 +135,11 @@
   Every editor slice must be capturable as a PNG through Nova GUI for review.
 - Consequences: ENG-04 panels are designed against this layout before styling;
   if a feature cannot be wired to real state it is not shown yet.
-- Status note: Studio 0.4.0 implements this layout as a real shell over one
-  `World` value (ENG-04.002/ENG-04.003/ENG-11.003). Editable transforms and
-  undo/redo are verified; dockable panels remain open before ENG-04 is
-  complete.
+- Status note: Studio 0.5.0 implements this layout as a real shell over one
+  `World` value (ENG-04.002/ENG-04.003/ENG-04.004/ENG-11.003/ENG-11.004).
+  Editable transforms, undo/redo and persisted panel sizes/visibility are
+  verified; free docking and editor camera controls remain open before ENG-04
+  is complete.
 
 ## ADR-ENG-010 — Studio composites an offscreen Metal frame
 - Status: accepted (ENG-11.003).
@@ -163,9 +164,9 @@
 - Consequences: GUI-only programs still link without Metal because the
   accessor is weak; the host remains one session; the draw list is capped at 64
   and the frame is read back synchronously. There is no GPU timing, MSAA,
-  shadow or multi-viewport support yet. Studio's editor camera is fixed; its
-  orbit/pan/zoom path must be wired through GUI events before the viewport is
-  called interactive.
+  shadow or multi-viewport support yet. Studio's Scene camera is fixed; Game
+  uses the tag-6 Game Camera entity. Scene orbit/pan/zoom still needs wiring
+  through GUI events before the viewport is called interactive.
 
 ## ADR-ENG-011 — Inspector edits are editor commands over World setters
 - Status: accepted (ENG-04.003).
@@ -186,3 +187,43 @@
 - Consequences: history is not persisted and does not group multi-select edits;
   the inspector edits whole vectors, not individual axes; gizmos, prefabs and
   scene serialization remain future work.
+
+## ADR-ENG-012 — Panel layout is editor-owned and persisted
+- Status: accepted (ENG-04.004).
+- Context: ADR-ENG-004 keeps selection, docking and undo in the editor, but the
+  shell needs panel sizes and visibility to survive a restart. The runtime
+  World must not gain layout state.
+- Decision: Hierarchy, Inspector and the bottom drawer are three fixed regions
+  with splitter hit tests and menu-bar visibility chips. Their sizes and flags
+  live in a `Panels` value inside the editor `App`. On mouse-up or toggle the
+  editor writes a small `layout.txt` under
+  `~/Library/Application Support/Nova Engine Studio/`; `NOVA_SCENE_LAYOUT`
+  overrides the path for tests. Missing or invalid values fall back to
+  `252/304/196` and all panels visible. Hiding a panel never changes the World
+  or selection.
+- Alternatives: store layout in scene serialization (rejected: layout is not
+  scene data); use `NSUserDefaults` in the GUI host (rejected: the editor owns
+  its state and the host stays generic); implement free docking now (deferred:
+  three persisted regions prove the state and restart path first).
+- Consequences: restart restores sizes and visibility; panels cannot float,
+  reorder or split into a second window yet; the layout file is plain text and
+  has no migration beyond clamped defaults.
+
+## ADR-ENG-013 — Game view uses a tagged World camera entity
+- Status: accepted (ENG-11.004).
+- Context: the runtime has no camera component type, and Game was still the
+  fixed editor perspective with overlays hidden. The owner requires Game to
+  look through the camera's perspective.
+- Decision: the demo world spawns a tag-6 `Game Camera` entity at
+  `(0, 2.60, 7.50)` with a -12° pitch. Game derives eye, forward and up from
+  that entity's existing `world_position` and `world_rotation`, hides the
+  camera entity from its own render, and leaves Scene on the fixed editor
+  camera. The inspector can edit the camera like any other entity; no new
+  runtime camera API or component type is introduced.
+- Alternatives: add a runtime camera component now (deferred until the
+  component registry exists); keep a separate editor-only camera struct
+  (rejected: Game must read real World data); hard-code a second camera pose
+  (rejected: it would not be inspectable or editable).
+- Consequences: moving or rotating the Game Camera changes Game immediately;
+  FOV, near/far and runtime input are not components yet; tag 6 is a convention
+  until component types land.

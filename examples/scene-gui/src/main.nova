@@ -22,6 +22,10 @@ fn window_h() -> Int {
     return 900
 }
 
+fn app_version() -> String {
+    return "0.5.0"
+}
+
 fn menu_h() -> Int {
     return 28
 }
@@ -34,36 +38,60 @@ fn body_y() -> Int {
     return 60
 }
 
-fn drawer_h() -> Int {
-    return 196
+// Editor-owned panel state. The World stays untouched when a panel is resized
+// or hidden; `layout.txt` persists only these shell values between launches.
+struct Panels {
+    left: Int,
+    right: Int,
+    drawer: Int,
+    hierarchy: Bool,
+    inspector: Bool,
+    drawer_open: Bool,
+    drag: Int,
+    drag_origin: Int,
+    drag_start: Int,
+    path: String,
 }
 
-fn drawer_y() -> Int {
-    return window_h() - drawer_h()
+fn drawer_h(p: Panels) -> Int {
+    if !p.drawer_open {
+        return 0
+    }
+    return p.drawer
 }
 
-fn body_h() -> Int {
-    return drawer_y() - body_y()
+fn drawer_y(p: Panels) -> Int {
+    return window_h() - drawer_h(p)
 }
 
-fn left_w() -> Int {
-    return 252
+fn body_h(p: Panels) -> Int {
+    return drawer_y(p) - body_y()
 }
 
-fn centre_x() -> Int {
-    return left_w()
+fn left_w(p: Panels) -> Int {
+    if !p.hierarchy {
+        return 0
+    }
+    return p.left
 }
 
-fn right_w() -> Int {
-    return 304
+fn centre_x(p: Panels) -> Int {
+    return left_w(p)
 }
 
-fn centre_w() -> Int {
-    return window_w() - left_w() - right_w()
+fn right_w(p: Panels) -> Int {
+    if !p.inspector {
+        return 0
+    }
+    return p.right
 }
 
-fn inspector_x() -> Int {
-    return window_w() - right_w()
+fn centre_w(p: Panels) -> Int {
+    return window_w() - left_w(p) - right_w(p)
+}
+
+fn inspector_x(p: Panels) -> Int {
+    return window_w() - right_w(p)
 }
 
 fn tabs_h() -> Int {
@@ -78,8 +106,8 @@ fn view_y() -> Int {
     return body_y() + tabs_h() + toolbar_h()
 }
 
-fn view_h() -> Int {
-    return drawer_y() - view_y()
+fn view_h(p: Panels) -> Int {
+    return drawer_y(p) - view_y()
 }
 
 fn hierarchy_first_row() -> Int {
@@ -90,12 +118,12 @@ fn hierarchy_row_h() -> Int {
     return 26
 }
 
-fn scene_tab_x() -> Int {
-    return centre_x() + 8
+fn scene_tab_x(p: Panels) -> Int {
+    return centre_x(p) + 8
 }
 
-fn game_tab_x() -> Int {
-    return centre_x() + 88
+fn game_tab_x(p: Panels) -> Int {
+    return centre_x(p) + 88
 }
 
 // The traffic lights are AppKit's own buttons; reserve their corner instead of
@@ -104,32 +132,32 @@ fn traffic_inset() -> Int {
     return 84
 }
 
-fn play_x() -> Int {
-    return centre_x() + 12
+fn play_x(p: Panels) -> Int {
+    return centre_x(p) + 12
 }
 
-fn pause_x() -> Int {
-    return centre_x() + 48
+fn pause_x(p: Panels) -> Int {
+    return centre_x(p) + 48
 }
 
-fn step_x() -> Int {
-    return centre_x() + 84
+fn step_x(p: Panels) -> Int {
+    return centre_x(p) + 84
 }
 
 fn tool_button_y() -> Int {
     return body_y() + tabs_h() + 6
 }
 
-fn add_component_y() -> Int {
-    return drawer_y() - 54
+fn add_component_y(p: Panels) -> Int {
+    return drawer_y(p) - 54
 }
 
-fn inspector_inner_x() -> Int {
-    return inspector_x() + 12
+fn inspector_inner_x(p: Panels) -> Int {
+    return inspector_x(p) + 12
 }
 
-fn inspector_inner_w() -> Int {
-    return right_w() - 24
+fn inspector_inner_w(p: Panels) -> Int {
+    return right_w(p) - 24
 }
 
 fn inspector_transform_y() -> Int {
@@ -144,12 +172,28 @@ fn history_button_y() -> Int {
     return body_y() + 6
 }
 
-fn undo_x() -> Int {
-    return inspector_x() + right_w() - 92
+fn undo_x(p: Panels) -> Int {
+    return inspector_x(p) + right_w(p) - 92
 }
 
-fn redo_x() -> Int {
-    return inspector_x() + right_w() - 50
+fn redo_x(p: Panels) -> Int {
+    return inspector_x(p) + right_w(p) - 50
+}
+
+// Panel visibility chips live in the menu bar so every panel can be restored
+// even when all three are hidden.
+fn panel_chip_w() -> Int {
+    return 38
+}
+
+fn panel_chip_y() -> Int {
+    return 5
+}
+
+fn panel_chip_x(index: Int) -> Int {
+    let version_w = gui.text_width(app_version(), 10)
+    let total = 3 * panel_chip_w() + 8
+    return window_w() - 18 - version_w - 16 - total + index * (panel_chip_w() + 4)
 }
 
 struct View3D {
@@ -200,6 +244,7 @@ struct App {
     history_at: Int,
     quit: Bool,
     metal: Int,
+    panels: Panels,
 }
 
 fn app_set_world(app: App, world: World) -> App {
@@ -217,6 +262,7 @@ fn app_set_world(app: App, world: World) -> App {
         edit_fresh: app.edit_fresh,
         history: app.history,
         history_at: app.history_at,
+        panels: app.panels,
     }
 }
 
@@ -235,6 +281,7 @@ fn app_set_selected(app: App, selected: EntityId) -> App {
         edit_fresh: app.edit_fresh,
         history: app.history,
         history_at: app.history_at,
+        panels: app.panels,
     }
 }
 
@@ -253,6 +300,7 @@ fn app_set_playing(app: App, playing: Bool) -> App {
         edit_fresh: app.edit_fresh,
         history: app.history,
         history_at: app.history_at,
+        panels: app.panels,
     }
 }
 
@@ -271,6 +319,7 @@ fn app_set_tab(app: App, tab: Int) -> App {
         edit_fresh: app.edit_fresh,
         history: app.history,
         history_at: app.history_at,
+        panels: app.panels,
     }
 }
 
@@ -289,6 +338,7 @@ fn app_set_drawer(app: App, drawer: Int) -> App {
         edit_fresh: app.edit_fresh,
         history: app.history,
         history_at: app.history_at,
+        panels: app.panels,
     }
 }
 
@@ -307,6 +357,7 @@ fn app_set_notice(app: App, notice: String) -> App {
         edit_fresh: app.edit_fresh,
         history: app.history,
         history_at: app.history_at,
+        panels: app.panels,
     }
 }
 
@@ -325,6 +376,7 @@ fn app_set_edit(app: App, field: Int, text: String, fresh: Bool) -> App {
         history_at: app.history_at,
         quit: app.quit,
         metal: app.metal,
+        panels: app.panels,
     }
 }
 
@@ -343,6 +395,7 @@ fn app_set_history(app: App, history: List<EditCommand>, at: Int) -> App {
         history_at: at,
         quit: app.quit,
         metal: app.metal,
+        panels: app.panels,
     }
 }
 
@@ -366,6 +419,26 @@ fn app_set_metal(app: App, metal: Int) -> App {
         edit_fresh: app.edit_fresh,
         history: app.history,
         history_at: app.history_at,
+        panels: app.panels,
+    }
+}
+
+fn app_set_panels(app: App, panels: Panels) -> App {
+    return App {
+        world: app.world,
+        selected: app.selected,
+        playing: app.playing,
+        tab: app.tab,
+        drawer: app.drawer,
+        notice: app.notice,
+        quit: app.quit,
+        metal: app.metal,
+        edit_field: app.edit_field,
+        edit_text: app.edit_text,
+        edit_fresh: app.edit_fresh,
+        history: app.history,
+        history_at: app.history_at,
+        panels: panels,
     }
 }
 
@@ -384,6 +457,7 @@ fn app_quit(app: App) -> App {
         edit_fresh: app.edit_fresh,
         history: app.history,
         history_at: app.history_at,
+        panels: app.panels,
     }
 }
 
@@ -424,6 +498,15 @@ fn demo_world() -> World {
     world = world_set_position(world, pedestal.id, vec3(fx_ratio(11, 5), fx_ratio(2, 5), fx_ratio(8, 5)))
     world = world_set_scale(world, pedestal.id, vec3(fx_ratio(8, 5), fx_ratio(2, 5), fx_ratio(8, 5)))
 
+    // Game mode looks through this entity. The -12 degree pitch aims at the
+    // player from eye height; editing the camera in the inspector changes the
+    // Game view without a separate camera component or runtime API.
+    let camera = world_spawn(world, 6)
+    world = camera.world
+    world = world_set_position(world, camera.id, vec3(0, fx_ratio(13, 5), fx_ratio(15, 2)))
+    world = world_set_rotation(world, camera.id, quat_axis_angle(vec3(fx(1), 0, 0), radians(0 - 12)))
+    world = world_set_scale(world, camera.id, vec3(fx_ratio(1, 2), fx_ratio(1, 2), fx_ratio(1, 2)))
+
     return world
 }
 
@@ -463,6 +546,10 @@ fn next_live(world: World, id: EntityId) -> EntityId {
 
 // ---------- formatting ----------
 
+fn radians(degrees: Int) -> Int {
+    return fx_mul(fx(degrees), fx_div(fx_pi(), fx(180)))
+}
+
 fn fixed2(value: Int) -> String {
     var v = value
     var sign = ""
@@ -481,6 +568,144 @@ fn fixed2(value: Int) -> String {
         pad = "0"
     }
     return "${sign}${whole}.${pad}${fraction}"
+}
+
+fn clamp_int(value: Int, low: Int, high: Int) -> Int {
+    if value < low {
+        return low
+    }
+    if value > high {
+        return high
+    }
+    return value
+}
+
+fn parse_int(text: String) -> Int {
+    let chars = text.trim().chars()
+    if chars.len() == 0 {
+        return 0
+    }
+    var i = 0
+    var negative = false
+    if chars[0] == "-" {
+        negative = true
+        i = 1
+    }
+    var value = 0
+    while i < chars.len() {
+        let code = chars[i].bytes()[0]
+        if code < 48 || code > 57 {
+            return 0
+        }
+        value = value * 10 + (code - 48)
+        i = i + 1
+    }
+    if negative {
+        return 0 - value
+    }
+    return value
+}
+
+fn bool_value(value: Bool) -> Int {
+    if value {
+        return 1
+    }
+    return 0
+}
+
+fn default_layout_path() -> String {
+    let override = gui.env("NOVA_SCENE_LAYOUT")
+    if override.len() > 0 {
+        return override
+    }
+    let home = gui.env("HOME")
+    if home.len() == 0 {
+        return "target/scene-layout.txt"
+    }
+    return home + "/Library/Application Support/Nova Engine Studio/layout.txt"
+}
+
+// `gui.write` deliberately does not create directories. The layout file gets
+// the same missing-parent treatment as a capture path.
+fn ensure_parent_dir(path: String) {
+    let parts = path.split("/")
+    if parts.len() < 2 {
+        return
+    }
+    var current = ""
+    if path.starts_with("/") {
+        current = "/"
+    }
+    var i = 0
+    while i < parts.len() - 1 {
+        let part = parts[i]
+        if part.len() > 0 {
+            if current.len() == 0 {
+                current = part
+            } else if current == "/" {
+                current = "/" + part
+            } else {
+                current = current + "/" + part
+            }
+            gui.mkdir(current)
+        }
+        i = i + 1
+    }
+}
+
+fn default_panels() -> Panels {
+    return Panels {
+        left: 252,
+        right: 304,
+        drawer: 196,
+        hierarchy: true,
+        inspector: true,
+        drawer_open: true,
+        drag: 0,
+        drag_origin: 0,
+        drag_start: 0,
+        path: default_layout_path(),
+    }
+}
+
+fn load_panels() -> Panels {
+    var panels = default_panels()
+    let data = gui.read(panels.path)
+    if data.len() == 0 {
+        return panels
+    }
+    for line in data.split("\n") {
+        let parts = line.trim().split("=")
+        if parts.len() == 2 {
+            let key = parts[0].trim()
+            let value = parts[1].trim()
+            if key == "left" {
+                panels.left = clamp_int(parse_int(value), 180, 420)
+            }
+            if key == "right" {
+                panels.right = clamp_int(parse_int(value), 220, 460)
+            }
+            if key == "drawer" {
+                panels.drawer = clamp_int(parse_int(value), 120, 320)
+            }
+            if key == "hierarchy" {
+                panels.hierarchy = parse_int(value) == 1
+            }
+            if key == "inspector" {
+                panels.inspector = parse_int(value) == 1
+            }
+            if key == "drawer_open" {
+                panels.drawer_open = parse_int(value) == 1
+            }
+        }
+    }
+    return panels
+}
+
+fn save_panels(panels: Panels) -> Bool {
+    ensure_parent_dir(panels.path)
+    let data = "version=1\nleft=${panels.left}\nright=${panels.right}\ndrawer=${panels.drawer}\nhierarchy=${bool_value(panels.hierarchy)}\ninspector=${bool_value(panels.inspector)}\ndrawer_open=${bool_value(panels.drawer_open)}\n"
+    return gui.write(panels.path, data)
 }
 
 // ---------- inspector editing and undo ----------
@@ -752,8 +977,8 @@ fn handle_text(app: App, text: String) -> App {
     return app_set_edit(app, app.edit_field, next, false)
 }
 
-fn inspector_field_at(x: Int, y: Int) -> Int {
-    if x < inspector_inner_x() || x >= inspector_inner_x() + inspector_inner_w() {
+fn inspector_field_at(p: Panels, x: Int, y: Int) -> Int {
+    if x < inspector_inner_x(p) || x >= inspector_inner_x(p) + inspector_inner_w(p) {
         return 0 - 1
     }
     var field = 0
@@ -772,7 +997,7 @@ fn edit_hit(app: App, x: Int, y: Int) -> Bool {
         return false
     }
     let row_y = inspector_field_y(app.edit_field)
-    return x >= inspector_inner_x() && x < inspector_inner_x() + inspector_inner_w() && y >= row_y && y < row_y + 24
+    return x >= inspector_inner_x(app.panels) && x < inspector_inner_x(app.panels) + inspector_inner_w(app.panels) && y >= row_y && y < row_y + 24
 }
 
 fn tag_name(tag: Int) -> String {
@@ -790,6 +1015,9 @@ fn tag_name(tag: Int) -> String {
     }
     if tag == 5 {
         return "Pedestal"
+    }
+    if tag == 6 {
+        return "Game Camera"
     }
     return "Entity"
 }
@@ -821,6 +1049,9 @@ fn tag_colour(tag: Int, theme: gui.Theme) -> Int {
     if tag == 5 {
         return theme.green
     }
+    if tag == 6 {
+        return theme.purple
+    }
     return theme.muted
 }
 
@@ -834,6 +1065,32 @@ fn make_view(x: Int, y: Int, w: Int, h: Int) -> View3D {
     let fov = fx_mul(fx(42), fx_div(fx_pi(), fx(180)))
     let projection = mat4_perspective(fov, fx_ratio(w, h), fx_ratio(1, 10), fx(60))
     return View3D { x: x, y: y, w: w, h: h, vp: mat4_mul(projection, view) }
+}
+
+// Game mode uses the scene's camera entity. Position and rotation are ordinary
+// World components, so moving or rotating the Game Camera in the inspector is
+// immediately visible without a separate runtime camera API.
+fn make_game_view(app: App, x: Int, y: Int, w: Int, h: Int) -> View3D {
+    let camera = find_tag(app.world, 6)
+    if entity_is_none(camera) || !world_has(app.world, camera) {
+        return make_view(x, y, w, h)
+    }
+    let eye = world_position(app.world, camera)
+    let rotation = world_rotation(app.world, camera)
+    let forward = quat_rotate_vec3(rotation, vec3(0, 0, 0 - 65536))
+    let up = quat_rotate_vec3(rotation, vec3(0, 65536, 0))
+    let target = v3_add(eye, forward)
+    let view = mat4_look_at(eye, target, up)
+    let fov = fx_mul(fx(50), fx_div(fx_pi(), fx(180)))
+    let projection = mat4_perspective(fov, fx_ratio(w, h), fx_ratio(1, 10), fx(60))
+    return View3D { x: x, y: y, w: w, h: h, vp: mat4_mul(projection, view) }
+}
+
+fn view_for(app: App, x: Int, y: Int, w: Int, h: Int) -> View3D {
+    if app.tab == 1 {
+        return make_game_view(app, x, y, w, h)
+    }
+    return make_view(x, y, w, h)
 }
 
 fn project(view: View3D, point: Vec3) -> Vec3 {
@@ -872,7 +1129,7 @@ fn metal_entity_mvp(world: World, id: EntityId, view: View3D) -> Mat4 {
     return mat4_mul(view.vp, model)
 }
 
-fn draw_metal_scene(app: App, view: View3D) -> Bool {
+fn draw_metal_scene(app: App, view: View3D, editor: Bool) -> Bool {
     if app.metal == 0 {
         return false
     }
@@ -882,8 +1139,11 @@ fn draw_metal_scene(app: App, view: View3D) -> Bool {
     while i < world_capacity(app.world) {
         if app.world.pool.alive[i] {
             let id = EntityId { index: i, generation: app.world.pool.generations[i] }
-            if metal_add_mvp(app.metal, metal_entity_mvp(app.world, id, view)) != 1 {
-                scene_ok = false
+            let is_camera = app.world.tags[i] == 6
+            if editor || !is_camera {
+                if metal_add_mvp(app.metal, metal_entity_mvp(app.world, id, view)) != 1 {
+                    scene_ok = false
+                }
             }
         }
         i = i + 1
@@ -898,8 +1158,8 @@ fn draw_metal_scene(app: App, view: View3D) -> Bool {
     return gui.metal_frame(view.x, view.y, view.w, view.h)
 }
 
-fn start_metal() -> Int {
-    let handle = metal_offscreen(centre_w(), view_h())
+fn start_metal(p: Panels) -> Int {
+    let handle = metal_offscreen(centre_w(p), view_h(p))
     if handle == 0 {
         println("scene-gui: metal unavailable: ${metal_last_error()}")
         return 0
@@ -1042,6 +1302,20 @@ fn draw_tool_button(x: Int, y: Int, w: Int, active: Bool, theme: gui.Theme, kind
 
 // ---------- top chrome ----------
 
+fn draw_panel_chip(x: Int, y: Int, label: String, on: Bool, theme: gui.Theme) {
+    var fill = theme.bg_hard
+    var border = theme.border
+    var colour = theme.faint
+    if on {
+        fill = theme.selection
+        border = theme.border_strong
+        colour = theme.fg_bright
+    }
+    gui.round_rect(x, y, panel_chip_w(), 18, 3, fill)
+    gui.stroke(x, y, panel_chip_w(), 18, border)
+    gui.text(x + (panel_chip_w() - gui.text_width(label, 9)) / 2, y + 3, label, 9, colour)
+}
+
 fn draw_top(app: App, theme: gui.Theme) {
     // Full-size content puts the native buttons over the menu strip. Keep them
     // in that strip but stop the title and menu from running underneath them.
@@ -1053,14 +1327,17 @@ fn draw_top(app: App, theme: gui.Theme) {
     gui.text(engine_x, 7, "Engine", 13, theme.accent)
     let items = "File    Edit    Assets    GameObject    Component    Window    Help"
     gui.text(engine_x + gui.text_width("Engine", 13) + 28, 8, items, 11, theme.muted)
-    let version = "0.4.0"
+    draw_panel_chip(panel_chip_x(0), panel_chip_y(), "Hier", app.panels.hierarchy, theme)
+    draw_panel_chip(panel_chip_x(1), panel_chip_y(), "Insp", app.panels.inspector, theme)
+    draw_panel_chip(panel_chip_x(2), panel_chip_y(), "Draw", app.panels.drawer_open, theme)
+    let version = app_version()
     gui.text(window_w() - 18 - gui.text_width(version, 10), 9, version, 10, theme.faint)
     gui.line(0, menu_h() - 1, window_w(), menu_h() - 1, theme.border)
 
     gui.rect(0, menu_h(), window_w(), strip_h(), theme.panel)
     gui.text_fmt(18, menu_h() + 9, "Demo Scene", 13, theme.fg_bright, gui.font_sans(), gui.style_bold())
     gui.text(18 + gui.text_width("Demo Scene", 13) + 10, menu_h() + 11, "·  unsaved", 10, theme.faint)
-    gui.text(centre_x() + 18, menu_h() + 10, "Nova Engine Studio", 11, theme.muted)
+    gui.text(centre_x(app.panels) + 18, menu_h() + 10, "Nova Engine Studio", 11, theme.muted)
     let live = "${world_live_count(app.world)} entities"
     let rate = "60 Hz"
     gui.text(window_w() - 18 - gui.text_width(rate, 10), menu_h() + 11, rate, 10, theme.faint)
@@ -1074,8 +1351,8 @@ fn hierarchy_row_y(n: Int) -> Int {
     return hierarchy_first_row() + n * hierarchy_row_h()
 }
 
-fn hierarchy_pick(world: World, x: Int, y: Int) -> EntityId {
-    if x < 0 || x >= left_w() {
+fn hierarchy_pick(world: World, p: Panels, x: Int, y: Int) -> EntityId {
+    if x < 0 || x >= left_w(p) {
         return entity_none()
     }
     var n = 0
@@ -1094,16 +1371,16 @@ fn hierarchy_pick(world: World, x: Int, y: Int) -> EntityId {
 }
 
 fn draw_hierarchy(app: App, theme: gui.Theme) {
-    gui.rect(0, body_y(), left_w(), body_h(), theme.panel)
-    gui.line(left_w() - 1, body_y(), left_w() - 1, drawer_y(), theme.border_strong)
+    gui.rect(0, body_y(), left_w(app.panels), body_h(app.panels), theme.panel)
+    gui.line(left_w(app.panels) - 1, body_y(), left_w(app.panels) - 1, drawer_y(app.panels), theme.border_strong)
     gui.text(16, body_y() + 13, "HIERARCHY", 10, theme.faint)
 
     let header_y = body_y() + 30
-    gui.rect(0, header_y, left_w(), 30, theme.elevated)
+    gui.rect(0, header_y, left_w(app.panels), 30, theme.elevated)
     gui.text(14, header_y + 8, "▾", 12, theme.fg)
     gui.text(32, header_y + 8, "Demo Scene", 12, theme.fg_bright)
     let count = "${world_live_count(app.world)}"
-    gui.text(left_w() - 16 - gui.text_width(count, 10), header_y + 10, count, 10, theme.faint)
+    gui.text(left_w(app.panels) - 16 - gui.text_width(count, 10), header_y + 10, count, 10, theme.faint)
 
     var n = 0
     var i = 0
@@ -1113,7 +1390,7 @@ fn draw_hierarchy(app: App, theme: gui.Theme) {
             let y = hierarchy_row_y(n)
             let selected = entity_eq(id, app.selected)
             if selected {
-                gui.rect(0, y, left_w(), hierarchy_row_h() - 2, theme.selection)
+                gui.rect(0, y, left_w(app.panels), hierarchy_row_h() - 2, theme.selection)
                 gui.rect(0, y, 3, hierarchy_row_h() - 2, theme.accent)
             }
             let colour = tag_colour(app.world.tags[i], theme)
@@ -1128,11 +1405,11 @@ fn draw_hierarchy(app: App, theme: gui.Theme) {
         i = i + 1
     }
 
-    gui.line(0, drawer_y() - 30, left_w(), drawer_y() - 30, theme.border)
+    gui.line(0, drawer_y(app.panels) - 30, left_w(app.panels), drawer_y(app.panels) - 30, theme.border)
     let footer = "${world_live_count(app.world)} entities  ·  step ${world_step(app.world)}"
-    gui.text(16, drawer_y() - 22, footer, 10, theme.faint)
+    gui.text(16, drawer_y(app.panels) - 22, footer, 10, theme.faint)
     let pending = "${world_pending_count(app.world)} pending"
-    gui.text(left_w() - 16 - gui.text_width(pending, 10), drawer_y() - 22, pending, 10, theme.faint)
+    gui.text(left_w(app.panels) - 16 - gui.text_width(pending, 10), drawer_y(app.panels) - 22, pending, 10, theme.faint)
 }
 
 // ---------- scene / game viewport ----------
@@ -1232,7 +1509,8 @@ fn draw_cpu_scene(app: App, view: View3D, theme: gui.Theme, editor: Bool) {
             if app.world.pool.alive[i] {
                 let id = EntityId { index: i, generation: app.world.pool.generations[i] }
                 let selected = entity_eq(id, app.selected)
-                if !editor || (pass == 0 && !selected) || (pass == 1 && selected) {
+                let is_camera = app.world.tags[i] == 6
+                if (editor || !is_camera) && (!editor || (pass == 0 && !selected) || (pass == 1 && selected)) {
                     draw_scene_entity(app, id, view, theme, editor)
                 }
             }
@@ -1243,15 +1521,15 @@ fn draw_cpu_scene(app: App, view: View3D, theme: gui.Theme, editor: Bool) {
 }
 
 fn draw_viewport(app: App, theme: gui.Theme) {
-    let x = centre_x()
+    let x = centre_x(app.panels)
     let y = view_y()
-    let w = centre_w()
-    let h = view_h()
+    let w = centre_w(app.panels)
+    let h = view_h(app.panels)
     gui.rect(x, y, w, h, theme.bg)
     gui.clip(x, y, w, h)
-    let view = make_view(x, y, w, h)
+    let view = view_for(app, x, y, w, h)
     let editor = app.tab == 0
-    let metal_drawn = draw_metal_scene(app, view)
+    let metal_drawn = draw_metal_scene(app, view, editor)
     if metal_drawn {
         if editor {
             draw_grid(view, theme)
@@ -1267,42 +1545,46 @@ fn draw_viewport(app: App, theme: gui.Theme) {
         view_name = "GAME"
     }
     gui.text(x + 14, y + 12, view_name, 10, theme.faint)
-    gui.text(x + w - 14 - gui.text_width("Perspective", 10), y + 12, "Perspective", 10, theme.faint)
+    var projection = "Perspective"
     if !editor {
-        gui.text(x + 14, y + h - 24, "Game view · editor overlays hidden", 10, theme.faint)
+        projection = "Game Camera"
+    }
+    gui.text(x + w - 14 - gui.text_width(projection, 10), y + 12, projection, 10, theme.faint)
+    if !editor {
+        gui.text(x + 14, y + h - 24, "Game view · Game Camera · editor overlays hidden", 10, theme.faint)
     }
 }
 
 fn draw_centre(app: App, theme: gui.Theme) {
-    let x = centre_x()
-    gui.rect(x, body_y(), centre_w(), body_h(), theme.panel)
+    let x = centre_x(app.panels)
+    gui.rect(x, body_y(), centre_w(app.panels), body_h(app.panels), theme.panel)
 
-    gui.rect(x, body_y(), centre_w(), tabs_h(), theme.panel)
+    gui.rect(x, body_y(), centre_w(app.panels), tabs_h(), theme.panel)
     let scene_active = app.tab == 0
     let game_active = app.tab == 1
     if scene_active {
-        gui.rect(scene_tab_x(), body_y(), 76, tabs_h(), theme.bg)
-        gui.rect(scene_tab_x(), body_y() + tabs_h() - 2, 76, 2, theme.accent)
+        gui.rect(scene_tab_x(app.panels), body_y(), 76, tabs_h(), theme.bg)
+        gui.rect(scene_tab_x(app.panels), body_y() + tabs_h() - 2, 76, 2, theme.accent)
     }
     if game_active {
-        gui.rect(game_tab_x(), body_y(), 76, tabs_h(), theme.bg)
-        gui.rect(game_tab_x(), body_y() + tabs_h() - 2, 76, 2, theme.accent)
+        gui.rect(game_tab_x(app.panels), body_y(), 76, tabs_h(), theme.bg)
+        gui.rect(game_tab_x(app.panels), body_y() + tabs_h() - 2, 76, 2, theme.accent)
     }
-    gui.text(scene_tab_x() + 16, body_y() + 8, "Scene", 12, if scene_active { theme.fg_bright } else { theme.muted })
-    gui.text(game_tab_x() + 16, body_y() + 8, "Game", 12, if game_active { theme.fg_bright } else { theme.muted })
-    gui.line(x, body_y() + tabs_h() - 1, x + centre_w(), body_y() + tabs_h() - 1, theme.border)
+    gui.text(scene_tab_x(app.panels) + 16, body_y() + 8, "Scene", 12, if scene_active { theme.fg_bright } else { theme.muted })
+    gui.text(game_tab_x(app.panels) + 16, body_y() + 8, "Game", 12, if game_active { theme.fg_bright } else { theme.muted })
+    gui.line(x, body_y() + tabs_h() - 1, x + centre_w(app.panels), body_y() + tabs_h() - 1, theme.border)
 
-    gui.rect(x, body_y() + tabs_h(), centre_w(), toolbar_h(), theme.panel)
-    gui.line(x, body_y() + tabs_h() + toolbar_h() - 1, x + centre_w(), body_y() + tabs_h() + toolbar_h() - 1, theme.border_strong)
-    draw_tool_button(play_x(), tool_button_y(), 30, app.playing, theme, 0)
-    draw_tool_button(pause_x(), tool_button_y(), 30, false, theme, 1)
-    draw_tool_button(step_x(), tool_button_y(), 30, false, theme, 2)
-    gui.line(step_x() + 42, tool_button_y() + 3, step_x() + 42, tool_button_y() + 20, theme.border)
+    gui.rect(x, body_y() + tabs_h(), centre_w(app.panels), toolbar_h(), theme.panel)
+    gui.line(x, body_y() + tabs_h() + toolbar_h() - 1, x + centre_w(app.panels), body_y() + tabs_h() + toolbar_h() - 1, theme.border_strong)
+    draw_tool_button(play_x(app.panels), tool_button_y(), 30, app.playing, theme, 0)
+    draw_tool_button(pause_x(app.panels), tool_button_y(), 30, false, theme, 1)
+    draw_tool_button(step_x(app.panels), tool_button_y(), 30, false, theme, 2)
+    gui.line(step_x(app.panels) + 42, tool_button_y() + 3, step_x(app.panels) + 42, tool_button_y() + 20, theme.border)
     var tool_label = "Grid 1m"
     if app.tab == 1 {
         tool_label = "Game camera"
     }
-    gui.text(step_x() + 54, tool_button_y() + 5, tool_label, 11, theme.muted)
+    gui.text(step_x(app.panels) + 54, tool_button_y() + 5, tool_label, 11, theme.muted)
     var mode = "EDIT MODE"
     if app.tab == 1 {
         mode = "GAME VIEW"
@@ -1310,7 +1592,7 @@ fn draw_centre(app: App, theme: gui.Theme) {
     if app.playing {
         mode = "PLAYING"
     }
-    gui.text(x + centre_w() - 16 - gui.text_width(mode, 10), tool_button_y() + 6, mode, 10, theme.faint)
+    gui.text(x + centre_w(app.panels) - 16 - gui.text_width(mode, 10), tool_button_y() + 6, mode, 10, theme.faint)
 
     draw_viewport(app, theme)
 }
@@ -1318,15 +1600,15 @@ fn draw_centre(app: App, theme: gui.Theme) {
 // ---------- inspector ----------
 
 fn draw_inspector(app: App, theme: gui.Theme) {
-    let x = inspector_x()
-    gui.rect(x, body_y(), right_w(), body_h(), theme.panel)
-    gui.line(x, body_y(), x, drawer_y(), theme.border_strong)
+    let x = inspector_x(app.panels)
+    gui.rect(x, body_y(), right_w(app.panels), body_h(app.panels), theme.panel)
+    gui.line(x, body_y(), x, drawer_y(app.panels), theme.border_strong)
     gui.text(x + 16, body_y() + 13, "INSPECTOR", 10, theme.faint)
-    draw_history_button(undo_x(), history_button_y(), app.history_at > 0, "Undo", theme)
-    draw_history_button(redo_x(), history_button_y(), app.history_at < app.history.len(), "Redo", theme)
+    draw_history_button(undo_x(app.panels), history_button_y(), app.history_at > 0, "Undo", theme)
+    draw_history_button(redo_x(app.panels), history_button_y(), app.history_at < app.history.len(), "Redo", theme)
 
-    let inner_x = inspector_inner_x()
-    let inner_w = inspector_inner_w()
+    let inner_x = inspector_inner_x(app.panels)
+    let inner_w = inspector_inner_w(app.panels)
     if entity_is_none(app.selected) || !world_has(app.world, app.selected) {
         gui.text(x + 16, body_y() + 52, "Nothing selected", 14, theme.muted)
         gui.text(x + 16, body_y() + 76, "Select an entity in the", 11, theme.faint)
@@ -1371,7 +1653,7 @@ fn draw_inspector(app: App, theme: gui.Theme) {
     field_row(inner_x, world_y + 54, inner_w, "Gravity", fixed2(app.world.gravity), theme)
     field_row(inner_x, world_y + 78, inner_w, "Live / pending", "${world_live_count(app.world)}  /  ${world_pending_count(app.world)}", theme)
 
-    let add_y = add_component_y()
+    let add_y = add_component_y(app.panels)
     gui.round_rect(inner_x, add_y, inner_w, 28, 5, theme.bg_hard)
     gui.stroke(inner_x, add_y, inner_w, 28, theme.border_strong)
     gui.text(inner_x + 12, add_y + 7, "+  Add Component", 11, theme.muted)
@@ -1385,8 +1667,8 @@ fn draw_inspector(app: App, theme: gui.Theme) {
 // ---------- drawer ----------
 
 fn draw_drawer(app: App, theme: gui.Theme) {
-    let y = drawer_y()
-    gui.rect(0, y, window_w(), drawer_h(), theme.bg_hard)
+    let y = drawer_y(app.panels)
+    gui.rect(0, y, window_w(), drawer_h(app.panels), theme.bg_hard)
     gui.line(0, y, window_w(), y, theme.border_strong)
 
     let project_x = 16
@@ -1430,20 +1712,40 @@ fn draw_drawer(app: App, theme: gui.Theme) {
 
 // ---------- frame ----------
 
+fn draw_splitters(app: App, theme: gui.Theme) {
+    let p = app.panels
+    if p.hierarchy {
+        gui.rect(left_w(p) - 1, body_y(), 2, body_h(p), theme.border_strong)
+    }
+    if p.inspector {
+        gui.rect(inspector_x(p) - 1, body_y(), 2, body_h(p), theme.border_strong)
+    }
+    if p.drawer_open {
+        gui.rect(0, drawer_y(p) - 1, window_w(), 2, theme.border_strong)
+    }
+}
+
 fn draw(app: App) {
     let theme = gui.dark()
     gui.clear(theme.bg)
     draw_top(app, theme)
-    draw_hierarchy(app, theme)
+    if app.panels.hierarchy {
+        draw_hierarchy(app, theme)
+    }
     draw_centre(app, theme)
-    draw_inspector(app, theme)
-    draw_drawer(app, theme)
+    if app.panels.inspector {
+        draw_inspector(app, theme)
+    }
+    if app.panels.drawer_open {
+        draw_drawer(app, theme)
+    }
+    draw_splitters(app, theme)
 }
 
 // ---------- input ----------
 
 fn scene_pick(app: App, x: Int, y: Int) -> EntityId {
-    let view = make_view(centre_x(), view_y(), centre_w(), view_h())
+    let view = view_for(app, centre_x(app.panels), view_y(), centre_w(app.panels), view_h(app.panels))
     var best = entity_none()
     var best_distance = 2500
     var i = 0
@@ -1539,6 +1841,169 @@ fn handle_key(app: App, code: Int, mods: Int) -> App {
     return app
 }
 
+fn near_value(value: Int, target: Int, radius: Int) -> Bool {
+    return value >= target - radius && value <= target + radius
+}
+
+fn panel_chip_at(x: Int, y: Int) -> Int {
+    var i = 0
+    while i < 3 {
+        let chip_x = panel_chip_x(i)
+        if x >= chip_x && x < chip_x + panel_chip_w() && y >= panel_chip_y() && y < panel_chip_y() + 18 {
+            return i
+        }
+        i = i + 1
+    }
+    return 0 - 1
+}
+
+fn panel_toggle(app: App, which: Int) -> App {
+    var panels = app.panels
+    if which == 0 {
+        panels.hierarchy = !panels.hierarchy
+    }
+    if which == 1 {
+        panels.inspector = !panels.inspector
+    }
+    if which == 2 {
+        panels.drawer_open = !panels.drawer_open
+    }
+    var next = app_set_panels(app, panels)
+    if !panels.inspector {
+        next = app_set_edit(next, 0 - 1, "", false)
+    }
+    save_panels(panels)
+    return next
+}
+
+fn panel_drag_at(app: App, x: Int, y: Int) -> Int {
+    let panels = app.panels
+    if panels.drawer_open && near_value(y, drawer_y(panels), 3) && x >= 0 && x < window_w() {
+        return 3
+    }
+    if panels.hierarchy && near_value(x, left_w(panels), 5) && y >= body_y() && y < drawer_y(panels) {
+        return 1
+    }
+    if panels.inspector && near_value(x, inspector_x(panels), 5) && y >= body_y() && y < drawer_y(panels) {
+        return 2
+    }
+    return 0
+}
+
+fn panel_drag_start(app: App, x: Int, y: Int) -> App {
+    let which = panel_drag_at(app, x, y)
+    if which == 0 {
+        return app
+    }
+    var panels = app.panels
+    panels.drag = which
+    if which == 3 {
+        panels.drag_origin = y
+        panels.drag_start = panels.drawer
+    } else {
+        panels.drag_origin = x
+        if which == 1 {
+            panels.drag_start = panels.left
+        } else {
+            panels.drag_start = panels.right
+        }
+    }
+    return app_set_panels(app, panels)
+}
+
+fn panel_drag_update(app: App, x: Int, y: Int) -> App {
+    if app.panels.drag == 0 {
+        return app
+    }
+    var panels = app.panels
+    if panels.drag == 1 {
+        panels.left = clamp_int(panels.drag_start + (x - panels.drag_origin), 180, 420)
+    }
+    if panels.drag == 2 {
+        panels.right = clamp_int(panels.drag_start - (x - panels.drag_origin), 220, 460)
+    }
+    if panels.drag == 3 {
+        panels.drawer = clamp_int(panels.drag_start - (y - panels.drag_origin), 120, 320)
+    }
+    return app_set_panels(app, panels)
+}
+
+fn panel_drag_finish(app: App) -> App {
+    if app.panels.drag == 0 {
+        return app
+    }
+    var panels = app.panels
+    panels.drag = 0
+    save_panels(panels)
+    return app_set_panels(app, panels)
+}
+
+// Test hooks use the real splitter hit test and event handlers, not a second
+// layout writer. `left:320` means drag the hierarchy splitter to 320 points.
+fn layout_test_drag(app: App, which: String, target: Int) -> App {
+    let panels = app.panels
+    var start_x = window_w() / 2
+    var start_y = body_y() + 80
+    if which == "left" {
+        start_x = left_w(panels)
+    }
+    if which == "right" {
+        start_x = inspector_x(panels)
+    }
+    if which == "drawer" {
+        start_y = drawer_y(panels)
+    }
+    var next = handle_mouse_down(app, start_x, start_y)
+    if next.panels.drag == 0 {
+        return next
+    }
+    var drag_x = start_x
+    var drag_y = start_y
+    if which == "left" {
+        drag_x = start_x + (target - panels.left)
+    }
+    if which == "right" {
+        drag_x = start_x + (panels.right - target)
+    }
+    if which == "drawer" {
+        drag_y = start_y + (panels.drawer - target)
+    }
+    next = panel_drag_update(next, drag_x, drag_y)
+    return panel_drag_finish(next)
+}
+
+fn layout_test_drag_spec(app: App, spec: String) -> App {
+    var next = app
+    for item in spec.split(",") {
+        let parts = item.trim().split(":")
+        if parts.len() == 2 {
+            next = layout_test_drag(next, parts[0].trim(), parse_int(parts[1]))
+        }
+    }
+    return next
+}
+
+fn layout_test_hide_spec(app: App, spec: String) -> App {
+    var next = app
+    for item in spec.split(",") {
+        let name = item.trim()
+        var which = 0 - 1
+        if name == "hierarchy" {
+            which = 0
+        }
+        if name == "inspector" {
+            which = 1
+        }
+        if name == "drawer" {
+            which = 2
+        }
+        if which >= 0 {
+            next = handle_mouse_down(next, panel_chip_x(which) + panel_chip_w() / 2, panel_chip_y() + 9)
+        }
+    }
+    return next
+}
+
 fn handle_mouse_down(app: App, x: Int, y: Int) -> App {
     var app = app
     if app.edit_field >= 0 && !edit_hit(app, x, y) {
@@ -1547,41 +2012,48 @@ fn handle_mouse_down(app: App, x: Int, y: Int) -> App {
             return app
         }
     }
-    if x >= scene_tab_x() && x < scene_tab_x() + 76 && y >= body_y() && y < body_y() + tabs_h() {
+    let chip = panel_chip_at(x, y)
+    if chip >= 0 {
+        return panel_toggle(app, chip)
+    }
+    if panel_drag_at(app, x, y) > 0 {
+        return panel_drag_start(app, x, y)
+    }
+    if x >= scene_tab_x(app.panels) && x < scene_tab_x(app.panels) + 76 && y >= body_y() && y < body_y() + tabs_h() {
         return app_set_tab(app, 0)
     }
-    if x >= game_tab_x() && x < game_tab_x() + 76 && y >= body_y() && y < body_y() + tabs_h() {
+    if x >= game_tab_x(app.panels) && x < game_tab_x(app.panels) + 76 && y >= body_y() && y < body_y() + tabs_h() {
         return app_set_tab(app, 1)
     }
-    if x >= play_x() && x < play_x() + 30 && y >= tool_button_y() && y < tool_button_y() + 24 {
+    if x >= play_x(app.panels) && x < play_x(app.panels) + 30 && y >= tool_button_y() && y < tool_button_y() + 24 {
         return app_set_playing(app, true)
     }
-    if x >= pause_x() && x < pause_x() + 30 && y >= tool_button_y() && y < tool_button_y() + 24 {
+    if x >= pause_x(app.panels) && x < pause_x(app.panels) + 30 && y >= tool_button_y() && y < tool_button_y() + 24 {
         return app_set_playing(app, false)
     }
-    if x >= step_x() && x < step_x() + 30 && y >= tool_button_y() && y < tool_button_y() + 24 {
+    if x >= step_x(app.panels) && x < step_x(app.panels) + 30 && y >= tool_button_y() && y < tool_button_y() + 24 {
         let world = world_tick(app.world, fx_ratio(1, 60))
         return app_set_playing(app_set_world(app, world), false)
     }
     if y >= history_button_y() && y < history_button_y() + 18 {
-        if x >= undo_x() && x < undo_x() + 38 {
+        if x >= undo_x(app.panels) && x < undo_x(app.panels) + 38 {
             return edit_undo(app)
         }
-        if x >= redo_x() && x < redo_x() + 38 {
+        if x >= redo_x(app.panels) && x < redo_x(app.panels) + 38 {
             return edit_redo(app)
         }
     }
-    let field = inspector_field_at(x, y)
+    let field = inspector_field_at(app.panels, x, y)
     if field >= 0 {
         if field == app.edit_field {
             return app
         }
         return edit_begin(app, field)
     }
-    if x >= inspector_x() + 12 && x < inspector_x() + 12 + right_w() - 24 && y >= add_component_y() && y < add_component_y() + 28 {
+    if x >= inspector_x(app.panels) + 12 && x < inspector_x(app.panels) + 12 + right_w(app.panels) - 24 && y >= add_component_y(app.panels) && y < add_component_y(app.panels) + 28 {
         return app_set_notice(app, "No component types registered yet.")
     }
-    if y >= drawer_y() + 4 && y < drawer_y() + 30 {
+    if y >= drawer_y(app.panels) + 4 && y < drawer_y(app.panels) + 30 {
         if x >= 16 && x < 80 {
             return app_set_drawer(app, 0)
         }
@@ -1589,13 +2061,13 @@ fn handle_mouse_down(app: App, x: Int, y: Int) -> App {
             return app_set_drawer(app, 1)
         }
     }
-    if x >= 0 && x < left_w() && y >= hierarchy_first_row() && y < hierarchy_first_row() + world_live_count(app.world) * hierarchy_row_h() {
-        let picked = hierarchy_pick(app.world, x, y)
+    if x >= 0 && x < left_w(app.panels) && y >= hierarchy_first_row() && y < hierarchy_first_row() + world_live_count(app.world) * hierarchy_row_h() {
+        let picked = hierarchy_pick(app.world, app.panels, x, y)
         if !entity_is_none(picked) {
             return app_set_selected(app, picked)
         }
     }
-    if x >= centre_x() && x < centre_x() + centre_w() && y >= view_y() && y < view_y() + view_h() {
+    if x >= centre_x(app.panels) && x < centre_x(app.panels) + centre_w(app.panels) && y >= view_y() && y < view_y() + view_h(app.panels) {
         return app_set_selected(app, scene_pick(app, x, y))
     }
     return app
@@ -1613,6 +2085,12 @@ fn handle(app: App, event: gui.Event) -> App {
     }
     if event.kind == gui.event_mouse_down() {
         return handle_mouse_down(app, event.x, event.y)
+    }
+    if event.kind == gui.event_drag() {
+        return panel_drag_update(app, event.x, event.y)
+    }
+    if event.kind == gui.event_mouse_up() {
+        return panel_drag_finish(app)
     }
     return app
 }
@@ -1634,30 +2112,42 @@ fn main() {
         history_at: 0,
         quit: false,
         metal: 0,
+        panels: load_panels(),
     }
     app = app_set_selected(app, find_tag(app.world, 3))
+    if gui.env("NOVA_SCENE_SELECT") == "camera" {
+        app = app_set_selected(app, find_tag(app.world, 6))
+    }
 
     let shot = gui.env("NOVA_SCENE_SHOT")
     if shot.len() > 0 {
+        let drag = gui.env("NOVA_SCENE_LAYOUT_DRAG")
+        if drag.len() > 0 {
+            app = layout_test_drag_spec(app, drag)
+        }
+        let hide = gui.env("NOVA_SCENE_LAYOUT_HIDE")
+        if hide.len() > 0 {
+            app = layout_test_hide_spec(app, hide)
+        }
         // Capture acceptance uses the same hit test as a real mouse-down so a
         // Game tab that paints but cannot be entered fails the check.
         if gui.env("NOVA_SCENE_CLICK") == "game" {
-            app = handle_mouse_down(app, game_tab_x() + 16, body_y() + 8)
+            app = handle_mouse_down(app, game_tab_x(app.panels) + 16, body_y() + 8)
         }
         let edit = edit_field_from_env(gui.env("NOVA_SCENE_EDIT"))
         if edit >= 0 {
-            app = handle_mouse_down(app, inspector_inner_x() + 20, inspector_field_y(edit) + 8)
+            app = handle_mouse_down(app, inspector_inner_x(app.panels) + 20, inspector_field_y(edit) + 8)
             app = handle_text(app, gui.env("NOVA_SCENE_TEXT"))
             app = handle_key(app, gui.key_enter(), 0)
         }
         if gui.env("NOVA_SCENE_UNDO") == "1" {
-            app = handle_mouse_down(app, undo_x() + 10, history_button_y() + 8)
+            app = handle_mouse_down(app, undo_x(app.panels) + 10, history_button_y() + 8)
         }
         if gui.env("NOVA_SCENE_REDO") == "1" {
-            app = handle_mouse_down(app, redo_x() + 10, history_button_y() + 8)
+            app = handle_mouse_down(app, redo_x(app.panels) + 10, history_button_y() + 8)
         }
         if gui.open("Nova Engine Studio", window_w(), window_h()) {
-            app = app_set_metal(app, start_metal())
+            app = app_set_metal(app, start_metal(app.panels))
             gui.begin()
             draw(app)
             gui.present()
@@ -1671,7 +2161,7 @@ fn main() {
                 viewport = "metal"
             }
             let position = world_position(app.world, app.selected)
-            println("scene-gui: shell=captured saved=${saved} entities=${world_live_count(app.world)} selected=${app.selected.index}:${app.selected.generation} tab=${tab_label} viewport=${viewport} drawer=console history=${app.history_at}/${app.history.len()} position=${fixed2(position.x)}, ${fixed2(position.y)}, ${fixed2(position.z)}")
+            println("scene-gui: shell=captured saved=${saved} entities=${world_live_count(app.world)} selected=${app.selected.index}:${app.selected.generation} tab=${tab_label} viewport=${viewport} drawer=console history=${app.history_at}/${app.history.len()} position=${fixed2(position.x)}, ${fixed2(position.y)}, ${fixed2(position.z)} layout=${app.panels.left},${app.panels.right},${app.panels.drawer} h=${bool_value(app.panels.hierarchy)} i=${bool_value(app.panels.inspector)} d=${bool_value(app.panels.drawer_open)}")
             if app.metal != 0 {
                 metal_shutdown(app.metal)
             }
@@ -1684,7 +2174,7 @@ fn main() {
         println("scene-gui: could not open a window")
         return
     }
-    app = app_set_metal(app, start_metal())
+    app = app_set_metal(app, start_metal(app.panels))
     let finite = gui.env("NOVA_SCENE_FRAMES").len() > 0
     var frames = 0
     while !app.quit && gui.is_open() {

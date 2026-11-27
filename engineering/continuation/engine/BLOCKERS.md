@@ -45,7 +45,11 @@
   not know `@nova_metal_`; build `examples/nova-tool` first (ENG-X.003).
 - **No MSAA, GPU timing, shadows, multiple lights or asset pipeline yet.**
   Depth32Float, one texture slot, one directional light and one offscreen
-  editor viewport are implemented; the viewport uses a fixed camera.
+  editor viewport are implemented. Scene uses a fixed editor camera; Game uses
+  the tag-6 Game Camera, but neither has orbit/pan/zoom or runtime input.
+- **No free panel docking or multi-window editor.** Hierarchy, Inspector and the
+  drawer resize/hide and persist their layout, but cannot float, reorder or
+  split into additional windows.
 - **No asset database, importer, UUID store or scene serialization.** ENG-03 is
   greenfield. Inspector history is per-session and single-field; multi-select,
   grouped commands, gizmos and persisted undo remain open.
