@@ -999,6 +999,40 @@ else
     no "builtin binary missing"
 fi
 
+# DEC-007: slots live in the function entry block. A loop body is a labelled
+# block, so an `alloca` after the first label is reallocated on every iteration
+# and leaks stack; that defect killed Nova Terminal after ~37 minutes.
+late_allocas() {
+    awk '
+        /^define / { infn = 1; seen = 0; next }
+        /^}/       { infn = 0; next }
+        infn && /^[%A-Za-z0-9_.$]+:/ { seen = 1 }
+        infn && seen && /alloca/ { print }
+    ' "$1" | wc -l | tr -d ' '
+}
+
+printf 'define i64 @f() {\n  br label %%L\nL:\n  %%s = alloca i64\n  ret i64 0\n}\n' > "$tmp/late.ll"
+[ "$(late_allocas "$tmp/late.ll")" -eq 1 ] && ok || no "slot guard detects a late alloca"
+
+out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-loop-slots.nova" "$tool")
+echo "$out" | grep -q "alloca i64" && ok || no "loop fixture allocates slots"
+printf '%s\n' "$out" > "$tmp/loop-slots.ll"
+late=$(late_allocas "$tmp/loop-slots.ll")
+[ "$late" -eq 0 ] && ok || no "loop-body slots allocate outside the entry block ($late)"
+if clang_ir "$tmp/loop-slots.ll" "$tmp/loop-slots" "$tmp/loop-slots-clang.log"; then
+    ok
+else
+    no "clang rejects loop-slot IR"
+    cat "$tmp/loop-slots-clang.log"
+fi
+if [ -x "$tmp/loop-slots" ]; then
+    "$tmp/loop-slots"
+    code=$?
+    [ "$code" -eq 19 ] && ok || no "loop-slot result (got $code, expected 19)"
+else
+    no "loop-slot binary missing"
+fi
+
 out=$(NOVA_TOOL=emit-ir NOVA_TOOL_PATH="$root/examples/nova-tool/tests/codegen-http-get.nova" "$tool")
 echo "$out" | grep -q "call %nova.string @nova_http_get" && ok || no "http_get call"
 printf '%s\n' "$out" > "$tmp/http-get.ll"

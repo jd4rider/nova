@@ -17,7 +17,7 @@ Stable IDs. A parent is not VERIFIED until its acceptance gate passes.
   rejected writes through struct fields and every `var cells = t.cells` copy
   was discarded, so ANSI output never reached the grid. `cg_index_assign`
   now writes through aggregate list handles; the core uses direct field
-  writes. Evidence: `term-ui.sh` 25/0, `codegen.sh` 259/0.
+  writes. Evidence: `term-ui.sh` 25/0, `codegen.sh` 264/0.
 - TERM-00.005 — Sema agrees with codegen on imported types and field writes:
   **VERIFIED**. `nova check` reports no errors on the terminal project;
   sema-ast 39/0 and diff-errors 27/27 unchanged.

@@ -478,6 +478,17 @@ no history/session/favicon writes, Cmd+Shift+N and `--private`)
   - The page user agent is a Safari/WebKit string so Google's embedded-WebView
     OAuth refusal is not triggered; `NOVA_BROWSER_UA` overrides it.
 
+- **0.9.11 — compiler stack-leak repair**
+  - The 2026-11-26 `Thread stack size exceeded` report had the same cause as the
+    Terminal crash: `alloca` was emitted at the declaration point, so a `var` in
+    the main loop leaked stack on every iteration. The compiler now allocates
+    every slot in the function entry block (DEC-007).
+  - Rebuilt against it: 0 `alloca` after any function's first block label
+    (1818 total) in `target/nova/nova-browser.ll`, and the installed binary's 15
+    `NOVA_GUI_TRACE` samples over 60 s all read `stack: used=23KB` of 8176 KB.
+  - `examples/nova-tool/tests/codegen.sh` now fails on a late `alloca`
+    (`codegen-loop-slots.nova`), so the defect cannot return unnoticed.
+
 ## Limits
 
 - Tabs are capped at 6; drag/reorder, overflow scrolling and a right-click

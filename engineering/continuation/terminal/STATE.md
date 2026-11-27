@@ -1,6 +1,6 @@
 # Nova Terminal checkpoint
 
-Updated: 2026-11-26
+Updated: 2026-11-27
 Repository / branch: `nova` / `main`
 Active milestone: TERM-02 streaming parser / TERM-05 input
 Active task: TERM-02.001 chunk-invariance fixtures (partial UTF-8/CSI/OSC
@@ -87,6 +87,26 @@ is installed.
   `tests/codegen.sh`
   - Pin the aggregate index-write path.
 
+## 2026-11-27 crash repair
+
+- `libraries/nova-codegen/src/llvm.nova`
+  - Locals, loop iterators, `match`/`?` temporaries and aggregate scratch slots
+    now allocate in the function entry block (`cg_entry_slot`) instead of at the
+    point where the declaration is reached. A `var` inside a loop had been
+    leaking one stack slot per iteration; the app's main loop leaked 16 bytes
+    per frame, which exhausted the 8 MB main-thread stack after ~37 minutes and
+    produced the `EXC_BAD_ACCESS` crash inside `nova_gui_text_fmt`.
+  - `cg_for_range`, `cg_for_array`, `cg_for_slice`, `cg_for_list`, `cg_var`,
+    `cg_try` and `cg_match` updated; total alloca count is unchanged.
+  - `examples/nova-tool/tests/codegen-loop-slots.nova` plus a `codegen.sh`
+    assertion pin the invariant: any `alloca` after a function's first block
+    label fails the suite. A hand-written late-`alloca` `.ll` checks the guard
+    itself. Nova Browser was rebuilt and verified against the same repair.
+- `examples/nova-term` rebuilt and reinstalled at
+  `/Applications/Nova Terminal.app` with the repaired tool.
+- Idle stack use is now flat at 22 KB (was +9.5 KB every 2.7 s). Full evidence
+  in `EVIDENCE.md`, decision in `../DECISIONS.md` DEC-007.
+
 ## Last verified behavior
 
 - `(cd examples/nova-tool && ../../bootstrap/nova build)` → built the current
@@ -111,9 +131,9 @@ is installed.
 - Live prompt capture with `NOVA_PTY_TRACE` ends in
   `U+E0B0 ESC[0m OSC 0;nova-term BEL space ESC[K`; the parsed row ends at
   U+E0B0 with the cursor in the following cell and no stray `K`.
-- `sh examples/nova-tool/tests/codegen.sh` → passed 259, failed 0, including
-  the field index-write fixture (exit 9) and the `char_code` round-trip in
-  `codegen-builtins.nova` (exit 5).
+- `sh examples/nova-tool/tests/codegen.sh` → passed 264, failed 0, including
+  the field index-write fixture (exit 9), the `char_code` round-trip in
+  `codegen-builtins.nova` (exit 5) and the entry-block slot guard.
 - `sh examples/nova-tool/tests/sema-ast.sh` → passed 39, failed 0.
 - `sh examples/nova-tool/tests/diff-errors.sh` → 27 fixtures matched, 0
   mismatched.
@@ -124,6 +144,13 @@ is installed.
   `NovaTerminal.icns`.
 - Captured frames: `/tmp/nova-term-live.png` (startup) and
   `/tmp/nova-term-live2.png` (after `wait 1800`).
+- 2026-11-27: `nova-term.ll` has 0 `alloca` in loop bodies; `NOVA_GUI_TRACE`
+  idle run stays at `stack: used=22KB`; `term-ui.sh` 47/0 and `codegen.sh`
+  264/0 after the codegen repair; installed bundle rebuilt and re-signed.
+- 2026-11-27: Nova Browser rebuilt against the repaired tool —
+  `nova-browser.ll` has 0 late allocas of 1818, `/Applications/Nova Browser.app`
+  reinstalled at 0.9.11, and 15 idle `NOVA_GUI_TRACE` samples over 60 s all read
+  `stack: used=23KB`.
 
 ## Known failures and limits
 

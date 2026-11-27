@@ -1317,6 +1317,11 @@ fn cg_slot(state: CgState) -> (CgState, String) {
     return (cg_state(state, state.lines, state.temps, next, state.locals, state.terminated, state.error), name)
 }
 
+/* Slots live in the entry block, never at the current insertion point. A
+ * declaration inside a loop body would otherwise run its alloca on every
+ * iteration and walk the stack pointer down until the thread dies; the
+ * terminal's main loop leaked 16 bytes per frame that way. Only the store
+ * that initialises the slot belongs at the declaration. */
 fn cg_entry_slot(state: CgState, ty: String) -> (CgState, String) {
     let next = state.slots + 1
     let name = "%s" + state.slots.to_string()
@@ -3420,10 +3425,9 @@ fn cg_for_range(ast: Ast, state: CgState, node: Int, iter: Int) -> CgState {
     if start.ty != "i64" || end.ty != "i64" {
         return cg_error(work, "for range bounds must be Int")
     }
-    let slot_result = cg_slot(work)
+    let slot_result = cg_entry_slot(work, "i64")
     work = slot_result.0
     let slot = slot_result.1
-    work = cg_line(work, "  " + slot + " = alloca i64")
     work = cg_line(work, "  store i64 " + start.value + ", ptr " + slot)
     let base = work.locals.len()
     var locals = work.locals
@@ -3482,20 +3486,17 @@ fn cg_for_range(ast: Ast, state: CgState, node: Int, iter: Int) -> CgState {
 
 fn cg_for_array(ast: Ast, state: CgState, node: Int, list: CgVal, elem: String, len: Int) -> CgState {
     let elem_ty = cg_llvm_type_in(state.structs, state.enums, elem)
-    let array_slot_result = cg_slot(state)
+    let array_slot_result = cg_entry_slot(state, list.ty)
     var work = array_slot_result.0
     let array_slot = array_slot_result.1
-    work = cg_line(work, "  " + array_slot + " = alloca " + list.ty)
     work = cg_line(work, "  store " + list.ty + " " + list.value + ", ptr " + array_slot)
-    let index_slot_result = cg_slot(work)
+    let index_slot_result = cg_entry_slot(work, "i64")
     work = index_slot_result.0
     let index_slot = index_slot_result.1
-    work = cg_line(work, "  " + index_slot + " = alloca i64")
     work = cg_line(work, "  store i64 0, ptr " + index_slot)
-    let var_slot_result = cg_slot(work)
+    let var_slot_result = cg_entry_slot(work, elem_ty)
     work = var_slot_result.0
     let var_slot = var_slot_result.1
-    work = cg_line(work, "  " + var_slot + " = alloca " + elem_ty)
     let base = work.locals.len()
     var locals = work.locals
     locals.push(CgLocal { name: ast.nodes[node].text, ty: elem_ty, slot: var_slot, value: "", mutable: false, elem: "", source: elem })
@@ -3562,20 +3563,17 @@ fn cg_for_array(ast: Ast, state: CgState, node: Int, list: CgVal, elem: String, 
 
 fn cg_for_slice(ast: Ast, state: CgState, node: Int, list: CgVal, elem: String) -> CgState {
     let elem_ty = cg_llvm_type_in(state.structs, state.enums, elem)
-    let slice_slot_result = cg_slot(state)
+    let slice_slot_result = cg_entry_slot(state, "%nova.slice")
     var work = slice_slot_result.0
     let slice_slot = slice_slot_result.1
-    work = cg_line(work, "  " + slice_slot + " = alloca %nova.slice")
     work = cg_line(work, "  store %nova.slice " + list.value + ", ptr " + slice_slot)
-    let index_slot_result = cg_slot(work)
+    let index_slot_result = cg_entry_slot(work, "i64")
     work = index_slot_result.0
     let index_slot = index_slot_result.1
-    work = cg_line(work, "  " + index_slot + " = alloca i64")
     work = cg_line(work, "  store i64 0, ptr " + index_slot)
-    let var_slot_result = cg_slot(work)
+    let var_slot_result = cg_entry_slot(work, elem_ty)
     work = var_slot_result.0
     let var_slot = var_slot_result.1
-    work = cg_line(work, "  " + var_slot + " = alloca " + elem_ty)
     let base = work.locals.len()
     var locals = work.locals
     locals.push(CgLocal { name: ast.nodes[node].text, ty: elem_ty, slot: var_slot, value: "", mutable: false, elem: "", source: elem })
@@ -3680,20 +3678,17 @@ fn cg_for_list(ast: Ast, state: CgState, node: Int, iter: Int) -> CgState {
     let size_result = cg_elem_size(work, list.elem)
     work = size_result.0
     let elem_size = size_result.1
-    let list_slot_result = cg_slot(work)
+    let list_slot_result = cg_entry_slot(work, "%nova.list")
     work = list_slot_result.0
     let list_slot = list_slot_result.1
-    work = cg_line(work, "  " + list_slot + " = alloca %nova.list")
     work = cg_line(work, "  store %nova.list " + list.value + ", ptr " + list_slot)
-    let index_slot_result = cg_slot(work)
+    let index_slot_result = cg_entry_slot(work, "i64")
     work = index_slot_result.0
     let index_slot = index_slot_result.1
-    work = cg_line(work, "  " + index_slot + " = alloca i64")
     work = cg_line(work, "  store i64 0, ptr " + index_slot)
-    let var_slot_result = cg_slot(work)
+    let var_slot_result = cg_entry_slot(work, elem_ty)
     work = var_slot_result.0
     let var_slot = var_slot_result.1
-    work = cg_line(work, "  " + var_slot + " = alloca " + elem_ty)
     let base = work.locals.len()
     var locals = work.locals
     locals.push(CgLocal { name: ast.nodes[node].text, ty: elem_ty, slot: var_slot, value: "", mutable: false, elem: "", source: list.elem })
@@ -3826,10 +3821,9 @@ fn cg_stmt(ast: Ast, state: CgState, node: Int) -> CgState {
             work = clone_result.0
             init_value = clone_result.1
         }
-        let slot_result = cg_slot(work)
+        let slot_result = cg_entry_slot(work, value.ty)
         work = slot_result.0
         let slot = slot_result.1
-        work = cg_line(work, "  " + slot + " = alloca " + value.ty)
         work = cg_line(work, "  store " + value.ty + " " + init_value + ", ptr " + slot)
         var locals = work.locals
         locals.push(CgLocal { name: item.text, ty: value.ty, slot: slot, value: "", mutable: true, elem: elem, source: value_source })
@@ -4477,10 +4471,9 @@ fn cg_try(ast: Ast, state: CgState, node: Int) -> CgVal {
     if option_inner.len() == 0 && (result_ok.len() == 0 || result_err.len() == 0) {
         return cg_val(cg_error(work, "? requires an Option or Result"), "0")
     }
-    let slot_result = cg_slot(work)
+    let slot_result = cg_entry_slot(work, operand.ty)
     work = slot_result.0
     let slot = slot_result.1
-    work = cg_line(work, "  " + slot + " = alloca " + operand.ty)
     work = cg_line(work, "  store " + operand.ty + " " + operand.value + ", ptr " + slot)
     let loaded_result = cg_temp(work)
     work = loaded_result.0
@@ -4549,10 +4542,9 @@ fn cg_match(ast: Ast, state: CgState, node: Int) -> CgVal {
     if scrut.ty != "i64" && scrut.ty != "i1" && scrut.ty != "%nova.string" && enum_index < 0 && !option_match && !result_match {
         return cg_val(cg_error(work, "match supports Int, Bool, String, Option, Result or enum scrutinees"), "0")
     }
-    let slot_result = cg_slot(work)
+    let slot_result = cg_entry_slot(work, scrut.ty)
     work = slot_result.0
     let slot = slot_result.1
-    work = cg_line(work, "  " + slot + " = alloca " + scrut.ty)
     work = cg_line(work, "  store " + scrut.ty + " " + scrut.value + ", ptr " + slot)
     let arm_count = item.count - 1
     if arm_count == 0 {

@@ -1,0 +1,43 @@
+// Regression fixture for DEC-007 (engineering/continuation/DECISIONS.md): a
+// slot declared inside a loop is allocated once, in the function entry block.
+// Before that repair `alloca` was emitted at the declaration, so every
+// iteration of Nova Terminal's main loop leaked 16 bytes of stack until the
+// main thread died inside CoreText after ~37 minutes.
+//
+// Keep every shape that leak came from: `var` in `while`, `var` in an `if`
+// inside a loop, `var` and `match` in `for`, and aggregate temporaries.
+fn scan(limit: Int) -> Int {
+    var total = 0
+    var i = 0
+    while i < limit {
+        var step = i * 2
+        if step > 6 {
+            var capped = 6
+            total = total + capped
+        } else {
+            total = total + step
+        }
+        i = i + 1
+    }
+    for n in 0..limit {
+        var doubled = n * 2
+        match doubled {
+            0 => {
+                total = total + 1
+            }
+            _ => {
+                total = total + 0
+            }
+        }
+    }
+    let xs = [1, 2, 3]
+    for n in 0..limit {
+        var seen = xs[0] + n
+        total = total + seen - seen
+    }
+    return total
+}
+
+fn main() -> Int {
+    return scan(5)
+}

@@ -35,7 +35,7 @@ All entries are from this working tree on 2026-11-26, macOS ARM64.
 | `(cd examples/nova-tool && ../../bootstrap/nova build)` | PASS: built `examples/nova-tool/target/nova/nova-tool` |
 | `(cd examples/nova-term && ../../examples/nova-tool/target/nova/nova-tool build)` | PASS: built `target/nova/nova-term` |
 | `sh examples/nova-term/tests/term-ui.sh` | PASS: `passed 47, failed 0` (mouse, replies, alt-view, default-home and earlier parser cases) |
-| `sh examples/nova-tool/tests/codegen.sh` | PASS: `passed 259, failed 0` (adds `char_code`) |
+| `sh examples/nova-tool/tests/codegen.sh` | PASS: `passed 264, failed 0` (adds `char_code` and the entry-block slot guard) |
 | `sh examples/nova-tool/tests/sema-ast.sh` | PASS: `passed 39, failed 0` |
 | `sh examples/nova-tool/tests/diff-errors.sh` | PASS: 27 fixtures matched, 0 mismatched |
 | `(cd examples/nova-term && ../../examples/nova-tool/target/nova/nova-tool check)` | PASS: `Checked …/src/main.nova: no errors` |
@@ -142,6 +142,67 @@ UI slice (2026-11-26):
   in it.
 - The app no longer repaints on every idle event-loop tick; `needs_draw` is
   set by pty bytes, input, resize and selection.
+
+## Stack-exhaustion crash (2026-11-27)
+
+Report `nova-term-2026-11-27-005927.ips`: `EXC_BAD_ACCESS` / `SIGSEGV`,
+`KERN_PROTECTION_FAILURE` at `0x16b037fe0`, 32 bytes below the bottom of the
+main thread's 8 MB stack, while CoreText drew glyphs for `nova_gui_text_fmt`.
+The fault was the first write after the stack pointer had already walked out of
+its region, not a bad text argument.
+
+Cause: `libraries/nova-codegen/src/llvm.nova` emitted `alloca` at the current
+insertion point. `var handled = 0` / `var running = true` in the app's main
+loop, and parser locals in `tm_feed`'s byte switch, therefore allocated a fresh
+slot on every iteration. Nothing reclaimed them, so an idle terminal lost stack
+continuously and died during a later draw.
+
+| Measurement (`NOVA_GUI_TRACE`, idle) | Before | After |
+|---|---|---|
+| stack used over 16–20 s | 31 → 87 KB, +9.5 KB per 2.7 s | 22 KB, flat |
+| projected life of 8176 KB | ~37 min (crash report: launch 00:15, death 00:59) | unbounded |
+| `alloca` inside loop bodies in `nova-term.ll` | 74 in 17 functions | 0 |
+
+Repair: all slots use `cg_entry_slot` (entry block); `cg_for_range`,
+`cg_for_array`, `cg_for_slice`, `cg_for_list`, `cg_var`, `cg_try` and
+`cg_match` no longer emit an `alloca` where they are reached. Total alloca
+count is unchanged (683), only their placement moved.
+
+### Regression guard
+
+`examples/nova-tool/tests/codegen-loop-slots.nova` declares slots in every shape
+that leaked: `var` in `while`, `var` in an `if` inside a loop, `var` and `match`
+in `for`, and a list temporary in a loop. `codegen.sh` then fails if any
+`alloca` appears after a function's first block label — the entry block is the
+only unlabelled block — and a hand-written `.ll` containing a late `alloca`
+proves the check fires instead of passing vacuously.
+
+| Command | Result |
+|---|---|
+| `(cd examples/nova-tool && ../../bootstrap/nova build)` | PASS: built the current tool with the repair |
+| `(cd examples/nova-term && ../../examples/nova-tool/target/nova/nova-tool build)` | PASS: built `target/nova/nova-term`; `nova-term.ll` has 0 loop-body allocas |
+| idle run, `NOVA_GUI_TRACE` | PASS: `stack: used=22KB` unchanged across every sample (was +9.5 KB/2.7 s) |
+| `sh examples/nova-term/tests/term-ui.sh` | PASS: `passed 47, failed 0` |
+| `sh examples/nova-tool/tests/codegen.sh` | PASS: `passed 264, failed 0` (259 before the guard) |
+| `sh examples/nova-term/install-macos.sh` | PASS: reinstalled `/Applications/Nova Terminal.app`, ad-hoc signed |
+| installed binary, idle run with `NOVA_GUI_TRACE` | PASS: `stack: used=22KB`, flat |
+
+### The same defect in Nova Browser
+
+`~/Library/Logs/DiagnosticReports/nova-browser-2026-11-26-032901.ips`
+("Thread stack size exceeded", fault 80 bytes below the stack) is the same bug;
+see `../browser/BLOCKERS.md`. Rebuilt against the repaired tool:
+
+| Command | Result |
+|---|---|
+| `(cd browser && ../examples/nova-tool/target/nova/nova-tool build)` | PASS: built `target/nova/nova-browser` |
+| IR scan of `browser/target/nova/nova-browser.ll` | PASS: 0 `alloca` after a function's first block label, 1818 allocas total |
+| `sh browser/scripts/install-macos.sh` | PASS: installed `/Applications/Nova Browser.app` 0.9.11, ad-hoc signed, `codesign --verify --strict` ok |
+| installed binary, 60 s idle with `NOVA_GUI_TRACE` | PASS: 15 samples, all `stack: used=23KB` |
+| `sh browser/tests/address.sh` | PASS: `failures=0` |
+
+Not verified: a 40-minute-plus live session (the leak is measured as zero, not
+waited out), and the full Browser suite rather than the address slice.
 
 ## Not verified
 

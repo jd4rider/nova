@@ -12,24 +12,33 @@ Japanese/Chinese/Korean input source, its candidate window and its key handling
 with such an input source and confirm the composition appears under the caret
 with its rule, then commits.
 
-## The original stack-overflow crash still has no repro
+## The original stack-overflow crash: fixed (2026-11-27)
 
 `~/Library/Logs/DiagnosticReports/nova-browser-2026-11-26-032901.ips` is
-`EXC_BAD_ACCESS` / "Thread stack size exceeded" on the main thread. The faulting
-address is 80 bytes below the bottom of the 8 MB stack, yet the backtrace is
-only `mach_msg2_internal -> … -> nova_gui_pump -> nova_user_119 -> main`: the
-stack pointer arrived at `mach_msg` already exhausted, with no recursion visible.
-A scan of all 768 generated functions finds no frame reservation above 64 KB
-(so not a single huge frame). That shape points at a stack-pointer imbalance
-somewhere earlier in the run, not at unbounded recursion in the loop.
+`EXC_BAD_ACCESS` / "Thread stack size exceeded" on the main thread, with the
+faulting address 80 bytes below the bottom of the 8 MB stack and only
+`mach_msg2_internal -> … -> nova_gui_pump -> nova_user_119 -> main` visible. No
+single frame was large and the steady-state loop measured 13 KB, which is the
+shape of a slow leak rather than recursion.
 
-0.7.0 adds headroom measurement (`nova_gui_stack_used/peak/headroom`, reported
-by `NOVA_BROWSER_BENCH`): 120 frames peak at 13 KB and 2000 frames peak at the
-same 13 KB of 8176 KB, so the steady-state loop is shallow and does not leak
-stack. The original run's steps are still unknown; the 300-pump trace line now
-records used/headroom so a repeat leaves a number behind instead of only a
-crash report. Its lasting effect (the crash-restore alert blocking launches) was
-fixed in 0.6.1.
+The cause was in codegen, not the browser: `alloca` was emitted at the current
+insertion point, so a `var` declared inside a loop allocated a fresh stack slot
+on every iteration. Nova Terminal died of exactly that on 2026-11-27 — 16 bytes
+per main-loop frame, 8 MB exhausted in ~37 minutes, fault inside CoreText during
+a draw. It is fixed in `libraries/nova-codegen/src/llvm.nova` (all slots now
+live in the entry block; see `../DECISIONS.md` DEC-007 and
+`../terminal/EVIDENCE.md`). The idle terminal's stack use went from +9.5 KB per
+2.7 s to flat at 22 KB.
+
+Fixed and verified in Browser on 2026-11-27. Rebuilt with the repaired tool:
+`browser/target/nova/nova-browser.ll` has 0 `alloca` after any function's first
+block label (1818 total), `sh browser/scripts/install-macos.sh` installed 0.9.11
+at `/Applications/Nova Browser.app`, and the installed binary ran 60 s under
+`NOVA_GUI_TRACE` with all 15 stack samples at `used=23KB` of 8176 KB. The
+invariant is now a compiler-suite assertion (`codegen-loop-slots.nova` in
+`examples/nova-tool/tests/codegen.sh`), so a late `alloca` fails the build
+before it can reach either app. A 40-minute live session is still unmeasured:
+the leak reads as zero rather than being waited out.
 
 A second report at 03:40 is a **different** crash and is understood:
 `-[NovaGuiView validAttributesForMarkedText]: unrecognized selector`, raised
@@ -46,10 +55,12 @@ installed 0.7.0 binary contains the selector and launches cleanly; no
 
 ## Technical
 
-- **BROWSER-COMP-01 — qualified imported struct signatures.** Cross-module
-  struct parameters/returns are rejected by codegen. Current browser code uses
-  primitive accessors; a minimal compiler fix is needed for a typed engine
-  contract.
+- **BROWSER-COMP-01 — qualified imported struct signatures.** RESOLVED
+  2026-11-26. Codegen now strips the module qualifier at type lookup
+  (`cg_unqualified`) and stores declared names in signatures; `scene-gui`
+  builds with `gui.Theme`/`gui.Event` parameters and the codegen suite is
+  255/0. Browser code still uses primitive accessors; migrating to the typed
+  engine contract is now possible and tracked as ordinary work, not a blocker.
 - **BROWSER-COMP-03 — one module-level namespace.** Every top-level function
   from every imported module shares one namespace: `history.slice_chars`
   collided with `address.slice_chars`, and a module function named `join` or a

@@ -49,3 +49,19 @@
 - Status: accepted.
 - Decision: status `VERIFIED` requires a command, result and commit/evidence
   reference. A green build alone is not semantic correctness.
+
+## DEC-007 — Slots are allocated once, in the entry block
+- Status: accepted (2026-11-27).
+- Decision: `alloca` for locals, loop iterators, `match`/`?` temporaries and
+  aggregate scratch space goes through `cg_entry_slot` and lands in the
+  function's entry block. Only the `store` that initialises a binding stays at
+  the declaration point.
+- Alternatives: `llvm.stacksave`/`stackrestore` around loop bodies; rejected as
+  more IR and more room for an unbalanced pair. Leaving allocas in place and
+  documenting the leak; rejected because it kills long-running apps.
+- Consequence: an `alloca` in a loop body is now a codegen bug by definition.
+  It was the cause of the Nova Terminal SIGSEGV: 16 bytes per main-loop
+  iteration exhausted the 8 MB stack in ~37 minutes (see
+  `terminal/EVIDENCE.md`). `codegen.sh` enforces it —
+  `codegen-loop-slots.nova` declares slots inside loops and the suite fails if
+  any `alloca` follows a function's first block label.
