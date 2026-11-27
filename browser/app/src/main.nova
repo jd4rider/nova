@@ -5608,6 +5608,9 @@ fn auto_close(session: Session, theme: Chrome, address: Address, store: Store) {
         println("startup: mode=${store.startup} tabs=${session.tabs.len()} first=${first}")
     }
     speech.use_engine(stored_engine(store))
+    // Tell the page which appearance to prefer before it loads, so a site's
+    // dark styles are chosen on the first paint rather than after a switch.
+    engine.apply_page_appearance(!theme_is_light(resolved_theme_name(store)))
     // A headless run starts at the URL it was given, the same one the window
     // would open.
     let compiled_rules = engine.blocklist(blocklist_rules())
@@ -5616,6 +5619,11 @@ fn auto_close(session: Session, theme: Chrome, address: Address, store: Store) {
         engine.navigate(handle, initial)
     }
     let final_state = engine.wait(handle, 8000)
+    if gui.env("NOVA_BROWSER_DARK_CHECK") == "1" {
+        let media = engine.run_js(handle, "window.matchMedia('(prefers-color-scheme: dark)').matches ? 1 : 0")
+        let theme_name = resolved_theme_name(store)
+        println("dark: theme=${theme_name} light=${flag(theme_is_light(theme_name))} media=${media}")
+    }
     ensure_favicon(store, engine.page_url(handle), engine.icon_url(handle))
     if gui.env("NOVA_BROWSER_BLOCK_CHECK") == "1" {
         let tracker = engine.run_js(handle, "typeof window.__novaTracker")
@@ -6154,6 +6162,7 @@ fn main() {
 
     var theme = load_theme(store)
     gui.set_appearance(theme_is_light(resolved_theme_name(store)))
+    engine.apply_page_appearance(!theme_is_light(resolved_theme_name(store)))
     let settings_text = gui.read(store.settings_path)
     let layout_setting = library.setting_value(settings_text, "layout")
     var vertical = layout_setting == "vertical" || layout_setting == "rail"
@@ -6443,6 +6452,7 @@ fn main() {
             drawn_theme = store.theme
             let now_name = resolved_theme_name(store)
             gui.set_appearance(theme_is_light(now_name))
+            engine.apply_page_appearance(!theme_is_light(now_name))
         }
 
         let signature = session_signature(session)

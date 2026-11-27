@@ -235,6 +235,14 @@ extern "C" fn nova_webview_find_state(handle: Int) -> Int
 extern "C" fn nova_webview_set_zoom(handle: Int, percent: Int)
 extern "C" fn nova_webview_zoom(handle: Int) -> Int
 
+// Tells every page which appearance to prefer, so `prefers-color-scheme`
+// follows Nova's chrome instead of the system setting.
+extern "C" fn nova_webview_set_appearance_all(dark: Int)
+
+fn wv_set_appearance(dark: Bool) {
+    nova_webview_set_appearance_all(if dark { 1 } else { 0 })
+}
+
 fn wv_find(handle: Int, query: String, forward: Bool) {
     nova_webview_find(handle, query, if forward { 1 } else { 0 })
 }

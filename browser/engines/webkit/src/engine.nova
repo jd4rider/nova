@@ -245,3 +245,9 @@ fn set_zoom(handle: Int, percent: Int) {
 fn zoom(handle: Int) -> Int {
     return view.wv_zoom(handle)
 }
+
+// Pages see `prefers-color-scheme` from the web view's appearance, applied to
+// every tab at once when the chrome theme changes.
+fn apply_page_appearance(dark: Bool) {
+    view.wv_set_appearance(dark)
+}

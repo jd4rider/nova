@@ -756,6 +756,19 @@ int64_t nova_webview_zoom(int64_t handle) {
     return 100;
 }
 
+/* Pages follow the chrome's appearance through prefers-color-scheme. Setting
+ * it on each WKWebView keeps that true even before a view is in a window (the
+ * headless harness creates offscreen views). */
+void nova_webview_set_appearance_all(int64_t dark) {
+    if (!nova_webviews) return;
+    NSAppearanceName name = dark ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua;
+    NSAppearance *appearance = [NSAppearance appearanceNamed:name];
+    for (NSNumber *key in nova_webviews) {
+        NovaWebViewEntry *entry = nova_webviews[key];
+        entry.webView.appearance = appearance;
+    }
+}
+
 void nova_webview_destroy(int64_t handle) {
     NovaWebViewEntry *entry = nova_webview_entry(handle);
     if (!entry) return;

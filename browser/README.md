@@ -114,6 +114,11 @@ blinking caret, and the loading bar follows WebKit's own estimate.
 These chords are forwarded from page focus through the same narrow host queue
 as Cmd+L; nothing is executed inside the page.
 
+Pages are also told which appearance to prefer. A dark theme (Gruvbox,
+Midnight, Nova Dark) makes `prefers-color-scheme: dark` true, while Light and
+Solarized make it false, so a site's own dark styles come up with the chrome
+theme rather than with the macOS system setting.
+
 ## Install / update
 
 ```sh

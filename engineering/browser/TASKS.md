@@ -164,6 +164,13 @@ Each task needs a reproducible acceptance check before it is marked done.
   re-applied on navigation) and publishes the find query and close control to
   the accessibility tree; the same test relaunches the profile and requires
   `zoom: host=127.0.0.1 applied=150 stored=150` plus both AX names (11 PASS).
+- **WB-03.014 — Page appearance.** DONE in 0.9.10. `nova_webview_set_appearance_all`
+  sets every tab's `WKWebView.appearance` from the chrome theme, before the
+  first load and on every theme change, so pages answer
+  `prefers-color-scheme: dark` for the dark themes and `light` for Light and
+  Solarized instead of following the macOS system setting. Evidence:
+  `browser/tests/dark.sh` loads a loopback page and requires
+  `media=1` under Gruvbox and `media=0` under Light.
 - **WB-04.002 — Downloads.** DONE. `WKDownloadDelegate` registry, attachment/
   MIME response policy, Nova shelf with cancel/reveal, `--download`, loopback
   test writing a real file. 0.7.3 adds pause/resume: clicking a running row

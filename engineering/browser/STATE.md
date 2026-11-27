@@ -3,11 +3,11 @@
 Updated: 2026-11-27
 Branch: `main`
 Last known good compiler checkpoint: `cfa00e3` (before browser work)
-Browser: **0.9.9 installed at `/Applications/Nova Browser.app`**
-Browser working tree: clean after the 0.9.9 commit; see `git status`
+Browser: **0.9.10 installed at `/Applications/Nova Browser.app`**
+Browser working tree: clean after the 0.9.10 commit; see `git status`
 Active gate: G0 WebKit; G1 WebCore not started
-Active task: **WB-03.013 — find in page and zoom** (0.9.9 adds per-host zoom
-memory and the find bar's field/close control to the accessibility tree)
+Active task: **WB-03.014 — page appearance** (0.9.10: pages request dark or
+light styles from the chrome theme, not from the macOS system setting)
 
 ## Completed
 
@@ -324,6 +324,15 @@ memory and the find bar's field/close control to the accessibility tree)
     `lsregister -f`, `--set-default-browser` reports `set=1 state=1` and
     `NSWorkspace` resolves a web URL to `Nova Browser.app`. Revert in System
     Settings → Desktop & Dock → Default web browser.
+- **0.9.10 — pages follow the chrome appearance**
+  - Every WKWebView gets the appearance the chrome theme implies, before the
+    first load and again on every theme change, so `prefers-color-scheme`
+    answers dark for Gruvbox/Midnight/Nova Dark and light for Light/Solarized
+    even when the macOS system setting is the other one.
+  - Evidence: `browser/tests/dark.sh` loads a real page over loopback and
+    requires `dark: theme=gruvbox light=0 media=1` and
+    `dark: theme=light light=1 media=0`.
+
 - **0.9.9 — per-host zoom memory, find bar in the accessibility tree**
   - Zoom now persists per host in `settings.tsv` as `zoom:<host>` and is
     re-applied on every navigation to that host; Cmd+0 stores 100%.
@@ -463,6 +472,9 @@ memory and the find bar's field/close control to the accessibility tree)
   selectors, keycaps, skin tones, flags and ZWJ sequences, but not Indic
   conjuncts, Arabic/Hebrew vowel marks or Hangul jamo; Escape/reload still have
   no automated coverage (WB-03.001.a).
+- Pages follow the chrome appearance through `prefers-color-scheme`; there is
+  no separate per-page or per-site appearance override, and a page that ignores
+  the query is not restyled.
 - Import covers bookmarks only; Chrome history is SQLite and is not imported.
   No Firefox/Safari live-profile import (Netscape HTML export works for all).
 - Downloads pause/resume only when the origin supports byte ranges and WebKit

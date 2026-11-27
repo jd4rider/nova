@@ -1337,3 +1337,24 @@ find: pass=11 fail=0
 - Regressions: accessibility 17/17 (the base chrome gained no controls).
   Not tested: zoom restored on a page reached through a redirect, and a
   VoiceOver session reading the find field by hand.
+
+## 0.9.10 — pages follow the chrome appearance
+
+- `nova_webview_set_appearance_all(dark)` sets `WKWebView.appearance` to
+  `NSAppearanceNameDarkAqua` or `Aqua` on every live tab. Nova calls it before
+  the first load, at startup and on every theme change, so `prefers-color-scheme`
+  answers from the chrome theme rather than the macOS system setting.
+- This matters for offscreen and freshly created views, which do not inherit a
+  window's appearance even when `gui.set_appearance` already set the app and
+  window.
+- Evidence: `browser/tests/dark.sh` loads a loopback page and requires
+
+```
+dark: theme=gruvbox light=0 media=1
+dark: theme=light light=1 media=0
+dark: pass=2 fail=0
+```
+
+- Regressions: find 11/11, accessibility 17/17.
+  Not tested: switching the macOS system appearance while Nova runs, and a
+  page that only checks the query at load time.
