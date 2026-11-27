@@ -145,6 +145,68 @@ assert_has composed-typing
 SCRIPT
 run_case text-event "$WORK/text-event.txt"
 
+# Mouse reporting: mode 1000 sends press/release, 1002 adds drag, 1003
+# adds bare motion; 1006 switches from X10 bytes to the SGR text protocol.
+cat > "$WORK/mouse-report.txt" <<'SCRIPT'
+feed <E>[?1000h<E>[?1006h
+assert_mouse_hex 2 3 0 0 0 0 1b5b3c303b333b344d
+assert_mouse_hex 2 3 0 1 0 0 1b5b3c303b333b346d
+assert_mouse_hex 2 3 64 0 0 0 1b5b3c36343b333b344d
+assert_mouse_hex 2 3 0 0 0 2 1b5b3c343b333b344d
+assert_mouse_hex 2 3 0 0 0 8 1b5b3c31363b333b344d
+assert_mouse_hex 2 3 0 0 1 0 -
+feed <E>[?1002h
+assert_mouse_hex 2 3 0 0 1 0 1b5b3c33323b333b344d
+feed <E>[?1006l
+assert_mouse_hex 2 3 0 0 0 0 1b5b4d202324
+assert_mouse_hex 2 3 0 1 0 0 1b5b4d232324
+assert_mouse_hex 2 3 64 0 0 0 1b5b4d602324
+feed <E>[?1003h<E>[?1006h
+assert_mouse_hex 5 1 none 0 1 0 1b5b3c33353b363b324d
+feed <E>[?1003l
+assert_mouse_hex 5 1 none 0 1 0 -
+SCRIPT
+run_case mouse-report "$WORK/mouse-report.txt"
+
+# Entering a full-screen program must start at the top of the *alternate*
+# screen, not at a scroll position left over from the shell. Leaving it must
+# also drop any mouse mode the program forgot to disable.
+{
+    printf 'wait 900\n'
+    printf 'feed <E>[2J\n'
+    i=1
+    while [ "$i" -le 35 ]; do
+        printf 'feed line%s<N>\n' "$i"
+        i=$((i + 1))
+    done
+    printf 'scroll 3\n'
+    printf 'assert_view 3\n'
+    printf 'feed <E>[?1049h\n'
+    printf 'assert_view 0\n'
+    printf 'feed X\n'
+    printf 'assert_cell 0 0 X\n'
+    printf 'feed <E>[?1000h<E>[?1049l\n'
+    printf 'assert_mouse_hex 0 0 0 0 0 0 -\n'
+} > "$WORK/alt-view.txt"
+run_case alt-view "$WORK/alt-view.txt"
+
+# vim/less/freebuff probe the terminal before drawing. Without a reply they
+# can leave an alternate screen blank or lay out against the wrong size.
+cat > "$WORK/replies.txt" <<'SCRIPT'
+feed <E>[2J<E>[H
+feed <E>[6n
+assert_reply_hex 1b5b313b3152
+feed <E>[5n
+assert_reply_hex 1b5b306e
+feed <E>[c
+assert_reply_hex 1b5b3f313b3263
+feed <E>[>c
+assert_reply_hex 1b5b3e303b313b3063
+feed <E>[18t
+assert_reply_has 8;
+SCRIPT
+run_case replies "$WORK/replies.txt"
+
 echo
 echo "passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]

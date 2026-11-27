@@ -16,8 +16,10 @@
 //   term.tm_feed(t, gui.pty_poll(0))
 //   term.tm_draw(t, 8, 8, 1200, 600, 12, term.tm_palette_dark())
 //
-// Not implemented: mouse reporting, DSR replies (ESC[6n), character sets other
-// than UTF-8, and reflow on resize — a narrower grid wraps new output only.
+// Mouse reporting covers left-button press/release, drag and wheel in X10 or
+// SGR (1006) encoding. DSR/DA and text-area-size queries are answered from a
+// reply queue. Right/middle buttons, character sets other than UTF-8, and
+// reflow on resize are not implemented yet.
 
 import "../../nova-gui/src/gui.nova" as gui
 
@@ -53,11 +55,13 @@ fn tm_i_scount() -> Int { return 25 }
 fn tm_i_mbase() -> Int { return 26 }
 fn tm_i_mlen() -> Int { return 27 }
 fn tm_i_mcount() -> Int { return 28 }
+fn tm_i_mouse() -> Int { return 29 }
+fn tm_i_mousesgr() -> Int { return 30 }
 
 // 27 is the alternate-screen base row: 0 for the main screen, `rows` for alt.
 fn tm_i_abase() -> Int { return tm_i_mlen() }
 
-fn tm_register_count() -> Int { return 29 }
+fn tm_register_count() -> Int { return 31 }
 fn tm_param_slots() -> Int { return 16 }
 
 // String registers: title, OSC payload, private marker, final byte.
@@ -66,6 +70,7 @@ fn tm_s_osc() -> Int { return 1 }
 fn tm_s_private() -> Int { return 2 }
 fn tm_s_fin() -> Int { return 3 }
 fn tm_s_pending() -> Int { return 4 }
+fn tm_s_reply() -> Int { return 5 }
 
 fn tm_reg(t: Term, index: Int) -> Int {
     /* A corrupt or stale list header must never reach the runtime's list
@@ -273,7 +278,7 @@ fn tm_new(width: Int, height: Int) -> Term {
     regs[tm_i_rows()] = r
     regs[tm_i_bottom()] = r - 1
     regs[tm_i_cursor()] = 1
-    var strs: List<String> = ["", "", "", "", ""]
+    var strs: List<String> = ["", "", "", "", "", ""]
     var marks = tm_blank_ints(tm_mark_capacity())
     var grid = tm_blank_grid(c * r)
     var saved_grid = tm_blank_grid(c * r)
@@ -306,6 +311,8 @@ fn tm_resize(t: Term, width: Int, height: Int) -> Term {
     tm_set_reg(fresh, tm_i_bg(), tm_reg(t, tm_i_bg()))
     tm_set_reg(fresh, tm_i_flags(), tm_reg(t, tm_i_flags()))
     tm_set_reg(fresh, tm_i_cursor(), tm_reg(t, tm_i_cursor()))
+    tm_set_reg(fresh, tm_i_mouse(), tm_reg(t, tm_i_mouse()))
+    tm_set_reg(fresh, tm_i_mousesgr(), tm_reg(t, tm_i_mousesgr()))
     tm_set_str(fresh, tm_s_title(), tm_str_reg(t, tm_s_title()))
     tm_set_reg(fresh, tm_i_scount(), tm_reg(t, tm_i_scount()))
     tm_set_reg(fresh, tm_i_shead(), tm_reg(t, tm_i_shead()))
@@ -373,7 +380,7 @@ fn tm_put_cell(t: Term, row: Int, col: Int, value: Cell) {
 }
 
 fn tm_clear_physical(t: Term, slot: Int) {
-    let base = slot * tm_cols(t)
+    let base = (tm_reg(t, tm_i_abase()) + slot) * tm_cols(t)
     var col = 0
     while col < tm_cols(t) && base + col < t.cells.len() {
         t.cells[base + col] = tm_blank_cell()
@@ -894,6 +901,7 @@ fn tm_alt_enter(t: Term) {
     tm_set_reg(t, tm_i_head(), 0)
     tm_set_reg(t, tm_i_cx(), 0)
     tm_set_reg(t, tm_i_cy(), 0)
+    tm_set_reg(t, tm_i_view(), 0)
     tm_set_reg(t, tm_i_alt(), 1)
     tm_set_reg(t, tm_i_top(), 0)
     tm_set_reg(t, tm_i_bottom(), rows - 1)
@@ -910,7 +918,12 @@ fn tm_alt_leave(t: Term) {
     tm_set_reg(t, tm_i_alt(), 0)
     tm_set_reg(t, tm_i_top(), 0)
     tm_set_reg(t, tm_i_bottom(), tm_rows(t) - 1)
+    tm_set_reg(t, tm_i_view(), 0)
     tm_set_reg(t, tm_i_wrap(), 0)
+    /* A full-screen program that exits before disabling mouse tracking must
+     * not leave the shell receiving mouse reports. */
+    tm_set_reg(t, tm_i_mouse(), 0)
+    tm_set_reg(t, tm_i_mousesgr(), 0)
 }
 
 fn tm_rstrip(line: String) -> String {
@@ -970,6 +983,10 @@ fn tm_selection_text(t: Term, r0: Int, c0: Int, r1: Int, c1: Int) -> String {
     return out
 }
 
+
+fn tm_append_reply(t: Term, text: String) {
+    tm_set_str(t, tm_s_reply(), tm_str_reg(t, tm_s_reply()) + text)
+}
 
 fn tm_dispatch_csi(t: Term) {
     let fin = tm_str_reg(t, tm_s_fin())
@@ -1045,11 +1062,55 @@ fn tm_dispatch_csi(t: Term) {
         tm_set_reg(t, tm_i_cx(), tm_reg(t, tm_i_sx()))
         tm_set_reg(t, tm_i_cy(), tm_reg(t, tm_i_sy()))
     }
+    if fin == "n" {
+        let private = tm_str_reg(t, tm_s_private())
+        let param = tm_param_raw(t, 0)
+        if private == "" && param == 5 {
+            tm_append_reply(t, tm_escape() + "[0n")
+        }
+        if (private == "" || private == "?") && param == 6 {
+            let row = tm_reg(t, tm_i_cy()) + 1
+            let col = tm_reg(t, tm_i_cx()) + 1
+            if private == "?" {
+                tm_append_reply(t, tm_escape() + "[?" + row.to_string() + ";" + col.to_string() + "R")
+            } else {
+                tm_append_reply(t, tm_escape() + "[" + row.to_string() + ";" + col.to_string() + "R")
+            }
+        }
+    }
+    if fin == "c" {
+        if tm_str_reg(t, tm_s_private()) == ">" {
+            tm_append_reply(t, tm_escape() + "[>0;1;0c")
+        } else {
+            tm_append_reply(t, tm_escape() + "[?1;2c")
+        }
+    }
+    if fin == "t" {
+        let param = tm_param_raw(t, 0)
+        if param == 18 || param == 0 {
+            tm_append_reply(t, tm_escape() + "[8;" + tm_rows(t).to_string() + ";" + tm_cols(t).to_string() + "t")
+        }
+    }
     if fin == "h" || fin == "l" {
         let on = fin == "h"
+        let private = tm_str_reg(t, tm_s_private()) == "?"
         var i = 0
         while i < tm_reg(t, tm_i_pcount()) {
             let mode = tm_param_raw(t, i)
+            if private && (mode == 1000 || mode == 1002 || mode == 1003) {
+                if on {
+                    tm_set_reg(t, tm_i_mouse(), mode)
+                } else if tm_reg(t, tm_i_mouse()) == mode {
+                    tm_set_reg(t, tm_i_mouse(), 0)
+                }
+            }
+            if private && mode == 1006 {
+                if on {
+                    tm_set_reg(t, tm_i_mousesgr(), 1)
+                } else {
+                    tm_set_reg(t, tm_i_mousesgr(), 0)
+                }
+            }
             if mode == 25 {
                 tm_set_reg(t, tm_i_cursor(), 1)
                 if !on {
@@ -1695,6 +1756,95 @@ fn tm_key_text(code: Int, mods: Int) -> String {
         }
     }
     return tm_code_of_text(code)
+}
+
+// Mouse modes 1000 (press/release), 1002 (button drag) and 1003 (any
+// motion). The host reports the left button today; SGR 1006 is preferred and
+// X10 is the fallback for older clients.
+fn tm_mouse_mode(t: Term) -> Int {
+    return tm_reg(t, tm_i_mouse())
+}
+
+fn tm_mouse_enabled(t: Term) -> Bool {
+    return tm_mouse_mode(t) != 0
+}
+
+fn tm_mouse_sgr_on(t: Term) -> Bool {
+    return tm_reg(t, tm_i_mousesgr()) == 1
+}
+
+fn tm_mouse_event_code(button: Int, release: Bool, motion: Bool, mods: Int) -> Int {
+    var code = button
+    if code < 0 {
+        code = 3
+    }
+    if motion {
+        code = code + 32
+    }
+    if mods / 2 % 2 == 1 {
+        code = code + 4
+    }
+    if mods / 4 % 2 == 1 {
+        code = code + 8
+    }
+    if mods / 8 % 2 == 1 {
+        code = code + 16
+    }
+    return code
+}
+
+fn tm_mouse_text(t: Term, x: Int, y: Int, button: Int, release: Bool, motion: Bool, mods: Int) -> String {
+    let mode = tm_mouse_mode(t)
+    if mode == 0 || x < 0 || y < 0 {
+        return ""
+    }
+    if motion && mode == 1000 {
+        return ""
+    }
+    if motion && mode == 1002 && button < 0 {
+        return ""
+    }
+    if !tm_mouse_sgr_on(t) {
+        return ""
+    }
+    let code = tm_mouse_event_code(button, release, motion, mods)
+    var final = "M"
+    if release {
+        final = "m"
+    }
+    return tm_escape() + "[<" + code.to_string() + ";" + (x + 1).to_string() + ";" + (y + 1).to_string() + final
+}
+
+// Bytes rather than a String because an X10 report can contain bytes above
+// 127 that are not valid UTF-8. Callers write each byte with pty_write.
+fn tm_mouse_bytes(t: Term, x: Int, y: Int, button: Int, release: Bool, motion: Bool, mods: Int) -> List<Int> {
+    let mode = tm_mouse_mode(t)
+    if mode == 0 || x < 0 || y < 0 {
+        return []
+    }
+    if motion && mode == 1000 {
+        return []
+    }
+    if motion && mode == 1002 && button < 0 {
+        return []
+    }
+    if tm_mouse_sgr_on(t) {
+        return tm_mouse_text(t, x, y, button, release, motion, mods).bytes()
+    }
+    if x > 222 || y > 222 {
+        return []
+    }
+    var code = tm_mouse_event_code(button, release, motion, mods)
+    if release {
+        code = 3
+    }
+    return [27, 91, 77, code + 32, x + 33, y + 33]
+}
+
+fn tm_take_reply(t: Term) -> String {
+    let reply = tm_str_reg(t, tm_s_reply())
+    tm_set_str(t, tm_s_reply(), "")
+    return reply
 }
 
 fn tm_title(t: Term) -> String {

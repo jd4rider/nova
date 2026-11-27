@@ -31,9 +31,10 @@ Stable IDs. A parent is not VERIFIED until its acceptance gate passes.
   and close. `wait 1200; type pwd; enter` prints the working directory in the
   scripted run, and System Events typed a real command into the installed app
   (`touch /tmp/nova-typed-ok`) which created the file.
-- TERM-01.002 — Initial size, resize and exit status: **PARTIAL**. `TIOCSWINSZ`
-  is set at open and on resize with `SIGWINCH`; the reader thread reaps the
-  child and stores the status. Automated resize and status assertions are TODO.
+- TERM-01.002 — Initial size, resize and exit status: **PARTIAL**. The child
+  slave now also receives `TIOCSWINSZ`; `stty size` reports `34 133` on the
+  1120x720 test window. Resize with `SIGWINCH`, reaping and status storage are
+  present; automated resize and status assertions are TODO.
 - TERM-01.003 — Job control, Ctrl-C/Ctrl-Z, foreground groups, password
   prompts: **TODO**. No scripted evidence yet.
 - TERM-01.004 — Close vs terminate policy: **TODO**. Closing a tab sends
@@ -48,16 +49,18 @@ Stable IDs. A parent is not VERIFIED until its acceptance gate passes.
   comparing against whole-buffer parsing remains.
 - TERM-02.002 — Malformed and oversized input recovery: **TODO**. Add bounded
   OSC/DCS payload tests and unknown-sequence recovery fixtures.
-- TERM-02.003 — DCS and device replies: **TODO**. DCS is currently swallowed;
-  DSR/DA replies are absent.
+- TERM-02.003 — DCS and device replies: **PARTIAL**. DSR `5n`/`6n`, primary
+  and secondary DA, and `CSI 18t` text-area size are answered through a reply
+  queue; five fixtures pass. DCS is still swallowed and needs bounded-payload
+  handling.
 
 ## TERM-03 — Screen state
 
 - TERM-03.001 — Alternate screen preserves primary history: **VERIFIED** for
   enter/leave with `1049h`/`1049l`; the primary row survives.
-- TERM-03.002 — DEC private modes: **PARTIAL**. Cursor visibility and alternate
-  screen are handled; origin mode, autowrap toggle, application cursor/keypad,
-  bracketed paste, focus reporting and mouse modes are not.
+- TERM-03.002 — DEC private modes: **PARTIAL**. Cursor visibility, alternate
+  screen, mouse modes and bracketed-paste enable are handled; origin mode,
+  autowrap toggle, application cursor/keypad and focus reporting are not.
 - TERM-03.003 — Cursor style and saved cursor: **PARTIAL**. Coordinates are
   saved; attributes and style are not.
 
@@ -75,8 +78,10 @@ Stable IDs. A parent is not VERIFIED until its acceptance gate passes.
 
 - TERM-05.001 — Key encoding: **PARTIAL**. Arrows, Home/End, PageUp/Down,
   Delete, F-keys, Ctrl and Option are encoded; application modes are ignored.
-- TERM-05.002 — Mouse reporting: **TODO**. No X10/SGR mouse sequences are
-  emitted yet.
+- TERM-05.002 — Mouse reporting: **PARTIAL**. Modes 1000/1002/1003 and SGR
+  (`1006`) plus X10 fallback cover left press, release, drag and wheel; twelve
+  fixtures pin the bytes and modifiers. Right/middle buttons and a physical
+  host-click fixture remain TODO.
 - TERM-05.004 — Local selection and copy: **VERIFIED** for click, double-click
   word, triple-click line, drag and ⌘C; scripted assertions cover word and
   drag selection. Mouse reporting to the child is still TERM-05.002.

@@ -53,6 +53,9 @@ struct App {
     sel_c1: Int,
     selecting: Bool,
     has_sel: Bool,
+    mouse_down: Bool,
+    mouse_x: Int,
+    mouse_y: Int,
     needs_draw: Bool,
     scripting: Bool,
     quit: Bool,
@@ -244,6 +247,10 @@ fn poll(app: App) -> App {
         let chunk = gui.pty_poll(tab.slot)
         if chunk.len() > 0 {
             tab.term = vt.tm_feed(tab.term, chunk)
+            let reply = vt.tm_take_reply(tab.term)
+            if reply.len() > 0 {
+                gui.pty_write_text(tab.slot, reply)
+            }
             changed = true
             if tab.title == "shell" {
                 let named = vt.tm_title(tab.term)
@@ -784,12 +791,45 @@ fn word_bounds(app: App, row: Int, col: Int) -> (Int, Int) {
     return (start, stop)
 }
 
-fn click(app: App, mx: Int, my: Int) -> App {
-    return mouse_press(app, mx, my, 1)
+fn write_pty_bytes(slot: Int, bytes: List<Int>) {
+    var i = 0
+    while i < bytes.len() {
+        gui.pty_write(slot, bytes[i])
+        i = i + 1
+    }
 }
 
-fn mouse_press(app: App, mx: Int, my: Int, count: Int) -> App {
+fn shift_down(mods: Int) -> Bool {
+    return mods / 2 % 2 == 1
+}
+
+// Returns true when the child accepted the mouse report. With a mouse mode
+// active, a plain press belongs to the child; Shift keeps local selection.
+fn report_mouse(app: App, mx: Int, my: Int, button: Int, release: Bool, motion: Bool, mods: Int) -> Bool {
+    if app.tabs.len() == 0 || app.overlay.len() > 0 {
+        return false
+    }
+    let hit = grid_hit(app, mx, my)
+    if hit.0 < 0 {
+        return false
+    }
+    let bytes = vt.tm_mouse_bytes(app.tabs[app.active].term, hit.1, hit.0, button, release, motion, mods)
+    if bytes.len() == 0 {
+        return false
+    }
+    write_pty_bytes(app.tabs[app.active].slot, bytes)
+    return true
+}
+
+fn click(app: App, mx: Int, my: Int) -> App {
+    return mouse_press(app, mx, my, 1, 0)
+}
+
+fn mouse_press(app: App, mx: Int, my: Int, count: Int, mods: Int) -> App {
     var app = app
+    app.mouse_x = mx
+    app.mouse_y = my
+    app.mouse_down = false
     if app.overlay.len() > 0 {
         app.overlay = ""
         app.field = ""
@@ -832,6 +872,13 @@ fn mouse_press(app: App, mx: Int, my: Int, count: Int) -> App {
     }
     let row = hit.0
     let col = hit.1
+    if !shift_down(mods) && report_mouse(app, mx, my, 0, false, false, mods) {
+        app.mouse_down = true
+        app.has_sel = false
+        app.selecting = false
+        app.needs_draw = false
+        return app
+    }
     if count >= 3 {
         app.sel_r0 = row
         app.sel_c0 = 0
@@ -859,8 +906,14 @@ fn mouse_press(app: App, mx: Int, my: Int, count: Int) -> App {
     return app
 }
 
-fn drag(app: App, mx: Int, my: Int) -> App {
+fn drag(app: App, mx: Int, my: Int, mods: Int) -> App {
     var app = app
+    app.mouse_x = mx
+    app.mouse_y = my
+    if app.mouse_down {
+        report_mouse(app, mx, my, 0, false, true, mods)
+        return app
+    }
     if !app.selecting {
         return app
     }
@@ -875,8 +928,50 @@ fn drag(app: App, mx: Int, my: Int) -> App {
     return app
 }
 
-fn release(app: App) -> App {
+fn mouse_move(app: App, mx: Int, my: Int, mods: Int) -> App {
     var app = app
+    app.mouse_x = mx
+    app.mouse_y = my
+    if app.tabs.len() == 0 || app.overlay.len() > 0 {
+        return app
+    }
+    if vt.tm_mouse_mode(app.tabs[app.active].term) != 1003 {
+        return app
+    }
+    report_mouse(app, mx, my, 0 - 1, false, true, mods)
+    return app
+}
+
+fn wheel(app: App, mx: Int, my: Int, delta: Int, mods: Int) -> App {
+    var app = app
+    app.mouse_x = mx
+    app.mouse_y = my
+    if app.tabs.len() == 0 || app.overlay.len() > 0 || delta == 0 {
+        return app
+    }
+    if !shift_down(mods) && vt.tm_mouse_enabled(app.tabs[app.active].term) {
+        var button = 65
+        if delta > 0 {
+            button = 64
+        }
+        report_mouse(app, mx, my, button, false, false, mods)
+        return app
+    }
+    if vt.tm_alt_on(app.tabs[app.active].term) {
+        return app
+    }
+    return set_term(app, app.active, vt.tm_scroll(app.tabs[app.active].term, delta * 3))
+}
+
+fn release(app: App, mx: Int, my: Int, mods: Int) -> App {
+    var app = app
+    app.mouse_x = mx
+    app.mouse_y = my
+    if app.mouse_down {
+        report_mouse(app, mx, my, 0, true, false, mods)
+        app.mouse_down = false
+        return app
+    }
     if !app.selecting {
         return app
     }
@@ -923,6 +1018,25 @@ fn to_int(word: String) -> Int {
         }
     }
     return value
+}
+
+fn hex_digit(value: Int) -> String {
+    let chars = "0123456789abcdef".chars()
+    if value < 0 || value >= chars.len() {
+        return "0"
+    }
+    return chars[value]
+}
+
+fn hex2(value: Int) -> String {
+    var v = value
+    if v < 0 {
+        v = 0
+    }
+    if v > 255 {
+        v = 255
+    }
+    return hex_digit(v / 16) + hex_digit(v % 16)
 }
 
 fn lines_of(text: String) -> List<String> {
@@ -988,20 +1102,43 @@ fn run_script(app: App, path: String) -> App {
                 app = click(app, to_int(words[1]), to_int(words[2]))
             }
             if cmd == "dblclick" && words.len() >= 3 {
-                app = mouse_press(app, to_int(words[1]), to_int(words[2]), 2)
+                app = mouse_press(app, to_int(words[1]), to_int(words[2]), 2, 0)
             }
             if cmd == "drag" && words.len() >= 3 {
-                app = drag(app, to_int(words[1]), to_int(words[2]))
+                app = drag(app, to_int(words[1]), to_int(words[2]), 0)
             }
             if cmd == "release" {
-                app = release(app)
+                app = release(app, app.mouse_x, app.mouse_y, 0)
+            }
+            if cmd == "wheel" && words.len() >= 4 {
+                app = wheel(app, to_int(words[1]), to_int(words[2]), to_int(words[3]), 0)
+            }
+            if cmd == "scroll" && words.len() >= 2 {
+                if app.tabs.len() > 0 {
+                    app = set_term(app, app.active, vt.tm_scroll(app.tabs[app.active].term, to_int(words[1])))
+                }
+            }
+            if cmd == "mousepress" && words.len() >= 5 {
+                app = mouse_press(app, to_int(words[1]), to_int(words[2]), to_int(words[3]), to_int(words[4]))
+            }
+            if cmd == "mouserelease" && words.len() >= 3 {
+                app = release(app, to_int(words[1]), to_int(words[2]), 0)
             }
             if cmd == "newtab" {
                 app = spawn(app)
             }
             if cmd == "type" && words.len() >= 2 {
                 if app.tabs.len() > 0 {
-                    gui.pty_write_text(app.tabs[app.active].slot, words[1])
+                    var payload = ""
+                    var k = 1
+                    while k < words.len() {
+                        if k > 1 {
+                            payload = payload + " "
+                        }
+                        payload = payload + words[k]
+                        k = k + 1
+                    }
+                    gui.pty_write_text(app.tabs[app.active].slot, payload)
                 }
             }
             if cmd == "enter" {
@@ -1020,7 +1157,7 @@ fn run_script(app: App, path: String) -> App {
                     k = k + 1
                 }
                 var tab = app.tabs[app.active]
-                tab.term = vt.tm_feed(tab.term, payload.replace("<B>", vt.tm_bell()).replace("<E>", vt.tm_escape()))
+                tab.term = vt.tm_feed(tab.term, payload.replace("<B>", vt.tm_bell()).replace("<E>", vt.tm_escape()).replace("<N>", "\n"))
                 var tabs = app.tabs
                 tabs[app.active] = tab
                 app.tabs = tabs
@@ -1128,8 +1265,44 @@ fn run_script(app: App, path: String) -> App {
             if cmd == "assert_clipboard_has" && words.len() >= 2 {
                 println(truth(gui.clipboard().contains(words[1])) + " " + trimmed)
             }
+            if cmd == "assert_reply_hex" && words.len() >= 2 {
+                let reply = vt.tm_take_reply(app.tabs[app.active].term)
+                var hex = ""
+                for b in reply.bytes() {
+                    hex = hex + hex2(b)
+                }
+                println(truth(hex == words[1]) + " " + trimmed)
+            }
+            if cmd == "assert_reply_has" && words.len() >= 2 {
+                let reply = vt.tm_take_reply(app.tabs[app.active].term)
+                println(truth(reply.contains(words[1])) + " " + trimmed)
+            }
+            if cmd == "assert_mouse_hex" && words.len() >= 8 {
+                let term = app.tabs[app.active].term
+                var button = to_int(words[3])
+                if words[3] == "none" {
+                    button = 0 - 1
+                }
+                let bytes = vt.tm_mouse_bytes(term, to_int(words[1]), to_int(words[2]), button, words[4] == "1", words[5] == "1", to_int(words[6]))
+                var hex = ""
+                for b in bytes {
+                    hex = hex + hex2(b)
+                }
+                var ok = hex == words[7]
+                if words[7] == "-" {
+                    ok = hex.len() == 0
+                }
+                println(truth(ok) + " " + trimmed)
+            }
             if cmd == "assert_tabs" && words.len() >= 2 {
                 println(truth(app.tabs.len() == to_int(words[1])) + " " + trimmed)
+            }
+            if cmd == "assert_view" && words.len() >= 2 {
+                var view = 0
+                if app.tabs.len() > 0 {
+                    view = vt.tm_view(app.tabs[app.active].term)
+                }
+                println(truth(view == to_int(words[1])) + " " + trimmed)
             }
             if cmd == "assert_cell" && words.len() >= 4 {
                 let cell = vt.tm_cell_at(app.tabs[app.active].term, to_int(words[1]), to_int(words[2]))
@@ -1221,6 +1394,9 @@ fn main() {
         sel_c1: 0,
         selecting: false,
         has_sel: false,
+        mouse_down: false,
+        mouse_x: 0,
+        mouse_y: 0,
         needs_draw: true,
         scripting: false,
         quit: false,
@@ -1264,15 +1440,15 @@ fn main() {
                 } else if event.kind == gui.event_text() {
                     app = typed(app, gui.typed_text())
                 } else if event.kind == gui.event_mouse_down() {
-                    app = mouse_press(app, event.x, event.y, event.code)
+                    app = mouse_press(app, event.x, event.y, event.code, event.mods)
                 } else if event.kind == gui.event_mouse_up() {
-                    app = release(app)
+                    app = release(app, event.x, event.y, event.mods)
                 } else if event.kind == gui.event_drag() {
-                    app = drag(app, event.x, event.y)
+                    app = drag(app, event.x, event.y, event.mods)
+                } else if event.kind == gui.event_mouse_move() {
+                    app = mouse_move(app, event.x, event.y, event.mods)
                 } else if event.kind == gui.event_scroll() {
-                    if app.tabs.len() > 0 && app.overlay.len() == 0 {
-                        app = set_term(app, app.active, vt.tm_scroll(app.tabs[app.active].term, event.delta * 3))
-                    }
+                    app = wheel(app, event.x, event.y, event.delta, event.mods)
                 }
                 app.needs_draw = true
                 handled = handled + 1

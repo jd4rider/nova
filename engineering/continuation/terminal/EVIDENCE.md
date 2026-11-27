@@ -34,7 +34,7 @@ All entries are from this working tree on 2026-11-26, macOS ARM64.
 |---|---|
 | `(cd examples/nova-tool && ../../bootstrap/nova build)` | PASS: built `examples/nova-tool/target/nova/nova-tool` |
 | `(cd examples/nova-term && ../../examples/nova-tool/target/nova/nova-tool build)` | PASS: built `target/nova/nova-term` |
-| `sh examples/nova-term/tests/term-ui.sh` | PASS: `passed 25, failed 0` (adds split glyph, BEL OSC, split CSI and composed-text cases) |
+| `sh examples/nova-term/tests/term-ui.sh` | PASS: `passed 46, failed 0` (mouse, replies, alt-view and earlier parser cases) |
 | `sh examples/nova-tool/tests/codegen.sh` | PASS: `passed 259, failed 0` (adds `char_code`) |
 | `sh examples/nova-tool/tests/sema-ast.sh` | PASS: `passed 39, failed 0` |
 | `sh examples/nova-tool/tests/diff-errors.sh` | PASS: 27 fixtures matched, 0 mismatched |
@@ -93,10 +93,28 @@ UTF-8 to the active pty (or the palette/search field). Verified in the installed
 app by typing `touch /tmp/nova-typed-ok` and Return with System Events: the
 file was created.
 
-## Scripted UI coverage (25 assertions)
+## Pty size, replies and mouse
+
+- The child saw `stty size` = `0 0` when only the master received `TIOCSWINSZ`.
+  Setting the size on the opened slave too makes it report `34 133` on the
+  1120x720 window; `LINES`/`COLUMNS` are dropped from the inherited child
+  environment. This is the layout failure that made full-screen programs spill
+  or leave the bottom blank.
+- `CSI 6n`/`?6n`, `CSI 5n`, primary/secondary DA and `CSI 18t` are queued and
+  written back to the pty. `vim -u NONE` now paints `VIM - Vi IMproved` and its
+  `~` rows instead of leaving a blank alternate screen.
+- Mouse modes 1000/1002/1003 and SGR 1006/X10 encoding have twelve assertions:
+  left press/release, drag, wheel, shift/control modifiers, mode shutdown, and
+  no bare-motion reports in mode 1000. Entering/leaving the alternate screen
+  resets the view and mouse modes.
+
+## Scripted UI coverage (46 assertions)
 
 - ANSI: `31m` red cell, `92m` bright green cell, `2;1H` cursor address,
   `38;5;196` indexed colour.
+- Mouse: SGR press/release/drag/wheel, X10 bytes, modifiers and mode shutdown.
+- Replies: cursor-position DSR, status DSR, primary/secondary DA and `CSI 18t`.
+- Alternate screen: view reset on entry and mouse-mode reset on leave.
 - Shell: real zsh prints the working directory after `pwd`.
 - Tabs: 1 → 2 → 1 after new/close.
 - Title: OSC `0;my-shell` captured from a real ESC/ST sequence.
@@ -125,8 +143,13 @@ UI slice (2026-11-26):
 
 ## Not verified
 
-- Mouse reporting, IME, splits, multi-window, reflow, search UI, settings
-  persistence, shell integration, OSC 8 links, DCS/DSR/DA replies.
-- vim, less, top, tmux, SSH, job control, Ctrl-C/Ctrl-Z and password prompts.
+- Right/middle mouse buttons and a physical host-click automation fixture;
+  protocol and app encoding are tested, but synthetic AppKit clicks were not
+  delivered by accessibility automation.
+- IME, splits, multi-window, reflow, search UI, settings persistence, shell
+  integration, OSC 8 links and bounded DCS handling.
+- less, top, tmux, SSH, job control, Ctrl-C/Ctrl-Z and password prompts.
+  Vim's alternate screen is the only full-screen TUI checked through the
+  scripted cell dump.
 - Performance, idle CPU, sustained output and memory endurance.
 - Developer ID signing and notarization.

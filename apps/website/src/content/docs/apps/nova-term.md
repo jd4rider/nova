@@ -1,6 +1,6 @@
 ---
 title: Nova Terminal
-description: A native terminal emulator written in Nova — real pty tabs, ANSI colour, scrollback, selection, a command palette and Powerline prompts.
+description: A native terminal emulator written in Nova — real pty tabs, ANSI colour, mouse reporting, scrollback, selection, a command palette and Powerline prompts.
 ---
 
 **Status: experimental, macOS only.** `examples/nova-term` is a standalone terminal emulator written in Nova on [nova-gui](../../libraries/gui/). The pty lives in the host, the escape-sequence parser lives in `libraries/nova-term`, and the window is drawn cell by cell by Nova itself. There is no Electron, no web view and no ncurses.
@@ -37,6 +37,7 @@ The installer builds, renders `packaging/icon.html`, writes `NovaTerminal.icns`,
 
 - **Real pty tabs.** Each tab is its own pty slot in the host (eight available). The shell sees a terminal: it prompts, colours, reads keys and receives `SIGWINCH` when the window resizes. The child gets its own identity (`TERM=xterm-256color`, `TERM_PROGRAM=NovaTerminal`, `COLORTERM=truecolor`) instead of inheriting Warp/iTerm variables.
 - **Typing and IME.** Plain keys arrive through AppKit's input context as composed UTF-8 text, then go straight to the active pty. The same path feeds the palette and search fields, so shifted, dead-key and composed characters work rather than only ASCII key codes.
+- **Mouse and terminal queries.** A child can enable modes 1000, 1002 or 1003; left press/release, drag and wheel are sent as SGR (`1006`) or X10. Shift keeps local selection. DSR (`ESC[5n`/`6n`), primary/secondary DA and `ESC[18t` are answered from a reply queue; leaving the alternate screen clears a stale mouse mode.
 - **ANSI / VT100 screen.** SGR colours (16, 256 and 24-bit), cursor addressing, erase, insert/delete line and character, scroll regions, save/restore cursor, tab stops, wrapping, the alternate screen (`ESC[?1049h`) and OSC window titles (BEL or `ESC \` terminated).
 - **Scrollback.** 2000 lines per tab, wheel or `PageUp`/`PageDown`, `Cmd+F` searches it and marks each hit on the left edge.
 - **Prompt blocks.** A 2px rail marks every prompt line (OSC 133 `A`, or a line beginning with `$`, `❯` or `%`), so commands are easy to find while scrolling.
@@ -85,7 +86,7 @@ t = vt.tm_feed(t, gui.pty_poll(0))
 vt.tm_draw(t, 16, 8, 1200, 640, 13, vt.tm_palette_dark())
 ```
 
-`tm_feed` mutates the terminal in place and returns the same `Term`; store the return value because Nova passes structs by value. `tm_resize`, `tm_scroll`, `tm_all_text`, `tm_find`, `tm_cell_at`, `tm_key_text` and `tm_palette_gruvbox()` cover the rest.
+`tm_feed` mutates the terminal in place and returns the same `Term`; store the return value because Nova passes structs by value. `tm_resize`, `tm_scroll`, `tm_all_text`, `tm_find`, `tm_cell_at`, `tm_key_text`, `tm_mouse_bytes`, `tm_take_reply` and `tm_palette_gruvbox()` cover the rest.
 
 The parser needs raw Unicode scalars, so this work also added **`String.chars()`** to the language: unlike `graphemes()`, which glues ANSI sequences onto the following cluster for styled-text measurement, `chars()` returns one element per scalar and keeps escape bytes intact. `char_code()` turns a scalar back into an `Int`; `String.bytes()` is still used to detect a split sequence at a pty-read boundary.
 
@@ -96,7 +97,7 @@ cd examples/nova-term
 sh tests/term-ui.sh
 ```
 
-The harness feeds synthetic ANSI through the real parser and drives the real pty: colour indices, cursor addressing, alternate-screen restore, 256-colour, `pwd` through a shell, tab create/close and OSC titles. It also pins the recent prompt regressions: a `BEL`-terminated OSC, a split U+E0B0 Powerline glyph and a split `ESC[2K`. The current run is **passed 25, failed 0**.
+The harness feeds synthetic ANSI through the real parser and drives the real pty: colour indices, cursor addressing, alternate-screen restore, 256-colour, `pwd` through a shell, tab create/close and OSC titles. It also pins the recent prompt regressions: a `BEL`-terminated OSC, a split U+E0B0 Powerline glyph and a split `ESC[2K`. New cases cover mouse SGR/X10 press, release, drag and wheel, alternate-screen view reset, and DSR/DA/size replies. The current run is **passed 46, failed 0**.
 
 The scripted harness exercises the text handler directly; the actual AppKit `event_text` path is verified by typing a command into the installed app.
 
@@ -111,8 +112,8 @@ Assembles `Nova Terminal.app` under `dist/`, copies it to `/Applications` (or `~
 ## Honest gaps
 
 - **No splits or windows.** Tabs only; one window.
-- **No mouse reporting.** Full-screen programs that expect mouse events fall back to the keyboard.
-- **No DSR replies** (`ESC[6n`), and no character sets beyond UTF-8.
+- **Mouse reporting is left-button only.** Right/middle buttons and a physical-click automation fixture are still missing; left press, release, drag and wheel are covered.
+- **DCS is swallowed.** DSR/DA and text-area-size queries are answered; other device-control payloads are not.
 - **No reflow on resize:** a narrower grid wraps new output, older lines keep their original break.
 - **Scrollback is plain text**, so scrolled-off colour is lost.
 - **Wide cells and emoji width** are not modelled; combining marks and double-width glyphs need work before this is a daily driver for every TUI.

@@ -6,11 +6,11 @@ Status vocabulary: `TODO`, `READY`, `IN_PROGRESS`, `PARTIAL`, `BLOCKED`,
 | ID | Milestone | Status | Evidence / gap |
 |---|---|---|---|
 | TERM-00 | Existing implementation audit | VERIFIED | `AUDIT.md`; build, install, launch and 15/0 UI tests recorded in `EVIDENCE.md` |
-| TERM-01 | PTY lifecycle | PARTIAL | Real `/bin/zsh` under a POSIX pty, initial size, resize ioctl, SIGHUP close, exit status; job control and Ctrl-C/Ctrl-Z not yet scripted |
-| TERM-02 | Streaming parser | PARTIAL | ESC/CSI/OSC state machine with chunk-preserving state; split-byte and malformed-input fixtures are TODO |
-| TERM-03 | Screen state | PARTIAL | Primary/alternate screens, cursor, scrolling, eras, regions, insert/delete, SGR 16/256/truecolor; DEC modes, DSR replies and replies are incomplete |
+| TERM-01 | PTY lifecycle | PARTIAL | Real `/bin/zsh` under a POSIX pty; child slave gets `TIOCSWINSZ` (`stty size` 34x133), resize and SIGHUP, exit status; job control not yet scripted |
+| TERM-02 | Streaming parser | PARTIAL | ESC/CSI/OSC state machine with chunk-preserving state; DSR/DA/size replies added; DCS, split-byte and malformed-input fixtures remain |
+| TERM-03 | Screen state | PARTIAL | Primary/alternate screens, cursor, scrolling, eras, regions, insert/delete, SGR 16/256/truecolor; origin/autowrap/app-cursor/focus modes remain |
 | TERM-04 | Scrollback and Unicode | PARTIAL | 2000-line ring, fixed 512-mark ring, 96-cell draw runs; no reflow, no grapheme-aware selection, no wide-cell policy |
-| TERM-05 | Input | PARTIAL | Arrow/Home/End/Delete/F-keys, Ctrl/Option mapping, paste, scrollback keys; no mouse reporting, no IME automation, no word/line selection |
+| TERM-05 | Input | PARTIAL | Arrow/Home/End/Delete/F-keys, Ctrl/Option mapping, paste, scrollback keys, left-button mouse press/release/drag/wheel in X10/SGR; no right/middle, IME automation or host-click fixture |
 | TERM-06 | Rendering | PARTIAL | Immediate-mode grid, runs, dirty-frame loop, Retina via host, software fallback; no GPU path, no glyph atlas, no measured benchmarks |
 | TERM-07 | TUI compatibility | TODO | Not yet exercised against vim, less, top, tmux or SSH |
 | TERM-08 | Tabs and splits | PARTIAL | Up to 8 tabs with close/new/select and independent ptys; no split panes, no multiple windows |
@@ -29,14 +29,15 @@ Status vocabulary: `TODO`, `READY`, `IN_PROGRESS`, `PARTIAL`, `BLOCKED`,
 
 TERM-00 audit is complete and the critical core defects found by it are
 repaired: shared list writes in the screen buffer now persist, scripted ESC
-bytes are real control bytes, and the terminal builds from source. The next
+bytes are real control bytes, pty winsize reaches the child, mouse reporting
+covers the left button, and DSR/DA replies unblock vim-style probes. The next
 slice is TERM-02.001 parser chunk-invariance fixtures, because every later
 screen and TUI claim depends on it.
 
 ## Gates
 
 - A milestone is VERIFIED only with a command, result and artifact.
-- Do not advertise xterm-256color parity, mouse reporting, link support or
+- Do not advertise xterm-256color parity, right/middle mouse, link support or
   splits before their fixtures pass.
 - The PTY host is `runtime/gui.m`; the parser and screen are Nova. Do not
   replace them with a third-party terminal or a mock.

@@ -2,11 +2,12 @@
 
 Updated: 2026-11-26
 Repository / branch: `nova` / `main`
-Active milestone: TERM-02 streaming parser
+Active milestone: TERM-02 streaming parser / TERM-05 input
 Active task: TERM-02.001 chunk-invariance fixtures (partial UTF-8/CSI/OSC
 buffering landed; the full byte-split corpus remains)
 Status: IN_PROGRESS — TERM-00 is VERIFIED; the core write-path and control-byte
-defects it found are repaired and the app is installed.
+defects it found are repaired, pty sizing and DSR/DA probes work, and the app
+is installed.
 
 ## What changed in this session
 
@@ -55,6 +56,15 @@ defects it found are repaired and the app is installed.
     was also ~14 ms. The later ~195 ms burst is oh-my-posh rebuilding its
     prompt, not terminal input.
 - `libraries/nova-term/src/term.nova`
+  - Mouse modes 1000/1002/1003 and SGR 1006/X10 encoding cover left press,
+    release, drag and wheel; `tm_mouse_bytes` keeps X10 bytes raw. Shift keeps
+    local selection. Leaving the alternate screen clears mouse modes so a TUI
+    that exits early cannot leave the shell consuming mouse reports.
+  - DSR `5n`/`6n`, primary/secondary DA, and `CSI 18t` replies are queued in
+    `tm_take_reply` and written to the pty by the app. Vim now paints its
+    alternate screen instead of waiting on a query.
+  - Alternate-screen entry resets the scroll view; `tm_clear_physical` uses the
+    alternate base, so a full-screen scroll cannot erase the primary grid.
   - Cell runs now draw at fixed cell x positions, with bold/italic/underline
     styles, dim blending and a solid inverse cursor; wide glyphs fall back to
     per-cell draws so columns do not drift.
@@ -63,8 +73,11 @@ defects it found are repaired and the app is installed.
 - `runtime/gui.m`
   - The child shell gets an explicit identity (`TERM=xterm-256color`,
     `TERM_PROGRAM=NovaTerminal`, `TERM_PROGRAM_VERSION`, `COLORTERM=truecolor`,
-    UTF-8 `LANG`) and inherited Warp/iTerm/VS Code/kitty plus `NOVA_TERM_*`
-    variables are dropped. `NOVA_PTY_TRACE=<path>` records raw pty reads.
+    UTF-8 `LANG`) and inherited Warp/iTerm/VS Code/kitty, `NOVA_TERM_*`,
+    `LINES` and `COLUMNS` are dropped. The child slave also gets `TIOCSWINSZ`;
+    macOS left the pty at 0x0 when only the master was set. `stty size` now
+    reports 34x133 on the 1120x720 test window. `NOVA_PTY_TRACE=<path>` records
+    raw pty reads.
 - `examples/nova-term/install-macos.sh`, `packaging/icon.html`, `VERSION`
   - Uses the current Nova tool, renders an icon, writes a full Info.plist,
     ad-hoc signs and installs to `/Applications`. The headless Chrome render
@@ -80,12 +93,13 @@ defects it found are repaired and the app is installed.
   compiler tool.
 - `(cd examples/nova-term && ../../examples/nova-tool/target/nova/nova-tool build)`
   → `built …/target/nova/nova-term`.
-- `sh examples/nova-term/tests/term-ui.sh` → passed 25, failed 0.
+- `sh examples/nova-term/tests/term-ui.sh` → passed 46, failed 0.
   Covers ANSI colours and cells, a real zsh `pwd`, tabs, OSC title, alternate
-  screen history, font discovery and struct/list behavior, plus tab-bar
-  click rules, double-click word selection and drag selection. New cases pin
-  a split U+E0B0 glyph, a BEL-terminated OSC, a split `ESC[2K` and composed
-  text reaching the pty.
+  screen history, font discovery and struct/list behavior, tab-bar click rules,
+  word/drag selection, split U+E0B0, BEL OSC, split `ESC[2K`, composed text,
+  SGR/X10 mouse bytes, alternate-screen view reset and DSR/DA/size replies.
+- `stty size` in a real child → `34 133`; vim's alternate screen paints its
+  banner and `~` rows after the reply queue was added.
 - Live keyboard: the installed app was frontmost and System Events typed
   `touch /tmp/nova-typed-ok` plus Return; the file appeared. This exercises the
   real keyDown → input context → `event_text` → pty path that scripted tests
@@ -115,8 +129,10 @@ defects it found are repaired and the app is installed.
 - The checked-in `bootstrap/nova` cannot build the app: its codegen lacks
   imported-type field support. Build with the current tool as the installer
   does. `nova check` is clean with the current tool.
-- No mouse reporting, splits, multi-window, IME automation, reflow, search UI,
-  persistence, shell-integration installer or TUI compatibility suite yet.
+- Mouse reporting is left-button only; right/middle buttons and a physical
+  host-click automation fixture are not covered. No splits, multi-window, IME
+  automation, reflow, search UI, persistence, shell-integration installer or
+  TUI compatibility suite yet.
 - Scripted tests cover the parser and one real shell, not interactive vim,
   tmux, SSH or job control.
 - The installed bundle is ad-hoc signed, not Developer ID signed/notarized.
@@ -133,9 +149,10 @@ defects it found are repaired and the app is installed.
    resulting cells/attributes/cursor with whole-buffer parsing, then add
    malformed and oversized OSC fixtures. The pending register now makes the
    two split regressions pass; the exhaustive corpus is still missing.
-2. Implement DSR/DA replies and bounded DCS handling in `tm_feed` so vim,
-   less and tmux probes have the replies they expect.
-3. Then run the TERM-07 interactive probes and record exact versions.
+2. Add bounded DCS handling and malformed/oversized OSC fixtures; DSR/DA and
+   text-area-size replies are now in place.
+3. Then run the TERM-07 interactive probes for less, top, tmux and SSH and
+   record exact versions.
 
 ## Dependencies
 

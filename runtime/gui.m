@@ -2700,7 +2700,7 @@ static int nova_pty_env_drop(const char *entry) {
     static const char *exact[] = {
         "TERM=", "TERM_PROGRAM=", "TERM_PROGRAM_VERSION=", "COLORTERM=",
         "TERM_SESSION_ID=", "TMUX=", "TMUX_PANE=", "STY=",
-        "LC_TERMINAL=", "LC_TERMINAL_VERSION=", NULL
+        "LC_TERMINAL=", "LC_TERMINAL_VERSION=", "LINES=", "COLUMNS=", NULL
     };
     static const char *prefix[] = {
         "WARP_", "NOVA_TERM_", "ITERM_", "VSCODE_", "KITTY_",
@@ -2791,6 +2791,15 @@ int64_t nova_pty_open(int64_t slot, nova_str command, nova_str cwd, int64_t cols
         int slave = open(slave_name, O_RDWR);
         if (slave < 0) _exit(127);
         ioctl(slave, TIOCSCTTY, 0);
+        /* Setting the size on the master alone has been observed to leave the
+         * child's winsize at 0x0 on macOS. Set the slave after it is the
+         * controlling terminal as well, so TUIs see the real grid. */
+        struct winsize child_size;
+        child_size.ws_row = (unsigned short)(rows > 0 ? rows : 30);
+        child_size.ws_col = (unsigned short)(cols > 0 ? cols : 120);
+        child_size.ws_xpixel = 0;
+        child_size.ws_ypixel = 0;
+        ioctl(slave, TIOCSWINSZ, &child_size);
         dup2(slave, 0);
         dup2(slave, 1);
         dup2(slave, 2);
