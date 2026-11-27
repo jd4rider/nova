@@ -57,8 +57,13 @@ extern "C" fn nova_gui_stroke_rect(x: Int, y: Int, w: Int, h: Int, rgb: Int) -> 
 extern "C" fn nova_gui_line(x0: Int, y0: Int, x1: Int, y1: Int, rgb: Int) -> Unit
 extern "C" fn nova_gui_text(x: Int, y: Int, text: String, size: Int, rgb: Int, mono: Int) -> Unit
 extern "C" fn nova_gui_text_width(text: String, size: Int, mono: Int) -> Int
+// Styled runs: family 0 sans, 1 mono, 2 serif; style bits 1 bold, 2 italic,
+// 4 underline. CoreText shapes and measures; the app owns layout.
+extern "C" fn nova_gui_text_fmt(x: Int, y: Int, text: String, size: Int, rgb: Int, family: Int, style: Int) -> Unit
+extern "C" fn nova_gui_text_fmt_width(text: String, size: Int, family: Int, style: Int) -> Int
 extern "C" fn nova_gui_advance(size: Int, mono: Int) -> Int
 extern "C" fn nova_gui_now_ms() -> Int
+extern "C" fn nova_epoch_ms() -> Int
 extern "C" fn nova_gui_clip(x: Int, y: Int, w: Int, h: Int) -> Unit
 extern "C" fn nova_gui_clip_reset() -> Unit
 extern "C" fn nova_gui_present() -> Unit
@@ -95,6 +100,8 @@ extern "C" fn nova_fs_read(path: String) -> String
 extern "C" fn nova_gui_resource(name: String) -> String
 extern "C" fn nova_fs_read_bytes(path: String) -> String
 extern "C" fn nova_fs_write_bytes(path: String, data: String) -> Int
+extern "C" fn nova_fs_rename(from: String, to: String) -> Int
+extern "C" fn nova_fs_delete(path: String) -> Int
 extern "C" fn nova_sha256_file(path: String) -> String
 extern "C" fn nova_sha256_bytes(data: String) -> String
 extern "C" fn nova_fs_write(path: String, data: String) -> Int
@@ -192,6 +199,35 @@ fn dark() -> Theme {
         purple: rgb(197, 134, 192),
         aqua: rgb(78, 201, 176),
         orange: rgb(206, 145, 120),
+    }
+}
+
+// Light chrome for document work and daylight. The paper colour is the app's
+// own choice; this only themes the surrounding UI.
+fn light() -> Theme {
+    return Theme {
+        bg: rgb(250, 249, 247),
+        bg_hard: rgb(240, 238, 234),
+        panel: rgb(235, 232, 227),
+        elevated: rgb(226, 222, 216),
+        border: rgb(215, 211, 205),
+        border_strong: rgb(190, 185, 178),
+        fg: rgb(60, 56, 54),
+        fg_bright: rgb(30, 28, 27),
+        muted: rgb(112, 105, 100),
+        faint: rgb(140, 133, 127),
+        accent: rgb(202, 86, 20),
+        status: rgb(235, 232, 227),
+        link: rgb(30, 100, 180),
+        selection: rgb(205, 222, 245),
+        input: rgb(255, 255, 255),
+        red: rgb(190, 45, 35),
+        green: rgb(95, 130, 20),
+        yellow: rgb(170, 130, 20),
+        blue: rgb(30, 100, 180),
+        purple: rgb(130, 70, 150),
+        aqua: rgb(30, 130, 130),
+        orange: rgb(202, 86, 20),
     }
 }
 
@@ -571,6 +607,40 @@ fn text_width(value: String, size: Int) -> Int {
     return nova_gui_text_width(value, size, 0)
 }
 
+// A styled run: family picks sans/serif/mono, style carries bold/italic/
+// underline bits. Layout and document semantics stay in Nova.
+fn text_fmt(x: Int, y: Int, value: String, size: Int, color: Int, family: Int, style: Int) {
+    nova_gui_text_fmt(x, y, value, size, color, family, style)
+}
+
+fn text_fmt_width(value: String, size: Int, family: Int, style: Int) -> Int {
+    return nova_gui_text_fmt_width(value, size, family, style)
+}
+
+fn font_sans() -> Int {
+    return 0
+}
+
+fn font_mono() -> Int {
+    return 1
+}
+
+fn font_serif() -> Int {
+    return 2
+}
+
+fn style_bold() -> Int {
+    return 1
+}
+
+fn style_italic() -> Int {
+    return 2
+}
+
+fn style_underline() -> Int {
+    return 4
+}
+
 fn mono_width(value: String, size: Int) -> Int {
     return nova_gui_text_width(value, size, 1)
 }
@@ -583,6 +653,11 @@ fn advance(size: Int) -> Int {
 // Monotonic milliseconds, for easing and other time-based animation.
 fn now() -> Int {
     return nova_gui_now_ms()
+}
+
+// Wall-clock milliseconds since the Unix epoch, for file names and dates.
+fn epoch_ms() -> Int {
+    return nova_epoch_ms()
 }
 
 fn clip(x: Int, y: Int, w: Int, h: Int) {
@@ -695,6 +770,17 @@ fn read_bytes(path: String) -> List<Int> {
 
 fn write_bytes(path: String, data: List<Int>) -> Bool {
     return nova_fs_write_bytes(path, data.utf8()) == 1
+}
+
+// Atomic replacement: the source is verified first, then renamed over the
+// destination, so a failed save never truncates the original.
+fn rename(from: String, to: String) -> Bool {
+    return nova_fs_rename(from, to) == 1
+}
+
+// Removes a file; a missing file counts as success.
+fn delete_file(path: String) -> Bool {
+    return nova_fs_delete(path) == 1
 }
 
 // Reveals a file in Finder. False when it has been moved or deleted, which is

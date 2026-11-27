@@ -1,0 +1,617 @@
+// nova-document — the Writer document core.
+//
+// This module is GUI-independent and file-format-independent: it owns the
+// typed paragraph tree, stable IDs, grapheme positions, pure transactions,
+// bounded undo history and the versioned `.novadoc` v1 container. It imports
+// no GUI or filesystem code; `store.nova` handles disk access.
+//
+// A position is a paragraph index plus a grapheme offset. Edits are pure
+// functions that return a new Document, which is what makes snapshot undo and
+// future collaboration anchors safe.
+
+import "text.nova" as tx
+
+// Paragraph kinds. Numeric values are part of the `.novadoc` v1 format.
+fn wd_body() -> Int {
+    return 0
+}
+
+fn wd_title_style() -> Int {
+    return 1
+}
+
+fn wd_heading1() -> Int {
+    return 2
+}
+
+fn wd_heading2() -> Int {
+    return 3
+}
+
+fn wd_quote() -> Int {
+    return 4
+}
+
+fn wd_bullet() -> Int {
+    return 5
+}
+
+fn wd_kind_name(kind: Int) -> String {
+    if kind == wd_title_style() {
+        return "Title"
+    }
+    if kind == wd_heading1() {
+        return "Heading 1"
+    }
+    if kind == wd_heading2() {
+        return "Heading 2"
+    }
+    if kind == wd_quote() {
+        return "Quote"
+    }
+    if kind == wd_bullet() {
+        return "List"
+    }
+    return "Body"
+}
+
+fn wd_is_heading(kind: Int) -> Bool {
+    return kind == wd_title_style() || kind == wd_heading1() || kind == wd_heading2()
+}
+
+// Alignment: 0 left, 1 centre, 2 right, 3 justify (justify is stored, not yet
+// rendered; the canvas treats it as left until WRI-05.006).
+fn wd_left() -> Int {
+    return 0
+}
+
+fn wd_center() -> Int {
+    return 1
+}
+
+fn wd_right() -> Int {
+    return 2
+}
+
+fn wd_justify() -> Int {
+    return 3
+}
+
+fn wd_align_name(align: Int) -> String {
+    if align == wd_center() {
+        return "Center"
+    }
+    if align == wd_right() {
+        return "Right"
+    }
+    if align == wd_justify() {
+        return "Justify"
+    }
+    return "Left"
+}
+
+struct Paragraph {
+    id: Int,
+    kind: Int,
+    align: Int,
+    text: String,
+}
+
+struct Document {
+    version: Int,
+    doc_id: Int,
+    title: String,
+    next_id: Int,
+    paragraphs: List<Paragraph>,
+}
+
+struct LoadResult {
+    ok: Bool,
+    doc: Document,
+    error: String,
+}
+
+struct UndoResult {
+    ok: Bool,
+    doc: Document,
+    undo: List<Document>,
+    redo: List<Document>,
+}
+
+fn wd_para(id: Int, kind: Int, text: String) -> Paragraph {
+    return Paragraph { id: id, kind: kind, align: wd_left(), text: text }
+}
+
+fn wd_empty() -> Document {
+    var ps: List<Paragraph> = []
+    ps.push(wd_para(1, wd_body(), ""))
+    return Document {
+        version: 1,
+        doc_id: 1,
+        title: "Untitled",
+        next_id: 2,
+        paragraphs: ps,
+    }
+}
+
+fn wd_new(title: String) -> Document {
+    var doc = wd_empty()
+    doc.title = title
+    return doc
+}
+
+fn wd_load_fail(message: String) -> LoadResult {
+    return LoadResult { ok: false, doc: wd_empty(), error: message }
+}
+
+// Structural validation. Returns "" when the document is valid.
+fn wd_valid(doc: Document) -> String {
+    if doc.version != 1 {
+        return "unsupported document version"
+    }
+    if doc.paragraphs.len() == 0 {
+        return "document has no paragraphs"
+    }
+    var max_id = 0
+    var i = 0
+    while i < doc.paragraphs.len() {
+        let p = doc.paragraphs[i]
+        if p.id < 1 {
+            return "paragraph id must be positive"
+        }
+        if p.kind < 0 || p.kind > 5 {
+            return "unknown paragraph kind"
+        }
+        if p.align < 0 || p.align > 3 {
+            return "unknown paragraph alignment"
+        }
+        var j = 0
+        while j < i {
+            if doc.paragraphs[j].id == p.id {
+                return "duplicate paragraph id"
+            }
+            j = j + 1
+        }
+        if p.id > max_id {
+            max_id = p.id
+        }
+        i = i + 1
+    }
+    if doc.next_id <= max_id {
+        return "next_id must exceed every paragraph id"
+    }
+    return ""
+}
+
+fn wd_index_of(doc: Document, id: Int) -> Int {
+    var i = 0
+    while i < doc.paragraphs.len() {
+        if doc.paragraphs[i].id == id {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+fn wd_text(doc: Document, index: Int) -> String {
+    if index < 0 || index >= doc.paragraphs.len() {
+        return ""
+    }
+    return doc.paragraphs[index].text
+}
+
+fn wd_count(doc: Document) -> Int {
+    return doc.paragraphs.len()
+}
+
+// ---------- transactions ----------
+
+fn wd_insert(doc: Document, index: Int, offset: Int, value: String) -> Document {
+    var d = doc
+    if index < 0 || index >= d.paragraphs.len() {
+        return d
+    }
+    var p = d.paragraphs[index]
+    p.text = tx.tx_insert_at(p.text, offset, value)
+    var ps = d.paragraphs
+    ps[index] = p
+    d.paragraphs = ps
+    return d
+}
+
+// Deletes the range (p0,o0)..(p1,o1). A multi-paragraph range joins the first
+// paragraph's prefix to the last paragraph's suffix and drops the rest.
+fn wd_delete_range(doc: Document, p0: Int, o0: Int, p1: Int, o1: Int) -> Document {
+    var d = doc
+    if p0 < 0 || p1 >= d.paragraphs.len() || p0 > p1 {
+        return d
+    }
+    if p0 == p1 {
+        let p = d.paragraphs[p0]
+        let starts = tx.tx_starts(p.text)
+        let count = starts.len() - 1
+        let a = tx.tx_clamp(o0, count)
+        let b = tx.tx_clamp(o1, count)
+        if b <= a {
+            return d
+        }
+        let chars = p.text.chars()
+        var np = p
+        np.text = tx.tx_slice(chars, 0, starts[a]) + tx.tx_slice(chars, starts[b], chars.len())
+        var ps = d.paragraphs
+        ps[p0] = np
+        d.paragraphs = ps
+        return d
+    }
+    let first = d.paragraphs[p0]
+    let last = d.paragraphs[p1]
+    let fstarts = tx.tx_starts(first.text)
+    let lchars = last.text.chars()
+    let lstarts = tx.tx_starts(last.text)
+    let fcount = fstarts.len() - 1
+    let lcount = lstarts.len() - 1
+    let a = tx.tx_clamp(o0, fcount)
+    let b = tx.tx_clamp(o1, lcount)
+    var np = first
+    np.text = tx.tx_slice(first.text.chars(), 0, fstarts[a]) + tx.tx_slice(lchars, lstarts[b], lchars.len())
+    var ps: List<Paragraph> = []
+    var i = 0
+    while i < d.paragraphs.len() {
+        if i == p0 {
+            ps.push(np)
+        } else {
+            if i > p1 {
+                ps.push(d.paragraphs[i])
+            }
+        }
+        i = i + 1
+    }
+    d.paragraphs = ps
+    return d
+}
+
+fn wd_split(doc: Document, index: Int, offset: Int) -> Document {
+    var d = doc
+    if index < 0 || index >= d.paragraphs.len() {
+        return d
+    }
+    let p = d.paragraphs[index]
+    let starts = tx.tx_starts(p.text)
+    let count = starts.len() - 1
+    let g = tx.tx_clamp(offset, count)
+    let scalar = starts[g]
+    let chars = p.text.chars()
+    var left = p
+    left.text = tx.tx_slice(chars, 0, scalar)
+    var right = wd_para(d.next_id, p.kind, tx.tx_slice(chars, scalar, chars.len()))
+    right.align = p.align
+    if right.kind == wd_title_style() {
+        right.kind = wd_body()
+    }
+    d.next_id = d.next_id + 1
+    var ps: List<Paragraph> = []
+    var i = 0
+    while i < d.paragraphs.len() {
+        if i == index {
+            ps.push(left)
+            ps.push(right)
+        } else {
+            ps.push(d.paragraphs[i])
+        }
+        i = i + 1
+    }
+    d.paragraphs = ps
+    return d
+}
+
+fn wd_merge(doc: Document, index: Int) -> Document {
+    var d = doc
+    if index < 0 || index + 1 >= d.paragraphs.len() {
+        return d
+    }
+    let a = d.paragraphs[index]
+    let b = d.paragraphs[index + 1]
+    var np = a
+    np.text = a.text + b.text
+    var ps: List<Paragraph> = []
+    var i = 0
+    while i < d.paragraphs.len() {
+        if i == index {
+            ps.push(np)
+        } else {
+            if i != index + 1 {
+                ps.push(d.paragraphs[i])
+            }
+        }
+        i = i + 1
+    }
+    d.paragraphs = ps
+    return d
+}
+
+fn wd_set_kind(doc: Document, index: Int, kind: Int) -> Document {
+    var d = doc
+    if index < 0 || index >= d.paragraphs.len() || kind < 0 || kind > 5 {
+        return d
+    }
+    var p = d.paragraphs[index]
+    p.kind = kind
+    var ps = d.paragraphs
+    ps[index] = p
+    d.paragraphs = ps
+    return d
+}
+
+fn wd_set_align(doc: Document, index: Int, align: Int) -> Document {
+    var d = doc
+    if index < 0 || index >= d.paragraphs.len() || align < 0 || align > 3 {
+        return d
+    }
+    var p = d.paragraphs[index]
+    p.align = align
+    var ps = d.paragraphs
+    ps[index] = p
+    d.paragraphs = ps
+    return d
+}
+
+fn wd_append(doc: Document) -> Document {
+    var d = doc
+    var ps = d.paragraphs
+    ps.push(wd_para(d.next_id, wd_body(), ""))
+    d.next_id = d.next_id + 1
+    d.paragraphs = ps
+    return d
+}
+
+fn wd_set_title(doc: Document, title: String) -> Document {
+    var d = doc
+    d.title = title
+    return d
+}
+
+// ---------- counts and outline ----------
+
+fn wd_word_count(doc: Document) -> Int {
+    var total = 0
+    var i = 0
+    while i < doc.paragraphs.len() {
+        total = total + tx.tx_word_count(doc.paragraphs[i].text)
+        i = i + 1
+    }
+    return total
+}
+
+fn wd_char_count(doc: Document) -> Int {
+    var total = 0
+    var i = 0
+    while i < doc.paragraphs.len() {
+        total = total + tx.tx_count(doc.paragraphs[i].text)
+        i = i + 1
+    }
+    return total
+}
+
+fn wd_outline(doc: Document) -> List<Int> {
+    var out: List<Int> = []
+    var i = 0
+    while i < doc.paragraphs.len() {
+        if wd_is_heading(doc.paragraphs[i].kind) {
+            out.push(i)
+        }
+        i = i + 1
+    }
+    return out
+}
+
+// ---------- bounded snapshot history ----------
+
+fn wd_history_push(items: List<Document>, doc: Document) -> List<Document> {
+    var out = items
+    out.push(doc)
+    while out.len() > 100 {
+        var next: List<Document> = []
+        var i = 1
+        while i < out.len() {
+            next.push(out[i])
+            i = i + 1
+        }
+        out = next
+    }
+    return out
+}
+
+fn wd_undo(undo: List<Document>, redo: List<Document>, current: Document) -> UndoResult {
+    if undo.len() == 0 {
+        return UndoResult { ok: false, doc: current, undo: undo, redo: redo }
+    }
+    let previous = undo[undo.len() - 1]
+    var next_undo: List<Document> = []
+    var i = 0
+    while i + 1 < undo.len() {
+        next_undo.push(undo[i])
+        i = i + 1
+    }
+    var next_redo = redo
+    next_redo.push(current)
+    return UndoResult { ok: true, doc: previous, undo: next_undo, redo: next_redo }
+}
+
+fn wd_redo(undo: List<Document>, redo: List<Document>, current: Document) -> UndoResult {
+    if redo.len() == 0 {
+        return UndoResult { ok: false, doc: current, undo: undo, redo: redo }
+    }
+    let next_doc = redo[redo.len() - 1]
+    var next_redo: List<Document> = []
+    var i = 0
+    while i + 1 < redo.len() {
+        next_redo.push(redo[i])
+        i = i + 1
+    }
+    var next_undo = undo
+    next_undo.push(current)
+    return UndoResult { ok: true, doc: next_doc, undo: next_undo, redo: next_redo }
+}
+
+// ---------- native container v1 ----------
+
+// A 31-based polynomial checksum modulo 2^31-1. It detects truncation and
+// corruption, not tampering; the format makes no cryptographic claim.
+fn wd_checksum(text: String) -> Int {
+    let bytes = text.bytes()
+    var h = 0
+    var i = 0
+    while i < bytes.len() {
+        h = (h * 31 + bytes[i]) % 2147483647
+        i = i + 1
+    }
+    return h
+}
+
+fn wd_parse_int(text: String) -> Int {
+    let chars = text.chars()
+    if chars.len() == 0 {
+        return -1
+    }
+    var value = 0
+    var neg = false
+    var i = 0
+    if chars[0] == "-" {
+        neg = true
+        i = 1
+    }
+    var digits = 0
+    while i < chars.len() {
+        let code = chars[i].bytes()[0]
+        if code < 48 || code > 57 {
+            return -1
+        }
+        value = value * 10 + (code - 48)
+        digits = digits + 1
+        i = i + 1
+    }
+    if digits == 0 {
+        return -1
+    }
+    if neg {
+        return 0 - value
+    }
+    return value
+}
+
+fn wd_body_text(doc: Document) -> String {
+    var out = "NOVADOC\t1\n"
+    out = out + "id\t" + doc.doc_id.to_string() + "\n"
+    out = out + "title\t" + tx.tx_escape(doc.title) + "\n"
+    out = out + "next\t" + doc.next_id.to_string() + "\n"
+    var i = 0
+    while i < doc.paragraphs.len() {
+        let p = doc.paragraphs[i]
+        out = out + "p\t" + p.id.to_string() + "\t" + p.kind.to_string() + "\t" + p.align.to_string() + "\t" + tx.tx_escape(p.text) + "\n"
+        i = i + 1
+    }
+    out = out + "END\n"
+    return out
+}
+
+fn wd_serialize(doc: Document) -> String {
+    let body = wd_body_text(doc)
+    return body + "CK\t" + wd_checksum(body).to_string() + "\n"
+}
+
+fn wd_parse(text: String) -> LoadResult {
+    let lines = tx.tx_split_lines(text)
+    if lines.len() < 2 {
+        return wd_load_fail("empty document")
+    }
+    let head = lines[0].split("\t")
+    if head.len() != 2 || head[0] != "NOVADOC" || head[1] != "1" {
+        return wd_load_fail("not a NOVADOC version 1 file")
+    }
+    var doc = wd_empty()
+    var paragraphs: List<Paragraph> = []
+    var body = ""
+    var ended = false
+    var checksum = -1
+    var i = 0
+    while i < lines.len() {
+        let line = lines[i]
+        if i == 0 {
+            body = body + line + "\n"
+            i = i + 1
+            continue
+        }
+        if ended {
+            if line.len() > 0 {
+                let f = line.split("\t")
+                if f.len() >= 2 && f[0] == "CK" {
+                    checksum = wd_parse_int(f[1])
+                } else {
+                    return wd_load_fail("line " + (i + 1).to_string() + ": unexpected record after END")
+                }
+            }
+            i = i + 1
+            continue
+        }
+        if line == "END" {
+            ended = true
+            body = body + line + "\n"
+            i = i + 1
+            continue
+        }
+        body = body + line + "\n"
+        let fields = line.split("\t")
+        let key = fields[0]
+        if key == "id" && fields.len() >= 2 {
+            doc.doc_id = wd_parse_int(fields[1])
+        } else if key == "title" {
+            if fields.len() >= 2 {
+                doc.title = tx.tx_unescape(fields[1])
+            } else {
+                doc.title = ""
+            }
+        } else if key == "next" && fields.len() >= 2 {
+            doc.next_id = wd_parse_int(fields[1])
+        } else if key == "p" && fields.len() >= 4 {
+            let id = wd_parse_int(fields[1])
+            let kind = wd_parse_int(fields[2])
+            let align = wd_parse_int(fields[3])
+            var value = ""
+            if fields.len() >= 5 {
+                value = tx.tx_unescape(fields[4])
+            }
+            if id < 1 {
+                return wd_load_fail("line " + (i + 1).to_string() + ": invalid paragraph id")
+            }
+            if kind < 0 || kind > 5 {
+                return wd_load_fail("line " + (i + 1).to_string() + ": unknown paragraph kind")
+            }
+            if align < 0 || align > 3 {
+                return wd_load_fail("line " + (i + 1).to_string() + ": unknown paragraph alignment")
+            }
+            paragraphs.push(Paragraph { id: id, kind: kind, align: align, text: value })
+        } else {
+            return wd_load_fail("line " + (i + 1).to_string() + ": unknown record " + key)
+        }
+        i = i + 1
+    }
+    if !ended {
+        return wd_load_fail("missing END")
+    }
+    if checksum < 0 {
+        return wd_load_fail("missing checksum")
+    }
+    if wd_checksum(body) != checksum {
+        return wd_load_fail("checksum mismatch")
+    }
+    if paragraphs.len() == 0 {
+        return wd_load_fail("document has no paragraphs")
+    }
+    doc.paragraphs = paragraphs
+    let invalid = wd_valid(doc)
+    if invalid.len() > 0 {
+        return wd_load_fail(invalid)
+    }
+    return LoadResult { ok: true, doc: doc, error: "" }
+}

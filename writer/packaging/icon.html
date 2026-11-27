@@ -1,0 +1,183 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 1024px;
+    height: 1024px;
+    background: transparent;
+  }
+  .icon {
+    position: relative;
+    width: 1024px;
+    height: 1024px;
+    border-radius: 228px;
+    overflow: hidden;
+    background:
+      radial-gradient(circle at 78% 18%, rgba(254, 128, 25, 0.34) 0%, rgba(254, 128, 25, 0) 46%),
+      radial-gradient(circle at 20% 86%, rgba(142, 192, 124, 0.16) 0%, rgba(142, 192, 124, 0) 44%),
+      linear-gradient(155deg, #32302f 0%, #1d2021 60%, #141617 100%);
+    box-shadow: inset 0 0 0 7px rgba(251, 241, 199, 0.06);
+    font-family: -apple-system, "Helvetica Neue", sans-serif;
+  }
+  .glow {
+    position: absolute;
+    left: 120px;
+    top: 96px;
+    width: 784px;
+    height: 832px;
+    border-radius: 70px;
+    background: rgba(254, 128, 25, 0.10);
+    filter: blur(46px);
+  }
+  .sheet {
+    position: absolute;
+    left: 206px;
+    top: 132px;
+    width: 612px;
+    height: 760px;
+    border-radius: 28px;
+    background: #fbf1c7;
+    box-shadow:
+      0 46px 96px rgba(0, 0, 0, 0.58),
+      0 0 0 3px rgba(60, 56, 54, 0.18),
+      inset 0 0 0 2px rgba(60, 56, 54, 0.08);
+    transform: rotate(-3.2deg);
+    overflow: hidden;
+  }
+  .bar {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 54px;
+    background: #282828;
+    border-bottom: 3px solid #504945;
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding-left: 26px;
+  }
+  .dot { width: 13px; height: 13px; border-radius: 50%; }
+  .red { background: #fb4934; }
+  .yellow { background: #fabd2f; }
+  .green { background: #b8bb26; }
+  .tab {
+    margin-left: 18px;
+    width: 190px;
+    height: 34px;
+    border-radius: 9px 9px 0 0;
+    background: #32302f;
+    border: 2px solid #504945;
+    border-bottom: 0;
+    position: relative;
+    top: 13px;
+  }
+  .tab::after {
+    content: "";
+    position: absolute;
+    left: 18px;
+    top: 12px;
+    width: 104px;
+    height: 7px;
+    border-radius: 4px;
+    background: #665c54;
+  }
+  .title {
+    position: absolute;
+    left: 64px;
+    top: 108px;
+    width: 392px;
+    height: 34px;
+    border-radius: 17px;
+    background: #282828;
+  }
+  .subtitle {
+    position: absolute;
+    left: 64px;
+    top: 162px;
+    width: 268px;
+    height: 15px;
+    border-radius: 8px;
+    background: #bdae93;
+  }
+  .rule {
+    position: absolute;
+    left: 64px;
+    height: 13px;
+    border-radius: 7px;
+    background: #d5c4a1;
+  }
+  .r1 { top: 238px; width: 452px; }
+  .r2 { top: 272px; width: 414px; }
+  .r3 { top: 306px; width: 438px; }
+  .r4 { top: 340px; width: 356px; }
+  .r5 { top: 374px; width: 448px; }
+  .r6 { top: 408px; width: 402px; }
+  .r7 { top: 442px; width: 432px; }
+  .r8 { top: 476px; width: 300px; }
+  .heading {
+    position: absolute;
+    left: 64px;
+    top: 540px;
+    width: 210px;
+    height: 20px;
+    border-radius: 10px;
+    background: #fe8019;
+  }
+  .r9 { top: 588px; width: 436px; }
+  .r10 { top: 622px; width: 460px; }
+  .r11 { top: 656px; width: 372px; }
+  .mark {
+    position: absolute;
+    right: 54px;
+    bottom: 24px;
+    width: 190px;
+    height: 190px;
+    border-radius: 42px;
+    background: linear-gradient(145deg, #fabd2f 0%, #fe8019 58%, #d65d0e 100%);
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.36);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #1d2021;
+    font-size: 132px;
+    font-weight: 800;
+    letter-spacing: -8px;
+    line-height: 1;
+    transform: rotate(6deg);
+  }
+</style>
+</head>
+<body>
+  <div class="icon">
+    <div class="glow"></div>
+    <div class="sheet">
+      <div class="bar">
+        <div class="dot red"></div>
+        <div class="dot yellow"></div>
+        <div class="dot green"></div>
+        <div class="tab"></div>
+      </div>
+      <div class="title"></div>
+      <div class="subtitle"></div>
+      <div class="rule r1"></div>
+      <div class="rule r2"></div>
+      <div class="rule r3"></div>
+      <div class="rule r4"></div>
+      <div class="rule r5"></div>
+      <div class="rule r6"></div>
+      <div class="rule r7"></div>
+      <div class="rule r8"></div>
+      <div class="heading"></div>
+      <div class="rule r9"></div>
+      <div class="rule r10"></div>
+      <div class="rule r11"></div>
+      <div class="mark">W</div>
+    </div>
+  </div>
+</body>
+</html>

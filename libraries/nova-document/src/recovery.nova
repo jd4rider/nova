@@ -1,0 +1,147 @@
+// nova-document/recovery — autosave snapshots and crash recovery.
+//
+// Recovery files are ordinary `.novadoc` documents under the application's
+// Application Support directory. Names embed the creation epoch so a directory
+// listing sorts oldest to newest without a stat call. Writes reuse the atomic
+// store path: temp file, verify, rename.
+//
+// This module owns paths and listing only. The app decides when to write and
+// when a recovered document becomes a tab.
+
+import "../../nova-gui/src/gui.nova" as gui
+import "text.nova" as tx
+import "document.nova" as wd
+import "store.nova" as store
+
+struct RecoveryFile {
+    path: String,
+    name: String,
+}
+
+fn rec_root() -> String {
+    let override = gui.env("NOVA_WRITER_RECOVERY_DIR")
+    if override.len() > 0 {
+        return override
+    }
+    let home = gui.env("HOME")
+    if home.len() == 0 {
+        return gui.cwd() + "/.nova-writer-recovery"
+    }
+    return home + "/Library/Application Support/Nova Writer/Recovery"
+}
+
+// `gui.mkdir` creates one level, so walk up until an existing parent is found.
+fn rec_make_dir(path: String) -> Bool {
+    if path.len() == 0 {
+        return false
+    }
+    if gui.is_dir(path) {
+        return true
+    }
+    if gui.mkdir(path) {
+        return true
+    }
+    let chars = path.chars()
+    var cut = 0 - 1
+    var i = 0
+    while i < chars.len() {
+        if chars[i] == "/" {
+            cut = i
+        }
+        i = i + 1
+    }
+    if cut <= 0 {
+        return false
+    }
+    let parent = tx.tx_slice(chars, 0, cut)
+    if !rec_make_dir(parent) {
+        return false
+    }
+    return gui.mkdir(path)
+}
+
+fn rec_ensure() -> Bool {
+    return rec_make_dir(rec_root())
+}
+
+// A unique path per tab. The id distinguishes tabs created in one millisecond;
+// the epoch distinguishes launches.
+fn rec_path(id: String) -> String {
+    return rec_root() + "/recovery-" + gui.epoch_ms().to_string() + "-" + id + ".novadoc"
+}
+
+fn rec_save(doc: wd.Document, path: String) -> String {
+    if path.len() == 0 {
+        return "no recovery path"
+    }
+    if !rec_ensure() {
+        return "cannot create recovery directory"
+    }
+    return store.wd_save(doc, path)
+}
+
+fn rec_load(path: String) -> wd.LoadResult {
+    return store.wd_load(path)
+}
+
+fn rec_remove(path: String) -> Bool {
+    if path.len() == 0 {
+        return true
+    }
+    if !gui.exists(path) {
+        return true
+    }
+    return gui.delete_file(path)
+}
+
+// Recovery files only. `gui.list` already sorts by name, and the epoch prefix
+// makes that order chronological.
+fn rec_entries() -> List<RecoveryFile> {
+    var out: List<RecoveryFile> = []
+    let dir = rec_root()
+    if !gui.is_dir(dir) {
+        return out
+    }
+    let lines = gui.list(dir).split("\n")
+    var i = 0
+    while i < lines.len() {
+        let line = lines[i]
+        if line.starts_with("f\t") {
+            let parts = line.split("\t")
+            if parts.len() >= 2 {
+                let name = parts[1]
+                if name.starts_with("recovery-") && name.ends_with(".novadoc") {
+                    out.push(RecoveryFile { path: dir + "/" + name, name: name })
+                }
+            }
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn rec_count() -> Int {
+    let files = rec_entries()
+    return files.len()
+}
+
+fn rec_newest() -> String {
+    let files = rec_entries()
+    if files.len() == 0 {
+        return ""
+    }
+    return files[files.len() - 1].path
+}
+
+fn rec_clear() -> Int {
+    let files = rec_entries()
+    var removed = 0
+    var i = 0
+    while i < files.len() {
+        if rec_remove(files[i].path) {
+            removed = removed + 1
+        }
+        i = i + 1
+    }
+    return removed
+}

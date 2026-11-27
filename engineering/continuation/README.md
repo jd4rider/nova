@@ -21,6 +21,13 @@ inventory is `docs/rust-migration.md` and `docs/engineering/ecosystem-audit.md`.
 - Migration plan: `docs/rust-migration.md`
 - Compiler/LSP audit: `docs/engineering/ecosystem-audit.md`
 
+## Product lines
+
+- **Nova Writer** — native word processor. Ledger:
+  `engineering/continuation/writer/`; app: `writer/`; reusable core:
+  `libraries/nova-document/`. Installed locally as
+  `/Applications/Nova Writer.app` for owner testing.
+
 Do not push, publish, deploy, change visibility or delete the Rust seed without
 owner authorization.
 

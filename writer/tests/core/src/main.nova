@@ -1,0 +1,232 @@
+import std.io { println }
+import "../../../../libraries/nova-gui/src/gui.nova" as gui
+import "../../../../libraries/nova-document/src/text.nova" as tx
+import "../../../../libraries/nova-document/src/document.nova" as wd
+import "../../../../libraries/nova-document/src/layout.nova" as wl
+import "../../../../libraries/nova-document/src/store.nova" as store
+import "../../../../libraries/nova-document/src/recovery.nova" as rec
+
+// Headless Writer core acceptance. No window is opened; layout measurement
+// links the host for CoreText advances but never draws.
+
+fn check(label: String, condition: Bool) -> Int {
+    if condition {
+        println("PASS " + label)
+        return 0
+    }
+    println("FAIL " + label)
+    return 1
+}
+
+fn long_paragraph() -> String {
+    return "A word processor must keep the text, the caret and the page in agreement. " +
+        "This paragraph is deliberately long enough to wrap across several measured lines, " +
+        "because a line break that counts characters instead of glyph advances is not layout. " +
+        "CoreText reports each advance; Nova decides where the line ends and where the page breaks."
+}
+
+fn main() -> Int {
+    var failures = 0
+
+    // ---------- grapheme-aware text ----------
+    failures = failures + check("plain grapheme count", tx.tx_count("hello") == 5)
+    let combining = "e" + char_string(769)
+    failures = failures + check("combining mark is one cluster", tx.tx_count(combining) == 1)
+    failures = failures + check("combining backspace removes cluster", tx.tx_backspace_at(combining, 1) == "")
+    failures = failures + check("emoji skin tone is one cluster", tx.tx_count("👍🏽") == 1)
+    failures = failures + check("flag is one cluster", tx.tx_count("🇺🇸") == 1)
+    failures = failures + check("zwj family is one cluster", tx.tx_count("👨‍👩‍👧") == 1)
+    failures = failures + check("insert in the middle", tx.tx_insert_at("ac", 1, "b") == "abc")
+    failures = failures + check("delete forward", tx.tx_delete_at("abc", 1) == "ac")
+    failures = failures + check("escape round trip", tx.tx_unescape(tx.tx_escape("a\tb\nc\\d")) == "a\tb\nc\\d")
+    failures = failures + check("word count", tx.tx_word_count("one two  three") == 3)
+    failures = failures + check("empty text has no words", tx.tx_word_count("   ") == 0)
+    failures = failures + check("find is case insensitive", tx.tx_find("Hello World", "world", true) == 6)
+    failures = failures + check("find respects case", tx.tx_find("Hello World", "world", false) == 0 - 1)
+
+    // ---------- document transactions ----------
+    var doc = wd.wd_empty()
+    failures = failures + check("new document is valid", wd.wd_valid(doc) == "")
+    failures = failures + check("new document has one paragraph", wd.wd_count(doc) == 1)
+    failures = failures + check("first paragraph id is stable", doc.paragraphs[0].id == 1)
+
+    doc = wd.wd_insert(doc, 0, 0, "Hello world")
+    failures = failures + check("insert at start", wd.wd_text(doc, 0) == "Hello world")
+    doc = wd.wd_insert(doc, 0, 11, "!")
+    failures = failures + check("insert at end", wd.wd_text(doc, 0) == "Hello world!")
+    doc = wd.wd_insert(doc, 0, 5, ",")
+    failures = failures + check("insert in the middle", wd.wd_text(doc, 0) == "Hello, world!")
+
+    let before_split = doc
+    doc = wd.wd_split(doc, 0, 6)
+    failures = failures + check("split makes two paragraphs", wd.wd_count(doc) == 2)
+    failures = failures + check("split keeps the prefix", wd.wd_text(doc, 0) == "Hello,")
+    failures = failures + check("split keeps the suffix", wd.wd_text(doc, 1) == " world!")
+    failures = failures + check("split allocates a new id", doc.paragraphs[1].id == 2)
+    failures = failures + check("split advances next_id", doc.next_id == 3)
+
+    doc = wd.wd_merge(doc, 0)
+    failures = failures + check("merge restores one paragraph", wd.wd_count(doc) == 1)
+    failures = failures + check("merge preserves text", wd.wd_text(doc, 0) == "Hello, world!")
+    failures = failures + check("merge keeps the first id", doc.paragraphs[0].id == 1)
+    failures = failures + check("merge does not reuse the removed id", doc.next_id == 3)
+
+    doc = wd.wd_delete_range(doc, 0, 5, 0, 6)
+    failures = failures + check("same-paragraph delete", wd.wd_text(doc, 0) == "Hello world!")
+    doc = wd.wd_delete_range(doc, 0, 5, 0, 6)
+    failures = failures + check("delete space", wd.wd_text(doc, 0) == "Helloworld!")
+
+    // Multi-paragraph delete joins prefix and suffix.
+    var multi = wd.wd_empty()
+    multi = wd.wd_insert(multi, 0, 0, "alpha")
+    multi = wd.wd_split(multi, 0, 5)
+    multi = wd.wd_insert(multi, 1, 0, "beta")
+    multi = wd.wd_delete_range(multi, 0, 5, 1, 2)
+    failures = failures + check("cross-paragraph delete joins", wd.wd_text(multi, 0) == "alphata")
+    failures = failures + check("cross-paragraph delete removes the middle", wd.wd_count(multi) == 1)
+
+    // Styles and alignment.
+    var styled = wd.wd_empty()
+    styled = wd.wd_insert(styled, 0, 0, "Chapter One")
+    styled = wd.wd_set_kind(styled, 0, wd.wd_heading1())
+    styled = wd.wd_set_align(styled, 0, wd.wd_center())
+    failures = failures + check("kind is stored", styled.paragraphs[0].kind == wd.wd_heading1())
+    failures = failures + check("alignment is stored", styled.paragraphs[0].align == wd.wd_center())
+    failures = failures + check("outline finds the heading", wd.wd_outline(styled).len() == 1)
+
+    // ---------- undo / redo ----------
+    var history: List<wd.Document> = []
+    let before_edit = styled
+    styled = wd.wd_insert(styled, 0, 11, "!")
+    history = wd.wd_history_push(history, before_edit)
+    let undone = wd.wd_undo(history, [], styled)
+    failures = failures + check("undo succeeds", undone.ok)
+    failures = failures + check("undo restores text", undone.doc.paragraphs[0].text == "Chapter One")
+    failures = failures + check("undo keeps kind", undone.doc.paragraphs[0].kind == wd.wd_heading1())
+    let redone = wd.wd_redo(undone.undo, undone.redo, undone.doc)
+    failures = failures + check("redo succeeds", redone.ok)
+    failures = failures + check("redo restores the edit", redone.doc.paragraphs[0].text == "Chapter One!")
+    let empty_undo = wd.wd_undo([], [], redone.doc)
+    failures = failures + check("empty undo is a no-op", !empty_undo.ok)
+
+    var bounded: List<wd.Document> = []
+    var bi = 0
+    while bi < 105 {
+        bounded = wd.wd_history_push(bounded, before_edit)
+        bi = bi + 1
+    }
+    failures = failures + check("history is bounded at 100", bounded.len() == 100)
+
+    // ---------- native format ----------
+    var saved = wd.wd_new("Quarterly Report")
+    saved = wd.wd_insert(saved, 0, 0, "The quick brown fox")
+    saved = wd.wd_split(saved, 0, 9)
+    saved = wd.wd_set_kind(saved, 1, wd.wd_heading2())
+    saved = wd.wd_set_title(saved, "A\tB")
+    let serialized = wd.wd_serialize(saved)
+    let loaded = wd.wd_parse(serialized)
+    failures = failures + check("serialized document loads", loaded.ok)
+    failures = failures + check("title survives escaping", loaded.doc.title == "A\tB")
+    failures = failures + check("paragraph count survives", loaded.doc.paragraphs.len() == saved.paragraphs.len())
+    failures = failures + check("text survives", loaded.doc.paragraphs[0].text == "The quick")
+    failures = failures + check("kind survives", loaded.doc.paragraphs[1].kind == wd.wd_heading2())
+    failures = failures + check("next_id survives", loaded.doc.next_id == saved.next_id)
+
+    let corrupted = serialized.replace("quick", "quack")
+    failures = failures + check("checksum rejects corruption", !wd.wd_parse(corrupted).ok)
+    let unknown = serialized.replace("END\n", "bogus\t1\nEND\n")
+    failures = failures + check("unknown record is rejected", !wd.wd_parse(unknown).ok)
+    failures = failures + check("garbage is rejected", !wd.wd_parse("not a document").ok)
+
+    var dup = wd.wd_empty()
+    var dup_ps: List<wd.Paragraph> = []
+    dup_ps.push(wd.wd_para(1, wd.wd_body(), "a"))
+    dup_ps.push(wd.wd_para(1, wd.wd_body(), "b"))
+    dup.paragraphs = dup_ps
+    dup.next_id = 3
+    failures = failures + check("duplicate ids are invalid", wd.wd_valid(dup).len() > 0)
+
+    // ---------- measured layout ----------
+    var page_doc = wd.wd_empty()
+    page_doc = wd.wd_insert(page_doc, 0, 0, long_paragraph())
+    let layout = wl.wl_layout(page_doc, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
+    failures = failures + check("layout produced lines", layout.lines.len() > 1)
+    failures = failures + check("layout produced a page", layout.pages == 1)
+    let content_w = wl.wl_a4_w() - wl.wl_margin() * 2
+    var fits = true
+    var li = 0
+    while li < layout.lines.len() {
+        if layout.lines[li].w > content_w + 2 {
+            fits = false
+        }
+        li = li + 1
+    }
+    failures = failures + check("no line exceeds the text column", fits)
+
+    let caret = wl.wl_caret(page_doc, layout, 0, 0)
+    failures = failures + check("caret has geometry", caret.found)
+    let hit = wl.wl_hit(page_doc, layout, caret.page, caret.x + 1, caret.y + 2)
+    failures = failures + check("hit test finds the first line", hit.found && hit.para == 0)
+    failures = failures + check("hit test starts at offset zero", hit.offset == 0)
+
+    // Long unbroken word hard-breaks instead of overflowing.
+    var long_word = wd.wd_empty()
+    var token = ""
+    var ti = 0
+    while ti < 80 {
+        token = token + "abcdefghij"
+        ti = ti + 1
+    }
+    long_word = wd.wd_insert(long_word, 0, 0, token)
+    let word_layout = wl.wl_layout(long_word, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
+    failures = failures + check("long word is broken across lines", word_layout.lines.len() > 1)
+
+    // Many paragraphs paginate.
+    var many = wd.wd_empty()
+    var pi = 0
+    while pi < 40 {
+        many = wd.wd_insert(many, many.paragraphs.len() - 1, 0, long_paragraph())
+        many = wd.wd_append(many)
+        pi = pi + 1
+    }
+    let many_layout = wl.wl_layout(many, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
+    failures = failures + check("long document paginates", many_layout.pages > 1)
+    failures = failures + check("long document keeps every line on a page", many_layout.lines[many_layout.lines.len() - 1].page >= 1)
+
+    // ---------- atomic store ----------
+    let path = "/tmp/nova-writer-core-test.novadoc"
+    let save_error = store.wd_save(saved, path)
+    failures = failures + check("save reports no error", save_error == "")
+    failures = failures + check("save leaves no temp file", !gui.exists(path + ".tmp"))
+    let reopened = store.wd_load(path)
+    failures = failures + check("reopened document loads", reopened.ok)
+    failures = failures + check("reopened title matches", reopened.doc.title == "A\tB")
+    failures = failures + check("reopened text matches", reopened.doc.paragraphs[0].text == "The quick")
+    let bad_path = "/tmp/nova-writer-core-bad.novadoc"
+    gui.write(bad_path, "garbage")
+    failures = failures + check("corrupt file is rejected", !store.wd_load(bad_path).ok)
+
+    // ---------- autosave / recovery ----------
+    let rec_root = rec.rec_root()
+    failures = failures + check("recovery root honors the test override", rec_root.contains("nova-writer-core-recovery"))
+    let rec_file = rec.rec_path("core")
+    failures = failures + check("recovery path is a novadoc file", rec_file.ends_with(".novadoc"))
+    failures = failures + check("recovery save succeeds", rec.rec_save(saved, rec_file) == "")
+    failures = failures + check("recovery file exists", gui.exists(rec_file))
+    let recovered = rec.rec_load(rec_file)
+    failures = failures + check("recovery loads", recovered.ok)
+    failures = failures + check("recovery text survives", recovered.doc.paragraphs[0].text == "The quick")
+    failures = failures + check("recovery title survives", recovered.doc.title == "A\tB")
+    failures = failures + check("recovery is listed", rec.rec_count() == 1)
+    failures = failures + check("newest recovery is the saved file", rec.rec_newest() == rec_file)
+    failures = failures + check("recovery removes", rec.rec_remove(rec_file))
+    failures = failures + check("recovery file is gone", !gui.exists(rec_file))
+    failures = failures + check("empty recovery directory has no newest", rec.rec_newest() == "")
+    let bad_rec = rec.rec_path("bad")
+    gui.write(bad_rec, "garbage")
+    failures = failures + check("corrupt recovery is rejected", !rec.rec_load(bad_rec).ok)
+    rec.rec_remove(bad_rec)
+
+    println("failures=${failures}")
+    return failures
+}

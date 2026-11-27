@@ -60,15 +60,15 @@ Everything is immediate mode: a frame is whatever the loop draws between `begin`
 | Terminal pool | `pty_open(slot, cmd, dir, cols, rows)`, `pty_poll(slot)`, `pty_running(slot)`, `pty_write(slot, code)`, `pty_write_text(slot, text)`, `pty_resize(slot, cols, rows)`, `pty_status(slot)`, `pty_close(slot)` — up to eight ptys, each a real terminal with its own window size |
 | Frame | `begin()`, `clear(color)`, `present()`, `save_png(path)`, `sleep(ms)` |
 | Shapes | `rect`, `round_rect`, `stroke`, `line`, `rect_alpha` |
-| Text | `text` (system font), `mono` (monospaced), `text_width`, `mono_width`, `advance(size)` |
+| Text | `text` (system font), `mono` (monospaced), `text_fmt` (sans/serif/mono with bold/italic/underline bits), `text_width`, `text_fmt_width`, `mono_width`, `advance(size)`, `font_sans/font_serif/font_mono`, `style_bold/style_italic/style_underline` |
 | Mono font | `mono_font()`, `set_mono_font(family)`, `mono_fonts()` — the family defaults to an installed Nerd Font (`NOVA_MONO_FONT` overrides it), `mono_fonts()` lists every installed monospaced family, and setting one invalidates the host's glyph cache |
 | Clipping | `clip(x, y, w, h)`, `clip_reset()` |
-| Input | `next_event()` returning `Event { kind, code, x, y, mods, delta }` |
+| Input | `next_event()` returning `Event { kind, code, x, y, mods, delta }`; `typed_text()` and `marked_text()` for composed and in-progress IME text |
 | Events | `event_key`, `event_mouse_down`, `event_mouse_up`, `event_mouse_move`, `event_drag`, `event_scroll`, `event_resize`, `event_close` |
 | Keys | `key_enter`, `key_tab`, `key_escape`, `key_backspace`, `key_delete`, `key_left`, `key_right`, `key_up`, `key_down`, `key_home`, `key_end`, `key_page_up`, `key_page_down` |
 | Modifiers | `mod_command`, `mod_shift`, `mod_option`, `mod_control` |
-| Theme | `dark()` (VS Code Dark+), `gruvbox()`, `rgb`, `white` |
-| Workspace | `read`, `write`, `exists`, `is_dir`, `list`, `cwd`, `env`, `run`, `exit_status` |
+| Theme | `dark()` (VS Code Dark+), `light()`, `gruvbox()`, `rgb`, `white` |
+| Workspace | `read`, `write`, `exists`, `is_dir`, `list`, `cwd`, `env`, `run`, `exit_status`, `rename`, `delete_file`, `sha256` |
 
 `present()` pumps the platform queue with `nextEventMatchingMask:` and sends each event, then blits the framebuffer into the view. Printable keys arrive as their Unicode scalar; everything else uses the codes above, which match `nova-tui` where the two overlap.
 
@@ -104,6 +104,12 @@ These are host functions, not a sandbox: the caller decides which paths are allo
 
 Drawing text and reading files both need strings in and out of C, so `extern "C"` now accepts `String` alongside `Bool`, `Int`, `Float`, `Char` and `Unit`. On both sides a `String` is `{ const char *ptr; int64_t len; }` — a borrowed view, never freed by the host. Lists, maps and user structs still cannot cross. The [language tour](../../language/tour/) documents the boundary.
 
+## IME and marked text
+
+The macOS host implements `NSTextInputClient`, so a Japanese, Chinese or Korean input source can compose in front of a Nova app. `gui.marked_text()` returns the in-progress composition; `insertText:` clears it and delivers one `event_text`; `cancelOperation:` (Escape) clears it and delivers `key_escape`. The host owns the marked string; the app decides what to paint and when to insert it into its own model.
+
+[Nova Writer](../../apps/nova-writer/) uses this to paint the preedit inline through a temporary layout, commit exactly once and cancel on Escape. `writer/tests/ime.sh` drives the same two entry points with `NOVA_GUI_IME_PROBE` and asserts both paths.
+
 ## Verifying a frame
 
 GUI programs are hard to check from a terminal, so the host can write its framebuffer to a PNG:
@@ -119,9 +125,9 @@ gui.save_png("dist/frame.png")
 
 - **macOS only.** There is no X11, Wayland or Windows host yet; the build simply does not link the GUI on other targets.
 - **No GPU.** Every frame is rasterized on the CPU into a bitmap. That is fine for a workbench (`~120` text runs per frame) and wrong for animation-heavy apps.
-- **No text input protocol.** There is no IME, marked text or keyboard-layout composition; key events are characters, and the editor composes its own buffer.
+- **IME is host-owned.** Marked text is exposed through `marked_text()` and committed through `insertText:`; there is no document text-range model, so a screen reader still sees a page label rather than editable ranges.
 - **No images, gradients, paths, rotation or multi-window support.** `rect`, `round_rect`, `stroke`, `line`, `text` and clipping are the vocabulary.
-- **No accessibility tree**, no VoiceOver, no high-contrast or reduced-motion query.
+- **No high-contrast or reduced-motion query.** The host can publish an accessibility tree of pushed elements, but it is not a document model.
 - **Text is measured per call.** There is no glyph-run cache; a frame with thousands of short runs will spend most of its time in CoreText.
 - The event queue holds 1024 events and drops the newest when full.
 

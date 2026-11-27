@@ -1,0 +1,473 @@
+// nova-document/layout — measured line breaking and pagination.
+//
+// Layout is deterministic for a fixed font set and platform: CoreText reports
+// the advance width of a shaped line, and Nova decides where the line breaks
+// and where the page ends. Paragraph positions stay in grapheme offsets, so a
+// click, caret or selection always maps back to the document model.
+
+import "../../nova-gui/src/gui.nova" as gui
+import "document.nova" as wd
+import "text.nova" as tx
+
+struct LineBox {
+    para: Int,
+    start: Int,
+    end: Int,
+    page: Int,
+    x: Int,
+    y: Int,
+    w: Int,
+    size: Int,
+    style: Int,
+    family: Int,
+    text: String,
+    prefix: String,
+    indent: Int,
+}
+
+struct Layout {
+    lines: List<LineBox>,
+    pages: Int,
+    page_w: Int,
+    page_h: Int,
+    margin: Int,
+}
+
+struct EmitResult {
+    lines: List<LineBox>,
+    page: Int,
+    y: Int,
+}
+
+struct WrapResult {
+    lines: List<LineBox>,
+    page: Int,
+    y: Int,
+}
+
+struct CaredBox {
+    found: Bool,
+    page: Int,
+    x: Int,
+    y: Int,
+    h: Int,
+    line: Int,
+}
+
+struct Hit {
+    found: Bool,
+    para: Int,
+    offset: Int,
+    line: Int,
+}
+
+fn wl_a4_w() -> Int {
+    return 595
+}
+
+fn wl_a4_h() -> Int {
+    return 842
+}
+
+fn wl_margin() -> Int {
+    return 64
+}
+
+fn wl_line_h(size: Int) -> Int {
+    return size + 7
+}
+
+fn wl_size(kind: Int) -> Int {
+    if kind == wd.wd_title_style() {
+        return 24
+    }
+    if kind == wd.wd_heading1() {
+        return 18
+    }
+    if kind == wd.wd_heading2() {
+        return 14
+    }
+    return 11
+}
+
+fn wl_family(kind: Int) -> Int {
+    if kind == wd.wd_title_style() || kind == wd.wd_heading1() || kind == wd.wd_heading2() {
+        return 0
+    }
+    return 2
+}
+
+fn wl_style(kind: Int) -> Int {
+    if kind == wd.wd_title_style() || kind == wd.wd_heading1() || kind == wd.wd_heading2() {
+        return 1
+    }
+    if kind == wd.wd_quote() {
+        return 2
+    }
+    return 0
+}
+
+fn wl_before(kind: Int) -> Int {
+    if kind == wd.wd_title_style() {
+        return 0
+    }
+    if kind == wd.wd_heading1() {
+        return 14
+    }
+    if kind == wd.wd_heading2() {
+        return 10
+    }
+    return 0
+}
+
+fn wl_after(kind: Int) -> Int {
+    if kind == wd.wd_title_style() {
+        return 18
+    }
+    if kind == wd.wd_heading1() {
+        return 10
+    }
+    if kind == wd.wd_heading2() {
+        return 8
+    }
+    if kind == wd.wd_quote() {
+        return 8
+    }
+    return 7
+}
+
+fn wl_prefix(kind: Int) -> String {
+    if kind == wd.wd_bullet() {
+        return "• "
+    }
+    return ""
+}
+
+fn wl_align_x(align: Int, margin: Int, content_w: Int, width: Int) -> Int {
+    if align == wd.wd_center() {
+        return margin + (content_w - width) / 2
+    }
+    if align == wd.wd_right() {
+        return margin + content_w - width
+    }
+    return margin
+}
+
+fn wl_emit(lines: List<LineBox>, page: Int, y: Int, page_h: Int, margin: Int, line: LineBox) -> EmitResult {
+    var out = lines
+    var p = page
+    var yy = y
+    let lh = wl_line_h(line.size)
+    if yy + lh > page_h - margin {
+        p = p + 1
+        yy = margin
+    }
+    let placed = LineBox {
+        para: line.para,
+        start: line.start,
+        end: line.end,
+        page: p,
+        x: line.x,
+        y: yy,
+        w: line.w,
+        size: line.size,
+        style: line.style,
+        family: line.family,
+        text: line.text,
+        prefix: line.prefix,
+        indent: line.indent,
+    }
+    out.push(placed)
+    yy = yy + lh
+    return EmitResult { lines: out, page: p, y: yy }
+}
+
+// Wraps one paragraph into visual lines, breaking on spaces and hard-breaking a
+// single word that cannot fit (a URL, for example).
+fn wl_wrap(doc: wd.Document, index: Int, page: Int, y: Int, page_w: Int, page_h: Int, margin: Int) -> WrapResult {
+    let p = doc.paragraphs[index]
+    let size = wl_size(p.kind)
+    let family = wl_family(p.kind)
+    let style = wl_style(p.kind)
+    let content_w = page_w - margin * 2
+    let prefix = wl_prefix(p.kind)
+    let indent = gui.text_fmt_width(prefix, size, family, style)
+    var lines: List<LineBox> = []
+    var page = page
+    var y = y
+    if p.text.len() == 0 {
+        let e = wl_emit(lines, page, y, page_h, margin, LineBox {
+            para: index, start: 0, end: 0, page: 0,
+            x: margin, y: 0, w: 0, size: size, style: style, family: family,
+            text: "", prefix: prefix, indent: indent,
+        })
+        return WrapResult { lines: e.lines, page: e.page, y: e.y }
+    }
+    let words = p.text.split(" ")
+    var line_text = ""
+    var line_start = 0
+    var line_end = 0
+    var first = true
+    var gpos = 0
+    var wi = 0
+    while wi < words.len() {
+        let word = words[wi]
+        let wc = tx.tx_count(word)
+        let word_start = gpos
+        let word_end = gpos + wc
+        gpos = word_end
+        if wi + 1 < words.len() {
+            gpos = gpos + 1
+        }
+        if word.len() == 0 {
+            if line_text.len() > 0 {
+                line_text = line_text + " "
+                line_end = word_end
+            }
+            wi = wi + 1
+            continue
+        }
+        if line_text.len() > 0 {
+            let candidate = line_text + " " + word
+            let pad = if first { indent } else { 0 }
+            let cw = gui.text_fmt_width(candidate, size, family, style) + pad
+            if cw > content_w {
+                let lw = gui.text_fmt_width(line_text, size, family, style) + pad
+                let x = wl_align_x(p.align, margin, content_w, lw)
+                let pre = if first { prefix } else { "" }
+                let pin = if first { indent } else { 0 }
+                let e = wl_emit(lines, page, y, page_h, margin, LineBox {
+                    para: index, start: line_start, end: line_end, page: 0,
+                    x: x, y: 0, w: lw, size: size, style: style, family: family,
+                    text: line_text, prefix: pre, indent: pin,
+                })
+                lines = e.lines
+                page = e.page
+                y = e.y
+                first = false
+                line_text = ""
+            }
+        }
+        if line_text.len() == 0 {
+            line_text = word
+            line_start = word_start
+            line_end = word_end
+            let pad = if first { indent } else { 0 }
+            if gui.text_fmt_width(word, size, family, style) + pad > content_w {
+                var rest = word
+                var rest_g = word_start
+                while rest.len() > 0 {
+                    let total = tx.tx_count(rest)
+                    var best = 1
+                    var k = 1
+                    while k <= total {
+                        let chunk = tx.tx_slice(rest.chars(), 0, tx.tx_scalar_at(rest, k))
+                        let pad2 = if first { indent } else { 0 }
+                        if gui.text_fmt_width(chunk, size, family, style) + pad2 <= content_w {
+                            best = k
+                            k = k + 1
+                        } else {
+                            k = total + 1
+                        }
+                    }
+                    let chunk = tx.tx_slice(rest.chars(), 0, tx.tx_scalar_at(rest, best))
+                    let lw = gui.text_fmt_width(chunk, size, family, style) + (if first { indent } else { 0 })
+                    let x = wl_align_x(p.align, margin, content_w, lw)
+                    let pre = if first { prefix } else { "" }
+                    let pin = if first { indent } else { 0 }
+                    let e = wl_emit(lines, page, y, page_h, margin, LineBox {
+                        para: index, start: rest_g, end: rest_g + best, page: 0,
+                        x: x, y: 0, w: lw, size: size, style: style, family: family,
+                        text: chunk, prefix: pre, indent: pin,
+                    })
+                    lines = e.lines
+                    page = e.page
+                    y = e.y
+                    first = false
+                    rest_g = rest_g + best
+                    rest = tx.tx_slice(rest.chars(), tx.tx_scalar_at(rest, best), rest.chars().len())
+                }
+                line_text = ""
+            }
+        } else {
+            line_text = line_text + " " + word
+            line_end = word_end
+        }
+        wi = wi + 1
+    }
+    if line_text.len() > 0 {
+        let pad = if first { indent } else { 0 }
+        let lw = gui.text_fmt_width(line_text, size, family, style) + pad
+        let x = wl_align_x(p.align, margin, content_w, lw)
+        let pre = if first { prefix } else { "" }
+        let pin = if first { indent } else { 0 }
+        let e = wl_emit(lines, page, y, page_h, margin, LineBox {
+            para: index, start: line_start, end: line_end, page: 0,
+            x: x, y: 0, w: lw, size: size, style: style, family: family,
+            text: line_text, prefix: pre, indent: pin,
+        })
+        lines = e.lines
+        page = e.page
+        y = e.y
+    }
+    return WrapResult { lines: lines, page: page, y: y }
+}
+
+fn wl_layout(doc: wd.Document, page_w: Int, page_h: Int, margin: Int) -> Layout {
+    var lines: List<LineBox> = []
+    var page = 0
+    var y = margin
+    var i = 0
+    while i < doc.paragraphs.len() {
+        let p = doc.paragraphs[i]
+        let size = wl_size(p.kind)
+        let lh = wl_line_h(size)
+        y = y + wl_before(p.kind)
+        if y + lh > page_h - margin {
+            page = page + 1
+            y = margin
+        }
+        if wd.wd_is_heading(p.kind) && y + lh * 2 > page_h - margin {
+            page = page + 1
+            y = margin
+        }
+        let r = wl_wrap(doc, i, page, y, page_w, page_h, margin)
+        var k = 0
+        while k < r.lines.len() {
+            lines.push(r.lines[k])
+            k = k + 1
+        }
+        page = r.page
+        y = r.y + wl_after(p.kind)
+        i = i + 1
+    }
+    if lines.len() == 0 {
+        lines.push(LineBox {
+            para: 0, start: 0, end: 0, page: 0,
+            x: margin, y: margin, w: 0, size: 11, style: 0, family: 2,
+            text: "", prefix: "", indent: 0,
+        })
+    }
+    return Layout { lines: lines, pages: page + 1, page_w: page_w, page_h: page_h, margin: margin }
+}
+
+fn wl_line_index(layout: Layout, para: Int, offset: Int) -> Int {
+    var best = 0 - 1
+    var i = 0
+    while i < layout.lines.len() {
+        let l = layout.lines[i]
+        if l.para == para && offset >= l.start && offset <= l.end {
+            if best < 0 {
+                best = i
+            }
+            if offset > l.start {
+                best = i
+            }
+        }
+        i = i + 1
+    }
+    return best
+}
+
+fn wl_x_at(doc: wd.Document, line: LineBox, offset: Int) -> Int {
+    if line.para < 0 || line.para >= doc.paragraphs.len() {
+        return line.x + line.indent
+    }
+    let text = doc.paragraphs[line.para].text
+    let starts = tx.tx_starts(text)
+    let count = starts.len() - 1
+    let g0 = tx.tx_clamp(line.start, count)
+    let g1 = tx.tx_clamp(offset, count)
+    let chars = text.chars()
+    let pre = tx.tx_slice(chars, starts[g0], starts[g1])
+    return line.x + line.indent + gui.text_fmt_width(pre, line.size, line.family, line.style)
+}
+
+fn wl_caret(doc: wd.Document, layout: Layout, para: Int, offset: Int) -> CaredBox {
+    let index = wl_line_index(layout, para, offset)
+    if index < 0 {
+        return CaredBox { found: false, page: 0, x: 0, y: 0, h: 0, line: 0 }
+    }
+    let l = layout.lines[index]
+    return CaredBox {
+        found: true,
+        page: l.page,
+        x: wl_x_at(doc, l, offset),
+        y: l.y,
+        h: wl_line_h(l.size),
+        line: index,
+    }
+}
+
+fn wl_hit(doc: wd.Document, layout: Layout, page: Int, px: Int, py: Int) -> Hit {
+    var i = 0
+    while i < layout.lines.len() {
+        let l = layout.lines[i]
+        if l.page == page && py >= l.y && py < l.y + wl_line_h(l.size) {
+            let text = doc.paragraphs[l.para].text
+            let count = tx.tx_count(text)
+            let from = tx.tx_clamp(l.start, count)
+            let to = tx.tx_clamp(l.end, count)
+            var best_g = from
+            var best_d = 999999
+            var g = from
+            while g <= to {
+                let cx = wl_x_at(doc, l, g)
+                var d = px - cx
+                if d < 0 {
+                    d = 0 - d
+                }
+                if d < best_d {
+                    best_d = d
+                    best_g = g
+                }
+                g = g + 1
+            }
+            return Hit { found: true, para: l.para, offset: best_g, line: i }
+        }
+        i = i + 1
+    }
+    return Hit { found: false, para: 0, offset: 0, line: 0 }
+}
+
+// Clicking past the last line of a page should still place the caret on that
+// page instead of jumping to the end of the document.
+fn wl_hit_nearest(doc: wd.Document, layout: Layout, page: Int, px: Int, py: Int) -> Hit {
+    let exact = wl_hit(doc, layout, page, px, py)
+    if exact.found {
+        return exact
+    }
+    var first = 0 - 1
+    var last = 0 - 1
+    var i = 0
+    while i < layout.lines.len() {
+        let l = layout.lines[i]
+        if l.page == page {
+            if first < 0 {
+                first = i
+            }
+            if l.y <= py {
+                last = i
+            }
+            if l.y > py && last < 0 {
+                last = i
+            }
+        }
+        i = i + 1
+    }
+    if last < 0 {
+        last = first
+    }
+    if last < 0 {
+        return Hit { found: false, para: 0, offset: 0, line: 0 }
+    }
+    let l = layout.lines[last]
+    return Hit { found: true, para: l.para, offset: l.start, line: last }
+}
+
+// End-of-document position: last paragraph, last grapheme.
+fn wl_end(doc: wd.Document) -> Hit {
+    let last = doc.paragraphs.len() - 1
+    let count = tx.tx_count(doc.paragraphs[last].text)
+    return Hit { found: true, para: last, offset: count, line: 0 }
+}

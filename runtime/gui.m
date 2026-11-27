@@ -495,7 +495,16 @@ static int64_t nova_gui_key_code(NSEvent *event, int64_t mods) {
     else if (selector == @selector(deleteForward:)) code = NOVA_KEY_DELETE;
     else if (selector == @selector(insertNewline:)) code = NOVA_KEY_ENTER;
     else if (selector == @selector(insertTab:)) code = NOVA_KEY_TAB;
-    else if (selector == @selector(cancelOperation:)) code = NOVA_KEY_ESCAPE;
+    else if (selector == @selector(cancelOperation:)) {
+        code = NOVA_KEY_ESCAPE;
+        /* Escape cancels the input context's composition. Clearing the store
+         * here is what makes the app stop painting the preedit; without it a
+         * cancelled composition would remain on screen forever. */
+        if (nova_marked_text_store.length > 0) {
+            nova_marked_text_store = nil;
+            nova_gui_trace("ime: cancelOperation cleared marked text");
+        }
+    }
     else if (selector == @selector(pageUp:) || selector == @selector(scrollPageUp:)) code = NOVA_KEY_PAGE_UP;
     else if (selector == @selector(pageDown:) || selector == @selector(scrollPageDown:)) code = NOVA_KEY_PAGE_DOWN;
     if (code >= 0) nova_gui_emit(NOVA_GUI_KEY, code, 0, 0, mods, 0);
@@ -892,7 +901,7 @@ static CGColorRef nova_gui_color(int64_t rgb) {
  * changing the family can drop it. */
 static char nova_mono_family[160] = {0};
 static int nova_mono_ready = 0;
-static CTFontRef nova_font_cache[2][80];
+static CTFontRef nova_font_cache[3][8][80];
 
 static void nova_mono_pick(void) {
     if (nova_mono_ready) return;
@@ -921,18 +930,23 @@ static const char *nova_mono_name(void) {
     return nova_mono_family;
 }
 
-static CTFontRef nova_gui_font(int64_t size, int64_t mono) {
-    CTFontRef (*cache)[80] = nova_font_cache;
+/* Families: 0 system sans, 1 monospaced, 2 serif. Style bits: 1 bold,
+ * 2 italic, 4 underline. CoreText owns shaping, fallback and glyph metrics;
+ * Writer owns line breaking, pagination and painting order. */
+static CTFontRef nova_gui_font_style(int64_t size, int64_t family, int64_t style) {
     int index = (int)(size < 1 ? 1 : (size > 79 ? 79 : size));
-    int which = mono ? 1 : 0;
-    if (!cache[which][index]) {
+    int fam = family < 0 ? 0 : (family > 2 ? 2 : (int)family);
+    int st = (int)(style & 7);
+    if (!nova_font_cache[fam][st][index]) {
         CTFontRef font = NULL;
-        if (mono) {
-            CFStringRef family = CFStringCreateWithCString(NULL, nova_mono_name(), kCFStringEncodingUTF8);
-            if (family) {
-                font = CTFontCreateWithName(family, (CGFloat)index, NULL);
-                CFRelease(family);
+        if (fam == 1) {
+            CFStringRef mono_family = CFStringCreateWithCString(NULL, nova_mono_name(), kCFStringEncodingUTF8);
+            if (mono_family) {
+                font = CTFontCreateWithName(mono_family, (CGFloat)index, NULL);
+                CFRelease(mono_family);
             }
+        } else if (fam == 2) {
+            font = CTFontCreateWithName(CFSTR("Times New Roman"), (CGFloat)index, NULL);
         }
         if (!font) {
             font = CTFontCreateUIFontForLanguage(kCTFontUIFontSystem, (CGFloat)index, NULL);
@@ -940,30 +954,49 @@ static CTFontRef nova_gui_font(int64_t size, int64_t mono) {
         if (!font) {
             font = CTFontCreateWithName(CFSTR("Helvetica"), (CGFloat)index, NULL);
         }
-        cache[which][index] = font;
+        CTFontSymbolicTraits traits = 0;
+        if (st & 1) traits |= kCTFontBoldTrait;
+        if (st & 2) traits |= kCTFontItalicTrait;
+        if (font && traits) {
+            CTFontRef styled = CTFontCreateCopyWithSymbolicTraits(font, (CGFloat)index, NULL, traits, traits);
+            if (styled) {
+                CFRelease(font);
+                font = styled;
+            }
+        }
+        nova_font_cache[fam][st][index] = font;
     }
-    return cache[which][index];
+    return nova_font_cache[fam][st][index];
 }
 
-static CTLineRef nova_gui_make_line(nova_str text, int64_t size, int64_t mono) {
+static CTFontRef nova_gui_font(int64_t size, int64_t mono) {
+    return nova_gui_font_style(size, mono ? 1 : 0, 0);
+}
+
+static CTLineRef nova_gui_make_line(nova_str text, int64_t size, int64_t family, int64_t style) {
     if (!text.ptr || text.len <= 0) return NULL;
     CFStringRef string = CFStringCreateWithBytes(NULL, (const UInt8 *)text.ptr, (CFIndex)text.len,
                                                  kCFStringEncodingUTF8, false);
     if (!string) return NULL;
-    CTFontRef font = nova_gui_font(size, mono);
+    CTFontRef font = nova_gui_font_style(size, family, style);
     /* Without this flag CTLineDraw ignores the fill colour set on the context
      * and paints the line black, which makes every label invisible on a dark
-     * background. The line is cached per (text, size, font), so the colour has
-     * to come from the context at draw time rather than from an attribute. */
-    const void *keys[2] = { kCTFontAttributeName, kCTForegroundColorFromContextAttributeName };
-    const void *values[2] = { font, kCFBooleanTrue };
-    CFDictionaryRef attributes = CFDictionaryCreate(NULL, keys, values, 2,
+     * background. The line is cached per (text, size, family, style), so the
+     * colour has to come from the context at draw time rather than from an
+     * attribute. Underline is the one style CoreText must apply while shaping. */
+    int underline = (style & 4) ? kCTUnderlineStyleSingle : kCTUnderlineStyleNone;
+    CFNumberRef underline_value = CFNumberCreate(NULL, kCFNumberIntType, &underline);
+    const void *keys[3] = { kCTFontAttributeName, kCTForegroundColorFromContextAttributeName,
+                            kCTUnderlineStyleAttributeName };
+    const void *values[3] = { font, kCFBooleanTrue, underline_value };
+    CFDictionaryRef attributes = CFDictionaryCreate(NULL, keys, values, 3,
                                                     &kCFTypeDictionaryKeyCallBacks,
                                                     &kCFTypeDictionaryValueCallBacks);
     CFAttributedStringRef attributed = CFAttributedStringCreate(NULL, string, attributes);
     CTLineRef line = CTLineCreateWithAttributedString(attributed);
     CFRelease(attributed);
     CFRelease(attributes);
+    if (underline_value) CFRelease(underline_value);
     CFRelease(string);
     return line;
 }
@@ -982,13 +1015,14 @@ typedef struct {
     char *bytes;
     int64_t len;
     int64_t size;
-    int64_t mono;
+    int64_t family;
+    int64_t style;
     CTLineRef line;
 } NovaLineEntry;
 
 static NovaLineEntry nova_lines[NOVA_LINE_CACHE];
 
-static CTLineRef nova_gui_cached_line(nova_str text, int64_t size, int64_t mono) {
+static CTLineRef nova_gui_cached_line(nova_str text, int64_t size, int64_t family, int64_t style) {
     if (!text.ptr || text.len <= 0 || text.len > 2048) return NULL;
     uint64_t hash = 1469598103934665603ULL;
     int64_t i = 0;
@@ -997,14 +1031,16 @@ static CTLineRef nova_gui_cached_line(nova_str text, int64_t size, int64_t mono)
         i = i + 1;
     }
     hash = hash * 1099511628211ULL ^ (uint64_t)size;
-    hash = hash * 1099511628211ULL ^ (uint64_t)mono;
+    hash = hash * 1099511628211ULL ^ (uint64_t)family;
+    hash = hash * 1099511628211ULL ^ (uint64_t)style;
     NovaLineEntry *entry = &nova_lines[hash % NOVA_LINE_CACHE];
-    if (entry->line && entry->hash == hash && entry->size == size && entry->mono == mono &&
+    if (entry->line && entry->hash == hash && entry->size == size &&
+        entry->family == family && entry->style == style &&
         entry->len == text.len && entry->bytes &&
         memcmp(entry->bytes, text.ptr, (size_t)text.len) == 0) {
         return (CTLineRef)CFRetain(entry->line);
     }
-    CTLineRef line = nova_gui_make_line(text, size, mono);
+    CTLineRef line = nova_gui_make_line(text, size, family, style);
     if (!line) return NULL;
     if (entry->line) CFRelease(entry->line);
     free(entry->bytes);
@@ -1012,7 +1048,8 @@ static CTLineRef nova_gui_cached_line(nova_str text, int64_t size, int64_t mono)
     if (entry->bytes) memcpy(entry->bytes, text.ptr, (size_t)text.len);
     entry->len = entry->bytes ? text.len : 0;
     entry->size = size;
-    entry->mono = mono;
+    entry->family = family;
+    entry->style = style;
     entry->hash = hash;
     entry->line = line;                /* the cache owns this reference */
     return (CTLineRef)CFRetain(line);  /* the caller owns its own */
@@ -1453,9 +1490,13 @@ void nova_gui_line(int64_t x0, int64_t y0, int64_t x1, int64_t y1, int64_t rgb) 
     CGColorRelease(color);
 }
 
+int64_t nova_gui_text_fmt_width(nova_str text, int64_t size, int64_t family, int64_t style);
+void nova_gui_text_fmt(int64_t x, int64_t y, nova_str text, int64_t size, int64_t rgb,
+                       int64_t family, int64_t style);
+
 void nova_gui_text(int64_t x, int64_t y, nova_str text, int64_t size, int64_t rgb, int64_t mono) {
     if (!nova_ctx) return;
-    CTLineRef line = nova_gui_cached_line(text, size, mono);
+    CTLineRef line = nova_gui_cached_line(text, size, mono ? 1 : 0, 0);
     if (!line) return;
     CTFontRef font = nova_gui_font(size, mono);
     CGColorRef color = nova_gui_color(rgb);
@@ -1469,7 +1510,28 @@ void nova_gui_text(int64_t x, int64_t y, nova_str text, int64_t size, int64_t rg
 }
 
 int64_t nova_gui_text_width(nova_str text, int64_t size, int64_t mono) {
-    CTLineRef line = nova_gui_cached_line(text, size, mono);
+    return nova_gui_text_fmt_width(text, size, mono ? 1 : 0, 0);
+}
+
+/* Styled text for document runs. `family` selects sans/serif/mono and `style`
+ * carries bold, italic and underline bits; the host measures and draws, while
+ * Writer decides what a run means and where the line breaks. */
+void nova_gui_text_fmt(int64_t x, int64_t y, nova_str text, int64_t size, int64_t rgb,
+                       int64_t family, int64_t style) {
+    if (!nova_ctx) return;
+    CTLineRef line = nova_gui_cached_line(text, size, family, style);
+    if (!line) return;
+    CTFontRef font = nova_gui_font_style(size, family, style);
+    CGColorRef color = nova_gui_color(rgb);
+    CGContextSetFillColorWithColor(nova_ctx, color);
+    CGContextSetTextPosition(nova_ctx, (CGFloat)x, (CGFloat)y + CTFontGetAscent(font));
+    CTLineDraw(line, nova_ctx);
+    CGColorRelease(color);
+    CFRelease(line);
+}
+
+int64_t nova_gui_text_fmt_width(nova_str text, int64_t size, int64_t family, int64_t style) {
+    CTLineRef line = nova_gui_cached_line(text, size, family, style);
     if (!line) return 0;
     /* CTLineGetTypographicBounds returns the width; its pointer arguments are
      * ascent, descent and leading. Measuring into the first one yields the
@@ -1487,6 +1549,12 @@ int64_t nova_gui_now_ms(void) {
     struct timespec ts;
     if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
     return (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000);
+}
+
+/* Wall-clock milliseconds since the Unix epoch. Recovery file names embed
+ * this so files from separate launches sort in creation order. */
+int64_t nova_epoch_ms(void) {
+    return (int64_t)([[NSDate date] timeIntervalSince1970] * 1000.0);
 }
 
 int64_t nova_gui_advance(int64_t size, int64_t mono) {
@@ -1575,13 +1643,49 @@ static void nova_gui_stack_check(void) {
  * drives exactly that pair, so the marked-text drawing and the commit path have
  * automated coverage; the converter itself is still a manual check. */
 static void nova_gui_ime_probe(void) {
-    const char *env = getenv("NOVA_BROWSER_IME_PROBE");
-    if (!env || !env[0] || !nova_view) return;
+    const char *browser_env = getenv("NOVA_BROWSER_IME_PROBE");
+    const char *generic_env = getenv("NOVA_GUI_IME_PROBE");
+    int browser_probe = browser_env && browser_env[0];
+    int generic_probe = generic_env && generic_env[0];
+    if ((!browser_probe && !generic_probe) || !nova_view) return;
     NovaGuiView *view = (NovaGuiView *)nova_view;
     static CFAbsoluteTime started = 0;
     static int stage = 0;
     if (started == 0) started = CFAbsoluteTimeGetCurrent();
     double elapsed = CFAbsoluteTimeGetCurrent() - started;
+    int cancel_probe = generic_probe && strcmp(generic_env, "cancel") == 0;
+    if (cancel_probe) {
+        /* Mark, cancel through the same selector AppKit uses for Escape, then
+         * mark again and commit. This exercises both ends of the protocol in
+         * one run and proves cancellation leaves no uncommitted text behind. */
+        if (stage == 0 && elapsed > 0.40) {
+            NSString *marked = @"にほ";
+            [view setMarkedText:marked selectedRange:NSMakeRange(2, 0)
+               replacementRange:NSMakeRange(NSNotFound, 0)];
+            printf("ime: marked=%s has=%d\n", [marked UTF8String], (int)[view hasMarkedText]);
+            fflush(stdout);
+            stage = 1;
+        } else if (stage == 1 && elapsed > 0.80) {
+            [view doCommandBySelector:@selector(cancelOperation:)];
+            printf("ime: cancelled has=%d\n", (int)[view hasMarkedText]);
+            fflush(stdout);
+            stage = 2;
+        } else if (stage == 2 && elapsed > 1.20) {
+            NSString *marked = @"にほ";
+            [view setMarkedText:marked selectedRange:NSMakeRange(2, 0)
+               replacementRange:NSMakeRange(NSNotFound, 0)];
+            printf("ime: marked=%s has=%d\n", [marked UTF8String], (int)[view hasMarkedText]);
+            fflush(stdout);
+            stage = 3;
+        } else if (stage == 3 && elapsed > 2.00) {
+            NSString *commit = @"日本";
+            [view insertText:commit replacementRange:NSMakeRange(NSNotFound, 0)];
+            printf("ime: committed=%s has=%d\n", [commit UTF8String], (int)[view hasMarkedText]);
+            fflush(stdout);
+            stage = 4;
+        }
+        return;
+    }
     if (stage == 0 && elapsed > 0.40) {
         NSString *marked = @"にほ";
         [view setMarkedText:marked selectedRange:NSMakeRange(2, 0)
@@ -2019,10 +2123,12 @@ int64_t nova_gui_set_mono_font(nova_str family) {
     free(name);
     if (matched) {
         nova_mono_ready = 1;
-        for (int i = 0; i < 80; i++) {
-            if (nova_font_cache[1][i]) {
-                CFRelease(nova_font_cache[1][i]);
-                nova_font_cache[1][i] = NULL;
+        for (int st = 0; st < 8; st++) {
+            for (int i = 0; i < 80; i++) {
+                if (nova_font_cache[1][st][i]) {
+                    CFRelease(nova_font_cache[1][st][i]);
+                    nova_font_cache[1][st][i] = NULL;
+                }
             }
         }
     }
@@ -2162,6 +2268,34 @@ int64_t nova_fs_write_bytes(nova_str path, nova_str data) {
     int ok = 1;
     if (data.len > 0 && data.ptr) ok = fwrite(data.ptr, 1, (size_t)data.len, file) == (size_t)data.len;
     if (fclose(file) != 0) ok = 0;
+    return ok ? 1 : 0;
+}
+
+/* Atomic replacement for document saves: the caller writes a temporary file,
+ * verifies it, then renames it over the destination. A failed save therefore
+ * leaves the original document untouched. */
+int64_t nova_fs_rename(nova_str from, nova_str to) {
+    char *source = nova_gui_cstr(from);
+    char *target = nova_gui_cstr(to);
+    if (!source || !target) {
+        free(source);
+        free(target);
+        return 0;
+    }
+    int ok = rename(source, target) == 0;
+    free(source);
+    free(target);
+    return ok ? 1 : 0;
+}
+
+/* Removes a file. A missing path is already the desired state, so cleanup
+ * after a save can be idempotent. */
+int64_t nova_fs_delete(nova_str path) {
+    char *name = nova_gui_cstr(path);
+    if (!name) return 0;
+    int ok = remove(name) == 0;
+    if (!ok && errno == ENOENT) ok = 1;
+    free(name);
     return ok ? 1 : 0;
 }
 

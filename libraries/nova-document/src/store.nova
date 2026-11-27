@@ -1,0 +1,43 @@
+// nova-document/store — disk persistence for `.novadoc` v1.
+//
+// The model and the serialization format stay in document.nova; this module is
+// the only place that touches the host filesystem. A save writes a temporary
+// file, reads it back to verify the bytes, then renames it over the target, so
+// a failed save leaves the previous document intact.
+
+import "../../nova-gui/src/gui.nova" as gui
+import "document.nova" as wd
+
+fn wd_save(doc: wd.Document, path: String) -> String {
+    if path.len() == 0 {
+        return "no destination path"
+    }
+    let text = wd.wd_serialize(doc)
+    let temp = path + ".tmp"
+    if !gui.write(temp, text) {
+        return "cannot write " + temp
+    }
+    let back = gui.read(temp)
+    if back != text {
+        return "verification failed for " + temp
+    }
+    if !gui.rename(temp, path) {
+        return "cannot replace " + path
+    }
+    return ""
+}
+
+fn wd_load(path: String) -> wd.LoadResult {
+    if !gui.exists(path) {
+        return wd.wd_load_fail("no such file: " + path)
+    }
+    let text = gui.read(path)
+    if text.len() == 0 {
+        return wd.wd_load_fail("empty file: " + path)
+    }
+    return wd.wd_parse(text)
+}
+
+fn wd_has_native_header(text: String) -> Bool {
+    return text.starts_with("NOVADOC\t1\n")
+}

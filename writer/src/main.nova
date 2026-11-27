@@ -1,0 +1,2009 @@
+import std.io { println }
+import "../../libraries/nova-gui/src/gui.nova" as gui
+import "../../libraries/nova-document/src/text.nova" as tx
+import "../../libraries/nova-document/src/document.nova" as wd
+import "../../libraries/nova-document/src/layout.nova" as wl
+import "../../libraries/nova-document/src/store.nova" as store
+import "../../libraries/nova-document/src/recovery.nova" as rec
+
+// Nova Writer — a native word processor.
+//
+// The window is immediate mode; the document model, layout and persistence are
+// separate Nova libraries. Text is shaped by CoreText and broken by measured
+// advances, so a line never ends because a character count said so. Every
+// visible command does real work: unsupported features are absent rather than
+// painted as fake buttons.
+
+// ---------- geometry ----------
+
+fn wr_title_h() -> Int {
+    return 34
+}
+
+fn wr_ribbon_h() -> Int {
+    return 48
+}
+
+fn wr_ruler_h() -> Int {
+    return 22
+}
+
+fn wr_status_h() -> Int {
+    return 24
+}
+
+fn wr_sidebar_w() -> Int {
+    return 216
+}
+
+fn wr_content_top() -> Int {
+    return wr_title_h() + wr_ribbon_h() + wr_ruler_h()
+}
+
+fn wr_page_gap() -> Int {
+    return 26
+}
+
+// ---------- colours ----------
+
+fn wr_paper_white() -> Int {
+    return gui.rgb(253, 252, 249)
+}
+
+fn wr_paper_warm() -> Int {
+    return gui.rgb(247, 241, 227)
+}
+
+fn wr_paper_sepia() -> Int {
+    return gui.rgb(238, 228, 206)
+}
+
+fn wr_ink() -> Int {
+    return gui.rgb(38, 36, 34)
+}
+
+fn wr_ink_muted() -> Int {
+    return gui.rgb(96, 92, 88)
+}
+
+fn wr_select() -> Int {
+    return gui.rgb(184, 208, 235)
+}
+
+fn wr_paper_color(app: App) -> Int {
+    if app.paper == 1 {
+        return wr_paper_warm()
+    }
+    if app.paper == 2 {
+        return wr_paper_sepia()
+    }
+    return wr_paper_white()
+}
+
+// ---------- model ----------
+
+struct Session {
+    doc: wd.Document,
+    path: String,
+    dirty: Bool,
+    cursor_para: Int,
+    cursor_off: Int,
+    anchor_para: Int,
+    anchor_off: Int,
+    selecting: Bool,
+    scroll: Int,
+    zoom: Int,
+    // The compiler rejects a List<Document> field, so the app keeps bounded
+    // serialized snapshots. The format preserves ids and formatting; the core
+    // library's Document-based history remains separately tested.
+    undo: List<String>,
+    redo: List<String>,
+    recovery_path: String,
+    recovery_ms: Int,
+}
+
+struct App {
+    sessions: List<Session>,
+    active: Int,
+    theme: gui.Theme,
+    theme_name: String,
+    paper: Int,
+    layout: wl.Layout,
+    layout_dirty: Bool,
+    words: Int,
+    chars: Int,
+    status: String,
+    sidebar: Bool,
+    quit: Bool,
+    mouse_x: Int,
+    mouse_y: Int,
+    last_type_ms: Int,
+    last_type_para: Int,
+    last_type_kind: Int,
+    solid_caret: Bool,
+    frame: Int,
+}
+
+struct Sel {
+    active: Bool,
+    p0: Int,
+    o0: Int,
+    p1: Int,
+    o1: Int,
+}
+
+struct HitBox {
+    id: String,
+    label: String,
+    x: Int,
+    y: Int,
+    w: Int,
+    h: Int,
+}
+
+struct PageHit {
+    found: Bool,
+    para: Int,
+    offset: Int,
+}
+
+// ---------- helpers ----------
+
+fn wr_clamp(value: Int, low: Int, high: Int) -> Int {
+    if value < low {
+        return low
+    }
+    if value > high {
+        return high
+    }
+    return value
+}
+
+fn wr_base(path: String) -> String {
+    let chars = path.chars()
+    var cut = 0 - 1
+    var i = 0
+    while i < chars.len() {
+        if chars[i] == "/" {
+            cut = i
+        }
+        i = i + 1
+    }
+    return tx.tx_slice(chars, cut + 1, chars.len())
+}
+
+fn wr_truncate(text: String, limit: Int) -> String {
+    let chars = text.chars()
+    if chars.len() <= limit {
+        return text
+    }
+    return tx.tx_slice(chars, 0, limit) + "…"
+}
+
+fn wr_display_name(s: Session) -> String {
+    if s.path.len() > 0 {
+        return wr_base(s.path)
+    }
+    if s.doc.title.len() > 0 {
+        return s.doc.title
+    }
+    return "Untitled"
+}
+
+fn wr_slug(title: String) -> String {
+    var out = ""
+    let chars = title.lower().chars()
+    var i = 0
+    while i < chars.len() {
+        let ch = chars[i]
+        if "abcdefghijklmnopqrstuvwxyz0123456789".contains(ch) {
+            out = out + ch
+        } else {
+            if ch == " " || ch == "-" || ch == "_" {
+                if out.len() > 0 && !out.ends_with("-") {
+                    out = out + "-"
+                }
+            }
+        }
+        i = i + 1
+    }
+    if out.len() == 0 {
+        return "Untitled"
+    }
+    return out
+}
+
+fn wr_unique_path(dir: String, base: String) -> String {
+    var path = dir + "/" + base + ".novadoc"
+    var n = 2
+    while gui.exists(path) {
+        path = dir + "/" + base + " " + n.to_string() + ".novadoc"
+        n = n + 1
+    }
+    return path
+}
+
+fn wr_no_text() -> List<String> {
+    var out: List<String> = []
+    return out
+}
+
+fn wr_push_text(items: List<String>, text: String) -> List<String> {
+    var out = items
+    out.push(text)
+    while out.len() > 100 {
+        var next: List<String> = []
+        var i = 1
+        while i < out.len() {
+            next.push(out[i])
+            i = i + 1
+        }
+        out = next
+    }
+    return out
+}
+
+fn wr_session(doc: wd.Document, path: String, dirty: Bool, recovery_path: String) -> Session {
+    return Session {
+        doc: doc,
+        path: path,
+        dirty: dirty,
+        cursor_para: 0,
+        cursor_off: 0,
+        anchor_para: 0,
+        anchor_off: 0,
+        selecting: false,
+        scroll: 0,
+        zoom: 100,
+        undo: wr_no_text(),
+        redo: wr_no_text(),
+        recovery_path: recovery_path,
+        recovery_ms: 0,
+    }
+}
+
+// The compiler only allows index assignment on a local list variable, not on a
+// list reached through a struct field. Every session replacement goes through
+// this helper, which rebuilds the field from a local copy.
+fn wr_put(app: App, index: Int, s: Session) -> App {
+    var out = app
+    var sessions = out.sessions
+    sessions[index] = s
+    out.sessions = sessions
+    return out
+}
+
+fn wr_sel(s: Session) -> Sel {
+    if s.anchor_para == s.cursor_para && s.anchor_off == s.cursor_off {
+        return Sel { active: false, p0: s.cursor_para, o0: s.cursor_off, p1: s.cursor_para, o1: s.cursor_off }
+    }
+    if s.anchor_para < s.cursor_para || (s.anchor_para == s.cursor_para && s.anchor_off < s.cursor_off) {
+        return Sel { active: true, p0: s.anchor_para, o0: s.anchor_off, p1: s.cursor_para, o1: s.cursor_off }
+    }
+    return Sel { active: true, p0: s.cursor_para, o0: s.cursor_off, p1: s.anchor_para, o1: s.anchor_off }
+}
+
+fn wr_para_count(s: Session) -> Int {
+    return s.doc.paragraphs.len()
+}
+
+fn wr_cursor_limit(s: Session) -> Int {
+    if s.cursor_para < 0 || s.cursor_para >= s.doc.paragraphs.len() {
+        return 0
+    }
+    return tx.tx_count(s.doc.paragraphs[s.cursor_para].text)
+}
+
+// ---------- document template ----------
+
+fn wr_add(doc: wd.Document, kind: Int, text: String) -> wd.Document {
+    var d = doc
+    var index = d.paragraphs.len() - 1
+    if d.paragraphs[index].text.len() > 0 {
+        d = wd.wd_append(d)
+        index = d.paragraphs.len() - 1
+    }
+    d = wd.wd_insert(d, index, 0, text)
+    d = wd.wd_set_kind(d, index, kind)
+    return d
+}
+
+fn wr_demo() -> wd.Document {
+    var d = wd.wd_new("Nova Writer")
+    d = wr_add(d, wd.wd_title_style(), "Nova Writer")
+    d = wr_add(d, wd.wd_heading2(), "A native word processor built in Nova")
+    d = wr_add(d, wd.wd_body(), "This is a real editable document. Click in the page and type; select with the mouse or Shift+arrows; undo with Cmd+Z. The caret moves on grapheme boundaries, so a combining mark, an emoji with a skin tone, a flag or a joined emoji family is never split by a single keypress.")
+    d = wr_add(d, wd.wd_heading1(), "Editing")
+    d = wr_add(d, wd.wd_bullet(), "Type in the page. Enter splits a paragraph; Backspace merges at the start of one.")
+    d = wr_add(d, wd.wd_bullet(), "Select with a drag or Shift+arrows. Copy, cut and paste use the system clipboard.")
+    d = wr_add(d, wd.wd_bullet(), "Undo and redo restore whole document snapshots, not just the last character.")
+    d = wr_add(d, wd.wd_bullet(), "Apply Title, Heading, Body, Quote or List from the Styles panel; align left, centre or right from the ribbon.")
+    d = wr_add(d, wd.wd_quote(), "Every visible command executes real document behavior. Features that are not implemented are absent, not painted as fake controls.")
+    d = wr_add(d, wd.wd_heading1(), "Layout")
+    d = wr_add(d, wd.wd_body(), "CoreText shapes each line and reports its advance width; Nova decides where the line breaks and where the page ends. Pages are A4 with one-inch margins, and zoom scales the canvas without reflowing the document.")
+    d = wr_add(d, wd.wd_body(), "Save writes a verified temporary file and renames it over the target, so a failed save leaves the previous document intact. Open reads the same versioned .novadoc container and validates its checksum before showing anything.")
+    d = wr_add(d, wd.wd_heading1(), "Next")
+    d = wr_add(d, wd.wd_body(), "Inline bold and italic runs, find and replace, tables, images, headers and footers, DOCX and PDF are tracked as later milestones. This build is the vertical slice: a real model, real layout and real persistence behind a native window.")
+    return d
+}
+
+// ---------- application state ----------
+
+fn wr_theme_name(name: String) -> String {
+    if name == "light" {
+        return "light"
+    }
+    if name == "gruvbox" {
+        return "gruvbox"
+    }
+    return "dark"
+}
+
+fn wr_theme(name: String) -> gui.Theme {
+    if name == "light" {
+        return gui.light()
+    }
+    if name == "gruvbox" {
+        return gui.gruvbox()
+    }
+    return gui.dark()
+}
+
+fn wr_restore(app: App) -> App {
+    var app = app
+    if gui.env("NOVA_WRITER_NO_RECOVERY") == "1" {
+        return app
+    }
+    let files = rec.rec_entries()
+    if files.len() == 0 {
+        return app
+    }
+    var restored = 0
+    var i = 0
+    while i < files.len() && restored < 6 {
+        let loaded = rec.rec_load(files[i].path)
+        if loaded.ok {
+            var sessions = app.sessions
+            sessions.push(wr_session(loaded.doc, "", true, files[i].path))
+            app.sessions = sessions
+            restored = restored + 1
+        }
+        i = i + 1
+    }
+    if restored == 0 {
+        app.status = "Recovery files could not be read"
+        return app
+    }
+    // The demo or blank tab was a placeholder; recovered work replaces it.
+    var keep: List<Session> = []
+    var j = 1
+    while j < app.sessions.len() {
+        keep.push(app.sessions[j])
+        j = j + 1
+    }
+    app.sessions = keep
+    app.active = keep.len() - 1
+    app.layout_dirty = true
+    app.status = "Recovered " + restored.to_string() + " unsaved document"
+    if restored > 1 {
+        app.status = app.status + "s"
+    }
+    return app
+}
+
+fn wr_start() -> App {
+    var doc = wr_demo()
+    if gui.env("NOVA_WRITER_DEMO") == "0" {
+        doc = wd.wd_empty()
+    }
+    var sessions: List<Session> = []
+    sessions.push(wr_session(doc, "", false, rec.rec_path("demo")))
+    let theme_name = wr_theme_name(gui.env("NOVA_WRITER_THEME"))
+    let layout = wl.wl_layout(doc, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
+    var app = App {
+        sessions: sessions,
+        active: 0,
+        theme: wr_theme(theme_name),
+        theme_name: theme_name,
+        paper: 0,
+        layout: layout,
+        layout_dirty: false,
+        words: wd.wd_word_count(doc),
+        chars: wd.wd_char_count(doc),
+        status: "",
+        sidebar: true,
+        quit: false,
+        mouse_x: 0,
+        mouse_y: 0,
+        last_type_ms: 0,
+        last_type_para: 0,
+        last_type_kind: 0,
+        solid_caret: gui.env("NOVA_WRITER_SNAPSHOT").len() > 0,
+        frame: 0,
+    }
+    return wr_restore(app)
+}
+
+fn wr_relayout(app: App) -> App {
+    var app = app
+    if !app.layout_dirty {
+        return app
+    }
+    if app.active < 0 || app.active >= app.sessions.len() {
+        return app
+    }
+    let s = app.sessions[app.active]
+    app.layout = wl.wl_layout(s.doc, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
+    app.words = wd.wd_word_count(s.doc)
+    app.chars = wd.wd_char_count(s.doc)
+    app.layout_dirty = false
+    return app
+}
+
+fn wr_changed(app: App) -> App {
+    var app = app
+    if app.active < 0 || app.active >= app.sessions.len() {
+        return app
+    }
+    var s = app.sessions[app.active]
+    s.dirty = true
+    app = wr_put(app, app.active, s)
+    app.layout_dirty = true
+    app.status = ""
+    return app
+}
+
+fn wr_autosave(app: App) -> App {
+    var app = app
+    let now = gui.now()
+    var i = 0
+    while i < app.sessions.len() {
+        var s = app.sessions[i]
+        if s.dirty && s.recovery_path.len() > 0 {
+            if s.recovery_ms == 0 || now - s.recovery_ms >= 4000 {
+                let error = rec.rec_save(s.doc, s.recovery_path)
+                s.recovery_ms = now
+                app = wr_put(app, i, s)
+                if error.len() == 0 {
+                    if app.status.starts_with("Autosave failed") {
+                        app.status = ""
+                    }
+                } else {
+                    app.status = "Autosave failed: " + error
+                }
+            }
+        }
+        i = i + 1
+    }
+    return app
+}
+
+fn wr_snapshot(app: App) -> App {
+    var app = app
+    if app.active < 0 || app.active >= app.sessions.len() {
+        return app
+    }
+    var s = app.sessions[app.active]
+    s.undo = wr_push_text(s.undo, wd.wd_serialize(s.doc))
+    s.redo = wr_no_text()
+    app = wr_put(app, app.active, s)
+    return app
+}
+
+// ---------- geometry of the canvas ----------
+
+fn wr_canvas_x(app: App) -> Int {
+    if app.sidebar {
+        return wr_sidebar_w()
+    }
+    return 0
+}
+
+fn wr_page_w(app: App) -> Int {
+    let s = app.sessions[app.active]
+    return wl.wl_a4_w() * s.zoom / 100
+}
+
+fn wr_page_h(app: App) -> Int {
+    let s = app.sessions[app.active]
+    return wl.wl_a4_h() * s.zoom / 100
+}
+
+fn wr_page_left(app: App, w: Int) -> Int {
+    let pw = wr_page_w(app)
+    let canvas_w = w - wr_canvas_x(app)
+    return wr_canvas_x(app) + (canvas_w - pw) / 2
+}
+
+fn wr_page_top(app: App, page: Int) -> Int {
+    let s = app.sessions[app.active]
+    return wr_content_top() + 16 + page * (wr_page_h(app) + wr_page_gap()) - s.scroll
+}
+
+fn wr_view_h() -> Int {
+    return gui.height() - wr_content_top() - wr_status_h()
+}
+
+fn wr_max_scroll(app: App) -> Int {
+    let total = app.layout.pages * wr_page_h(app) + (app.layout.pages - 1) * wr_page_gap() + 32
+    let max_scroll = total - wr_view_h()
+    if max_scroll < 0 {
+        return 0
+    }
+    return max_scroll
+}
+
+fn wr_ensure_caret(app: App) -> App {
+    var app = app
+    if app.active < 0 || app.active >= app.sessions.len() {
+        return app
+    }
+    var s = app.sessions[app.active]
+    let caret = wl.wl_caret(s.doc, app.layout, s.cursor_para, s.cursor_off)
+    if !caret.found {
+        return app
+    }
+    let top_limit = wr_content_top() + 12
+    let bottom_limit = gui.height() - wr_status_h() - 22
+    let y = wr_page_top(app, caret.page) + caret.y * s.zoom / 100
+    if y < top_limit {
+        s.scroll = s.scroll - (top_limit - y)
+    }
+    if y + 20 > bottom_limit {
+        s.scroll = s.scroll + (y + 20 - bottom_limit)
+    }
+    s.scroll = wr_clamp(s.scroll, 0, wr_max_scroll(app))
+    app = wr_put(app, app.active, s)
+    return app
+}
+
+fn wr_page_hit(app: App, x: Int, y: Int) -> PageHit {
+    let miss = PageHit { found: false, para: 0, offset: 0 }
+    if app.active < 0 || app.active >= app.sessions.len() {
+        return miss
+    }
+    let s = app.sessions[app.active]
+    let pw = wr_page_w(app)
+    let ph = wr_page_h(app)
+    let left = wr_page_left(app, gui.width())
+    if x < left || x >= left + pw {
+        return miss
+    }
+    var p = 0
+    while p < app.layout.pages {
+        let top = wr_page_top(app, p)
+        if y >= top && y < top + ph {
+            let px = (x - left) * 100 / s.zoom
+            let py = (y - top) * 100 / s.zoom
+            let hit = wl.wl_hit_nearest(s.doc, app.layout, p, px, py)
+            return PageHit { found: hit.found, para: hit.para, offset: hit.offset }
+        }
+        p = p + 1
+    }
+    return miss
+}
+
+// ---------- editing ----------
+
+fn wr_selection_text(s: Session) -> String {
+    let sel = wr_sel(s)
+    if !sel.active {
+        return ""
+    }
+    if sel.p0 == sel.p1 {
+        let text = s.doc.paragraphs[sel.p0].text
+        let chars = text.chars()
+        return tx.tx_slice(chars, tx.tx_scalar_at(text, sel.o0), tx.tx_scalar_at(text, sel.o1))
+    }
+    var out = ""
+    let first = s.doc.paragraphs[sel.p0].text
+    out = out + tx.tx_slice(first.chars(), tx.tx_scalar_at(first, sel.o0), first.chars().len())
+    var i = sel.p0 + 1
+    while i < sel.p1 {
+        out = out + "\n" + s.doc.paragraphs[i].text
+        i = i + 1
+    }
+    let last = s.doc.paragraphs[sel.p1].text
+    out = out + "\n" + tx.tx_slice(last.chars(), 0, tx.tx_scalar_at(last, sel.o1))
+    return out
+}
+
+fn wr_delete_selection(app: App) -> App {
+    var app = app
+    var s = app.sessions[app.active]
+    let sel = wr_sel(s)
+    if !sel.active {
+        return app
+    }
+    s.doc = wd.wd_delete_range(s.doc, sel.p0, sel.o0, sel.p1, sel.o1)
+    s.cursor_para = sel.p0
+    s.cursor_off = sel.o0
+    s.anchor_para = sel.p0
+    s.anchor_off = sel.o0
+    s.selecting = false
+    app = wr_put(app, app.active, s)
+    return wr_changed(app)
+}
+
+fn wr_insert_lines(app: App, value: String) -> App {
+    var app = app
+    let lines = value.split("\n")
+    var s = app.sessions[app.active]
+    s.doc = wd.wd_insert(s.doc, s.cursor_para, s.cursor_off, lines[0])
+    s.cursor_off = s.cursor_off + tx.tx_count(lines[0])
+    var i = 1
+    while i < lines.len() {
+        s.doc = wd.wd_split(s.doc, s.cursor_para, s.cursor_off)
+        s.cursor_para = s.cursor_para + 1
+        s.cursor_off = 0
+        s.doc = wd.wd_insert(s.doc, s.cursor_para, 0, lines[i])
+        s.cursor_off = tx.tx_count(lines[i])
+        i = i + 1
+    }
+    s.anchor_para = s.cursor_para
+    s.anchor_off = s.cursor_off
+    s.selecting = false
+    app = wr_put(app, app.active, s)
+    return wr_changed(app)
+}
+
+fn wr_insert(app: App, value: String) -> App {
+    var app = app
+    if value.len() == 0 {
+        return app
+    }
+    var s = app.sessions[app.active]
+    let sel = wr_sel(s)
+    let now = gui.now()
+    var coalesce = false
+    if !sel.active && app.last_type_kind == 1 && now - app.last_type_ms < 700 && app.last_type_para == s.cursor_para {
+        coalesce = true
+    }
+    if !coalesce {
+        app = wr_snapshot(app)
+    }
+    s = app.sessions[app.active]
+    if sel.active {
+        app = wr_delete_selection(app)
+        s = app.sessions[app.active]
+    }
+    if value.contains("\n") {
+        app = wr_insert_lines(app, value)
+    } else {
+        s.doc = wd.wd_insert(s.doc, s.cursor_para, s.cursor_off, value)
+        s.cursor_off = s.cursor_off + tx.tx_count(value)
+        s.anchor_para = s.cursor_para
+        s.anchor_off = s.cursor_off
+        s.selecting = false
+        app = wr_put(app, app.active, s)
+        app = wr_changed(app)
+    }
+    s = app.sessions[app.active]
+    app.last_type_ms = now
+    app.last_type_para = s.cursor_para
+    app.last_type_kind = 1
+    return wr_ensure_caret(app)
+}
+
+fn wr_backspace(app: App) -> App {
+    var app = app
+    var s = app.sessions[app.active]
+    let sel = wr_sel(s)
+    if sel.active {
+        app = wr_snapshot(app)
+        app = wr_delete_selection(app)
+        app.last_type_ms = 0
+        return wr_ensure_caret(app)
+    }
+    if s.cursor_off == 0 && s.cursor_para == 0 {
+        return app
+    }
+    let now = gui.now()
+    var coalesce = false
+    if app.last_type_kind == 2 && now - app.last_type_ms < 700 && app.last_type_para == s.cursor_para {
+        coalesce = true
+    }
+    if !coalesce {
+        app = wr_snapshot(app)
+    }
+    s = app.sessions[app.active]
+    if s.cursor_off > 0 {
+        s.doc = wd.wd_delete_range(s.doc, s.cursor_para, s.cursor_off - 1, s.cursor_para, s.cursor_off)
+        s.cursor_off = s.cursor_off - 1
+    } else {
+        let prev = s.cursor_para - 1
+        let prev_len = tx.tx_count(s.doc.paragraphs[prev].text)
+        s.doc = wd.wd_merge(s.doc, prev)
+        s.cursor_para = prev
+        s.cursor_off = prev_len
+    }
+    s.anchor_para = s.cursor_para
+    s.anchor_off = s.cursor_off
+    s.selecting = false
+    app = wr_put(app, app.active, s)
+    app = wr_changed(app)
+    app.last_type_ms = now
+    app.last_type_para = s.cursor_para
+    app.last_type_kind = 2
+    return wr_ensure_caret(app)
+}
+
+fn wr_delete_forward(app: App) -> App {
+    var app = app
+    var s = app.sessions[app.active]
+    let sel = wr_sel(s)
+    if sel.active {
+        app = wr_snapshot(app)
+        app = wr_delete_selection(app)
+        return wr_ensure_caret(app)
+    }
+    let count = wr_cursor_limit(s)
+    if s.cursor_off >= count && s.cursor_para + 1 >= s.doc.paragraphs.len() {
+        return app
+    }
+    app = wr_snapshot(app)
+    s = app.sessions[app.active]
+    if s.cursor_off < count {
+        s.doc = wd.wd_delete_range(s.doc, s.cursor_para, s.cursor_off, s.cursor_para, s.cursor_off + 1)
+    } else {
+        s.doc = wd.wd_merge(s.doc, s.cursor_para)
+    }
+    s.anchor_para = s.cursor_para
+    s.anchor_off = s.cursor_off
+    s.selecting = false
+    app = wr_put(app, app.active, s)
+    return wr_ensure_caret(wr_changed(app))
+}
+
+fn wr_enter(app: App) -> App {
+    var app = app
+    var s = app.sessions[app.active]
+    let sel = wr_sel(s)
+    app = wr_snapshot(app)
+    if sel.active {
+        app = wr_delete_selection(app)
+        s = app.sessions[app.active]
+    }
+    s = app.sessions[app.active]
+    s.doc = wd.wd_split(s.doc, s.cursor_para, s.cursor_off)
+    s.cursor_para = s.cursor_para + 1
+    s.cursor_off = 0
+    s.anchor_para = s.cursor_para
+    s.anchor_off = 0
+    s.selecting = false
+    app = wr_put(app, app.active, s)
+    app.last_type_ms = 0
+    return wr_ensure_caret(wr_changed(app))
+}
+
+fn wr_move_h(app: App, dir: Int, extend: Bool) -> App {
+    var app = app
+    var s = app.sessions[app.active]
+    let sel = wr_sel(s)
+    if !extend && sel.active {
+        if dir < 0 {
+            s.cursor_para = sel.p0
+            s.cursor_off = sel.o0
+        } else {
+            s.cursor_para = sel.p1
+            s.cursor_off = sel.o1
+        }
+        s.anchor_para = s.cursor_para
+        s.anchor_off = s.cursor_off
+        s.selecting = false
+        app = wr_put(app, app.active, s)
+        return wr_ensure_caret(app)
+    }
+    if extend && !s.selecting {
+        s.anchor_para = s.cursor_para
+        s.anchor_off = s.cursor_off
+        s.selecting = true
+    }
+    let count = wr_cursor_limit(s)
+    if dir < 0 {
+        if s.cursor_off > 0 {
+            s.cursor_off = s.cursor_off - 1
+        } else {
+            if s.cursor_para > 0 {
+                s.cursor_para = s.cursor_para - 1
+                s.cursor_off = tx.tx_count(s.doc.paragraphs[s.cursor_para].text)
+            }
+        }
+    } else {
+        if s.cursor_off < count {
+            s.cursor_off = s.cursor_off + 1
+        } else {
+            if s.cursor_para + 1 < s.doc.paragraphs.len() {
+                s.cursor_para = s.cursor_para + 1
+                s.cursor_off = 0
+            }
+        }
+    }
+    if !extend {
+        s.anchor_para = s.cursor_para
+        s.anchor_off = s.cursor_off
+        s.selecting = false
+    }
+    app = wr_put(app, app.active, s)
+    app.last_type_ms = 0
+    return wr_ensure_caret(app)
+}
+
+fn wr_move_v(app: App, dir: Int, extend: Bool) -> App {
+    var app = app
+    var s = app.sessions[app.active]
+    let caret = wl.wl_caret(s.doc, app.layout, s.cursor_para, s.cursor_off)
+    if !caret.found {
+        return app
+    }
+    let target = caret.line + dir
+    if target < 0 || target >= app.layout.lines.len() {
+        return app
+    }
+    if extend && !s.selecting {
+        s.anchor_para = s.cursor_para
+        s.anchor_off = s.cursor_off
+        s.selecting = true
+    }
+    let line = app.layout.lines[target]
+    var best = line.start
+    var best_d = 999999
+    var g = line.start
+    while g <= line.end {
+        let x = wl.wl_x_at(s.doc, line, g)
+        var d = x - caret.x
+        if d < 0 {
+            d = 0 - d
+        }
+        if d < best_d {
+            best_d = d
+            best = g
+        }
+        g = g + 1
+    }
+    s.cursor_para = line.para
+    s.cursor_off = best
+    if !extend {
+        s.anchor_para = s.cursor_para
+        s.anchor_off = s.cursor_off
+        s.selecting = false
+    }
+    app = wr_put(app, app.active, s)
+    app.last_type_ms = 0
+    return wr_ensure_caret(app)
+}
+
+fn wr_line_edge(app: App, start: Bool, extend: Bool) -> App {
+    var app = app
+    var s = app.sessions[app.active]
+    let caret = wl.wl_caret(s.doc, app.layout, s.cursor_para, s.cursor_off)
+    var offset = 0
+    if caret.found {
+        let line = app.layout.lines[caret.line]
+        if start {
+            offset = line.start
+        } else {
+            offset = line.end
+        }
+    } else {
+        if !start {
+            offset = wr_cursor_limit(s)
+        }
+    }
+    if extend && !s.selecting {
+        s.anchor_para = s.cursor_para
+        s.anchor_off = s.cursor_off
+        s.selecting = true
+    }
+    s.cursor_off = offset
+    if !extend {
+        s.anchor_para = s.cursor_para
+        s.anchor_off = s.cursor_off
+        s.selecting = false
+    }
+    app = wr_put(app, app.active, s)
+    return wr_ensure_caret(app)
+}
+
+fn wr_select_all(app: App) -> App {
+    var app = app
+    var s = app.sessions[app.active]
+    let last = s.doc.paragraphs.len() - 1
+    s.anchor_para = 0
+    s.anchor_off = 0
+    s.cursor_para = last
+    s.cursor_off = tx.tx_count(s.doc.paragraphs[last].text)
+    s.selecting = true
+    app = wr_put(app, app.active, s)
+    return wr_ensure_caret(app)
+}
+
+fn wr_copy(app: App) -> App {
+    var app = app
+    let s = app.sessions[app.active]
+    let text = wr_selection_text(s)
+    if text.len() == 0 {
+        return app
+    }
+    gui.set_clipboard(text)
+    app.status = "Copied " + tx.tx_count(text).to_string() + " characters"
+    return app
+}
+
+fn wr_cut(app: App) -> App {
+    var app = app
+    let s = app.sessions[app.active]
+    let text = wr_selection_text(s)
+    if text.len() == 0 {
+        return app
+    }
+    gui.set_clipboard(text)
+    app = wr_snapshot(app)
+    app = wr_delete_selection(app)
+    app.status = "Cut " + tx.tx_count(text).to_string() + " characters"
+    return wr_ensure_caret(app)
+}
+
+fn wr_paste(app: App) -> App {
+    var text = gui.clipboard()
+    if text.len() == 0 {
+        return app
+    }
+    // Clipboard text from other applications may use CRLF; the document model
+    // stores paragraph breaks, never carriage returns.
+    text = text.replace("\r\n", "\n")
+    text = text.replace("\r", "\n")
+    var app = wr_insert(app, text)
+    app.status = "Pasted " + tx.tx_count(text).to_string() + " characters"
+    return app
+}
+
+// ---------- commands ----------
+
+fn wr_undo(app: App) -> App {
+    var app = app
+    var s = app.sessions[app.active]
+    if s.undo.len() == 0 {
+        app.status = "Nothing to undo"
+        return app
+    }
+    let previous = s.undo[s.undo.len() - 1]
+    let result = wd.wd_parse(previous)
+    if !result.ok {
+        app.status = "Undo failed: " + result.error
+        return app
+    }
+    var next_undo: List<String> = []
+    var i = 0
+    while i + 1 < s.undo.len() {
+        next_undo.push(s.undo[i])
+        i = i + 1
+    }
+    s.redo = wr_push_text(s.redo, wd.wd_serialize(s.doc))
+    s.undo = next_undo
+    s.doc = result.doc
+    s.cursor_para = wr_clamp(s.cursor_para, 0, s.doc.paragraphs.len() - 1)
+    s.cursor_off = wr_clamp(s.cursor_off, 0, tx.tx_count(s.doc.paragraphs[s.cursor_para].text))
+    s.anchor_para = s.cursor_para
+    s.anchor_off = s.cursor_off
+    s.selecting = false
+    app = wr_put(app, app.active, s)
+    app = wr_changed(app)
+    app.status = "Undo"
+    return wr_ensure_caret(app)
+}
+
+fn wr_redo(app: App) -> App {
+    var app = app
+    var s = app.sessions[app.active]
+    if s.redo.len() == 0 {
+        app.status = "Nothing to redo"
+        return app
+    }
+    let next = s.redo[s.redo.len() - 1]
+    let result = wd.wd_parse(next)
+    if !result.ok {
+        app.status = "Redo failed: " + result.error
+        return app
+    }
+    var next_redo: List<String> = []
+    var i = 0
+    while i + 1 < s.redo.len() {
+        next_redo.push(s.redo[i])
+        i = i + 1
+    }
+    s.undo = wr_push_text(s.undo, wd.wd_serialize(s.doc))
+    s.redo = next_redo
+    s.doc = result.doc
+    s.cursor_para = wr_clamp(s.cursor_para, 0, s.doc.paragraphs.len() - 1)
+    s.cursor_off = wr_clamp(s.cursor_off, 0, tx.tx_count(s.doc.paragraphs[s.cursor_para].text))
+    s.anchor_para = s.cursor_para
+    s.anchor_off = s.cursor_off
+    s.selecting = false
+    app = wr_put(app, app.active, s)
+    app = wr_changed(app)
+    app.status = "Redo"
+    return wr_ensure_caret(app)
+}
+
+fn wr_new(app: App) -> App {
+    var app = app
+    var sessions = app.sessions
+    sessions.push(wr_session(wd.wd_empty(), "", false, rec.rec_path("new-" + app.sessions.len().to_string())))
+    app.sessions = sessions
+    app.active = sessions.len() - 1
+    app.layout_dirty = true
+    app.status = "New document"
+    return app
+}
+
+fn wr_open(app: App) -> App {
+    var app = app
+    let path = gui.pick_file()
+    if path.len() == 0 {
+        return app
+    }
+    var i = 0
+    while i < app.sessions.len() {
+        if app.sessions[i].path == path {
+            app.active = i
+            app.layout_dirty = true
+            return app
+        }
+        i = i + 1
+    }
+    let result = store.wd_load(path)
+    if !result.ok {
+        app.status = "Open failed: " + result.error
+        return app
+    }
+    var sessions = app.sessions
+    sessions.push(wr_session(result.doc, path, false, rec.rec_path("open-" + app.sessions.len().to_string())))
+    app.sessions = sessions
+    app.active = sessions.len() - 1
+    app.layout_dirty = true
+    app.status = "Opened " + wr_base(path)
+    return app
+}
+
+fn wr_save(app: App, save_as: Bool) -> App {
+    var app = app
+    var s = app.sessions[app.active]
+    var path = s.path
+    if save_as || path.len() == 0 {
+        let dir = gui.pick_folder()
+        if dir.len() == 0 {
+            return app
+        }
+        path = wr_unique_path(dir, wr_slug(s.doc.title))
+    }
+    let error = store.wd_save(s.doc, path)
+    if error.len() == 0 {
+        s.path = path
+        s.dirty = false
+        s.recovery_ms = 0
+        let cleaned = rec.rec_remove(s.recovery_path)
+        if cleaned {
+            app.status = "Saved " + wr_base(path)
+        } else {
+            app.status = "Saved " + wr_base(path) + " (recovery cleanup failed)"
+        }
+    } else {
+        app.status = "Save failed: " + error
+    }
+    app = wr_put(app, app.active, s)
+    return app
+}
+
+fn wr_switch(app: App, index: Int) -> App {
+    var app = app
+    if index < 0 || index >= app.sessions.len() {
+        return app
+    }
+    app.active = index
+    app.layout_dirty = true
+    app.status = ""
+    return app
+}
+
+fn wr_close_at(app: App, index: Int) -> App {
+    var app = app
+    if index < 0 || index >= app.sessions.len() {
+        return app
+    }
+    if app.sessions[index].dirty {
+        app.status = "Save before closing this document"
+        return app
+    }
+    let closing = app.sessions[index]
+    if closing.recovery_path.len() > 0 {
+        rec.rec_remove(closing.recovery_path)
+    }
+    var rest: List<Session> = []
+    var i = 0
+    while i < app.sessions.len() {
+        if i != index {
+            rest.push(app.sessions[i])
+        }
+        i = i + 1
+    }
+    if rest.len() == 0 {
+        rest.push(wr_session(wd.wd_empty(), "", false, rec.rec_path("new")))
+    }
+    app.sessions = rest
+    var active = app.active
+    if index < active {
+        active = active - 1
+    } else if index == active {
+        if active >= rest.len() {
+            active = rest.len() - 1
+        }
+    }
+    if active < 0 {
+        active = 0
+    }
+    app.active = active
+    app.layout_dirty = true
+    app.status = "Closed"
+    return app
+}
+
+fn wr_close(app: App) -> App {
+    return wr_close_at(app, app.active)
+}
+
+fn wr_apply_kind(app: App, kind: Int) -> App {
+    var app = wr_snapshot(app)
+    var s = app.sessions[app.active]
+    s.doc = wd.wd_set_kind(s.doc, s.cursor_para, kind)
+    app = wr_put(app, app.active, s)
+    app = wr_changed(app)
+    app.status = "Style: " + wd.wd_kind_name(kind)
+    return app
+}
+
+fn wr_apply_align(app: App, align: Int) -> App {
+    var app = wr_snapshot(app)
+    var s = app.sessions[app.active]
+    s.doc = wd.wd_set_align(s.doc, s.cursor_para, align)
+    app = wr_put(app, app.active, s)
+    app = wr_changed(app)
+    app.status = "Align: " + wd.wd_align_name(align)
+    return app
+}
+
+fn wr_zoom(app: App, delta: Int) -> App {
+    var app = app
+    var s = app.sessions[app.active]
+    s.zoom = wr_clamp(s.zoom + delta, 50, 200)
+    app = wr_put(app, app.active, s)
+    app = wr_ensure_caret(app)
+    app.status = "Zoom " + s.zoom.to_string() + "%"
+    return app
+}
+
+fn wr_zoom_set(app: App, value: Int) -> App {
+    var app = app
+    var s = app.sessions[app.active]
+    s.zoom = wr_clamp(value, 50, 200)
+    app = wr_put(app, app.active, s)
+    app = wr_ensure_caret(app)
+    app.status = "Zoom " + s.zoom.to_string() + "%"
+    return app
+}
+
+fn wr_cycle_theme(app: App) -> App {
+    var app = app
+    var name = "light"
+    if app.theme_name == "dark" {
+        name = "light"
+    } else if app.theme_name == "light" {
+        name = "gruvbox"
+    } else {
+        name = "dark"
+    }
+    app.theme_name = name
+    app.theme = wr_theme(name)
+    gui.set_appearance(name == "light")
+    app.status = "Theme: " + name
+    return app
+}
+
+fn wr_cycle_paper(app: App) -> App {
+    var app = app
+    app.paper = (app.paper + 1) % 3
+    var name = "White"
+    if app.paper == 1 {
+        name = "Warm"
+    }
+    if app.paper == 2 {
+        name = "Sepia"
+    }
+    app.status = "Paper: " + name
+    return app
+}
+
+fn wr_scroll(app: App, delta: Int) -> App {
+    var app = app
+    var s = app.sessions[app.active]
+    s.scroll = s.scroll - delta * 42
+    s.scroll = wr_clamp(s.scroll, 0, wr_max_scroll(app))
+    app = wr_put(app, app.active, s)
+    return app
+}
+
+// ---------- ribbon ----------
+
+fn wr_box_w(label: String) -> Int {
+    return gui.text_width(label, 12) + 24
+}
+
+fn wr_ribbon(w: Int) -> List<HitBox> {
+    var out: List<HitBox> = []
+    var x = 14
+    let y = wr_title_h() + 9
+    let h = 30
+    var gap = 6
+    // File
+    out.push(HitBox { id: "new", label: "New", x: x, y: y, w: wr_box_w("New"), h: h })
+    x = x + wr_box_w("New") + gap
+    out.push(HitBox { id: "open", label: "Open", x: x, y: y, w: wr_box_w("Open"), h: h })
+    x = x + wr_box_w("Open") + gap
+    out.push(HitBox { id: "save", label: "Save", x: x, y: y, w: wr_box_w("Save"), h: h })
+    x = x + wr_box_w("Save") + 16
+    // History
+    out.push(HitBox { id: "undo", label: "Undo", x: x, y: y, w: wr_box_w("Undo"), h: h })
+    x = x + wr_box_w("Undo") + gap
+    out.push(HitBox { id: "redo", label: "Redo", x: x, y: y, w: wr_box_w("Redo"), h: h })
+    x = x + wr_box_w("Redo") + 16
+    // Alignment
+    out.push(HitBox { id: "align_left", label: "Left", x: x, y: y, w: wr_box_w("Left"), h: h })
+    x = x + wr_box_w("Left") + gap
+    out.push(HitBox { id: "align_center", label: "Center", x: x, y: y, w: wr_box_w("Center"), h: h })
+    x = x + wr_box_w("Center") + gap
+    out.push(HitBox { id: "align_right", label: "Right", x: x, y: y, w: wr_box_w("Right"), h: h })
+    x = x + wr_box_w("Right") + 16
+    // Zoom
+    out.push(HitBox { id: "zoom_out", label: "−", x: x, y: y, w: wr_box_w("−"), h: h })
+    x = x + wr_box_w("−") + gap
+    out.push(HitBox { id: "zoom_in", label: "+", x: x, y: y, w: wr_box_w("+"), h: h })
+    x = x + wr_box_w("+") + 16
+    // Appearance
+    out.push(HitBox { id: "theme", label: "Theme", x: x, y: y, w: wr_box_w("Theme"), h: h })
+    x = x + wr_box_w("Theme") + gap
+    out.push(HitBox { id: "paper", label: "Paper", x: x, y: y, w: wr_box_w("Paper"), h: h })
+    x = x + wr_box_w("Paper") + gap
+    out.push(HitBox { id: "sidebar", label: "Panel", x: x, y: y, w: wr_box_w("Panel"), h: h })
+    return out
+}
+
+fn wr_ribbon_hit(app: App, x: Int, y: Int) -> String {
+    for box in wr_ribbon(gui.width()) {
+        if gui.inside(box.x, box.y, box.w, box.h, x, y) {
+            return box.id
+        }
+    }
+    return ""
+}
+
+fn wr_command(app: App, id: String) -> App {
+    if id == "new" {
+        return wr_new(app)
+    }
+    if id == "open" {
+        return wr_open(app)
+    }
+    if id == "save" {
+        return wr_save(app, false)
+    }
+    if id == "undo" {
+        return wr_undo(app)
+    }
+    if id == "redo" {
+        return wr_redo(app)
+    }
+    if id == "align_left" {
+        return wr_apply_align(app, wd.wd_left())
+    }
+    if id == "align_center" {
+        return wr_apply_align(app, wd.wd_center())
+    }
+    if id == "align_right" {
+        return wr_apply_align(app, wd.wd_right())
+    }
+    if id == "zoom_out" {
+        return wr_zoom(app, 0 - 10)
+    }
+    if id == "zoom_in" {
+        return wr_zoom(app, 10)
+    }
+    if id == "theme" {
+        return wr_cycle_theme(app)
+    }
+    if id == "paper" {
+        return wr_cycle_paper(app)
+    }
+    if id == "sidebar" {
+        var next = app
+        next.sidebar = !next.sidebar
+        return next
+    }
+    return app
+}
+
+// ---------- input ----------
+
+fn wr_key(app: App, code: Int, mods: Int) -> App {
+    let command = mods % 2 == 1
+    let shift = (mods / 2) % 2 == 1
+    if command {
+        if code == 110 {
+            return wr_new(app)
+        }
+        if code == 111 {
+            return wr_open(app)
+        }
+        if code == 115 {
+            return wr_save(app, shift)
+        }
+        if code == 122 {
+            if shift {
+                return wr_redo(app)
+            }
+            return wr_undo(app)
+        }
+        if code == 97 {
+            return wr_select_all(app)
+        }
+        if code == 99 {
+            return wr_copy(app)
+        }
+        if code == 120 {
+            return wr_cut(app)
+        }
+        if code == 118 {
+            return wr_paste(app)
+        }
+        if code == 61 || code == 43 {
+            return wr_zoom(app, 10)
+        }
+        if code == 45 {
+            return wr_zoom(app, 0 - 10)
+        }
+        if code == 48 {
+            return wr_zoom_set(app, 100)
+        }
+        if code == 112 && shift {
+            return wr_cycle_theme(app)
+        }
+        if code == 117 && shift {
+            return wr_cycle_paper(app)
+        }
+        if code == 98 {
+            var next = app
+            next.sidebar = !next.sidebar
+            return next
+        }
+        if code == 119 {
+            return wr_close(app)
+        }
+        if code == 113 {
+            var next = app
+            next.quit = true
+            return next
+        }
+        return app
+    }
+    if code == gui.key_backspace() {
+        return wr_backspace(app)
+    }
+    if code == gui.key_delete() {
+        return wr_delete_forward(app)
+    }
+    if code == gui.key_enter() {
+        return wr_enter(app)
+    }
+    if code == gui.key_tab() {
+        return wr_insert(app, "    ")
+    }
+    if code == gui.key_left() {
+        return wr_move_h(app, 0 - 1, shift)
+    }
+    if code == gui.key_right() {
+        return wr_move_h(app, 1, shift)
+    }
+    if code == gui.key_up() {
+        return wr_move_v(app, 0 - 1, shift)
+    }
+    if code == gui.key_down() {
+        return wr_move_v(app, 1, shift)
+    }
+    if code == gui.key_home() {
+        return wr_line_edge(app, true, shift)
+    }
+    if code == gui.key_end() {
+        return wr_line_edge(app, false, shift)
+    }
+    if code == gui.key_page_up() {
+        return wr_scroll(app, wr_view_h() / 42)
+    }
+    if code == gui.key_page_down() {
+        return wr_scroll(app, 0 - wr_view_h() / 42)
+    }
+    if code == gui.key_escape() {
+        var next = app
+        next.status = ""
+        if gui.env("NOVA_WRITER_TRACE") == "1" {
+            println("writer: escape")
+        }
+        return next
+    }
+    return app
+}
+
+fn wr_text(app: App, text: String) -> App {
+    if text.len() == 0 || text == "\n" || text == "\r" || text == "\t" {
+        return app
+    }
+    return wr_insert(app, text)
+}
+
+fn wr_click(app: App, x: Int, y: Int, mods: Int) -> App {
+    var app = app
+    app.mouse_x = x
+    app.mouse_y = y
+    if y < wr_title_h() {
+        var i = 0
+        while i < app.sessions.len() && i < 6 {
+            let tx0 = 86 + i * 176
+            if x >= tx0 && x < tx0 + 170 {
+                if x > tx0 + 170 - 22 {
+                    return wr_close_at(app, i)
+                }
+                return wr_switch(app, i)
+            }
+            i = i + 1
+        }
+        let plus = 86 + app.sessions.len() * 176
+        if x >= plus && x < plus + 28 {
+            return wr_new(app)
+        }
+        return app
+    }
+    if y < wr_title_h() + wr_ribbon_h() {
+        let id = wr_ribbon_hit(app, x, y)
+        return wr_command(app, id)
+    }
+    if app.sidebar && x < wr_sidebar_w() && y >= wr_content_top() {
+        return wr_sidebar_click(app, x, y, mods)
+    }
+    let hit = wr_page_hit(app, x, y)
+    if !hit.found {
+        return app
+    }
+    var s = app.sessions[app.active]
+    if (mods / 2) % 2 == 1 {
+        // Shift-click extends from the existing caret; a released click has
+        // selecting=false but the caret is still the anchor a user expects.
+        if s.anchor_para == s.cursor_para && s.anchor_off == s.cursor_off {
+            s.anchor_para = s.cursor_para
+            s.anchor_off = s.cursor_off
+        }
+        s.cursor_para = hit.para
+        s.cursor_off = hit.offset
+        s.selecting = true
+    } else {
+        s.cursor_para = hit.para
+        s.cursor_off = hit.offset
+        s.anchor_para = hit.para
+        s.anchor_off = hit.offset
+        s.selecting = true
+    }
+    app = wr_put(app, app.active, s)
+    app.last_type_ms = 0
+    return wr_ensure_caret(app)
+}
+
+fn wr_drag(app: App, x: Int, y: Int) -> App {
+    var app = app
+    app.mouse_x = x
+    app.mouse_y = y
+    var s = app.sessions[app.active]
+    if !s.selecting {
+        return app
+    }
+    let hit = wr_page_hit(app, x, y)
+    if hit.found {
+        s.cursor_para = hit.para
+        s.cursor_off = hit.offset
+        app = wr_put(app, app.active, s)
+        app = wr_ensure_caret(app)
+    }
+    return app
+}
+
+fn wr_release(app: App) -> App {
+    var app = app
+    var s = app.sessions[app.active]
+    if s.anchor_para == s.cursor_para && s.anchor_off == s.cursor_off {
+        s.selecting = false
+    }
+    app = wr_put(app, app.active, s)
+    return app
+}
+
+fn wr_sidebar_click(app: App, x: Int, y: Int, mods: Int) -> App {
+    let top = wr_content_top()
+    let kinds: List<Int> = [wd.wd_title_style(), wd.wd_heading1(), wd.wd_heading2(), wd.wd_body(), wd.wd_quote(), wd.wd_bullet()]
+    var i = 0
+    while i < kinds.len() {
+        let ry = top + 32 + i * 26
+        if y >= ry && y < ry + 24 {
+            return wr_apply_kind(app, kinds[i])
+        }
+        i = i + 1
+    }
+    let outline_y = top + 32 + kinds.len() * 26 + 18
+    let outline = wd.wd_outline(app.sessions[app.active].doc)
+    var j = 0
+    while j < outline.len() {
+        let ry = outline_y + 22 + j * 22
+        if y >= ry && y < ry + 20 {
+            var next = app
+            var s = next.sessions[next.active]
+            s.cursor_para = outline[j]
+            s.cursor_off = 0
+            s.anchor_para = s.cursor_para
+            s.anchor_off = 0
+            s.selecting = false
+            next = wr_put(next, next.active, s)
+            return wr_ensure_caret(next)
+        }
+        j = j + 1
+    }
+    return app
+}
+
+// ---------- drawing ----------
+
+fn wr_draw_title(app: App, w: Int) {
+    let theme = app.theme
+    gui.rect(0, 0, w, wr_title_h(), theme.bg_hard)
+    gui.line(0, wr_title_h() - 1, w, wr_title_h() - 1, theme.border)
+    var i = 0
+    while i < app.sessions.len() && i < 6 {
+        let x = 86 + i * 176
+        let s = app.sessions[i]
+        var bg = theme.bg_hard
+        if i == app.active {
+            bg = theme.bg
+        }
+        if gui.inside(x, 4, 170, 26, app.mouse_x, app.mouse_y) {
+            bg = theme.elevated
+        }
+        gui.round_rect(x, 4, 170, 26, 5, bg)
+        var name = wr_display_name(s)
+        if s.dirty {
+            name = "● " + name
+        }
+        var color = theme.muted
+        if i == app.active {
+            color = theme.fg_bright
+        }
+        gui.text(x + 10, 10, wr_truncate(name, 17), 12, color)
+        gui.text(x + 150, 9, "×", 12, theme.muted)
+        i = i + 1
+    }
+    let plus = 86 + app.sessions.len() * 176
+    if plus + 26 < w {
+        gui.text(plus + 8, 9, "+", 14, theme.muted)
+    }
+    gui.place_traffic_lights(17)
+}
+
+fn wr_draw_ribbon(app: App, w: Int) {
+    let theme = app.theme
+    gui.rect(0, wr_title_h(), w, wr_ribbon_h(), theme.panel)
+    gui.line(0, wr_title_h() + wr_ribbon_h() - 1, w, wr_title_h() + wr_ribbon_h() - 1, theme.border)
+    for box in wr_ribbon(w) {
+        var bg = theme.panel
+        if gui.inside(box.x, box.y, box.w, box.h, app.mouse_x, app.mouse_y) {
+            bg = theme.elevated
+        }
+        gui.round_rect(box.x, box.y, box.w, box.h, 6, bg)
+        var color = theme.fg
+        if gui.inside(box.x, box.y, box.w, box.h, app.mouse_x, app.mouse_y) {
+            color = theme.fg_bright
+        }
+        gui.text(box.x + 12, box.y + 8, box.label, 12, color)
+    }
+}
+
+fn wr_draw_ruler(app: App, w: Int) {
+    let theme = app.theme
+    let y = wr_title_h() + wr_ribbon_h()
+    gui.rect(0, y, w, wr_ruler_h(), theme.bg_hard)
+    gui.line(0, y + wr_ruler_h() - 1, w, y + wr_ruler_h() - 1, theme.border)
+    let s = app.sessions[app.active]
+    let pw = wr_page_w(app)
+    let left = wr_page_left(app, w)
+    let margin = wl.wl_margin() * s.zoom / 100
+    var n = 0
+    while n <= 7 {
+        let x = left + margin + n * 72 * s.zoom / 100
+        if x < w {
+            gui.line(x, y + 13, x, y + 21, theme.border_strong)
+            gui.text(x + 2, y + 2, (n + 1).to_string(), 9, theme.muted)
+        }
+        n = n + 1
+    }
+    gui.rect(left + margin, y + 8, 1, 14, theme.accent)
+    gui.rect(left + pw - margin, y + 8, 1, 14, theme.accent)
+}
+
+fn wr_draw_sidebar(app: App, h: Int) {
+    let theme = app.theme
+    let top = wr_content_top()
+    let bottom = h - wr_status_h()
+    gui.rect(0, top, wr_sidebar_w(), bottom - top, theme.panel)
+    gui.line(wr_sidebar_w() - 1, top, wr_sidebar_w() - 1, bottom, theme.border)
+    gui.text(16, top + 12, "STYLES", 10, theme.muted)
+    let kinds: List<Int> = [wd.wd_title_style(), wd.wd_heading1(), wd.wd_heading2(), wd.wd_body(), wd.wd_quote(), wd.wd_bullet()]
+    let s = app.sessions[app.active]
+    var i = 0
+    while i < kinds.len() {
+        let y = top + 32 + i * 26
+        let active = s.doc.paragraphs[s.cursor_para].kind == kinds[i]
+        if active {
+            gui.rect(8, y, wr_sidebar_w() - 16, 24, theme.selection)
+        } else {
+            if gui.inside(8, y, wr_sidebar_w() - 16, 24, app.mouse_x, app.mouse_y) {
+                gui.rect(8, y, wr_sidebar_w() - 16, 24, theme.elevated)
+            }
+        }
+        var color = theme.fg
+        if active {
+            color = theme.fg_bright
+        }
+        gui.text(18, y + 5, wd.wd_kind_name(kinds[i]), 12, color)
+        i = i + 1
+    }
+    let outline_y = top + 32 + kinds.len() * 26 + 18
+    gui.text(16, outline_y, "OUTLINE", 10, theme.muted)
+    let outline = wd.wd_outline(s.doc)
+    if outline.len() == 0 {
+        gui.text(18, outline_y + 22, "No headings yet", 11, theme.faint)
+    } else {
+        var j = 0
+        while j < outline.len() && outline_y + 22 + j * 22 < bottom {
+            let p = s.doc.paragraphs[outline[j]]
+            let y = outline_y + 22 + j * 22
+            var indent = 18
+            if p.kind == wd.wd_heading2() {
+                indent = 30
+            }
+            if gui.inside(8, y, wr_sidebar_w() - 16, 20, app.mouse_x, app.mouse_y) {
+                gui.rect(8, y, wr_sidebar_w() - 16, 20, theme.elevated)
+            }
+            gui.text(indent, y + 4, wr_truncate(p.text, 24), 11, theme.fg)
+            j = j + 1
+        }
+    }
+}
+
+fn wr_draw_pages(app: App, w: Int, h: Int) {
+    let theme = app.theme
+    let s = app.sessions[app.active]
+    let pw = wr_page_w(app)
+    let ph = wr_page_h(app)
+    let gap = wr_page_gap()
+    let left = wr_page_left(app, w)
+    let marked = gui.marked_text()
+    var doc = s.doc
+    var layout = app.layout
+    var sel = wr_sel(s)
+    var comp_para = 0 - 1
+    var comp_off = 0
+    var comp_len = 0
+    if marked.len() > 0 {
+        // The composition is not in the document yet, so draw from a
+        // temporary document: the preedit takes real space, wraps and pushes
+        // the following text instead of being painted over it. The saved
+        // document is untouched until the input method commits.
+        var base = s.doc
+        var para = s.cursor_para
+        var off = s.cursor_off
+        if sel.active {
+            base = wd.wd_delete_range(s.doc, sel.p0, sel.o0, sel.p1, sel.o1)
+            para = sel.p0
+            off = sel.o0
+            sel = Sel { active: false, p0: para, o0: off, p1: para, o1: off }
+        }
+        comp_para = para
+        comp_off = off
+        comp_len = tx.tx_count(marked)
+        doc = wd.wd_insert(base, para, off, marked)
+        layout = wl.wl_layout(doc, wl.wl_a4_w(), wl.wl_a4_h(), wl.wl_margin())
+    }
+    let pages = layout.pages
+    var first_page = 0
+    if s.scroll > 16 {
+        first_page = (s.scroll - 16) / (ph + gap)
+    }
+    if first_page < 0 {
+        first_page = 0
+    }
+    var last_page = first_page + wr_view_h() / (ph + gap) + 2
+    if last_page >= pages {
+        last_page = pages - 1
+    }
+    let paper = wr_paper_color(app)
+    var p = first_page
+    while p <= last_page {
+        let top = wr_page_top(app, p)
+        gui.rect_alpha(left + 3, top + 4, pw, ph, 0, 38)
+        gui.rect(left, top, pw, ph, paper)
+        gui.stroke(left, top, pw, ph, theme.border_strong)
+        let footer = "Page " + (p + 1).to_string() + " of " + pages.to_string()
+        let fw = gui.text_width(footer, 9)
+        let fy = top + ph - (wl.wl_margin() * s.zoom / 100) / 2
+        gui.text(left + (pw - fw) / 2, fy, footer, 9, wr_ink_muted())
+        if p == 0 && doc.paragraphs.len() == 1 && doc.paragraphs[0].text.len() == 0 {
+            let mx = wl.wl_margin() * s.zoom / 100
+            let my = wl.wl_margin() * s.zoom / 100
+            gui.text(left + mx, top + my, "Start typing…", 13, wr_ink_muted())
+        }
+        p = p + 1
+    }
+    var caret_para = s.cursor_para
+    var caret_off = s.cursor_off
+    if marked.len() > 0 {
+        caret_para = comp_para
+        caret_off = comp_off + comp_len
+    }
+    let caret = wl.wl_caret(doc, layout, caret_para, caret_off)
+    var current = 0 - 1
+    var li = 0
+    while li < layout.lines.len() {
+        let l = layout.lines[li]
+        if l.page < first_page || l.page > last_page {
+            if current >= 0 {
+                gui.clip_reset()
+                current = 0 - 1
+            }
+            li = li + 1
+            continue
+        }
+        if l.page != current {
+            if current >= 0 {
+                gui.clip_reset()
+            }
+            current = l.page
+            let page_top = wr_page_top(app, l.page)
+            gui.clip(left, page_top, pw, ph)
+        }
+        let top = wr_page_top(app, l.page)
+        let ly = top + l.y * s.zoom / 100
+        let lx = left + l.x * s.zoom / 100
+        var size = l.size * s.zoom / 100
+        if size < 6 {
+            size = 6
+        }
+        let lh = wl.wl_line_h(l.size) * s.zoom / 100
+        if sel.active && l.para >= sel.p0 && l.para <= sel.p1 {
+            var a = l.start
+            if l.para == sel.p0 && sel.o0 > a {
+                a = sel.o0
+            }
+            var b = l.end
+            if l.para == sel.p1 && sel.o1 < b {
+                b = sel.o1
+            }
+            if a < b {
+                let x0 = left + wl.wl_x_at(doc, l, a) * s.zoom / 100
+                let x1 = left + wl.wl_x_at(doc, l, b) * s.zoom / 100
+                gui.rect(x0, ly, x1 - x0, lh, wr_select())
+            }
+        }
+        if l.prefix.len() > 0 {
+            gui.text_fmt(lx, ly, l.prefix, size, wr_ink(), l.family, l.style)
+        }
+        let text_x = lx + l.indent * s.zoom / 100
+        var ink = wr_ink()
+        if l.para >= 0 && l.para < doc.paragraphs.len() {
+            if doc.paragraphs[l.para].kind == wd.wd_quote() {
+                ink = wr_ink_muted()
+            }
+        }
+        gui.text_fmt(text_x, ly, l.text, size, ink, l.family, l.style)
+        // The preedit is part of the temporary document, so underline only its
+        // range. A long composition can span more than one visual line.
+        if marked.len() > 0 && l.para == comp_para {
+            var a = l.start
+            if comp_off > a {
+                a = comp_off
+            }
+            var b = l.end
+            let comp_end = comp_off + comp_len
+            if comp_end < b {
+                b = comp_end
+            }
+            if a < b {
+                let x0 = left + wl.wl_x_at(doc, l, a) * s.zoom / 100
+                let x1 = left + wl.wl_x_at(doc, l, b) * s.zoom / 100
+                gui.rect(x0, ly + lh - 2, x1 - x0, 1, theme.accent)
+            }
+        }
+        if caret.found && caret.line == li {
+            let cx = left + caret.x * s.zoom / 100
+            let cy = top + caret.y * s.zoom / 100
+            let blink = app.solid_caret || (gui.now() % 1000) < 620
+            if blink {
+                gui.rect(cx, cy, 2, lh, theme.accent)
+            }
+        }
+        li = li + 1
+    }
+    if current >= 0 {
+        gui.clip_reset()
+    }
+}
+
+fn wr_status_text(app: App) -> String {
+    let s = app.sessions[app.active]
+    let caret = wl.wl_caret(s.doc, app.layout, s.cursor_para, s.cursor_off)
+    var page = 1
+    if caret.found {
+        page = caret.page + 1
+    }
+    var state = "Saved"
+    if s.dirty {
+        state = "Modified"
+        if s.recovery_ms > 0 {
+            state = "Autosaved"
+        }
+    }
+    var out = "Words " + app.words.to_string() + "   Characters " + app.chars.to_string() + "   Page " + page.to_string() + "/" + app.layout.pages.to_string() + "   Zoom " + s.zoom.to_string() + "%   " + state
+    if app.status.len() > 0 {
+        out = app.status
+    }
+    return out
+}
+
+fn wr_draw_status(app: App, w: Int, h: Int) {
+    let theme = app.theme
+    let y = h - wr_status_h()
+    gui.rect(0, y, w, wr_status_h(), theme.panel)
+    gui.line(0, y, w, y, theme.border)
+    gui.text(12, y + 6, wr_status_text(app), 11, theme.muted)
+    let version = "Nova Writer 0.1.0"
+    let vw = gui.text_width(version, 10)
+    gui.text(w - vw - 12, y + 7, version, 10, theme.faint)
+}
+
+fn wr_push_accessibility(app: App, w: Int, h: Int) {
+    for box in wr_ribbon(w) {
+        gui.ax_button(box.x, box.y, box.w, box.h, box.label)
+    }
+    var i = 0
+    while i < app.sessions.len() && i < 6 {
+        let x = 86 + i * 176
+        let s = app.sessions[i]
+        var selected = 0
+        if i == app.active {
+            selected = 1
+        }
+        gui.ax_tab(x, 4, 170, 26, wr_display_name(s), selected)
+        i = i + 1
+    }
+    gui.ax_label(12, h - wr_status_h(), w - 24, wr_status_h(), wr_status_text(app))
+}
+
+fn wr_draw(app: App) {
+    let w = gui.width()
+    let h = gui.height()
+    gui.clear(app.theme.bg)
+    gui.ax_begin()
+    wr_draw_title(app, w)
+    wr_draw_ribbon(app, w)
+    wr_draw_ruler(app, w)
+    if app.sidebar {
+        wr_draw_sidebar(app, h)
+    }
+    wr_draw_pages(app, w, h)
+    wr_draw_status(app, w, h)
+    wr_push_accessibility(app, w, h)
+    var name = wr_display_name(app.sessions[app.active])
+    if app.sessions[app.active].dirty {
+        name = "● " + name
+    }
+    gui.set_title("Nova Writer — " + name)
+}
+
+// ---------- main ----------
+
+fn main() {
+    if !gui.open("Nova Writer", 1180, 820) {
+        println("writer: could not open a window")
+        return
+    }
+    var app = wr_start()
+    gui.set_appearance(app.theme_name == "light")
+    let snapshot = gui.env("NOVA_WRITER_SNAPSHOT")
+    let snapshot_preedit = gui.env("NOVA_WRITER_SNAPSHOT_PREEDIT") == "1"
+    let autoclose = gui.env("NOVA_WRITER_AUTOCLOSE")
+    let trace = gui.env("NOVA_WRITER_TRACE") == "1"
+    var last_preedit = ""
+    var snapshot_saved = false
+    var running = true
+    while running {
+        app = wr_autosave(app)
+        app = wr_relayout(app)
+        // Read the host composition before drawing so a snapshot taken after
+        // present() captures the frame that actually painted it.
+        let preedit = gui.marked_text()
+        if trace && preedit != last_preedit {
+            if preedit.len() > 0 {
+                println("writer: preedit=" + preedit)
+            } else {
+                println("writer: composition cleared")
+            }
+            last_preedit = preedit
+        }
+        gui.begin()
+        wr_draw(app)
+        gui.present()
+        var event = gui.next_event()
+        while event.kind != gui.event_none() {
+            if event.kind == gui.event_close() {
+                app.quit = true
+            } else if event.kind == gui.event_key() {
+                app = wr_key(app, event.code, event.mods)
+            } else if event.kind == gui.event_text() {
+                let command = event.mods % 2 == 1
+                let control = (event.mods / 8) % 2 == 1
+                if !command && !control {
+                    let committed = gui.typed_text()
+                    app = wr_text(app, committed)
+                    if trace && committed.len() > 0 {
+                        println("writer: committed=" + committed)
+                        let s = app.sessions[app.active]
+                        println("writer: paragraph=" + s.doc.paragraphs[s.cursor_para].text)
+                    }
+                }
+            } else if event.kind == gui.event_mouse_down() {
+                app = wr_click(app, event.x, event.y, event.mods)
+            } else if event.kind == gui.event_drag() {
+                app = wr_drag(app, event.x, event.y)
+            } else if event.kind == gui.event_mouse_up() {
+                app = wr_release(app)
+            } else if event.kind == gui.event_mouse_move() {
+                app.mouse_x = event.x
+                app.mouse_y = event.y
+            } else if event.kind == gui.event_scroll() {
+                app = wr_scroll(app, event.delta)
+            }
+            event = gui.next_event()
+        }
+        app.frame = app.frame + 1
+        if snapshot.len() > 0 && !snapshot_saved {
+            if snapshot_preedit {
+                if preedit.len() > 0 {
+                    gui.save_png(snapshot)
+                    snapshot_saved = true
+                }
+            } else if app.frame == 2 {
+                gui.save_png(snapshot)
+                snapshot_saved = true
+            }
+        }
+        if autoclose.len() > 0 && app.frame >= 3 {
+            running = false
+        }
+        if app.quit {
+            running = false
+        }
+        gui.sleep(4)
+    }
+    gui.close()
+}

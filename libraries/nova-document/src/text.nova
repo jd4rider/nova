@@ -1,0 +1,363 @@
+// nova-document/text — grapheme-aware string primitives.
+//
+// The bundled compiler exposes `chars()` (Unicode scalars) but not
+// `graphemes()`, so Writer groups extended grapheme clusters here. Cursor
+// movement, deletion and selection all stop on cluster boundaries; a document
+// position is a grapheme offset, never a byte or scalar offset.
+//
+// Segmentation follows the runtime splitter's rules: combining marks,
+// variation selectors, emoji skin tones, keycaps, regional-indicator pairs and
+// ZWJ sequences stay whole. Indic conjuncts, Arabic/Hebrew vowel marks and
+// Hangul jamo are not joined yet; that gap is recorded in BLOCKERS.md.
+
+fn tx_clamp(at: Int, count: Int) -> Int {
+    if at < 0 {
+        return 0
+    }
+    if at > count {
+        return count
+    }
+    return at
+}
+
+fn tx_slice(chars: List<String>, start: Int, stop: Int) -> String {
+    var out = ""
+    var i = start
+    if i < 0 {
+        i = 0
+    }
+    while i < stop && i < chars.len() {
+        out = out + chars[i]
+        i = i + 1
+    }
+    return out
+}
+
+// Code point of one `chars()` element, decoded from its UTF-8 bytes.
+fn tx_code_point(ch: String) -> Int {
+    let bytes = ch.bytes()
+    if bytes.len() == 0 {
+        return 0
+    }
+    let first = bytes[0]
+    if first < 128 {
+        return first
+    }
+    if bytes.len() == 2 {
+        return (first % 32) * 64 + bytes[1] % 64
+    }
+    if bytes.len() == 3 {
+        return (first % 16) * 4096 + (bytes[1] % 64) * 64 + bytes[2] % 64
+    }
+    if bytes.len() == 4 {
+        return (first % 8) * 262144 + (bytes[1] % 64) * 4096 + (bytes[2] % 64) * 64 + bytes[3] % 64
+    }
+    return 0
+}
+
+fn tx_extends(cp: Int) -> Bool {
+    if cp >= 768 && cp <= 879 {
+        return true
+    }
+    if cp >= 6832 && cp <= 6911 {
+        return true
+    }
+    if cp >= 7616 && cp <= 7679 {
+        return true
+    }
+    if cp >= 8400 && cp <= 8447 {
+        return true
+    }
+    if cp >= 65056 && cp <= 65071 {
+        return true
+    }
+    if cp >= 65024 && cp <= 65039 {
+        return true
+    }
+    if cp >= 917760 && cp <= 917999 {
+        return true
+    }
+    if cp >= 127995 && cp <= 127999 {
+        return true
+    }
+    if cp == 8419 {
+        return true
+    }
+    return false
+}
+
+fn tx_regional(cp: Int) -> Bool {
+    return cp >= 127462 && cp <= 127487
+}
+
+// Scalar offset of every cluster start, followed by the end of the text.
+fn tx_starts(text: String) -> List<Int> {
+    let chars = text.chars()
+    var starts: List<Int> = []
+    starts.push(0)
+    if chars.len() == 0 {
+        return starts
+    }
+    var run = 0
+    if tx_regional(tx_code_point(chars[0])) {
+        run = 1
+    }
+    var i = 1
+    while i < chars.len() {
+        let prev = tx_code_point(chars[i - 1])
+        let cp = tx_code_point(chars[i])
+        var join = false
+        if tx_extends(cp) {
+            join = true
+        }
+        if cp == 8205 {
+            join = true
+        }
+        if prev == 8205 {
+            join = true
+        }
+        if tx_regional(cp) && tx_regional(prev) && run % 2 == 1 {
+            join = true
+        }
+        if !join {
+            starts.push(i)
+        }
+        if tx_regional(cp) {
+            if tx_regional(prev) && run % 2 == 1 {
+                run = 0
+            } else {
+                run = run + 1
+            }
+        } else {
+            run = 0
+        }
+        i = i + 1
+    }
+    starts.push(chars.len())
+    return starts
+}
+
+fn tx_count(text: String) -> Int {
+    return tx_starts(text).len() - 1
+}
+
+// Scalar offset of grapheme `g`.
+fn tx_scalar_at(text: String, g: Int) -> Int {
+    let starts = tx_starts(text)
+    let count = starts.len() - 1
+    let at = tx_clamp(g, count)
+    return starts[at]
+}
+
+// Grapheme index of the cluster containing scalar `scalar`.
+fn tx_grapheme_at(text: String, scalar: Int) -> Int {
+    let starts = tx_starts(text)
+    var i = 0
+    var best = 0
+    while i < starts.len() {
+        if starts[i] <= scalar {
+            best = i
+        } else {
+            return best
+        }
+        i = i + 1
+    }
+    return best
+}
+
+fn tx_insert_at(text: String, at: Int, value: String) -> String {
+    let starts = tx_starts(text)
+    let count = starts.len() - 1
+    let g = tx_clamp(at, count)
+    let scalar = starts[g]
+    let chars = text.chars()
+    return tx_slice(chars, 0, scalar) + value + tx_slice(chars, scalar, chars.len())
+}
+
+fn tx_backspace_at(text: String, at: Int) -> String {
+    let starts = tx_starts(text)
+    let count = starts.len() - 1
+    let g = tx_clamp(at, count)
+    if g <= 0 {
+        return text
+    }
+    let chars = text.chars()
+    return tx_slice(chars, 0, starts[g - 1]) + tx_slice(chars, starts[g], chars.len())
+}
+
+fn tx_delete_at(text: String, at: Int) -> String {
+    let starts = tx_starts(text)
+    let count = starts.len() - 1
+    let g = tx_clamp(at, count)
+    if g >= count {
+        return text
+    }
+    let chars = text.chars()
+    return tx_slice(chars, 0, starts[g]) + tx_slice(chars, starts[g + 1], chars.len())
+}
+
+// Left/Right and click snapping are one cluster step.
+fn tx_left(at: Int) -> Int {
+    if at <= 0 {
+        return 0
+    }
+    return at - 1
+}
+
+fn tx_right(at: Int, count: Int) -> Int {
+    if at >= count {
+        return count
+    }
+    return at + 1
+}
+
+fn tx_split_lines(text: String) -> List<String> {
+    var out: List<String> = []
+    var current = ""
+    for ch in text.chars() {
+        if ch == "\n" {
+            out.push(current)
+            current = ""
+        } else {
+            if ch != "\r" {
+                current = current + ch
+            }
+        }
+    }
+    out.push(current)
+    return out
+}
+
+fn tx_join_lines(lines: List<String>) -> String {
+    var out = ""
+    var i = 0
+    while i < lines.len() {
+        if i > 0 {
+            out = out + "\n"
+        }
+        out = out + lines[i]
+        i = i + 1
+    }
+    return out
+}
+
+fn tx_word_count(text: String) -> Int {
+    var count = 0
+    var in_word = false
+    for ch in text.chars() {
+        if ch == " " || ch == "\t" || ch == "\n" || ch == "\r" {
+            in_word = false
+        } else {
+            if !in_word {
+                count = count + 1
+                in_word = true
+            }
+        }
+    }
+    return count
+}
+
+// Escaping for the native container: the text format is tab-separated, so a
+// paragraph may never contain a literal tab, CR or newline.
+fn tx_escape(text: String) -> String {
+    var out = ""
+    for ch in text.chars() {
+        if ch == "\\" {
+            out = out + "\\\\"
+        } else if ch == "\n" {
+            out = out + "\\n"
+        } else if ch == "\r" {
+            out = out + "\\r"
+        } else if ch == "\t" {
+            out = out + "\\t"
+        } else {
+            out = out + ch
+        }
+    }
+    return out
+}
+
+fn tx_unescape(text: String) -> String {
+    let chars = text.chars()
+    var out = ""
+    var i = 0
+    while i < chars.len() {
+        let ch = chars[i]
+        if ch == "\\" && i + 1 < chars.len() {
+            let next = chars[i + 1]
+            if next == "n" {
+                out = out + "\n"
+            } else if next == "r" {
+                out = out + "\r"
+            } else if next == "t" {
+                out = out + "\t"
+            } else if next == "\\" {
+                out = out + "\\"
+            } else {
+                out = out + next
+            }
+            i = i + 2
+        } else {
+            out = out + ch
+            i = i + 1
+        }
+    }
+    return out
+}
+
+// Splits at ASCII whitespace and drops empty runs. Used by word counts and
+// find/replace, not by layout (which needs exact offsets).
+fn tx_words(text: String) -> List<String> {
+    var out: List<String> = []
+    var current = ""
+    for ch in text.chars() {
+        if ch == " " || ch == "\t" || ch == "\n" || ch == "\r" {
+            if current.len() > 0 {
+                out.push(current)
+                current = ""
+            }
+        } else {
+            current = current + ch
+        }
+    }
+    if current.len() > 0 {
+        out.push(current)
+    }
+    return out
+}
+
+fn tx_contains(text: String, needle: String) -> Bool {
+    return text.contains(needle)
+}
+
+// Case-insensitive (ASCII) search helper for find/replace.
+fn tx_find(text: String, needle: String, ignore_case: Bool) -> Int {
+    if needle.len() == 0 {
+        return -1
+    }
+    let hay = if ignore_case { text.lower() } else { text }
+    let pin = if ignore_case { needle.lower() } else { needle }
+    if !hay.contains(pin) {
+        return -1
+    }
+    let hchars = hay.chars()
+    let nchars = pin.chars()
+    var i = 0
+    while i + nchars.len() <= hchars.len() {
+        var j = 0
+        var same = true
+        while j < nchars.len() {
+            if hchars[i + j] != nchars[j] {
+                same = false
+                j = nchars.len()
+            } else {
+                j = j + 1
+            }
+        }
+        if same {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}

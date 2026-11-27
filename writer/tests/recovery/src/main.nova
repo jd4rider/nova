@@ -1,0 +1,44 @@
+import std.io { println }
+import "../../../../libraries/nova-gui/src/gui.nova" as gui
+import "../../../../libraries/nova-document/src/document.nova" as wd
+import "../../../../libraries/nova-document/src/recovery.nova" as rec
+
+// Two-process crash test. `write` creates unsaved work and exits without any
+// normal save; `read` is a fresh process that must find and load the recovery
+// file. The shell wrapper supplies NOVA_WRITER_RECOVERY_DIR.
+
+fn main() -> Int {
+    var mode = ""
+    if gui.args_count() > 1 {
+        mode = gui.arg(1)
+    }
+    if mode == "write" {
+        var doc = wd.wd_new("Crash Report")
+        doc = wd.wd_insert(doc, 0, 0, "Unsaved work survives a crash.")
+        let path = rec.rec_path("crash")
+        let error = rec.rec_save(doc, path)
+        if error.len() > 0 {
+            println("write failed: " + error)
+            return 1
+        }
+        println("wrote " + path)
+        return 0
+    }
+    if mode == "read" {
+        let path = rec.rec_newest()
+        if path.len() == 0 {
+            println("no recovery file")
+            return 1
+        }
+        let loaded = rec.rec_load(path)
+        if !loaded.ok {
+            println("load failed: " + loaded.error)
+            return 1
+        }
+        println("recovered=" + loaded.doc.title)
+        println("text=" + loaded.doc.paragraphs[0].text)
+        return 0
+    }
+    println("usage: nova-writer-recovery-test write|read")
+    return 2
+}
