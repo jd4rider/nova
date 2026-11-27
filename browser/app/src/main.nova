@@ -92,6 +92,10 @@ struct Store {
     homepage: String,
     downloads_open: Bool,
     bookmarks_open: Bool,
+    // Saved logins for the passwords panel, as host<TAB>escaped-user rows. The
+    // Keychain is read when the panel opens, never while drawing.
+    passwords_open: Bool,
+    password_entries: List<String>,
     // The find bar is chrome state, not page state: the query lives here so
     // typing, redraws and the next/previous commands share one source.
     find_open: Bool,
@@ -1820,6 +1824,8 @@ fn load_store() -> Store {
         homepage: homepage,
         downloads_open: false,
         bookmarks_open: false,
+        passwords_open: false,
+        password_entries: [],
         find_open: false,
         find_text: "",
         find_found: 0,
@@ -3373,6 +3379,101 @@ fn draw_bookmarks(session: Session, theme: Chrome, store: Store, fx: Fx) {
     gui.overlay(panel.x, panel.y, panel.w, panel.h, true)
 }
 
+// ---------- passwords panel ----------
+
+// Ten rows fit without a scroll view; the rest are counted at the bottom. The
+// rows carry the username captured with each login, so drawing never reads the
+// Keychain — opening the panel does that once.
+fn read_saved_logins() -> List<String> {
+    var out: List<String> = []
+    for host in login.hosts() {
+        let saved = login.lookup(host)
+        out.push(host + "\t" + library.escape(saved.user))
+    }
+    return out
+}
+
+fn password_rows(store: Store) -> Int {
+    return smaller(store.password_entries.len(), 10)
+}
+
+fn passwords_box(session: Session, store: Store) -> Box {
+    let rows = password_rows(store)
+    var height = 58 + rows * 42
+    if rows == 0 {
+        height = 104
+    }
+    let w = 380
+    let x = gui.width() - w - 14
+    let y = chrome_height(session.vertical) + 8
+    if y + height > gui.height() - 14 {
+        height = gui.height() - y - 14
+    }
+    return Box { x: x, y: y, w: w, h: height }
+}
+
+fn password_close_box(session: Session, store: Store) -> Box {
+    let panel = passwords_box(session, store)
+    return Box { x: panel.x + panel.w - 32, y: panel.y + 11, w: 22, h: 22 }
+}
+
+fn password_row_box(session: Session, store: Store, index: Int) -> Box {
+    let panel = passwords_box(session, store)
+    return Box { x: panel.x + 8, y: panel.y + 44 + index * 42, w: panel.w - 16, h: 38 }
+}
+
+fn password_remove_box(session: Session, store: Store, index: Int) -> Box {
+    let row = password_row_box(session, store, index)
+    return Box { x: row.x + row.w - 76, y: row.y + 8, w: 68, h: 24 }
+}
+
+fn draw_passwords(session: Session, theme: Chrome, store: Store, fx: Fx) {
+    if !store.passwords_open {
+        return
+    }
+    let panel = passwords_box(session, store)
+    gui.rect_alpha(panel.x + 3, panel.y + 6, panel.w, panel.h, 0, 80)
+    gui.round_rect(panel.x, panel.y, panel.w, panel.h, 12, theme.elevated)
+    gui.stroke(panel.x, panel.y, panel.w, panel.h, theme.border_strong)
+    gui.text(panel.x + 14, panel.y + 13, "Passwords", 13, theme.fg_bright)
+    gui.mono(panel.x + 14 + gui.text_width("Passwords", 13) + 8, panel.y + 15, "${store.password_entries.len()}", 10, theme.faint)
+    let close = password_close_box(session, store)
+    if slot(fx, 229) > 0 {
+        gui.round_rect(close.x, close.y, close.w, close.h, 5, blend(theme.elevated, theme.border_strong, slot(fx, 229)))
+    }
+    gui.text(close.x + 7, close.y + 3, "×", 12, theme.muted)
+    let rows = password_rows(store)
+    if rows == 0 {
+        gui.text(panel.x + 14, panel.y + 50, "No saved logins", 11, theme.muted)
+        gui.text(panel.x + 14, panel.y + 70, "Nova saves one when a site's form is submitted", 10, theme.faint)
+        gui.overlay(panel.x, panel.y, panel.w, panel.h, true)
+        return
+    }
+    var i = 0
+    while i < rows {
+        let record = store.password_entries[i]
+        let row = password_row_box(session, store, i)
+        let heat = slot(fx, 230 + i)
+        gui.round_rect(row.x, row.y, row.w, row.h, 8, blend(theme.elevated, theme.selection, heat))
+        gui.clip(row.x + 10, row.y + 2, row.w - 100, 20)
+        gui.text(row.x + 10, row.y + 4, library.field(record, 0), 11, theme.fg_bright)
+        gui.clip_reset()
+        gui.clip(row.x + 10, row.y + 19, row.w - 100, 14)
+        gui.text(row.x + 10, row.y + 19, library.field(record, 1), 9, theme.muted)
+        gui.clip_reset()
+        let remove = password_remove_box(session, store, i)
+        if slot(fx, 240 + i) > 0 {
+            gui.round_rect(remove.x, remove.y, remove.w, remove.h, 6, blend(theme.elevated, theme.red, slot(fx, 240 + i)))
+        }
+        gui.text(remove.x + 12, remove.y + 5, "Remove", 10, theme.muted)
+        i = i + 1
+    }
+    if store.password_entries.len() > rows {
+        gui.text(panel.x + 14, panel.y + panel.h - 18, "${store.password_entries.len() - rows} more not shown", 10, theme.faint)
+    }
+    gui.overlay(panel.x, panel.y, panel.w, panel.h, true)
+}
+
 // ---------- find in page ----------
 // Chrome's find bar floats over the page at the top right. WebKit does the
 // search, so highlights and match navigation are the engine's own; Nova only
@@ -4054,6 +4155,7 @@ fn draw_chrome(handle: Int, theme: Chrome, address: Address, session: Session, s
     }
     draw_downloads(theme, store, downloads, fx)
     draw_bookmarks(session, theme, store, fx)
+    draw_passwords(session, theme, store, fx)
     draw_find(theme, session, store, fx)
     draw_suggestions(theme, address, session, suggestions, fx)
     draw_reader_panel(theme, store, reader_open, fetching, received, hover)
@@ -4094,6 +4196,24 @@ fn hover_target(x: Int, y: Int, session: Session, address: Address, suggestions:
                 return 220
             }
             return 221
+        }
+    }
+    if store.passwords_open {
+        let panel = passwords_box(session, store)
+        if gui.inside(panel.x, panel.y, panel.w, panel.h, x, y) {
+            let close = password_close_box(session, store)
+            if gui.inside(close.x, close.y, close.w, close.h, x, y) {
+                return 229
+            }
+            var i = 0
+            while i < password_rows(store) {
+                let remove = password_remove_box(session, store, i)
+                if gui.inside(remove.x, remove.y, remove.w, remove.h, x, y) {
+                    return 240 + i
+                }
+                i = i + 1
+            }
+            return 0 - 1
         }
     }
     if store.bookmarks_open {
@@ -4446,6 +4566,41 @@ fn handle_click(handle: Int, x: Int, y: Int, clicks: Int, current: Address, sess
                     }
                     return click_reader(session, current, store, notice, 1, 1)
                 }
+            }
+            return click_action(session, current, store, notice)
+        }
+    }
+
+    // The passwords panel floats over the page too, and its rows take presses
+    // before anything underneath them.
+    if store.passwords_open {
+        let panel = passwords_box(session, store)
+        if gui.inside(panel.x, panel.y, panel.w, panel.h, x, y) {
+            let close = password_close_box(session, store)
+            if gui.inside(close.x, close.y, close.w, close.h, x, y) {
+                var closed = store
+                closed.passwords_open = false
+                return click_action(session, current, closed, notice)
+            }
+            var i = 0
+            while i < password_rows(store) {
+                let remove = password_remove_box(session, store, i)
+                if gui.inside(remove.x, remove.y, remove.w, remove.h, x, y) {
+                    let host = library.field(store.password_entries[i], 0)
+                    if host.len() > 0 && login.forget(host) {
+                        var next = store
+                        next.password_entries = read_saved_logins()
+                        return click_action(session, current, next, Notice {
+                            text: "Removed the login for " + host,
+                            until: gui.now() + 2600,
+                        })
+                    }
+                    return click_action(session, current, store, Notice {
+                        text: "That login could not be removed",
+                        until: gui.now() + 2600,
+                    })
+                }
+                i = i + 1
             }
             return click_action(session, current, store, notice)
         }
@@ -5658,6 +5813,22 @@ fn handle_key(handle: Int, code: Int, mods: Int, current: Address, session: Sess
         return key_action(session, current, store, notice_idle(), false)
     }
 
+    if command && shift && code == 79 {
+        // Cmd+Shift+O. With Command held the host reports the uppercase scalar
+        // from charactersIgnoringModifiers, so this is 'O', not 'o'.
+        // Saved logins: the list is read here, once, so the panel draws from
+        // memory. Opening it closes the bookmarks panel and the other way too.
+        var opened = store
+        opened.passwords_open = !store.passwords_open
+        opened.bookmarks_open = false
+        if opened.passwords_open {
+            opened.password_entries = read_saved_logins()
+        }
+        return key_action(session, current, opened, Notice {
+            text: if opened.passwords_open { "Passwords · ${opened.password_entries.len()} saved" } else { "" },
+            until: gui.now() + 1600,
+        }, false)
+    }
     if command && code == 108 {
         engine.focus_chrome(handle)
         return key_action(session, address_begin(engine.page_url(handle)), store, notice_idle(), false)
@@ -5675,6 +5846,11 @@ fn handle_key(handle: Int, code: Int, mods: Int, current: Address, session: Sess
         return key_action(session, current, store, notice_idle(), false)
     }
     if code == gui.key_escape() {
+        if store.passwords_open {
+            var closed = store
+            closed.passwords_open = false
+            return key_action(session, current, closed, notice_idle(), false)
+        }
         if store.bookmarks_open {
             var closed = store
             closed.bookmarks_open = false
@@ -5817,6 +5993,32 @@ fn auto_close(session: Session, theme: Chrome, address: Address, store: Store) {
         let autofilled = autofill_login(handle, engine.page_url(handle))
         let fields = engine.run_js(handle, "document.querySelector('#u').value+'|'+document.querySelector('#p').value")
         println("autofill: host=${login.origin(engine.page_url(handle))} filled=${flag(autofilled)} fields=${fields}")
+    }
+    // Headless passwords-panel check: a captured login appears in the panel's
+    // list by host and user, and the row's remove path deletes the item.
+    if gui.env("NOVA_BROWSER_PASSWORDS_CHECK") == "1" {
+        engine.run_js(handle, "document.querySelector('#u').value='ada';document.querySelector('#p').value='hunter2';document.querySelector('form').requestSubmit();'submitted'")
+        var waited_logins = 0
+        while !engine.login_pending(handle) && waited_logins < 2000 {
+            gui.pump()
+            gui.sleep(20)
+            waited_logins = waited_logins + 20
+        }
+        let seeded = save_captured_login(session.tabs[session.active], handle)
+        let entries = read_saved_logins()
+        var first_host = ""
+        var first_user = ""
+        if entries.len() > 0 {
+            first_host = library.field(entries[0], 0)
+            first_user = library.field(entries[0], 1)
+        }
+        var opened = store
+        opened.passwords_open = true
+        opened.password_entries = entries
+        let panel = passwords_box(session, opened)
+        let removed = login.forget(first_host)
+        let remaining = read_saved_logins().len()
+        println("passwords: seeded=${flag(seeded.len() > 0)} rows=${entries.len()} host=${first_host} user=${first_user} panel=${panel.w}x${panel.h} removed=${flag(removed)} remaining=${remaining}")
     }
     if gui.env("NOVA_BROWSER_LOGIN_CHECK") == "1" {
         engine.run_js(handle, "document.querySelector('#u').value='ada';document.querySelector('#p').value='hunter2';document.querySelector('form').requestSubmit();'submitted'")

@@ -8,6 +8,7 @@ import "../../history/src/history.nova" as library
 extern "C" fn nova_keychain_get(account: String) -> String
 extern "C" fn nova_keychain_set(account: String, secret: String) -> Int
 extern "C" fn nova_keychain_delete(account: String) -> Int
+extern "C" fn nova_keychain_list() -> String
 
 struct SavedLogin {
     user: String,
@@ -47,6 +48,18 @@ fn lookup(host: String) -> SavedLogin {
         pass: library.field(secret, 1),
         found: true,
     }
+}
+
+// Hosts with a saved login, already sorted by the keychain query. Used by the
+// passwords panel; nothing is read from the Keychain per frame.
+fn hosts() -> List<String> {
+    var out: List<String> = []
+    for line in nova_keychain_list().split("\n") {
+        if line.len() > 0 {
+            out.push(line)
+        }
+    }
+    return out
 }
 
 fn forget(host: String) -> Bool {

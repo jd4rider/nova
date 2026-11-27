@@ -175,9 +175,17 @@ Each task needs a reproducible acceptance check before it is marked done.
   normal tabs are captured through WebKit's `novaLogin` bridge and stored in
   the login keychain under `dev.nova.browser.login`, one item per host. A later
   load of that host fills the page's own form; Nova never submits it. Private
-  tabs do neither. `--forget-login <host>` removes an entry. Not done: a
-  password list/editor UI, importing Chrome's passwords, and sync.
+  tabs do neither. `--forget-login <host>` removes an entry. 0.9.14 adds the
+  panel list (WB-03.018); still open: editing or revealing a password and sync.
   Evidence: `browser/tests/login.sh` 3/3.
+- **WB-03.018 — Passwords panel.** DONE in 0.9.14. Cmd+Shift+O lists every
+  saved host and username (sorted, read from the keychain once when the panel
+  opens) with a per-row **Remove** that deletes the item and refreshes the
+  list. `nova_keychain_list` enumerates the login service's accounts. Escape
+  or × closes the panel; it is registered above the page. Not done: edit,
+  reveal, rename, and showing notes. Evidence: `browser/tests/passwords.sh`
+  2/2 — one captured login listed as `host=127.0.0.1 user=ada`, the panel
+  `380x100`, `removed=1 remaining=0`, and no keychain item left.
 - **WB-03.015 — Private tabs.** DONE in 0.9.11. `--private` and Cmd+Shift+N
   create a view on `WKWebsiteDataStore.nonPersistentDataStore`, so cookies and
   cache end with the tab. `record_visit` refuses private tabs, `save_session`

@@ -3,12 +3,12 @@
 Updated: 2026-11-27
 Branch: `main`
 Last known good compiler checkpoint: `cfa00e3` (before browser work)
-Browser: **0.9.13 installed at `/Applications/Nova Browser.app`**
-Browser working tree: clean after the 0.9.13 commit; see `git status`
+Browser: **0.9.14 installed at `/Applications/Nova Browser.app`**
+Browser working tree: clean after the 0.9.14 commit; see `git status`
 Active gate: G0 WebKit; G1 WebCore not started
-Active task: **WB-03.017 — Chrome password import** (0.9.13: `Login Data`
-rows decrypted with the Chrome Safe Storage key and stored in Nova's keychain,
-never overwriting a host Nova already has)
+Active task: **WB-03.018 — passwords panel** (0.9.14: Cmd+Shift+O lists every
+saved host and username read from the keychain once, with per-row Remove;
+`nova_keychain_list` enumerates the login service)
 
 ## Completed
 
@@ -325,6 +325,21 @@ never overwriting a host Nova already has)
     `lsregister -f`, `--set-default-browser` reports `set=1 state=1` and
     `NSWorkspace` resolves a web URL to `Nova Browser.app`. Revert in System
     Settings → Desktop & Dock → Default web browser.
+- **0.9.14 — passwords panel**
+  - Cmd+Shift+O opens a floating Passwords panel listing saved hosts with their
+    usernames, sorted by host, and a **Remove** control on each row. Removing
+    deletes that host's keychain item, refreshes the list and says what went.
+    Escape or × closes it; it is registered above the page like the other
+    panels. Opening it closes Bookmarks and opening Bookmarks closes it.
+  - `nova_keychain_list` enumerates the accounts under
+    `dev.nova.browser.login`; the app reads them once when the panel opens, so
+    drawing never calls Security.framework.
+  - The chord is Cmd+Shift+O because Command chords arrive as uppercase
+    scalars; a branch on lowercase 'o' would never run.
+  - Evidence: `browser/tests/passwords.sh` 2/2 — `passwords: seeded=1 rows=1
+    host=127.0.0.1 user=ada panel=380x100 removed=1 remaining=0` and no
+    keychain item left behind; login 3/3 and chrome-logins 6/6 still pass.
+
 - **0.9.13 — Chrome password import**
   - `import_chrome_logins` reads `Login Data` through `sqlite3` from an
     immutable snapshot, with `hex(password_value)` keeping the ciphertext
@@ -546,8 +561,9 @@ never overwriting a host Nova already has)
 - Private browsing is a tab, not a separate window: it shares the strip with
   normal tabs, and a private tab is still visible in the strip while open. No
   permission prompts, inspector, Developer ID signing/notarization or release.
-  Saved logins are one per host with no list, edit or rename UI, are not
-  imported from Safari, and are not synced; there is no account. Chrome's
+  Saved logins are one per host with no edit, reveal or rename UI, and the
+  panel lists at most ten rows; they are not imported from Safari and are not
+  synced; there is no account. Chrome's
   keychain item can prompt once on macOS before the import reads it.
   Find reports Found / No matches, not a match count; the bar's field
   and close control are in the accessibility tree, its status text is not. Zoom

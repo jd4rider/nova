@@ -102,6 +102,7 @@ blinking caret, and the loading bar follows WebKit's own estimate.
 | Cmd+= / Cmd+- | zoom the page in / out |
 | Cmd+0 | reset the page zoom |
 | Cmd+Shift+I | import Chrome bookmarks, history and saved passwords |
+| Cmd+Shift+O | open or close the passwords panel |
 | Cmd+Shift+E | tabs: top → sidebar → rail → top |
 | Cmd+Shift+L | read the page aloud, or stop reading |
 | Cmd+Shift+V | choose the next reader voice |
@@ -128,7 +129,7 @@ open -a "/Applications/Nova Browser.app"
 ```
 
 The script rebuilds, renders the icon, assembles `Nova Browser.app`, ad-hoc
-signs it locally and replaces the installed copy. Version 0.9.13 is installed.
+signs it locally and replaces the installed copy. Version 0.9.14 is installed.
 Re-run it after every completed phase. This is not Developer ID signing or
 notarization.
 
@@ -336,8 +337,10 @@ and stores hosts Nova does not already know in its own keychain store. An
 existing Nova login is never replaced, and without the key the import prints
 `chrome key locked` and imports none rather than writing blank passwords.
 
-One login is kept per host. There is no password list yet, so removing one is a
-command:
+One login is kept per host. Cmd+Shift+O opens the passwords panel: every saved
+host with its username, newest state read from the keychain, and a **Remove**
+button on each row. Escape or the × closes it. Removing one without opening the
+window is still a command:
 
 ```sh
 browser/target/nova/nova-browser --forget-login example.com

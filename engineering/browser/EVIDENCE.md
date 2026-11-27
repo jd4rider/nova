@@ -1444,3 +1444,32 @@ chrome-logins: pass=6 fail=0
 - Not tested: a live prompt for Chrome's keychain item, Chrome profiles that
   use a non-v10 password format, and hosts with several Chrome accounts (the
   store keeps one login per host).
+
+## 0.9.14 — passwords panel
+
+- `nova_keychain_list` runs a `kSecMatchLimitAll` attribute query for the
+  `dev.nova.browser.login` service and returns the accounts sorted and
+  newline-joined. `login.hosts()` splits it. The app reads the list and each
+  host's username once when the panel opens into `password_entries`, so the
+  draw and hit-test paths never touch Security.framework.
+- Cmd+Shift+O toggles the panel; opening it closes Bookmarks, opening Bookmarks
+  closes it, Escape closes it, and it is registered with `gui.overlay` so it
+  paints above the WebView. Each row draws the host and username; its
+  **Remove** box calls `login.forget(host)` and re-reads the list.
+- The chord is Cmd+Shift+O because `charactersIgnoringModifiers` reports the
+  uppercase scalar while Command is held; a branch comparing lowercase 'o'
+  would be dead code.
+- Evidence: `browser/tests/passwords.sh` 2/2. The probe captures a real login
+  through the page, reads the panel's list, removes it, and re-reads:
+
+```
+passwords: seeded=1 rows=1 host=127.0.0.1 user=ada panel=380x100 removed=1 remaining=0
+PASS the panel lists a saved login by host and user
+PASS removing the row deletes the keychain item
+passwords: pass=2 fail=0
+```
+
+- Regression at 0.9.14: `login.sh` 3/3 and `chrome-logins.sh` 6/6 still pass.
+- Not tested: the panel's pixels (no screenshot of the open panel), more than
+  ten saved hosts (the remainder is only counted), and keyboard navigation
+  inside the panel (there is none).

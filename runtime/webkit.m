@@ -1316,6 +1316,28 @@ nova_str nova_keychain_get(nova_str account) {
     return nova_webview_copy(text);
 }
 
+/* Every host with a saved login, sorted, newline-joined. Nova reads this once
+ * when the passwords panel opens so drawing never touches Security.framework. */
+nova_str nova_keychain_list(void) {
+    NSDictionary *query = @{(__bridge id)kSecClass:(__bridge id)kSecClassGenericPassword,
+                            (__bridge id)kSecAttrService:NOVA_LOGIN_SERVICE,
+                            (__bridge id)kSecReturnAttributes:@YES,
+                            (__bridge id)kSecMatchLimit:(__bridge id)kSecMatchLimitAll};
+    CFTypeRef found = NULL;
+    OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &found);
+    if (status != errSecSuccess || !found) return nova_webview_empty();
+    NSArray *items = (__bridge_transfer NSArray *)found;
+    NSMutableArray *accounts = [NSMutableArray array];
+    for (NSDictionary *item in items) {
+        id account = item[(__bridge id)kSecAttrAccount];
+        if ([account isKindOfClass:[NSString class]] && [account length] > 0) {
+            [accounts addObject:account];
+        }
+    }
+    [accounts sortUsingSelector:@selector(localizedStandardCompare:)];
+    return nova_webview_copy([accounts componentsJoinedByString:@"\n"]);
+}
+
 int64_t nova_keychain_delete(nova_str account) {
     NSString *acct = nova_webview_string(account);
     if (acct.length == 0) return 0;
