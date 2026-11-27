@@ -5,7 +5,7 @@ description: A native word processor written in Nova — a real document model, 
 
 **Status: experimental, macOS only.** `writer/` is a word processor written in Nova on [nova-gui](../../libraries/gui/). The document model, measured line breaking, pagination, editing, persistence and recovery are Nova source; the only non-Nova code is the audited AppKit/CoreText host. There is no Electron, no web view and no `contenteditable`.
 
-![Nova Writer showing its A4 page, styles panel, outline and status bar](/images/nova-writer.png)
+![Nova Writer showing its A4 page, styles panel, outline and status bar](../../../assets/nova-writer.png)
 
 ## Run it
 

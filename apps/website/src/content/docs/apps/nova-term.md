@@ -5,7 +5,7 @@ description: A native terminal emulator written in Nova — real pty tabs, ANSI 
 
 **Status: experimental, macOS only.** `examples/nova-term` is a standalone terminal emulator written in Nova on [nova-gui](../../libraries/gui/). The pty lives in the host, the escape-sequence parser lives in `libraries/nova-term`, and the window is drawn cell by cell by Nova itself. There is no Electron, no web view and no ncurses.
 
-![Nova Terminal running a zsh prompt with Powerline segments, a tab and the status bar](/images/nova-term.png)
+![Nova Terminal running a zsh prompt with Powerline segments, a tab and the status bar](../../../assets/nova-term.png)
 
 ## Run it
 
