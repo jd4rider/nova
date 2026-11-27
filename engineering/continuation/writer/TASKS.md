@@ -13,6 +13,11 @@ Stable IDs are permanent. Statuses are evidence-based. See `EVIDENCE.md`.
 - **WRI-00.003 — Compiler capability probe: VERIFIED.** Probe confirmed
   `chars()` and `List<String>.join`, independent snapshots, no `graphemes()`,
   and rejected qualified struct literals. Probe removed after recording.
+- **WRI-00.004 — Qualified generic fields: VERIFIED.** `cg_unqualified` now
+  strips a module prefix inside `List<...>`/`Option<...>` without truncating
+  the wrapper, so `List<wd.Document>` is `List<Document>`. The compiler
+  regression fixture returns 7, and the Writer core test declares a
+  `List<Document>` field and writes through it.
 
 ## WRI-01 — Native shell
 
@@ -24,7 +29,7 @@ Stable IDs are permanent. Statuses are evidence-based. See `EVIDENCE.md`.
 - **WRI-01.003 — Command routing and shortcuts: VERIFIED.** Every visible
   command executes real document behavior; unsupported commands are absent.
 - **WRI-01.004 — Headless test target: VERIFIED.** `writer/tests/core.sh`
-  runs 80 assertions without a window and exits non-zero on failure.
+  runs 82 assertions without a window and exits non-zero on failure.
 
 ## WRI-02 — Document core
 

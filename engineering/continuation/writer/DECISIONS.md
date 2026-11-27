@@ -135,9 +135,11 @@ Status: accepted as a compiler-limit workaround.
 
 ### Context
 
-The app needs per-tab undo history. The compiler rejects a `List<Document>`
-struct field with `unsupported type Document> on field undo`, and it also
-rejects index assignment through a struct field.
+The app needs per-tab undo history. At the time, the compiler rejected a
+`List<Document>` struct field with `unsupported type Document> on field undo`
+and index assignment through a struct field. Both were codegen bugs in type
+normalization and field writes; WRI-00.004 fixes the qualified-generic part,
+and the field-write path now has its own regression.
 
 ### Decision
 
@@ -154,8 +156,9 @@ rejects index assignment through a struct field.
   current document sizes and measurable later.
 - Snapshot strings preserve IDs, styles and alignment for the life of the
   session.
-- When the compiler supports `List<Document>` fields, the app can switch back
-  without changing user-visible behavior.
+- The compiler now supports `List<Document>` fields; the app can switch back
+  without changing user-visible behavior, but the serialized path remains
+  because it is already tested and bounded.
 
 ## DEC-WRI-007 — Install each phase to /Applications
 

@@ -1,0 +1,15 @@
+// A generic type may contain a module-qualified struct name. Codegen must
+// normalize the inner name (`mod.Doc` -> `Doc`) without truncating the
+// `List<...>` wrapper.
+struct Doc {
+    n: Int,
+}
+
+struct Holder {
+    docs: List<mod.Doc>,
+}
+
+fn main() -> Int {
+    let holder = Holder { docs: [Doc { n: 7 }] }
+    return holder.docs[0].n
+}

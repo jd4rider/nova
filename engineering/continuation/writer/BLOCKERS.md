@@ -37,7 +37,7 @@ clang, CoreText and the native GUI.
 
 - **No font family/weight API.** Styled CoreText runs and measured advances
   were added (DEC-WRI-004), so serif body, bold, italic and underline are real.
-- **No native test target.** A headless core binary with 80 assertions exists.
+- **No native test target.** A headless core binary with 82 assertions exists.
 - **No installable bundle.** `/Applications/Nova Writer.app` builds, signs and
   launches.
 - **No autosave or crash recovery.** `recovery.nova`, a two-process crash test

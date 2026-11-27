@@ -34,14 +34,14 @@ It is not a mock and not a browser canvas.
   paper size, accessibility labels, autoclose/snapshot hooks.
 - **Packaging** (`writer/scripts/install-macos.sh`): builds, renders the icon,
   creates and signs `Nova Writer.app`, installs to `/Applications`.
-- **Tests**: `writer/tests/core.sh` (80 assertions, headless),
+- **Tests**: `writer/tests/core.sh` (82 assertions, headless),
   `writer/tests/recovery.sh` (two-process crash recovery),
   `writer/tests/ime.sh` (14 IME composition assertions) and
   `writer/tests/smoke.sh` (real window + PNG snapshot).
 
 ## Evidence (latest run)
 
-- Core: `failures=0`, 80 PASS, exit 0.
+- Core: `failures=0`, 82 PASS, exit 0.
 - Crash recovery: `PASS recovery survives a process exit`; a second process
   loaded `Crash Report` / `Unsaved work survives a crash.` from the file the
   first process left behind.

@@ -284,13 +284,31 @@ fn cg_llvm_type(type_name: String) -> String {
 
 // Imported types keep their module qualifier in the AST (`gui.Theme`) while the
 // struct table is keyed by the declared name (`Theme`). Normalise at the type
-// lookup rather than at every call site.
+// lookup rather than at every call site. A dot inside a generic must drop only
+// the module prefix, not the wrapper: `List<wd.Document>` -> `List<Document>`.
 fn cg_unqualified(name: String) -> String {
-    let parts = name.split(".")
-    if parts.len() == 0 {
-        return name
+    let chars = name.chars()
+    var out = ""
+    var i = 0
+    while i < chars.len() {
+        let ch = chars[i]
+        if ch == "." {
+            var kept = out
+            while kept.len() > 0 {
+                let kept_chars = kept.chars()
+                let last = kept_chars[kept_chars.len() - 1]
+                if !"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_".contains(last) {
+                    break
+                }
+                kept = lx_slice(kept_chars, 0, kept_chars.len() - 1)
+            }
+            out = kept
+        } else {
+            out = out + ch
+        }
+        i = i + 1
     }
-    return parts[parts.len() - 1]
+    return out
 }
 
 fn cg_struct_index(structs: List<CgStruct>, name: String) -> Int {

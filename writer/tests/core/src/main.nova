@@ -25,6 +25,12 @@ fn long_paragraph() -> String {
         "CoreText reports each advance; Nova decides where the line ends and where the page breaks."
 }
 
+// Regression: an imported struct inside a generic used to truncate to `Doc>`
+// in codegen. This field also exercises index assignment through a struct.
+struct DocStack {
+    docs: List<wd.Document>,
+}
+
 fn main() -> Int {
     var failures = 0
 
@@ -205,6 +211,12 @@ fn main() -> Int {
     let bad_path = "/tmp/nova-writer-core-bad.novadoc"
     gui.write(bad_path, "garbage")
     failures = failures + check("corrupt file is rejected", !store.wd_load(bad_path).ok)
+
+    // ---------- qualified generic field (compiler regression) ----------
+    var stack = DocStack { docs: [saved] }
+    stack.docs[0] = saved
+    failures = failures + check("list of documents field", stack.docs.len() == 1)
+    failures = failures + check("list of documents index write", stack.docs[0].title == saved.title)
 
     // ---------- autosave / recovery ----------
     let rec_root = rec.rec_root()

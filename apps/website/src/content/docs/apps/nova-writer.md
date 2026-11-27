@@ -55,7 +55,7 @@ The app is immediate mode: draw the frame, pump the platform queue, handle one e
 ## Tests
 
 ```sh
-sh writer/tests/core.sh       # 80 headless assertions
+sh writer/tests/core.sh       # 82 headless assertions
 sh writer/tests/recovery.sh   # two-process crash recovery
 sh writer/tests/ime.sh        # 14 IME commit/cancel assertions
 sh writer/tests/smoke.sh      # real window + PNG snapshot

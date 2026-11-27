@@ -9,7 +9,7 @@ Silicon). Commands are reproducible from the repository root.
 sh writer/tests/core.sh
 ```
 
-Result: exit 0; 80 `PASS` lines; final line `failures=0`.
+Result: exit 0; 82 `PASS` lines; final line `failures=0`.
 
 Covers: grapheme segmentation (combining marks, skin tones, flags, ZWJ),
 insert/delete, escaping, word count, find, document validation, stable IDs,
@@ -157,6 +157,30 @@ The installed bundle was also launched with `NOVA_GUI_IME_PROBE=1` and produced
 installed app contains the composition path, not only the build-tree binary.
 
 Artifact: `writer/dist/ime-preedit.png` (gitignored).
+
+## 11. Compiler fix: module-qualified generic fields
+
+Before the fix, a Writer field declared as `List<wd.Document>` failed with:
+
+```
+error: unsupported type Doc> on field docs
+```
+
+`cg_unqualified` split on every dot, so `List<wd.Document>` became
+`Document>` and the `List<` wrapper was lost. The fix strips only the module
+prefix immediately before each dot, keeping the generic wrapper:
+
+```sh
+NOVA_TOOL=emit-ir NOVA_TOOL_PATH=examples/nova-tool/tests/codegen-list-qualified.nova \
+  examples/nova-tool/target/nova/nova-tool > /tmp/qualified.ll
+clang -x ir /tmp/qualified.ll -x none runtime/runtime.c -o /tmp/qualified -lm
+/tmp/qualified
+```
+
+Result: IR emitted, clang accepted it, and the program returned 7. The Writer
+core test now declares `struct DocStack { docs: List<wd.Document> }`, writes
+through `stack.docs[0]`, and passes. The standalone fixture lives at
+`examples/nova-tool/tests/codegen-list-qualified.nova`.
 
 ## Verified vs not verified
 

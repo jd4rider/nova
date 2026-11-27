@@ -19,7 +19,7 @@ headers and inline formatting are not implemented yet. See
 # Compiler (if not already built)
 (cd examples/nova-tool && ../../bootstrap/nova build)
 
-# Headless core: 80 assertions
+# Headless core: 82 assertions
 sh writer/tests/core.sh
 
 # Two-process crash recovery
@@ -115,7 +115,7 @@ header.
   `store.nova`, `recovery.nova`. GUI-independent and reusable by future Nova
   Office apps.
 - `writer/src/main.nova` — the application.
-- `writer/tests/core.sh` — headless acceptance (80 assertions).
+- `writer/tests/core.sh` — headless acceptance (82 assertions).
 - `writer/tests/recovery.sh` — crash recovery across two processes.
 - `writer/tests/ime.sh` — IME commit and Escape cancellation (14 assertions).
 - `writer/tests/smoke.sh` — native window launch/render.
