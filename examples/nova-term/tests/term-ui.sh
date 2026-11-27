@@ -70,6 +70,22 @@ assert_has row-one
 SCRIPT
 run_case altscreen "$WORK/alt.txt"
 
+cat > "$WORK/mouse.txt" <<'SCRIPT'
+assert_tabs 1
+click 700 20
+assert_tabs 1
+click 248 20
+assert_tabs 2
+feed hello world
+dblclick 92 66
+assert_sel_has world
+click 32 66
+drag 120 66
+release
+assert_sel_has hello
+SCRIPT
+run_case mouse "$WORK/mouse.txt"
+
 cat > "$WORK/font.txt" <<'SCRIPT'
 fontname
 assert_font_has Nerd
@@ -83,6 +99,51 @@ assert_tab_cwd
 assert_tab_title shell
 SCRIPT
 run_case structs "$WORK/structs.txt"
+
+# A pty read can split a non-ASCII glyph. Both halves must be held until the
+# sequence is complete; the cell must hold the original bytes, not a fallback.
+{
+    printf 'wait 900\n'
+    printf 'feed <E>[2J\n'
+    printf 'feed \356\n'
+    printf 'feed \202\260\n'
+    printf 'assert_cell 0 0 \356\202\260\n'
+} > "$WORK/glyph.txt"
+run_case glyph-chunk "$WORK/glyph.txt"
+
+# BEL is the common OSC terminator. When it decoded as 0 the parser stayed in
+# OSC through the following escape and printed its final byte as text (the
+# stray K after a powerline prompt). The title must be captured, not painted.
+cat > "$WORK/osc-bel.txt" <<'SCRIPT'
+wait 900
+feed <E>[2J
+feed <E>]0;bel-title<B>Z
+assert_cell 0 0 Z
+assert_not_has bel-title
+SCRIPT
+run_case osc-bel "$WORK/osc-bel.txt"
+
+# A split CSI must not lose the bracket and paint its final byte.
+cat > "$WORK/split-csi.txt" <<'SCRIPT'
+wait 900
+feed <E>[2J
+feed split
+feed <E>[
+feed 2K
+assert_not_has split
+SCRIPT
+run_case split-csi "$WORK/split-csi.txt"
+
+# Plain letters arrive as composed text, not key codes. Drive that handler
+# through a real pty and read back what the shell printed.
+cat > "$WORK/text-event.txt" <<'SCRIPT'
+wait 900
+typed echo composed-typing
+enter
+wait 900
+assert_has composed-typing
+SCRIPT
+run_case text-event "$WORK/text-event.txt"
 
 echo
 echo "passed $PASS, failed $FAIL"

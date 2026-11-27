@@ -1,0 +1,155 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 1024px;
+    height: 1024px;
+    background: transparent;
+  }
+  .icon {
+    position: relative;
+    width: 1024px;
+    height: 1024px;
+    border-radius: 228px;
+    overflow: hidden;
+    background:
+      radial-gradient(circle at 76% 16%, rgba(120, 200, 255, 0.26) 0%, rgba(120, 200, 255, 0) 48%),
+      radial-gradient(circle at 18% 88%, rgba(142, 192, 124, 0.18) 0%, rgba(142, 192, 124, 0) 46%),
+      linear-gradient(152deg, #2b3036 0%, #17191c 58%, #0e1013 100%);
+    box-shadow: inset 0 0 0 7px rgba(214, 214, 214, 0.06);
+    font-family: "SF Mono", "Menlo", monospace;
+  }
+  .glow {
+    position: absolute;
+    left: 132px;
+    top: 120px;
+    width: 760px;
+    height: 800px;
+    border-radius: 72px;
+    background: rgba(120, 200, 255, 0.10);
+    filter: blur(52px);
+  }
+  .screen {
+    position: absolute;
+    left: 178px;
+    top: 154px;
+    width: 668px;
+    height: 716px;
+    border-radius: 40px;
+    background: #121417;
+    box-shadow:
+      0 54px 110px rgba(0, 0, 0, 0.62),
+      0 0 0 3px rgba(120, 200, 255, 0.16),
+      inset 0 0 0 2px rgba(255, 255, 255, 0.04);
+    overflow: hidden;
+  }
+  .bar {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 76px;
+    background: #1d2024;
+    border-bottom: 2px solid #2c3138;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding-left: 30px;
+    box-sizing: border-box;
+  }
+  .dot { width: 17px; height: 17px; border-radius: 50%; }
+  .red { background: #e74c3c; }
+  .yellow { background: #e5c07b; }
+  .green { background: #89d185; }
+  .tab {
+    margin-left: 26px;
+    width: 236px;
+    height: 46px;
+    border-radius: 12px 12px 0 0;
+    background: #121417;
+    border: 2px solid #2c3138;
+    border-bottom: 0;
+    position: relative;
+    top: 15px;
+    display: flex;
+    align-items: center;
+    padding-left: 22px;
+    color: #9aa3ad;
+    font-size: 22px;
+    box-sizing: border-box;
+  }
+  .row {
+    position: absolute;
+    left: 44px;
+    height: 21px;
+    border-radius: 10px;
+    background: #262b31;
+  }
+  .r1 { top: 148px; width: 430px; background: #2f353d; }
+  .r2 { top: 198px; width: 356px; }
+  .r3 { top: 248px; width: 402px; }
+  .r4 { top: 298px; width: 300px; }
+  .prompt {
+    position: absolute;
+    left: 44px;
+    top: 376px;
+    color: #78c8ff;
+    font-size: 74px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    line-height: 1;
+  }
+  .cursor {
+    position: absolute;
+    left: 172px;
+    top: 382px;
+    width: 34px;
+    height: 66px;
+    border-radius: 6px;
+    background: #78c8ff;
+    box-shadow: 0 0 28px rgba(120, 200, 255, 0.55);
+  }
+  .mark {
+    position: absolute;
+    right: 46px;
+    bottom: 40px;
+    width: 132px;
+    height: 132px;
+    border-radius: 34px;
+    background: linear-gradient(145deg, #89d185 0%, #78c8ff 52%, #4a90d9 100%);
+    box-shadow: 0 16px 34px rgba(0, 0, 0, 0.42);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #0e1013;
+    font-size: 92px;
+    font-weight: 800;
+    line-height: 1;
+  }
+</style>
+</head>
+<body>
+  <div class="icon">
+    <div class="glow"></div>
+    <div class="screen">
+      <div class="bar">
+        <div class="dot red"></div>
+        <div class="dot yellow"></div>
+        <div class="dot green"></div>
+        <div class="tab">~/nova</div>
+      </div>
+      <div class="row r1"></div>
+      <div class="row r2"></div>
+      <div class="row r3"></div>
+      <div class="row r4"></div>
+      <div class="prompt">&gt;_</div>
+      <div class="cursor"></div>
+      <div class="mark">N</div>
+    </div>
+  </div>
+</body>
+</html>

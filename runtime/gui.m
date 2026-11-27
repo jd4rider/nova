@@ -2521,9 +2521,15 @@ struct nova_pty_job {
 static void *nova_pty_worker(void *arg) {
     struct nova_pty_job *job = (struct nova_pty_job *)arg;
     char chunk[8192];
+    const char *trace = getenv("NOVA_PTY_TRACE");
+    int trace_fd = trace ? open(trace, O_WRONLY | O_CREAT | O_APPEND, 0600) : -1;
     for (;;) {
         ssize_t got = read(job->master, chunk, sizeof(chunk));
         if (got > 0) {
+            if (trace_fd >= 0) {
+                ssize_t ignored = write(trace_fd, chunk, (size_t)got);
+                (void)ignored;
+            }
             nova_pty_append(job->term, chunk, (size_t)got);
         } else if (got == 0) {
             break;
@@ -2552,6 +2558,52 @@ static void *nova_pty_worker(void *arg) {
 
 /* Opens `command` under a fresh pty in `cwd`, sized cols x rows. Returns 1 on
  * success; a slot that is still running is not replaced. */
+/* A terminal must describe itself, not inherit whoever launched it. Running
+ * inside Warp or iTerm, the child shell otherwise sees that program's TERM and
+ * TERM_PROGRAM and picks a prompt or glyph set for the wrong terminal. Test
+ * variables must not leak into the shell either. */
+static int nova_pty_env_drop(const char *entry) {
+    static const char *exact[] = {
+        "TERM=", "TERM_PROGRAM=", "TERM_PROGRAM_VERSION=", "COLORTERM=",
+        "TERM_SESSION_ID=", "TMUX=", "TMUX_PANE=", "STY=",
+        "LC_TERMINAL=", "LC_TERMINAL_VERSION=", NULL
+    };
+    static const char *prefix[] = {
+        "WARP_", "NOVA_TERM_", "ITERM_", "VSCODE_", "KITTY_",
+        "WEZTERM_", "GHOSTTY_", NULL
+    };
+    for (int i = 0; exact[i]; i++) {
+        size_t n = strlen(exact[i]);
+        if (strncmp(entry, exact[i], n) == 0) return 1;
+    }
+    for (int i = 0; prefix[i]; i++) {
+        if (strncmp(entry, prefix[i], strlen(prefix[i])) == 0) return 1;
+    }
+    return 0;
+}
+
+static void nova_pty_child_env(void) {
+    extern char **environ;
+    int count = 0;
+    if (environ) {
+        while (environ[count]) count++;
+    }
+    char **kept = (char **)malloc(sizeof(char *) * (size_t)(count + 1));
+    if (kept) {
+        int n = 0;
+        for (int i = 0; i < count; i++) {
+            if (!nova_pty_env_drop(environ[i])) kept[n++] = environ[i];
+        }
+        kept[n] = NULL;
+        environ = kept;
+    }
+    setenv("TERM", "xterm-256color", 1);
+    setenv("TERM_PROGRAM", "NovaTerminal", 1);
+    setenv("TERM_PROGRAM_VERSION", "0.1.0", 1);
+    setenv("COLORTERM", "truecolor", 1);
+    if (!getenv("LANG")) setenv("LANG", "en_US.UTF-8", 1);
+}
+
 int64_t nova_pty_open(int64_t slot, nova_str command, nova_str cwd, int64_t cols, int64_t rows) {
     nova_pty_slot *term = nova_pty_get(slot);
     if (!term) return 0;
@@ -2610,6 +2662,7 @@ int64_t nova_pty_open(int64_t slot, nova_str command, nova_str cwd, int64_t cols
         dup2(slave, 2);
         if (slave > 2) close(slave);
         if (chdir(dir) != 0) _exit(127);
+        nova_pty_child_env();
         execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
         _exit(127);
     }

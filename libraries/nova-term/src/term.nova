@@ -52,11 +52,12 @@ fn tm_i_shead() -> Int { return 24 }
 fn tm_i_scount() -> Int { return 25 }
 fn tm_i_mbase() -> Int { return 26 }
 fn tm_i_mlen() -> Int { return 27 }
+fn tm_i_mcount() -> Int { return 28 }
 
 // 27 is the alternate-screen base row: 0 for the main screen, `rows` for alt.
 fn tm_i_abase() -> Int { return tm_i_mlen() }
 
-fn tm_register_count() -> Int { return 28 }
+fn tm_register_count() -> Int { return 29 }
 fn tm_param_slots() -> Int { return 16 }
 
 // String registers: title, OSC payload, private marker, final byte.
@@ -64,6 +65,7 @@ fn tm_s_title() -> Int { return 0 }
 fn tm_s_osc() -> Int { return 1 }
 fn tm_s_private() -> Int { return 2 }
 fn tm_s_fin() -> Int { return 3 }
+fn tm_s_pending() -> Int { return 4 }
 
 fn tm_reg(t: Term, index: Int) -> Int {
     /* A corrupt or stale list header must never reach the runtime's list
@@ -75,9 +77,8 @@ fn tm_reg(t: Term, index: Int) -> Int {
 }
 
 fn tm_set_reg(t: Term, index: Int, value: Int) {
-    var regs = t.regs
-    if index >= 0 && index < regs.len() && regs.len() <= tm_register_count() {
-        regs[index] = value
+    if index >= 0 && index < t.regs.len() && t.regs.len() <= tm_register_count() {
+        t.regs[index] = value
     }
 }
 
@@ -89,9 +90,8 @@ fn tm_str_reg(t: Term, index: Int) -> String {
 }
 
 fn tm_set_str(t: Term, index: Int, value: String) {
-    var strs = t.strs
-    if index >= 0 && index < strs.len() {
-        strs[index] = value
+    if index >= 0 && index < t.strs.len() {
+        t.strs[index] = value
     }
 }
 
@@ -243,6 +243,12 @@ fn tm_scrollback_capacity() -> Int {
     return 2000
 }
 
+// Prompt marks live in a fixed ring: a terminal must not grow without bound
+// just because a long-lived shell printed many prompts.
+fn tm_mark_capacity() -> Int {
+    return 512
+}
+
 struct Term {
     regs: List<Int>,
     strs: List<String>,
@@ -267,8 +273,8 @@ fn tm_new(width: Int, height: Int) -> Term {
     regs[tm_i_rows()] = r
     regs[tm_i_bottom()] = r - 1
     regs[tm_i_cursor()] = 1
-    var strs: List<String> = ["", "", "", ""]
-    var marks: List<Int> = []
+    var strs: List<String> = ["", "", "", "", ""]
+    var marks = tm_blank_ints(tm_mark_capacity())
     var grid = tm_blank_grid(c * r)
     var saved_grid = tm_blank_grid(c * r)
     return Term {
@@ -309,16 +315,15 @@ fn tm_resize(t: Term, width: Int, height: Int) -> Term {
     }
     var i = 0
     while i < tm_reg(t, tm_i_scount()) {
-        var sb = fresh.sb
-        sb[i] = tm_scroll_line(t, i)
+        fresh.sb[i] = tm_scroll_line(t, i)
         i = i + 1
     }
-    var marks = fresh.marks
-    var m = tm_reg(t, tm_i_mbase())
-    while m < t.marks.len() {
-        marks.push(t.marks[m])
+    var m = 0
+    while m < tm_reg(t, tm_i_mcount()) {
+        fresh.marks[m] = t.marks[m]
         m = m + 1
     }
+    tm_set_reg(fresh, tm_i_mcount(), tm_reg(t, tm_i_mcount()))
     let keep = gui.min(r, tm_rows(t))
     var row = 0
     while row < keep {
@@ -361,19 +366,17 @@ fn tm_put_cell(t: Term, row: Int, col: Int, value: Cell) {
     if row < 0 || row >= tm_rows(t) || col < 0 || col >= tm_cols(t) {
         return
     }
-    var cells = t.cells
     let index = tm_physical(t, row) * tm_cols(t) + col
-    if index >= 0 && index < cells.len() {
-        cells[index] = value
+    if index >= 0 && index < t.cells.len() {
+        t.cells[index] = value
     }
 }
 
 fn tm_clear_physical(t: Term, slot: Int) {
-    var cells = t.cells
     let base = slot * tm_cols(t)
     var col = 0
-    while col < tm_cols(t) && base + col < cells.len() {
-        cells[base + col] = tm_blank_cell()
+    while col < tm_cols(t) && base + col < t.cells.len() {
+        t.cells[base + col] = tm_blank_cell()
         col = col + 1
     }
 }
@@ -416,29 +419,41 @@ fn tm_push_scrollback(t: Term, text: String) {
     if tm_reg(t, tm_i_alt()) == 1 {
         return
     }
-    var sb = t.sb
     var head = tm_reg(t, tm_i_shead())
     var count = tm_reg(t, tm_i_scount())
     if count >= tm_scrollback_capacity() {
         head = (head + 1) % tm_scrollback_capacity()
         count = tm_scrollback_capacity() - 1
-        var marks = t.marks
         var i = 0
-        while i < marks.len() {
-            if marks[i] > 0 {
-                marks[i] = marks[i] - 1
+        while i < tm_reg(t, tm_i_mcount()) {
+            if t.marks[i] > 0 {
+                t.marks[i] = t.marks[i] - 1
             }
             i = i + 1
         }
     }
-    sb[(head + count) % tm_scrollback_capacity()] = text
+    t.sb[(head + count) % tm_scrollback_capacity()] = text
     tm_set_reg(t, tm_i_shead(), head)
     tm_set_reg(t, tm_i_scount(), count + 1)
     let trimmed = text.trim()
     if trimmed.starts_with("$ ") || trimmed.starts_with("❯ ") || trimmed.starts_with("% ") {
-        var marks = t.marks
-        marks.push(count)
+        tm_add_mark(t, count)
     }
+}
+
+fn tm_add_mark(t: Term, line: Int) {
+    let mcount = tm_reg(t, tm_i_mcount())
+    if mcount < tm_mark_capacity() {
+        t.marks[mcount] = line
+        tm_set_reg(t, tm_i_mcount(), mcount + 1)
+        return
+    }
+    var i = 0
+    while i + 1 < tm_mark_capacity() {
+        t.marks[i] = t.marks[i + 1]
+        i = i + 1
+    }
+    t.marks[tm_mark_capacity() - 1] = line
 }
 
 fn tm_scroll(term: Term, delta: Int) -> Term {
@@ -614,7 +629,8 @@ fn tm_erase_display(t: Term, mode: Int) {
         if mode == 3 {
             tm_set_reg(t, tm_i_scount(), 0)
             tm_set_reg(t, tm_i_shead(), 0)
-            tm_set_reg(t, tm_i_mbase(), t.marks.len())
+            tm_set_reg(t, tm_i_mbase(), tm_reg(t, tm_i_mcount()))
+            tm_set_reg(t, tm_i_mcount(), 0)
         }
         tm_set_reg(t, tm_i_cx(), 0)
         tm_set_reg(t, tm_i_cy(), 0)
@@ -725,9 +741,8 @@ fn tm_clear_params(t: Term) {
 
 fn tm_push_param(t: Term, value: Int) {
     let count = tm_reg(t, tm_i_pcount())
-    var params = t.params
-    if count >= 0 && count < params.len() {
-        params[count] = value
+    if count >= 0 && count < t.params.len() {
+        t.params[count] = value
     }
     tm_set_reg(t, tm_i_pcount(), count + 1)
 }
@@ -865,7 +880,6 @@ fn tm_alt_enter(t: Term) {
     /* The alternate screen is the second half of the cell buffer. Entering it
      * just moves the base register, so the main screen is never copied and
      * cannot be overwritten by the full-screen program. */
-    var cells = t.cells
     let rows = tm_rows(t)
     let cols = tm_cols(t)
     tm_set_reg(t, tm_i_mhead(), tm_reg(t, tm_i_head()))
@@ -873,8 +887,8 @@ fn tm_alt_enter(t: Term) {
     tm_set_reg(t, tm_i_my(), tm_reg(t, tm_i_cy()))
     tm_set_reg(t, tm_i_abase(), rows)
     var i = 0
-    while i < rows * cols && rows * cols + i < cells.len() {
-        cells[rows * cols + i] = tm_blank_cell()
+    while i < rows * cols && rows * cols + i < t.cells.len() {
+        t.cells[rows * cols + i] = tm_blank_cell()
         i = i + 1
     }
     tm_set_reg(t, tm_i_head(), 0)
@@ -1069,12 +1083,11 @@ fn tm_slice_join(chars: List<String>, start: Int, stop: Int) -> String {
 fn tm_finish_osc(t: Term) {
     let value = tm_str_reg(t, tm_s_osc())
     if value.starts_with("0;") || value.starts_with("2;") {
-        let chars = value.graphemes()
+        let chars = value.chars()
         tm_set_str(t, tm_s_title(), tm_slice_join(chars, 2, chars.len()))
     }
     if value.starts_with("133;A") {
-        var marks = t.marks
-        marks.push(tm_reg(t, tm_i_scount()) + tm_reg(t, tm_i_cy()))
+        tm_add_mark(t, tm_reg(t, tm_i_scount()) + tm_reg(t, tm_i_cy()))
     }
     tm_set_str(t, tm_s_osc(), "")
 }
@@ -1115,10 +1128,112 @@ fn tm_digit_of(ch: String) -> Int {
     return -1
 }
 
+// A pty read can end in the middle of a UTF-8 sequence. Hold the trailing
+// bytes until the next read instead of letting chars() see an orphan lead or
+// continuation byte and drop the glyph.
+fn tm_utf8_need(byte: Int) -> Int {
+    if byte >= 240 && byte <= 244 {
+        return 4
+    }
+    if byte >= 224 && byte <= 239 {
+        return 3
+    }
+    if byte >= 194 && byte <= 223 {
+        return 2
+    }
+    return 0
+}
+
+fn tm_utf8_tail(chars: List<String>) -> Int {
+    var count = 0
+    var i = chars.len() - 1
+    while i >= 0 && count < 4 {
+        let bytes = chars[i].bytes()
+        if bytes.len() != 1 {
+            return 0
+        }
+        let byte = bytes[0]
+        if byte < 128 {
+            return 0
+        }
+        if byte >= 192 {
+            let need = tm_utf8_need(byte)
+            if need > count + 1 {
+                return count + 1
+            }
+            return 0
+        }
+        count = count + 1
+        i = i - 1
+    }
+    return 0
+}
+
+// Returns the index where an escape sequence that has not finished yet starts,
+// or chars.len() when the text ends at a clean parser boundary. Holding the
+// partial sequence means a read that ends in the middle of `ESC [ K` cannot
+// print the final K as text, and a resize between reads cannot lose the state.
+fn tm_partial_start(chars: List<String>) -> Int {
+    var state = 0
+    var start = 0
+    var i = 0
+    while i < chars.len() {
+        let ch = chars[i]
+        let code = tm_code_of(ch)
+        if state == 0 {
+            if code == 27 {
+                start = i
+                state = 1
+            }
+        } else if state == 1 {
+            if ch == "[" {
+                state = 2
+            } else if ch == "]" {
+                state = 3
+            } else if ch == "(" || ch == ")" || ch == "#" {
+                state = 5
+            } else {
+                state = 0
+            }
+        } else if state == 2 {
+            if code >= 64 && code <= 126 {
+                state = 0
+            } else if code == 27 {
+                start = i
+                state = 1
+            }
+        } else if state == 3 {
+            if code == 7 {
+                state = 0
+            } else if code == 27 {
+                state = 4
+            }
+        } else if state == 4 {
+            state = 0
+        } else if state == 5 {
+            state = 0
+        }
+        i = i + 1
+    }
+    if state == 0 {
+        return chars.len()
+    }
+    return start
+}
+
 // Feeds raw pty bytes into the screen. The Term is mutated in place; the return
 // value is the same Term so callers can chain.
 fn tm_feed(term: Term, chunk: String) -> Term {
-    let chars = chunk.chars()
+    let pending = tm_str_reg(term, tm_s_pending())
+    let data = pending + chunk
+    let all = data.chars()
+    var keep = all.len() - tm_utf8_tail(all)
+    let partial = tm_partial_start(all)
+    if partial < all.len() {
+        keep = partial
+    }
+    tm_set_str(term, tm_s_pending(), tm_slice_join(all, keep, all.len()))
+    let chars = tm_slice_join(all, 0, keep).chars()
     var i = 0
     while i < chars.len() {
         let ch = chars[i]
@@ -1296,7 +1411,36 @@ fn tm_draw(t: Term, x: Int, y: Int, w: Int, h: Int, size: Int, pal: Palette) {
     gui.clip_reset()
 }
 
-// One draw call per run of one colour keeps a 200-column build log cheap.
+fn tm_channel(value: Int, shift: Int) -> Int {
+    return (value / shift) % 256
+}
+
+fn tm_blend(from: Int, to: Int, percent: Int) -> Int {
+    let back = 100 - percent
+    let red = (tm_channel(from, 65536) * back + tm_channel(to, 65536) * percent) / 100
+    let green = (tm_channel(from, 256) * back + tm_channel(to, 256) * percent) / 100
+    let blue = (tm_channel(from, 1) * back + tm_channel(to, 1) * percent) / 100
+    return gui.rgb(red, green, blue)
+}
+
+fn tm_style_of(flags: Int) -> Int {
+    var style = 0
+    if tm_has_flag(flags, tm_bold_bit()) {
+        style = style + gui.style_bold()
+    }
+    if tm_has_flag(flags, tm_italic_bit()) {
+        style = style + gui.style_italic()
+    }
+    if tm_has_flag(flags, tm_underline_bit()) {
+        style = style + gui.style_underline()
+    }
+    return style
+}
+
+// One draw call per run of one colour keeps a 200-column build log cheap, but
+// every glyph starts at its cell's x. If the shaped run is not exactly the
+// grid width (a Nerd Font icon, CJK or an emoji), the run falls back to one
+// draw per character so the columns never drift.
 fn tm_draw_row(t: Term, absolute: Int, x: Int, y: Int, cfit: Int, cw: Int, size: Int, pal: Palette) {
     let count = tm_reg(t, tm_i_scount())
     if absolute < count {
@@ -1306,8 +1450,10 @@ fn tm_draw_row(t: Term, absolute: Int, x: Int, y: Int, cfit: Int, cw: Int, size:
     let row = absolute - count
     var col = 0
     var run = ""
+    var run_cells = 0
     var run_fg = pal.fg
     var run_bg = pal.bg
+    var run_flags = 0
     while col < tm_cols(t) && col < cfit {
         let cell = tm_cell_at(t, row, col)
         var fg = tm_colour_of(t, cell.fg, pal, pal.fg)
@@ -1320,26 +1466,45 @@ fn tm_draw_row(t: Term, absolute: Int, x: Int, y: Int, cfit: Int, cw: Int, size:
         if tm_has_flag(cell.flags, tm_bold_bit()) && cell.fg >= 0 && cell.fg < 8 {
             fg = tm_colour_of(t, cell.fg + 8, pal, pal.fg)
         }
-        if bg != pal.bg || fg != run_fg || run.graphemes().len() > 96 {
-            tm_flush_run(t, run, x + (col - run.graphemes().len()) * cw, y, size, run_fg, run_bg, pal)
+        if tm_has_flag(cell.flags, tm_dim_bit()) && !tm_has_flag(cell.flags, tm_inverse_bit()) {
+            fg = tm_blend(fg, bg, 58)
+        }
+        if bg != run_bg || fg != run_fg || cell.flags != run_flags || run_cells > 96 {
+            tm_flush_run(run, x + (col - run_cells) * cw, y, run_cells, cw, size, run_fg, run_bg, run_flags, pal)
             run = ""
+            run_cells = 0
             run_fg = fg
             run_bg = bg
+            run_flags = cell.flags
         }
         run = run + cell.ch
+        run_cells = run_cells + 1
         col = col + 1
     }
-    tm_flush_run(t, run, x + (col - run.graphemes().len()) * cw, y, size, run_fg, run_bg, pal)
+    tm_flush_run(run, x + (col - run_cells) * cw, y, run_cells, cw, size, run_fg, run_bg, run_flags, pal)
 }
 
-fn tm_flush_run(t: Term, text: String, x: Int, y: Int, size: Int, fg: Int, bg: Int, pal: Palette) {
-    if text.len() == 0 {
+fn tm_flush_run(text: String, x: Int, y: Int, cells: Int, cw: Int, size: Int, fg: Int, bg: Int, flags: Int, pal: Palette) {
+    if cells <= 0 {
         return
     }
     if bg != pal.bg {
-        gui.rect(x, y, gui.mono_width(text, size), tm_cell_height(size), bg)
+        gui.rect(x, y, cells * cw, tm_cell_height(size), bg)
     }
-    gui.mono(x, y + 2, text, size, fg)
+    if text.len() == 0 {
+        return
+    }
+    let style = tm_style_of(flags)
+    if gui.mono_width(text, size) == cells * cw {
+        gui.text_fmt(x, y + 2, text, size, fg, gui.font_mono(), style)
+        return
+    }
+    let chars = text.chars()
+    var i = 0
+    while i < chars.len() && i < cells {
+        gui.text_fmt(x + i * cw, y + 2, chars[i], size, fg, gui.font_mono(), style)
+        i = i + 1
+    }
 }
 
 fn tm_draw_cursor(t: Term, x: Int, y: Int, cw: Int, ch: Int, size: Int, pal: Palette) {
@@ -1350,18 +1515,69 @@ fn tm_draw_cursor(t: Term, x: Int, y: Int, cw: Int, ch: Int, size: Int, pal: Pal
     }
     let px = x + cx * cw
     let py = y + cy * ch
-    gui.rect_alpha(px, py + 1, cw, ch - 3, pal.cursor, 90)
+    gui.rect(px, py + 1, cw, ch - 3, pal.cursor)
     let cell = tm_cell_at(t, cy, cx)
-    if cell.ch != " " {
-        gui.mono(px, py + 2, cell.ch, size, pal.bg)
+    if cell.ch.len() > 0 && cell.ch != " " {
+        gui.text_fmt(px, py + 2, cell.ch, size, pal.bg, gui.font_mono(), 0)
+    }
+}
+
+// Selection is painted after the grid at partial opacity so the glyphs stay
+// readable. The copy path uses tm_selection_text, which preserves the logical
+// text rather than the painted tint.
+fn tm_draw_selection(t: Term, x: Int, y: Int, size: Int, pal: Palette, r0: Int, c0: Int, r1: Int, c1: Int) {
+    var top_row = r0
+    var top_col = c0
+    var bot_row = r1
+    var bot_col = c1
+    if bot_row < top_row || (bot_row == top_row && bot_col < top_col) {
+        top_row = r1
+        top_col = c1
+        bot_row = r0
+        bot_col = c0
+    }
+    let cw = tm_cell_width(size)
+    let ch = tm_cell_height(size)
+    if cw <= 0 || ch <= 0 {
+        return
+    }
+    if top_row < 0 {
+        top_row = 0
+    }
+    if bot_row >= tm_rows(t) {
+        bot_row = tm_rows(t) - 1
+    }
+    if bot_col >= tm_cols(t) {
+        bot_col = tm_cols(t) - 1
+    }
+    var row = top_row
+    while row <= bot_row {
+        var from = 0
+        var to = tm_cols(t) - 1
+        if row == top_row {
+            from = top_col
+        }
+        if row == bot_row {
+            to = bot_col
+        }
+        if from < 0 {
+            from = 0
+        }
+        if to >= tm_cols(t) {
+            to = tm_cols(t) - 1
+        }
+        if to >= from {
+            gui.rect_alpha(x + from * cw, y + row * ch, (to - from + 1) * cw, ch, pal.selection, 80)
+        }
+        row = row + 1
     }
 }
 
 // A 2px accent rail beside every prompt line, Warp style.
 fn tm_draw_rail(t: Term, x: Int, y: Int, h: Int, size: Int, pal: Palette) {
     let ch = tm_cell_height(size)
-    var i = tm_reg(t, tm_i_mbase())
-    while i < t.marks.len() {
+    var i = 0
+    while i < tm_reg(t, tm_i_mcount()) {
         let row = t.marks[i] - (tm_reg(t, tm_i_scount()) - tm_reg(t, tm_i_view()))
         if row >= 0 && row * ch < h {
             gui.rect(x, y + row * ch + 2, 2, ch - 4, pal.rail)
@@ -1380,7 +1596,7 @@ fn tm_code_of(ch: String) -> Int {
     if ch.len() == 0 {
         return 0
     }
-    let chars = tm_printable().graphemes()
+    let chars = tm_printable().chars()
     var i = 0
     while i < chars.len() {
         if chars[i] == ch {
@@ -1388,7 +1604,7 @@ fn tm_code_of(ch: String) -> Int {
         }
         i = i + 1
     }
-    if ch == "\u{1b}" {
+    if ch == char_string(27) {
         return 27
     }
     if ch == "\r" {
@@ -1400,36 +1616,50 @@ fn tm_code_of(ch: String) -> Int {
     if ch == "\t" {
         return 9
     }
-    if ch == "\u{7f}" {
+    if ch == char_string(127) {
         return 127
+    }
+    let bytes = ch.bytes()
+    if bytes.len() == 1 {
+        if bytes[0] < 128 {
+            return bytes[0]
+        }
+        return 0
+    }
+    if bytes.len() == 2 {
+        return (bytes[0] - 192) * 64 + (bytes[1] - 128)
+    }
+    if bytes.len() == 3 {
+        return (bytes[0] - 224) * 4096 + (bytes[1] - 128) * 64 + (bytes[2] - 128)
+    }
+    if bytes.len() == 4 {
+        return (bytes[0] - 240) * 262144 + (bytes[1] - 128) * 4096 + (bytes[2] - 128) * 64 + (bytes[3] - 128)
     }
     return 0
 }
 
+// `\u{...}` is not decoded by the Nova lexer; the char_string builtin is the
+// supported way to emit a control byte from source.
 fn tm_escape() -> String {
-    return "\u{1b}"
+    return char_string(27)
 }
 
-fn tm_controls() -> String {
-    return "\u{1}\u{2}\u{3}\u{4}\u{5}\u{6}\u{7}\u{8}\t\n\u{b}\u{c}\r\u{e}\u{f}\u{10}\u{11}\u{12}\u{13}\u{14}\u{15}\u{16}\u{17}\u{18}\u{19}\u{1a}\u{1b}\u{1c}\u{1d}\u{1e}\u{1f}"
+fn tm_bell() -> String {
+    return char_string(7)
 }
 
 fn tm_control_text(code: Int) -> String {
     if code < 1 || code > 31 {
         return ""
     }
-    let chars = tm_controls().chars()
-    if code - 1 < chars.len() {
-        return chars[code - 1]
-    }
-    return ""
+    return char_string(code)
 }
 
 fn tm_code_of_text(code: Int) -> String {
     if code < 32 || code > 126 {
         return ""
     }
-    let chars = tm_printable().graphemes()
+    let chars = tm_printable().chars()
     let index = code - 32
     if index >= 0 && index < chars.len() {
         return chars[index]
@@ -1450,7 +1680,7 @@ fn tm_key_text(code: Int, mods: Int) -> String {
         return "\t"
     }
     if code == 127 {
-        return "\u{7f}"
+        return char_string(127)
     }
     if code == 27 {
         return tm_escape()
@@ -1490,7 +1720,7 @@ fn tm_key_text(code: Int, mods: Int) -> String {
             return tm_control_text(code - 96)
         }
         if code == 32 {
-            return "\u{0}"
+            return char_string(0)
         }
     }
     if option {
@@ -1504,6 +1734,14 @@ fn tm_key_text(code: Int, mods: Int) -> String {
 
 fn tm_title(t: Term) -> String {
     return tm_str_reg(t, tm_s_title())
+}
+
+fn tm_cursor_x(t: Term) -> Int {
+    return tm_reg(t, tm_i_cx())
+}
+
+fn tm_cursor_y(t: Term) -> Int {
+    return tm_reg(t, tm_i_cy())
 }
 
 fn tm_view(t: Term) -> Int {

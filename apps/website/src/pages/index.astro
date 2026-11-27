@@ -26,6 +26,7 @@ const statusRows = features.slice(0, 6)
           <a class="button" href={href('tui')}>See Nova TUI</a>
           <a class="button" href={href('studio')}>Explore Nova Studio</a>
           <a class="button" href={href('browser')}>See Nova Browser</a>
+          <a class="button" href={href('apps/nova-writer/')}>See Nova Writer</a>
           <a class="button" href={href('apps/engine-studio/')}>Explore Nova Engine Studio</a>
         </div>
         <ul class="proof">
@@ -81,6 +82,28 @@ Ada is 36
         </article>
       </div>
       <p class="section-intro" style="margin-top: 22px;">Prefer your own editor? The <a href={href('toolchain/vscode/')}>Nova Language extension</a> brings the shared grammar and the Nova language server into VS Code.</p>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap grid-2" style="align-items: start;">
+      <div>
+        <div class="kicker">Native apps</div>
+        <h2 style="font-size: clamp(28px, 3.6vw, 42px); margin-bottom: 14px;">A terminal in Nova,<br />not a wrapper.</h2>
+        <p class="section-intro">
+          Nova Terminal owns the pty lifecycle, the VT parser and every cell it draws:
+          real tabs, Powerline prompts, selection, a command palette and an installer
+          that produces a signed app bundle. Type into it and the composed text goes
+          straight to the shell. No Electron and no embedded terminal.
+        </p>
+        <div class="hero-actions" style="margin-top: 22px;">
+          <a class="button primary" href={href('apps/nova-term/')}>Open the terminal page <span aria-hidden="true">→</span></a>
+        </div>
+      </div>
+      <div class="card" style="padding: 10px;">
+        <img src="/images/nova-term.png" alt="Nova Terminal running a zsh prompt with Powerline segments, one tab and a status bar" style="width: 100%; display: block; border-radius: 6px;" />
+        <p class="meta" style="margin: 10px 4px 2px;">25 scripted assertions · live typing verified · installed at <code>/Applications/Nova Terminal.app</code></p>
+      </div>
     </div>
   </section>
 

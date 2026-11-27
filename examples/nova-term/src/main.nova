@@ -47,6 +47,14 @@ struct App {
     hit_at: Int,
     fonts: List<String>,
     font_index: Int,
+    sel_r0: Int,
+    sel_c0: Int,
+    sel_r1: Int,
+    sel_c1: Int,
+    selecting: Bool,
+    has_sel: Bool,
+    needs_draw: Bool,
+    scripting: Bool,
     quit: Bool,
 }
 
@@ -65,8 +73,30 @@ fn default_shell() -> String {
     return "/bin/zsh"
 }
 
+fn grid_pad_x() -> Int {
+    return 18
+}
+
+fn grid_pad_y() -> Int {
+    return 14
+}
+
+// The traffic lights are AppKit's own buttons; reserve their corner instead of
+// painting a tab underneath them.
+fn traffic_inset() -> Int {
+    return 92
+}
+
+fn grid_origin_x() -> Int {
+    return grid_pad_x() + 14
+}
+
+fn grid_origin_y() -> Int {
+    return tab_height() + grid_pad_y()
+}
+
 fn grid_cols(app: App) -> Int {
-    let cols = (gui.width() - 28) / gui.advance(app.size)
+    let cols = (gui.width() - grid_origin_x() - grid_pad_x()) / gui.advance(app.size)
     if cols < 20 {
         return 20
     }
@@ -74,7 +104,7 @@ fn grid_cols(app: App) -> Int {
 }
 
 fn grid_rows(app: App) -> Int {
-    let rows = (gui.height() - tab_height() - status_height() - 22) / vt.tm_cell_height(app.size)
+    let rows = (gui.height() - tab_height() - status_height() - grid_pad_y() * 2) / vt.tm_cell_height(app.size)
     if rows < 4 {
         return 4
     }
@@ -124,6 +154,9 @@ fn spawn(app: App) -> App {
     })
     app.tabs = tabs
     app.active = tabs.len() - 1
+    app.has_sel = false
+    app.selecting = false
+    app.needs_draw = true
     if gui.pty_open(slot, default_shell() + " -i", working, cols, rows) {
         app.message = "started " + default_shell()
     } else {
@@ -156,6 +189,9 @@ fn close_active(app: App) -> App {
         i = i + 1
     }
     app.tabs = rest
+    app.has_sel = false
+    app.selecting = false
+    app.needs_draw = true
     if rest.len() == 0 {
         app = spawn(app)
         return app
@@ -166,10 +202,32 @@ fn close_active(app: App) -> App {
     return app
 }
 
+// Field assignment through a list index is not supported by the compiler, so
+// replace the tab record instead of mutating it in place.
+fn set_term(app: App, index: Int, term: vt.Term) -> App {
+    var app = app
+    if index < 0 || index >= app.tabs.len() {
+        return app
+    }
+    var tabs = app.tabs
+    let old = tabs[index]
+    tabs[index] = Tab {
+        slot: old.slot,
+        title: old.title,
+        term: term,
+        cols: old.cols,
+        rows: old.rows,
+        cwd: old.cwd,
+    }
+    app.tabs = tabs
+    return app
+}
+
 fn select_tab(app: App, index: Int) -> App {
     var app = app
     if index >= 0 && index < app.tabs.len() {
         app.active = index
+        app.needs_draw = true
     }
     return app
 }
@@ -179,12 +237,14 @@ fn select_tab(app: App, index: Int) -> App {
 fn poll(app: App) -> App {
     var app = app
     var tabs = app.tabs
+    var changed = false
     var i = 0
     while i < tabs.len() {
         var tab = tabs[i]
         let chunk = gui.pty_poll(tab.slot)
         if chunk.len() > 0 {
-            vt.tm_feed(tab.term, chunk)
+            tab.term = vt.tm_feed(tab.term, chunk)
+            changed = true
             if tab.title == "shell" {
                 let named = vt.tm_title(tab.term)
                 if named.len() > 0 {
@@ -192,13 +252,13 @@ fn poll(app: App) -> App {
                 }
             }
         }
-        if !gui.pty_running(tab.slot) {
-            tab.title = tab.title
-        }
         tabs[i] = tab
         i = i + 1
     }
     app.tabs = tabs
+    if changed {
+        app.needs_draw = true
+    }
     return app
 }
 
@@ -216,6 +276,7 @@ fn sync_size(app: App) -> App {
             tab.term = vt.tm_resize(tab.term, cols, rows)
             gui.pty_resize(tab.slot, cols, rows)
             tabs[i] = tab
+            fresh.needs_draw = true
         }
         i = i + 1
     }
@@ -248,9 +309,10 @@ fn tab_width_of(title: String) -> Int {
 fn draw_tab_bar(app: App) {
     let theme = app.theme
     let window_w = gui.width()
+    gui.place_traffic_lights(23)
     gui.rect(0, 0, window_w, tab_height(), theme.panel)
     gui.line(0, tab_height() - 1, window_w, tab_height() - 1, theme.border)
-    var x = 14
+    var x = traffic_inset()
     var i = 0
     while i < app.tabs.len() {
         let tab = app.tabs[i]
@@ -275,26 +337,30 @@ fn draw_tab_bar(app: App) {
         x = x + tab_w + 8
         i = i + 1
     }
-    gui.round_rect(x + 2, 11, 24, 24, 8, theme.elevated)
-    gui.text(x + 10, 14, "+", 13, theme.muted)
-    gui.text(window_w - 168, 16, "⌘T new   ⌘K palette", 11, theme.faint)
+    gui.round_rect(x + 4, 11, 24, 24, 8, theme.elevated)
+    gui.text(x + 11, 14, "+", 13, theme.muted)
+    if x + 44 < window_w - 220 {
+        gui.text(window_w - 168, 16, "⌘T new   ⌘K palette", 11, theme.faint)
+    }
 }
 
 fn draw_grid(app: App) {
     let pal = app.palette
     let top = tab_height()
     let window_w = gui.width()
-    let pad_x = 18
-    let pad_y = 14
-    let content_h = gui.height() - tab_height() - status_height() - pad_y * 2
+    let pad_x = grid_pad_x()
+    let content_h = gui.height() - tab_height() - status_height() - grid_pad_y() * 2
     gui.rect(0, top, window_w, gui.height() - top - status_height(), pal.bg)
     if app.tabs.len() == 0 || app.active < 0 || app.active >= app.tabs.len() {
         return
     }
     let tab = app.tabs[app.active]
-    let grid_x = pad_x + 14
-    let grid_y = top + pad_y
+    let grid_x = grid_origin_x()
+    let grid_y = grid_origin_y()
     vt.tm_draw(tab.term, grid_x, grid_y, window_w - grid_x - pad_x, content_h, app.size, pal)
+    if app.has_sel {
+        vt.tm_draw_selection(tab.term, grid_x, grid_y, app.size, pal, app.sel_r0, app.sel_c0, app.sel_r1, app.sel_c1)
+    }
     vt.tm_draw_rail(tab.term, pad_x, grid_y, content_h, app.size, pal)
     var i = 0
     while i < app.hits.len() {
@@ -385,12 +451,20 @@ fn run_command(app: App, id: String) -> App {
         return app
     }
     if id == "clear" {
-        app.tabs[app.active].term = vt.tm_new(grid_cols(app), grid_rows(app))
+        app = set_term(app, app.active, vt.tm_new(grid_cols(app), grid_rows(app)))
         return app
     }
     if id == "copy" {
-        gui.set_clipboard(vt.tm_screen_text(app.tabs[app.active].term))
-        app.message = "copied the screen"
+        var copied = selected_text(app)
+        if copied.len() == 0 {
+            copied = vt.tm_screen_text(app.tabs[app.active].term)
+            app.message = "copied the screen"
+        } else {
+            app.message = "copied the selection"
+        }
+        if copied.len() > 0 {
+            gui.set_clipboard(copied)
+        }
     }
     if id == "paste" {
         let text = gui.clipboard()
@@ -416,10 +490,10 @@ fn run_command(app: App, id: String) -> App {
         app.size = app.size - 1
     }
     if id == "top" {
-        app.tabs[app.active].term = vt.tm_scroll(app.tabs[app.active].term, vt.tm_total_lines(app.tabs[app.active].term))
+        app = set_term(app, app.active, vt.tm_scroll(app.tabs[app.active].term, vt.tm_total_lines(app.tabs[app.active].term)))
     }
     if id == "bottom" {
-        app.tabs[app.active].term = vt.tm_scroll_bottom(app.tabs[app.active].term)
+        app = set_term(app, app.active, vt.tm_scroll_bottom(app.tabs[app.active].term))
     }
     if id == "font" {
         if app.fonts.len() == 0 {
@@ -493,6 +567,32 @@ fn search(app: App) -> App {
     }
     app.hits = vt.tm_find(app.tabs[app.active].term, app.field)
     app.message = "${app.hits.len()}" + " matches for " + app.field
+    return app
+}
+
+// Composed text from AppKit's input context. Plain letters never arrive as key
+// codes (they go through interpretKeyEvents so an IME can compose), so the
+// terminal must consume event_text or typing silently does nothing.
+fn typed(app: App, text: String) -> App {
+    var app = app
+    if text.len() == 0 {
+        return app
+    }
+    if app.overlay.len() > 0 {
+        app.field = app.field + text
+        if app.overlay == "search" {
+            app = search(app)
+        }
+        app.needs_draw = true
+        return app
+    }
+    if app.tabs.len() > 0 {
+        gui.pty_write_text(app.tabs[app.active].slot, text)
+        app.has_sel = false
+        app.selecting = false
+        app = set_term(app, app.active, vt.tm_scroll_bottom(app.tabs[app.active].term))
+        app.needs_draw = true
+    }
     return app
 }
 
@@ -580,13 +680,13 @@ fn key(app: App, code: Int, mods: Int) -> App {
     }
     if code == gui.key_page_up() {
         if app.tabs.len() > 0 {
-            app.tabs[app.active].term = vt.tm_scroll(app.tabs[app.active].term, 10)
+            app = set_term(app, app.active, vt.tm_scroll(app.tabs[app.active].term, 10))
         }
         return app
     }
     if code == gui.key_page_down() {
         if app.tabs.len() > 0 {
-            app.tabs[app.active].term = vt.tm_scroll(app.tabs[app.active].term, 0 - 10)
+            app = set_term(app, app.active, vt.tm_scroll(app.tabs[app.active].term, 0 - 10))
         }
         return app
     }
@@ -595,21 +695,109 @@ fn key(app: App, code: Int, mods: Int) -> App {
     }
     let bytes = vt.tm_key_text(code, mods)
     if bytes.len() > 0 {
+        app.has_sel = false
+        app.selecting = false
         gui.pty_write_text(app.tabs[app.active].slot, bytes)
-        app.tabs[app.active].term = vt.tm_scroll_bottom(app.tabs[app.active].term)
+        app = set_term(app, app.active, vt.tm_scroll_bottom(app.tabs[app.active].term))
     }
     return app
 }
 
+fn selected_text(app: App) -> String {
+    if app.tabs.len() == 0 || !app.has_sel {
+        return ""
+    }
+    return vt.tm_selection_text(app.tabs[app.active].term, app.sel_r0, app.sel_c0, app.sel_r1, app.sel_c1)
+}
+
+// Maps a point to a screen cell, or (-1, -1) outside the grid.
+fn grid_hit(app: App, mx: Int, my: Int) -> (Int, Int) {
+    let cw = gui.advance(app.size)
+    let ch = vt.tm_cell_height(app.size)
+    if cw <= 0 || ch <= 0 || app.tabs.len() == 0 {
+        return (0 - 1, 0 - 1)
+    }
+    let x = mx - grid_origin_x()
+    let y = my - grid_origin_y()
+    if x < 0 || y < 0 {
+        return (0 - 1, 0 - 1)
+    }
+    let col = x / cw
+    let row = y / ch
+    if row >= vt.tm_rows(app.tabs[app.active].term) || col >= vt.tm_cols(app.tabs[app.active].term) {
+        return (0 - 1, 0 - 1)
+    }
+    return (row, col)
+}
+
+fn row_chars(app: App, row: Int) -> List<String> {
+    var out: List<String> = []
+    if app.tabs.len() == 0 {
+        return out
+    }
+    let cols = vt.tm_cols(app.tabs[app.active].term)
+    var c = 0
+    while c < cols {
+        out.push(vt.tm_cell_at(app.tabs[app.active].term, row, c).ch)
+        c = c + 1
+    }
+    return out
+}
+
+fn is_word_char(ch: String) -> Bool {
+    let code = vt.tm_code_of(ch)
+    if code >= 48 && code <= 57 {
+        return true
+    }
+    if code >= 65 && code <= 90 {
+        return true
+    }
+    if code >= 97 && code <= 122 {
+        return true
+    }
+    if code == 95 || code == 45 || code == 46 || code == 47 || code == 126 {
+        return true
+    }
+    return false
+}
+
+fn word_bounds(app: App, row: Int, col: Int) -> (Int, Int) {
+    let chars = row_chars(app, row)
+    if chars.len() == 0 {
+        return (0, 0)
+    }
+    var at = col
+    if at >= chars.len() {
+        at = chars.len() - 1
+    }
+    if !is_word_char(chars[at]) {
+        return (at, at)
+    }
+    var start = at
+    while start > 0 && is_word_char(chars[start - 1]) {
+        start = start - 1
+    }
+    var stop = at
+    while stop + 1 < chars.len() && is_word_char(chars[stop + 1]) {
+        stop = stop + 1
+    }
+    return (start, stop)
+}
+
 fn click(app: App, mx: Int, my: Int) -> App {
+    return mouse_press(app, mx, my, 1)
+}
+
+fn mouse_press(app: App, mx: Int, my: Int, count: Int) -> App {
     var app = app
     if app.overlay.len() > 0 {
         app.overlay = ""
         app.field = ""
+        app.needs_draw = true
         return app
     }
     if my < tab_height() {
-        var x = 12
+        var x = traffic_inset()
         var i = 0
         while i < app.tabs.len() {
             let width = tab_width_of(app.tabs[i].title)
@@ -618,13 +806,85 @@ fn click(app: App, mx: Int, my: Int) -> App {
                     app.active = i
                     return close_active(app)
                 }
-                return select_tab(app, i)
+                app = select_tab(app, i)
+                app.has_sel = false
+                app.selecting = false
+                app.needs_draw = true
+                return app
             }
-            x = x + width + 6
+            x = x + width + 8
             i = i + 1
         }
-        return spawn(app)
+        if mx >= x + 4 && mx < x + 28 && my >= 11 && my < 35 {
+            return spawn(app)
+        }
+        if !app.scripting {
+            gui.begin_window_drag()
+        }
+        return app
     }
+    if my >= gui.height() - status_height() {
+        return app
+    }
+    let hit = grid_hit(app, mx, my)
+    if hit.0 < 0 {
+        return app
+    }
+    let row = hit.0
+    let col = hit.1
+    if count >= 3 {
+        app.sel_r0 = row
+        app.sel_c0 = 0
+        app.sel_r1 = row
+        app.sel_c1 = gui.max(vt.tm_cols(app.tabs[app.active].term) - 1, 0)
+        app.has_sel = true
+        app.selecting = false
+    } else if count == 2 {
+        let bounds = word_bounds(app, row, col)
+        app.sel_r0 = row
+        app.sel_c0 = bounds.0
+        app.sel_r1 = row
+        app.sel_c1 = bounds.1
+        app.has_sel = true
+        app.selecting = false
+    } else {
+        app.sel_r0 = row
+        app.sel_c0 = col
+        app.sel_r1 = row
+        app.sel_c1 = col
+        app.selecting = true
+        app.has_sel = false
+    }
+    app.needs_draw = true
+    return app
+}
+
+fn drag(app: App, mx: Int, my: Int) -> App {
+    var app = app
+    if !app.selecting {
+        return app
+    }
+    let hit = grid_hit(app, mx, my)
+    if hit.0 < 0 {
+        return app
+    }
+    app.sel_r1 = hit.0
+    app.sel_c1 = hit.1
+    app.has_sel = true
+    app.needs_draw = true
+    return app
+}
+
+fn release(app: App) -> App {
+    var app = app
+    if !app.selecting {
+        return app
+    }
+    app.selecting = false
+    if app.sel_r0 != app.sel_r1 || app.sel_c0 != app.sel_c1 {
+        app.has_sel = true
+    }
+    app.needs_draw = true
     return app
 }
 
@@ -727,6 +987,15 @@ fn run_script(app: App, path: String) -> App {
             if cmd == "click" && words.len() >= 3 {
                 app = click(app, to_int(words[1]), to_int(words[2]))
             }
+            if cmd == "dblclick" && words.len() >= 3 {
+                app = mouse_press(app, to_int(words[1]), to_int(words[2]), 2)
+            }
+            if cmd == "drag" && words.len() >= 3 {
+                app = drag(app, to_int(words[1]), to_int(words[2]))
+            }
+            if cmd == "release" {
+                app = release(app)
+            }
             if cmd == "newtab" {
                 app = spawn(app)
             }
@@ -750,7 +1019,23 @@ fn run_script(app: App, path: String) -> App {
                     payload = payload + words[k]
                     k = k + 1
                 }
-                vt.tm_feed(app.tabs[app.active].term, payload.replace("<E>", vt.tm_escape()))
+                var tab = app.tabs[app.active]
+                tab.term = vt.tm_feed(tab.term, payload.replace("<B>", vt.tm_bell()).replace("<E>", vt.tm_escape()))
+                var tabs = app.tabs
+                tabs[app.active] = tab
+                app.tabs = tabs
+            }
+            if cmd == "typed" && words.len() >= 2 {
+                var payload = ""
+                var k = 1
+                while k < words.len() {
+                    if k > 1 {
+                        payload = payload + " "
+                    }
+                    payload = payload + words[k]
+                    k = k + 1
+                }
+                app = typed(app, payload)
             }
             if cmd == "cmd" && words.len() >= 2 {
                 app = run_command(app, words[1])
@@ -770,8 +1055,69 @@ fn run_script(app: App, path: String) -> App {
                 gui.present()
                 gui.save_png(words[1])
             }
+            if cmd == "dump" {
+                println("TEXT[" + active_text(app) + "]")
+            }
+            if cmd == "cursor" {
+                if app.tabs.len() > 0 {
+                    let cx = vt.tm_cursor_x(app.tabs[app.active].term)
+                    let cy = vt.tm_cursor_y(app.tabs[app.active].term)
+                    let ch = vt.tm_cell_at(app.tabs[app.active].term, cy, cx).ch
+                    var bytes = ""
+                    for b in ch.bytes() {
+                        bytes = bytes + b.to_string() + ","
+                    }
+                    println("CURSOR " + cx.to_string() + "," + cy.to_string() + " bytes=" + bytes + " text=[" + ch + "]")
+                }
+            }
+            if cmd == "hexrow" && words.len() >= 2 {
+                let row = to_int(words[1])
+                var report = ""
+                var c = 0
+                let cols = vt.tm_cols(app.tabs[app.active].term)
+                while c < cols {
+                    let ch = vt.tm_cell_at(app.tabs[app.active].term, row, c).ch
+                    if ch.len() > 1 {
+                        var bytes = ""
+                        for b in ch.bytes() {
+                            bytes = bytes + b.to_string() + ","
+                        }
+                        report = report + c.to_string() + ":" + bytes + " "
+                    }
+                    c = c + 1
+                }
+                println("HEXROW " + row.to_string() + " " + report)
+            }
+            if cmd == "cells" && words.len() >= 2 {
+                let row = to_int(words[1])
+                var report = ""
+                var c = 0
+                let cols = vt.tm_cols(app.tabs[app.active].term)
+                while c < cols {
+                    let ch = vt.tm_cell_at(app.tabs[app.active].term, row, c).ch
+                    if ch != " " {
+                        var bytes = ""
+                        for b in ch.bytes() {
+                            bytes = bytes + b.to_string() + ","
+                        }
+                        report = report + c.to_string() + ":" + bytes + " "
+                    }
+                    c = c + 1
+                }
+                println("CELLS " + row.to_string() + " " + report)
+            }
             if cmd == "assert_has" && words.len() >= 2 {
                 println(truth(active_text(app).contains(words[1])) + " " + trimmed)
+            }
+            if cmd == "assert_not_has" && words.len() >= 2 {
+                let found = active_text(app).contains(words[1])
+                println(truth(!found) + " " + trimmed)
+            }
+            if cmd == "assert_sel_has" && words.len() >= 2 {
+                println(truth(selected_text(app).contains(words[1])) + " " + trimmed)
+            }
+            if cmd == "assert_clipboard_has" && words.len() >= 2 {
+                println(truth(gui.clipboard().contains(words[1])) + " " + trimmed)
             }
             if cmd == "assert_tabs" && words.len() >= 2 {
                 println(truth(app.tabs.len() == to_int(words[1])) + " " + trimmed)
@@ -789,7 +1135,15 @@ fn run_script(app: App, path: String) -> App {
                 if words[1] == "1" {
                     want = true
                 }
-                println(truth(vt.tm_alt_on(app.tabs[app.active].term) == want) + " " + trimmed)
+                let got = vt.tm_alt_on(app.tabs[app.active].term)
+                var same = false
+                if got && want {
+                    same = true
+                }
+                if !got && !want {
+                    same = true
+                }
+                println(truth(same) + " " + trimmed)
             }
             if cmd == "assert_tab_title" && words.len() >= 2 {
                 var ok = false
@@ -852,6 +1206,14 @@ fn main() {
         hit_at: 0,
         fonts: [],
         font_index: 0,
+        sel_r0: 0,
+        sel_c0: 0,
+        sel_r1: 0,
+        sel_c1: 0,
+        selecting: false,
+        has_sel: false,
+        needs_draw: true,
+        scripting: false,
         quit: false,
     }
     app.fonts = lines_of(gui.mono_fonts())
@@ -866,19 +1228,20 @@ fn main() {
     app = spawn(app)
     let script = gui.env("NOVA_TERM_SCRIPT")
     let shot = gui.env("NOVA_TERM_SHOT")
+    gui.set_manual_drag(true)
     if script.len() > 0 {
+        app.scripting = true
         app = run_script(app, script)
         app.quit = true
     }
-    var dirty = true
     while !app.quit {
         app = sync_size(app)
         app = poll(app)
-        if dirty {
+        if app.needs_draw {
             gui.begin()
             draw(app)
             gui.present()
-            dirty = false
+            app.needs_draw = false
             if shot.len() > 0 {
                 gui.save_png(shot)
                 app.quit = true
@@ -888,22 +1251,30 @@ fn main() {
         if event.kind == gui.event_none() {
             gui.pump()
             gui.sleep(8)
-            dirty = true
         } else if event.kind == gui.event_close() {
             app.quit = true
         } else if event.kind == gui.event_key() {
             app = key(app, event.code, event.mods)
-            dirty = true
+            app.needs_draw = true
+        } else if event.kind == gui.event_text() {
+            app = typed(app, gui.typed_text())
+            app.needs_draw = true
         } else if event.kind == gui.event_mouse_down() {
-            app = click(app, event.x, event.y)
-            dirty = true
+            app = mouse_press(app, event.x, event.y, event.code)
+            app.needs_draw = true
+        } else if event.kind == gui.event_mouse_up() {
+            app = release(app)
+            app.needs_draw = true
+        } else if event.kind == gui.event_drag() {
+            app = drag(app, event.x, event.y)
+            app.needs_draw = true
         } else if event.kind == gui.event_scroll() {
             if app.tabs.len() > 0 && app.overlay.len() == 0 {
-                app.tabs[app.active].term = vt.tm_scroll(app.tabs[app.active].term, event.delta * 3)
+                app = set_term(app, app.active, vt.tm_scroll(app.tabs[app.active].term, event.delta * 3))
             }
-            dirty = true
+            app.needs_draw = true
         } else if event.kind == gui.event_resize() || event.kind == gui.event_repaint() {
-            dirty = true
+            app.needs_draw = true
         }
     }
     var i = 0
