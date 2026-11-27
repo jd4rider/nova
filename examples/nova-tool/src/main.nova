@@ -485,6 +485,22 @@ fn nt_wants_webkit(ir: String) -> Bool {
     return ir.contains("@nova_webview_")
 }
 
+fn nt_find_speech(runtime: String) -> String {
+    var base = runtime
+    if !base.starts_with("/") {
+        base = gui.cwd() + "/" + base
+    }
+    let candidate = rs_dirname(base) + "/speech.m"
+    if gui.exists(candidate) {
+        return candidate
+    }
+    return ""
+}
+
+fn nt_wants_speech(ir: String) -> Bool {
+    return ir.contains("@nova_speech_")
+}
+
 fn nt_build_project() -> Int {
     let root = nt_find_root()
     if root.len() == 0 {
@@ -788,12 +804,31 @@ fn nt_build_source(path: String, source: String, target: String) -> Int {
             return 1
         }
     }
+    let speech_source = nt_find_speech(runtime)
+    var wants_speech = false
+    var speech_object = ""
+    if host == "Darwin" && speech_source.len() > 0 && nt_wants_speech(result.ir) {
+        wants_speech = true
+        speech_object = target + ".speech.o"
+        let speech_command = "clang -fobjc-arc -O2 -c " + nt_shell_quote(speech_source) + " -o " + nt_shell_quote(speech_object)
+        let speech_output = gui.run(speech_command, gui.cwd())
+        if gui.exit_status() != 0 {
+            println("error: clang failed to compile nova-speech for " + path)
+            if speech_output.len() > 0 {
+                println(speech_output)
+            }
+            return 1
+        }
+    }
     var command = "clang -x ir " + nt_shell_quote(ir_path) + " -x none " + nt_shell_quote(runtime) + " -o " + nt_shell_quote(target) + " -lm"
     if wants_gui {
         command = command + " " + nt_shell_quote(gui_object) + " -framework Cocoa -framework CoreText -framework CoreGraphics -framework ImageIO -framework QuartzCore"
     }
     if wants_webkit {
         command = command + " " + nt_shell_quote(webkit_object) + " -framework WebKit -framework Cocoa"
+    }
+    if wants_speech {
+        command = command + " " + nt_shell_quote(speech_object) + " -framework AVFoundation -framework Cocoa"
     }
     let output = gui.run(command, gui.cwd())
     if gui.exit_status() != 0 {
@@ -808,6 +843,9 @@ fn nt_build_source(path: String, source: String, target: String) -> Int {
     }
     if wants_webkit {
         gui.run("rm -f " + nt_shell_quote(webkit_object), gui.cwd())
+    }
+    if wants_speech {
+        gui.run("rm -f " + nt_shell_quote(speech_object), gui.cwd())
     }
     println("built " + target)
     return 0

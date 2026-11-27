@@ -4,6 +4,7 @@ import "../../engines/webkit/src/engine.nova" as engine
 import "../../address/src/address.nova" as address_edit
 import "../../history/src/history.nova" as library
 import "../../status/src/status.nova" as status
+import "../../../libraries/nova-speech/src/speech.nova" as speech
 
 // The Nova Browser shell. Nova owns the window, tabs, toolbar, address
 // autocomplete, history/bookmarks and engine lifecycle. Each tab owns one
@@ -62,6 +63,10 @@ struct Session {
     active: Int,
     closed: List<ClosedTab>,
     vertical: Bool,
+    // A collapsed vertical sidebar: a narrow rail that opens its names as an
+    // overlay while the pointer is on it, so revealing them never resizes the
+    // page or WebKit.
+    rail: Bool,
     seen: String,
 }
 
@@ -73,6 +78,7 @@ struct Store {
     settings_path: String,
     session_path: String,
     search: String,
+    theme: String,
     downloads_open: Bool,
     downloads_path: String,
     download_history: List<String>,
@@ -114,6 +120,7 @@ struct Toolbar {
     reload: Int,
     address: Int,
     address_w: Int,
+    voice: Int,
     star: Int,
     downloads: Int,
     docs: Int,
@@ -141,7 +148,7 @@ struct Imported {
     message: String,
 }
 
-fn chrome_theme() -> Chrome {
+fn gruvbox_theme() -> Chrome {
     let theme = gui.gruvbox()
     return Chrome {
         bg_hard: theme.bg_hard,
@@ -160,6 +167,224 @@ fn chrome_theme() -> Chrome {
         yellow: theme.yellow,
         selection: theme.selection,
     }
+}
+
+// Gruvbox stays the default; these are the built-ins a shortcut can cycle to.
+fn theme_named(name: String) -> Chrome {
+    if name == "midnight" {
+        return Chrome {
+            bg_hard: gui.rgb(15, 18, 26),
+            panel: gui.rgb(22, 26, 37),
+            border: gui.rgb(38, 44, 60),
+            border_strong: gui.rgb(58, 66, 88),
+            fg: gui.rgb(200, 210, 230),
+            fg_bright: gui.rgb(235, 242, 255),
+            muted: gui.rgb(140, 152, 175),
+            faint: gui.rgb(110, 122, 145),
+            input: gui.rgb(18, 22, 32),
+            elevated: gui.rgb(30, 36, 50),
+            orange: gui.rgb(122, 162, 247),
+            red: gui.rgb(247, 118, 142),
+            green: gui.rgb(158, 206, 106),
+            yellow: gui.rgb(224, 175, 104),
+            selection: gui.rgb(51, 66, 102),
+        }
+    }
+    if name == "light" {
+        return Chrome {
+            bg_hard: gui.rgb(245, 243, 240),
+            panel: gui.rgb(235, 232, 227),
+            border: gui.rgb(215, 211, 205),
+            border_strong: gui.rgb(190, 185, 178),
+            fg: gui.rgb(60, 56, 54),
+            fg_bright: gui.rgb(30, 28, 27),
+            muted: gui.rgb(112, 105, 100),
+            faint: gui.rgb(140, 133, 127),
+            input: gui.rgb(250, 249, 247),
+            elevated: gui.rgb(225, 221, 215),
+            orange: gui.rgb(214, 93, 14),
+            red: gui.rgb(200, 50, 40),
+            green: gui.rgb(120, 140, 30),
+            yellow: gui.rgb(180, 140, 20),
+            selection: gui.rgb(205, 200, 190),
+        }
+    }
+    if name == "solarized" {
+        return Chrome {
+            bg_hard: gui.rgb(253, 246, 227),
+            panel: gui.rgb(238, 232, 213),
+            border: gui.rgb(213, 206, 186),
+            border_strong: gui.rgb(181, 173, 153),
+            fg: gui.rgb(88, 110, 117),
+            fg_bright: gui.rgb(7, 54, 66),
+            muted: gui.rgb(147, 161, 161),
+            faint: gui.rgb(168, 180, 180),
+            input: gui.rgb(255, 252, 240),
+            elevated: gui.rgb(226, 220, 201),
+            orange: gui.rgb(203, 75, 22),
+            red: gui.rgb(220, 50, 47),
+            green: gui.rgb(133, 153, 0),
+            yellow: gui.rgb(181, 137, 0),
+            selection: gui.rgb(213, 206, 186),
+        }
+    }
+    if name == "nova" {
+        let theme = gui.dark()
+        return Chrome {
+            bg_hard: theme.bg_hard,
+            panel: theme.panel,
+            border: theme.border,
+            border_strong: theme.border_strong,
+            fg: theme.fg,
+            fg_bright: theme.fg_bright,
+            muted: theme.muted,
+            faint: theme.faint,
+            input: theme.input,
+            elevated: theme.elevated,
+            orange: theme.orange,
+            red: theme.red,
+            green: theme.green,
+            yellow: theme.yellow,
+            selection: theme.selection,
+        }
+    }
+    return gruvbox_theme()
+}
+
+fn theme_label(name: String) -> String {
+    if name == "midnight" {
+        return "Midnight"
+    }
+    if name == "light" {
+        return "Light"
+    }
+    if name == "solarized" {
+        return "Solarized"
+    }
+    if name == "nova" {
+        return "Nova Dark"
+    }
+    return "Gruvbox"
+}
+
+fn cycle_theme(current: String) -> String {
+    if current == "gruvbox" {
+        return "midnight"
+    }
+    if current == "midnight" {
+        return "light"
+    }
+    if current == "light" {
+        return "solarized"
+    }
+    if current == "solarized" {
+        return "nova"
+    }
+    return "gruvbox"
+}
+
+fn hex_digit(ch: String) -> Int {
+    if ch == "0" { return 0 }
+    if ch == "1" { return 1 }
+    if ch == "2" { return 2 }
+    if ch == "3" { return 3 }
+    if ch == "4" { return 4 }
+    if ch == "5" { return 5 }
+    if ch == "6" { return 6 }
+    if ch == "7" { return 7 }
+    if ch == "8" { return 8 }
+    if ch == "9" { return 9 }
+    if ch == "a" || ch == "A" { return 10 }
+    if ch == "b" || ch == "B" { return 11 }
+    if ch == "c" || ch == "C" { return 12 }
+    if ch == "d" || ch == "D" { return 13 }
+    if ch == "e" || ch == "E" { return 14 }
+    if ch == "f" || ch == "F" { return 15 }
+    return 0 - 1
+}
+
+fn parse_hex(text: String) -> Int {
+    let chars = text.trim().chars()
+    var start = 0
+    if chars.len() > 0 && chars[0] == "#" {
+        start = 1
+    }
+    if chars.len() - start != 6 {
+        return 0 - 1
+    }
+    var value = 0
+    var i = start
+    while i < chars.len() {
+        let digit = hex_digit(chars[i])
+        if digit < 0 {
+            return 0 - 1
+        }
+        value = value * 16 + digit
+        i = i + 1
+    }
+    return value
+}
+
+fn with_color(base: Chrome, key: String, color: Int) -> Chrome {
+    var next = base
+    if key == "bg_hard" { next.bg_hard = color }
+    if key == "panel" { next.panel = color }
+    if key == "border" { next.border = color }
+    if key == "border_strong" { next.border_strong = color }
+    if key == "fg" { next.fg = color }
+    if key == "fg_bright" { next.fg_bright = color }
+    if key == "muted" { next.muted = color }
+    if key == "faint" { next.faint = color }
+    if key == "input" { next.input = color }
+    if key == "elevated" { next.elevated = color }
+    if key == "orange" { next.orange = color }
+    if key == "red" { next.red = color }
+    if key == "green" { next.green = color }
+    if key == "yellow" { next.yellow = color }
+    if key == "selection" { next.selection = color }
+    return next
+}
+
+// A theme.tsv next to the other profile files overrides single roles:
+//   panel<TAB>#1d2021
+// Lines whose first field starts with # are comments. Unknown keys are ignored.
+fn theme_override(base: Chrome, text: String) -> Chrome {
+    var out = base
+    let lines = text.split("\n")
+    var i = 0
+    while i < lines.len() {
+        let key = library.field(lines[i], 0)
+        let color = parse_hex(library.field(lines[i], 1))
+        if key.len() > 0 && !key.starts_with("#") && color >= 0 {
+            out = with_color(out, key, color)
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn resolved_theme_name(store: Store) -> String {
+    let forced = gui.env("NOVA_BROWSER_THEME").trim()
+    if forced.len() > 0 {
+        return forced
+    }
+    if store.theme.len() == 0 {
+        return "gruvbox"
+    }
+    return store.theme
+}
+
+fn theme_is_light(name: String) -> Bool {
+    return name == "light" || name == "solarized"
+}
+
+fn load_theme(store: Store) -> Chrome {
+    let name = resolved_theme_name(store)
+    let overrides = gui.read(profile_root() + "/theme.tsv")
+    if gui.env("NOVA_BROWSER_TRACE").len() > 0 {
+        println("browser: theme=" + name)
+    }
+    return theme_override(theme_named(name), overrides)
 }
 
 // ---------- geometry ----------
@@ -201,9 +426,27 @@ fn sidebar_width() -> Int {
     return width
 }
 
+fn rail_width() -> Int {
+    return 46
+}
+
+fn rail_panel_width() -> Int {
+    return 210
+}
+
+fn sidebar_span(session: Session) -> Int {
+    if !session.vertical {
+        return 0
+    }
+    if session.rail {
+        return rail_width()
+    }
+    return sidebar_width()
+}
+
 fn page_left(session: Session) -> Int {
     if session.vertical {
-        return sidebar_width() + 1
+        return sidebar_span(session) + 1
     }
     return 0
 }
@@ -216,7 +459,9 @@ fn tab_width(count: Int) -> Int {
     if count <= 0 {
         return 160
     }
-    var available = gui.width() - 142
+    // The horizontal strip no longer reserves room for a plus, so tabs get
+    // the whole width up to the window edge.
+    var available = gui.width() - 96
     if available < 300 {
         available = 300
     }
@@ -235,7 +480,7 @@ fn tab_width(count: Int) -> Int {
 fn tab_offset(session: Session) -> Int {
     let count = session.tabs.len()
     let width = tab_width(count)
-    let span = gui.width() - 136
+    let span = gui.width() - 92
     let total = count * (width + 6)
     if total <= span {
         return 0
@@ -407,29 +652,106 @@ fn tab_box_h(vertical: Bool) -> Int {
     return 30
 }
 
+fn tab_title(tab: Tab) -> String {
+    if tab.title.len() > 0 {
+        return tab.title
+    }
+    if tab.fixture {
+        return "New Tab"
+    }
+    return tab.url
+}
+
+// One tab mark in the collapsed rail.
+fn rail_tab_box(index: Int) -> Box {
+    return Box { x: 4, y: tab_box_y(index, true), w: rail_width() - 8, h: 30 }
+}
+
+// One row in the floating list a collapsed rail reveals on hover.
+fn overlay_tab_box(index: Int) -> Box {
+    return Box { x: 8, y: tab_box_y(index, true), w: rail_panel_width() - 16, h: 32 }
+}
+
+// New Tab grows under the last tab in a vertical sidebar, not above it.
+fn new_tab_box(session: Session) -> Box {
+    let y = tab_box_y(session.tabs.len(), true) + 4
+    if session.rail {
+        return Box { x: 4, y: y, w: rail_width() - 8, h: 28 }
+    }
+    return Box { x: 8, y: y, w: sidebar_width() - 16, h: 28 }
+}
+
+fn panel_new_tab_box(session: Session) -> Box {
+    return Box { x: 8, y: tab_box_y(session.tabs.len(), true) + 4, w: rail_panel_width() - 16, h: 28 }
+}
+
+// Pin/expand control: the chevron sits in the sidebar header, or at the top of
+// the rail when collapsed.
+fn collapse_box(session: Session) -> Box {
+    if session.rail {
+        return Box { x: 6, y: 66, w: rail_width() - 12, h: 26 }
+    }
+    return Box { x: sidebar_width() - 36, y: 64, w: 26, h: 26 }
+}
+
+// One row of 30 px controls with an even 8 px gap on both sides of the field,
+// the way Chrome lays out its toolbar. Every button is vertically centred on
+// the 34 px field, so nothing sits a pixel off from its neighbour.
 fn toolbar_metrics(vertical: Bool) -> Toolbar {
     let label = gui.width() - 12 - gui.mono_width("WEBKIT", 10)
     let layout_x = label - 38
-    let docs_x = layout_x - 36
-    let downloads_x = docs_x - 36
-    let star_x = downloads_x - 36
-    let address_x = 214
-    var address_w = star_x - address_x - 10
+    let docs_x = layout_x - 38
+    let downloads_x = docs_x - 38
+    let star_x = downloads_x - 38
+    // Reading a page aloud sits next to the bookmark, on the same 8 px grid.
+    let voice_x = star_x - 38
+    let address_x = 202
+    var address_w = voice_x - address_x - 8
     if address_w < 120 {
         address_w = 120
     }
     return Toolbar {
         back: 88,
-        forward: 128,
-        reload: 168,
+        forward: 126,
+        reload: 164,
         address: address_x,
         address_w: address_w,
+        voice: voice_x,
         star: star_x,
         downloads: downloads_x,
         docs: docs_x,
         layout: layout_x,
         label: label,
     }
+}
+
+// The engine chip sits inside the address field's left edge while editing.
+fn address_chip_box(vertical: Bool) -> Box {
+    let metrics = toolbar_metrics(vertical)
+    return Box { x: metrics.address + 8, y: toolbar_y(vertical) + 4, w: 26, h: 26 }
+}
+
+// Text and caret math start after the chip while editing. Click handling and
+// the painter both read this, so a press lands on the glyph it points at.
+fn address_text_x(vertical: Bool, editing: Bool) -> Int {
+    let metrics = toolbar_metrics(vertical)
+    if editing {
+        return metrics.address + 42
+    }
+    return metrics.address + 18
+}
+
+fn search_initial(provider: String) -> String {
+    if provider == "google" {
+        return "G"
+    }
+    if provider == "duckduckgo" {
+        return "D"
+    }
+    if provider == "brave" {
+        return "B"
+    }
+    return "-"
 }
 
 fn suggestion_top(vertical: Bool) -> Int {
@@ -515,7 +837,7 @@ fn fx_step(fx: Fx, hover: Int, editing: Bool) -> Fx {
     var i = 0
     while i < fx.slots.len() {
         let target = if i == hover { 1000 } else { 0 }
-        slots.push(approach(fx.slots[i], target, 90))
+        slots.push(approach(fx.slots[i], target, 240))
         i = i + 1
     }
     let focus_target = if editing { 1000 } else { 0 }
@@ -950,6 +1272,27 @@ fn address_open(current: Address, url: String) -> Address {
     }
 }
 
+// The engine owns plain text, so the first suggestion row says exactly where
+// Enter sends it. Built locally from the chosen provider; nothing is fetched.
+fn with_search_row(rows: List<String>, text: String, provider: String) -> List<String> {
+    let trimmed = text.trim()
+    if trimmed.len() == 0 || provider == "off" {
+        return rows
+    }
+    if address_edit.normalize(trimmed).len() > 0 {
+        return rows
+    }
+    let url = address_edit.search_url(provider, trimmed)
+    if url.len() == 0 {
+        return rows
+    }
+    var out: List<String> = ["search\t" + url + "\t" + "Search " + address_edit.search_label(provider) + " for \"" + trimmed + "\""]
+    for row in rows {
+        out.push(row)
+    }
+    return out
+}
+
 fn address_submit(handle: Int, current: Address, suggestions: List<String>, search: String) -> Address {
     var url = ""
     if current.highlight >= 0 && current.highlight < suggestions.len() {
@@ -966,7 +1309,7 @@ fn address_submit(handle: Int, current: Address, suggestions: List<String>, sear
             text: current.text,
             cursor: current.cursor,
             anchor: current.anchor,
-            error: "Enter an address or turn on search (Cmd+Shift+S)",
+            error: "Enter an address to open",
             highlight: current.highlight,
         }
     }
@@ -1090,6 +1433,7 @@ fn append_tab(session: Session, tab: Tab) -> Session {
         active: tabs.len() - 1,
         closed: session.closed,
         vertical: session.vertical,
+        rail: session.rail,
         seen: "",
     }
     sync_visibility(next)
@@ -1150,6 +1494,7 @@ fn close_tab(session: Session, index: Int, parent: Int, width: Int, height: Int)
         active: active,
         closed: closed,
         vertical: session.vertical,
+        rail: session.rail,
         seen: "",
     }
     sync_visibility(next)
@@ -1186,6 +1531,7 @@ fn restore_closed(session: Session, parent: Int, width: Int, height: Int) -> Ses
         active: tabs.len() - 1,
         closed: remaining,
         vertical: session.vertical,
+        rail: session.rail,
         seen: "",
     }
     sync_visibility(next)
@@ -1196,9 +1542,29 @@ fn restore_closed(session: Session, parent: Int, width: Int, height: Int) -> Ses
     return next
 }
 
+// Top tabs → sidebar → rail → top tabs. The rail is the collapsed sidebar:
+// hovering it reveals the names without pinning it back open.
+fn layout_notice(session: Session) -> String {
+    if !session.vertical {
+        return "Tabs: top"
+    }
+    if session.rail {
+        return "Tabs: rail · hover to reveal"
+    }
+    return "Tabs: sidebar"
+}
+
 fn toggle_layout(session: Session) -> Session {
     var next = session
-    next.vertical = !session.vertical
+    if !session.vertical {
+        next.vertical = true
+        next.rail = false
+    } else if !session.rail {
+        next.rail = true
+    } else {
+        next.vertical = false
+        next.rail = false
+    }
     return next
 }
 
@@ -1243,7 +1609,13 @@ fn load_store() -> Store {
     let settings = gui.read(settings_path)
     var search = library.setting_value(settings, "search")
     if search.len() == 0 {
-        search = "off"
+        // Google is the default search engine. The chip in the address bar can
+        // switch it without leaving the field or pressing a shortcut.
+        search = "google"
+    }
+    var theme_name = library.setting_value(settings, "theme")
+    if theme_name.len() == 0 {
+        theme_name = "gruvbox"
     }
     return Store {
         visits: visits,
@@ -1253,6 +1625,7 @@ fn load_store() -> Store {
         settings_path: settings_path,
         session_path: if history_enabled() { session_path } else { "" },
         search: search,
+        theme: theme_name,
         downloads_open: false,
         downloads_path: downloads_path,
         download_history: download_history,
@@ -1293,24 +1666,46 @@ fn save_setting(store: Store, key: String, value: String) {
     gui.write(store.settings_path, library.setting_with(text, key, value))
 }
 
-fn save_layout(store: Store, vertical: Bool) {
-    save_setting(store, "layout", if vertical { "vertical" } else { "horizontal" })
+fn save_layout(store: Store, vertical: Bool, rail: Bool) {
+    var value = "horizontal"
+    if vertical {
+        value = "vertical"
+        if rail {
+            value = "rail"
+        }
+    }
+    save_setting(store, "layout", value)
+}
+
+// Every Chromium-family browser saves the same JSON Bookmarks file, so
+// detection is the only per-browser work. Firefox and Safari export HTML
+// instead, which --import reads directly.
+fn import_roots() -> List<String> {
+    return [
+        "Google/Chrome",
+        "Chromium",
+        "BraveSoftware/Brave-Browser",
+        "Microsoft Edge",
+        "Arc/User Data",
+        "Vivaldi",
+    ]
 }
 
 fn chrome_profile_paths() -> List<String> {
-    let base = gui.env("HOME") + "/Library/Application Support/Google/Chrome"
     var paths: List<String> = []
-    if !gui.is_dir(base) {
-        return paths
-    }
-    let listing = gui.list(base)
-    for line in listing.split("\n") {
-        if line.starts_with("d\t") {
-            let parts = line.split("\t")
-            if parts.len() > 1 {
-                let candidate = base + "/" + parts[1] + "/Bookmarks"
-                if gui.exists(candidate) {
-                    paths.push(candidate)
+    for root in import_roots() {
+        let base = gui.env("HOME") + "/Library/Application Support/" + root
+        if gui.is_dir(base) {
+            let listing = gui.list(base)
+            for line in listing.split("\n") {
+                if line.starts_with("d\t") {
+                    let parts = line.split("\t")
+                    if parts.len() > 1 {
+                        let candidate = base + "/" + parts[1] + "/Bookmarks"
+                        if gui.exists(candidate) {
+                            paths.push(candidate)
+                        }
+                    }
                 }
             }
         }
@@ -1384,48 +1779,210 @@ fn import_from_google(store: Store) -> Imported {
     if added == 0 {
         return Imported { store: next, message: "Bookmarks already up to date" }
     }
-    return Imported { store: next, message: "Imported ${added} Google bookmarks" }
+    return Imported { store: next, message: "Imported ${added} bookmarks" }
 }
 
 // ---------- drawing ----------
 
-fn draw_icon_button(x: Int, y: Int, glyph: String, theme: Chrome, heat: Int, enabled: Bool, active: Bool) {
-    let fill = if active { theme.elevated } else { blend(theme.panel, theme.elevated, heat) }
-    gui.round_rect(x, y, 30, 30, 7, fill)
-    gui.stroke(x, y, 30, 30, blend(theme.border, theme.border_strong, heat))
-    let ink = if enabled {
-        blend(theme.muted, theme.fg_bright, heat)
-    } else {
-        blend(theme.panel, theme.muted, 420)
+// Soft light around a shape: three translucent copies, largest faintest. Three
+// fills cost far less than an offscreen shadow and read as a glow, not a border.
+fn glow(x: Int, y: Int, w: Int, h: Int, radius: Int, color: Int, amount: Int) {
+    if amount <= 0 {
+        return
     }
-    let width = gui.text_width(glyph, 15)
-    gui.text(x + (30 - width) / 2, y + 7, glyph, 15, ink)
+    var layer = 1
+    while layer <= 3 {
+        let spread = layer * 3
+        let alpha = amount / (layer * 2)
+        gui.round_rect_alpha(x - spread, y - spread, w + spread * 2, h + spread * 2, radius + spread, color, alpha)
+        layer = layer + 1
+    }
 }
 
-fn draw_tabs(session: Session, theme: Chrome, fx: Fx) {
+// ---------- glyphs ----------
+// Navigation marks are drawn from lines rather than font characters: the old
+// text glyphs depended on font coverage (a missing one is a tofu box) and sat
+// at the font's baseline instead of the button's centre.
+
+fn draw_plus(cx: Int, cy: Int, color: Int) {
+    gui.line(cx - 5, cy, cx + 5, cy, color)
+    gui.line(cx - 5, cy + 1, cx + 5, cy + 1, color)
+    gui.line(cx, cy - 5, cx, cy + 5, color)
+    gui.line(cx + 1, cy - 5, cx + 1, cy + 5, color)
+}
+
+fn draw_close(cx: Int, cy: Int, color: Int) {
+    gui.line(cx - 4, cy - 4, cx + 4, cy + 4, color)
+    gui.line(cx - 3, cy - 4, cx + 5, cy + 4, color)
+    gui.line(cx + 4, cy - 4, cx - 4, cy + 4, color)
+    gui.line(cx + 5, cy - 4, cx - 3, cy + 4, color)
+}
+
+fn draw_chevron_left(cx: Int, cy: Int, color: Int) {
+    gui.line(cx + 3, cy - 5, cx - 3, cy, color)
+    gui.line(cx - 3, cy, cx + 3, cy + 5, color)
+    gui.line(cx + 3, cy - 4, cx - 2, cy, color)
+    gui.line(cx - 2, cy, cx + 3, cy + 4, color)
+}
+
+fn draw_chevron_right(cx: Int, cy: Int, color: Int) {
+    gui.line(cx - 3, cy - 5, cx + 3, cy, color)
+    gui.line(cx + 3, cy, cx - 3, cy + 5, color)
+    gui.line(cx - 3, cy - 4, cx + 2, cy, color)
+    gui.line(cx + 2, cy, cx - 3, cy + 4, color)
+}
+
+fn draw_star(cx: Int, cy: Int, color: Int, filled: Bool) {
+    gui.line(cx, cy - 8, cx + 2, cy - 3, color)
+    gui.line(cx + 2, cy - 3, cx + 8, cy - 2, color)
+    gui.line(cx + 8, cy - 2, cx + 3, cy + 1, color)
+    gui.line(cx + 3, cy + 1, cx + 5, cy + 6, color)
+    gui.line(cx + 5, cy + 6, cx, cy + 3, color)
+    gui.line(cx, cy + 3, cx - 5, cy + 6, color)
+    gui.line(cx - 5, cy + 6, cx - 3, cy + 1, color)
+    gui.line(cx - 3, cy + 1, cx - 8, cy - 2, color)
+    gui.line(cx - 8, cy - 2, cx - 2, cy - 3, color)
+    gui.line(cx - 2, cy - 3, cx, cy - 8, color)
+    if filled {
+        gui.line(cx - 3, cy, cx + 3, cy, color)
+        gui.line(cx - 2, cy + 2, cx + 2, cy + 2, color)
+        gui.line(cx - 1, cy + 3, cx + 1, cy + 3, color)
+    }
+}
+
+fn draw_download(cx: Int, cy: Int, color: Int) {
+    gui.line(cx, cy - 7, cx, cy + 3, color)
+    gui.line(cx + 1, cy - 7, cx + 1, cy + 3, color)
+    gui.line(cx - 4, cy - 1, cx, cy + 4, color)
+    gui.line(cx, cy + 4, cx + 4, cy - 1, color)
+    gui.line(cx - 4, cy, cx, cy + 5, color)
+    gui.line(cx, cy + 5, cx + 4, cy, color)
+    gui.line(cx - 6, cy + 7, cx + 6, cy + 7, color)
+}
+
+fn draw_reload(cx: Int, cy: Int, color: Int) {
+    gui.line(cx, cy - 7, cx + 5, cy - 5, color)
+    gui.line(cx + 5, cy - 5, cx + 7, cy, color)
+    gui.line(cx + 7, cy, cx + 5, cy + 5, color)
+    gui.line(cx + 5, cy + 5, cx, cy + 7, color)
+    gui.line(cx, cy + 7, cx - 5, cy + 5, color)
+    gui.line(cx - 5, cy + 5, cx - 7, cy, color)
+    gui.line(cx - 7, cy, cx - 5, cy - 5, color)
+    gui.line(cx - 5, cy - 5, cx - 2, cy - 6, color)
+    gui.line(cx + 2, cy - 8, cx + 5, cy - 5, color)
+    gui.line(cx + 2, cy - 8, cx + 3, cy - 4, color)
+}
+
+// A speaker cone with two waves: the reader control.
+fn draw_speaker(cx: Int, cy: Int, color: Int) {
+    gui.line(cx - 8, cy - 3, cx - 4, cy - 3, color)
+    gui.line(cx - 4, cy - 3, cx, cy - 7, color)
+    gui.line(cx, cy - 7, cx, cy + 7, color)
+    gui.line(cx, cy + 7, cx - 4, cy + 3, color)
+    gui.line(cx - 4, cy + 3, cx - 8, cy + 3, color)
+    gui.line(cx - 8, cy - 3, cx - 8, cy + 3, color)
+    gui.line(cx + 4, cy - 4, cx + 6, cy - 2, color)
+    gui.line(cx + 6, cy - 2, cx + 6, cy + 2, color)
+    gui.line(cx + 6, cy + 2, cx + 4, cy + 4, color)
+    gui.line(cx + 8, cy - 6, cx + 10, cy - 3, color)
+    gui.line(cx + 10, cy - 3, cx + 10, cy + 3, color)
+    gui.line(cx + 10, cy + 3, cx + 8, cy + 6, color)
+}
+
+fn draw_sidebar_glyph(cx: Int, cy: Int, color: Int) {
+    gui.line(cx - 7, cy - 6, cx + 7, cy - 6, color)
+    gui.line(cx - 7, cy + 6, cx + 7, cy + 6, color)
+    gui.line(cx - 7, cy - 6, cx - 7, cy + 6, color)
+    gui.line(cx + 7, cy - 6, cx + 7, cy + 6, color)
+    gui.line(cx - 2, cy - 6, cx - 2, cy + 6, color)
+}
+
+// 1 back, 2 forward, 3 reload, 4 stop, 5 star, 6 star filled, 7 download,
+// 8 help, 9 sidebar, 10 plus, 11 chevron right, 12 chevron left, 13 close,
+// 14 speaker.
+fn draw_glyph(kind: Int, x: Int, y: Int, ink: Int) {
+    let cx = x + 15
+    let cy = y + 15
+    if kind == 1 {
+        draw_chevron_left(cx - 3, cy, ink)
+    } else if kind == 2 {
+        draw_chevron_right(cx + 3, cy, ink)
+    } else if kind == 3 {
+        draw_reload(cx, cy, ink)
+    } else if kind == 4 {
+        draw_close(cx, cy, ink)
+    } else if kind == 5 {
+        draw_star(cx, cy - 1, ink, false)
+    } else if kind == 6 {
+        draw_star(cx, cy - 1, ink, true)
+    } else if kind == 7 {
+        draw_download(cx, cy - 1, ink)
+    } else if kind == 8 {
+        gui.text(cx - gui.text_width("?", 14) / 2, y + 7, "?", 14, ink)
+    } else if kind == 9 {
+        draw_sidebar_glyph(cx, cy, ink)
+    } else if kind == 10 {
+        draw_plus(cx, cy, ink)
+    } else if kind == 11 {
+        draw_chevron_right(cx, cy, ink)
+    } else if kind == 12 {
+        draw_chevron_left(cx, cy, ink)
+    } else if kind == 13 {
+        draw_close(cx, cy, ink)
+    } else if kind == 14 {
+        draw_speaker(cx, cy, ink)
+    }
+}
+
+// The button is its glyph: no resting box, a rounded wash and a soft glow that
+// follow the eased hover energy, and a dimmed ink when the action is disabled.
+fn draw_icon_button(x: Int, y: Int, kind: Int, theme: Chrome, heat: Int, enabled: Bool, active: Bool) {
+    if active {
+        gui.round_rect(x, y, 30, 30, 8, theme.elevated)
+    } else if heat > 0 {
+        gui.round_rect(x, y, 30, 30, 8, blend(theme.panel, theme.elevated, heat))
+    }
+    if heat > 180 {
+        glow(x, y, 30, 30, 8, theme.orange, heat / 10)
+    }
+    var ink = blend(theme.muted, theme.fg_bright, heat)
+    if active {
+        // A lit button, not an orange glyph: an orange square reads as a stray
+        // box rather than a state.
+        ink = theme.fg_bright
+    }
+    if !enabled {
+        ink = blend(theme.panel, theme.muted, 420)
+    }
+    draw_glyph(kind, x, y, ink)
+}
+
+fn draw_tabs(session: Session, theme: Chrome, fx: Fx, rail_open: Bool) {
     let vertical = session.vertical
     let width = gui.width()
     let count = session.tabs.len()
 
-    if vertical {
-        let strip = sidebar_width()
-        gui.rect(0, chrome_height(true), strip + 1, gui.height() - chrome_height(true), theme.panel)
-        gui.line(strip, chrome_height(true), strip, gui.height(), theme.border_strong)
-
-        let plus_heat = slot(fx, 8)
-        gui.round_rect(8, 64, strip - 16, 28, 7, blend(theme.panel, theme.elevated, plus_heat))
-        gui.stroke(8, 64, strip - 16, 28, blend(theme.border, theme.border_strong, plus_heat))
-        gui.text(18, 69, "+  New Tab", 12, blend(theme.muted, theme.fg_bright, plus_heat))
-    } else {
+    if !vertical {
         gui.rect(0, 0, width, 44, theme.panel)
         gui.line(0, 43, width, 43, theme.border_strong)
-
-        gui.clip(84, 0, width - 136, 44)
-        let plus_heat = slot(fx, 8)
-        let plus_x = width - 46
-        gui.round_rect(plus_x, 8, 30, 30, 8, blend(theme.bg_hard, theme.elevated, plus_heat))
-        gui.stroke(plus_x, 8, 30, 30, blend(theme.border, theme.border_strong, plus_heat))
-        gui.text(plus_x + 10, 11, "+", 16, blend(theme.muted, theme.fg_bright, plus_heat))
+        // Tabs fill the strip. The plus that used to sit here took width from
+        // every tab, so it is gone; Cmd+T, the vertical New Tab row and the tab
+        // menu are the create paths.
+        gui.clip(84, 0, width - 92, 44)
+    } else if session.rail {
+        draw_rail(session, theme, fx, rail_open)
+        return
+    } else {
+        let span = sidebar_span(session)
+        gui.rect(0, chrome_height(true), span + 1, gui.height() - chrome_height(true), theme.panel)
+        gui.line(span, chrome_height(true), span, gui.height(), theme.border_strong)
+        gui.mono(14, 71, "TABS", 9, theme.faint)
+        let toggle = collapse_box(session)
+        let heat = slot(fx, 12)
+        if heat > 0 {
+            gui.round_rect(toggle.x, toggle.y, toggle.w, toggle.h, 7, blend(theme.panel, theme.elevated, heat))
+        }
+        draw_chevron_left(toggle.x + 13, toggle.y + 13, blend(theme.muted, theme.fg_bright, heat))
     }
 
     var i = 0
@@ -1437,22 +1994,23 @@ fn draw_tabs(session: Session, theme: Chrome, fx: Fx) {
         let box_w = tab_box_w(count, vertical)
         let box_h = tab_box_h(vertical)
         let heat = slot(fx, 40 + i)
+        if active {
+            glow(x, y, box_w, box_h, 8, theme.orange, 30)
+        }
         let fill = if active { theme.elevated } else { blend(theme.bg_hard, theme.elevated, heat) }
         gui.round_rect(x, y, box_w, box_h, 8, fill)
-        gui.stroke(x, y, box_w, box_h, if active { theme.border_strong } else { blend(theme.border, theme.border_strong, heat) })
         if active {
             gui.rect(x + 8, y + box_h - 2, box_w - 16, 2, theme.orange)
         }
-        let shown = if tab.title.len() > 0 { tab.title } else if tab.fixture { "New Tab" } else { tab.url }
         let ink = if active { theme.fg_bright } else { blend(theme.muted, theme.fg, heat) }
         gui.clip(x + 10, y + 4, box_w - 34, box_h - 8)
-        gui.text(x + 10, y + 7, shown, 11, ink)
+        gui.text(x + 10, y + 7, tab_title(tab), 11, ink)
         gui.clip_reset()
         let close_heat = slot(fx, 50 + i)
         if close_heat > 0 {
-            gui.round_rect(x + box_w - 24, y + 6, 18, 18, 5, blend(theme.panel, theme.red, close_heat))
+            gui.round_rect(x + box_w - 24, y + 6, 18, 18, 6, blend(theme.panel, theme.red, close_heat / 2))
         }
-        gui.text(x + box_w - 20, y + 7, "×", 11, if close_heat > 0 { theme.fg_bright } else { ink })
+        draw_close(x + box_w - 15, y + 15, if close_heat > 0 { theme.fg_bright } else { ink })
         if engine.page_state(tab.handle) == 1 {
             gui.rect(x + box_w - 34, y + 13, 5, 5, theme.orange)
         }
@@ -1460,19 +2018,109 @@ fn draw_tabs(session: Session, theme: Chrome, fx: Fx) {
     }
     if !vertical {
         gui.clip_reset()
+    } else {
+        // New Tab grows under the list, which is where a vertical tab stack
+        // wants its next row.
+        let box = new_tab_box(session)
+        let plus_heat = slot(fx, 8)
+        gui.round_rect(box.x, box.y, box.w, box.h, 7, blend(theme.panel, theme.elevated, plus_heat))
+        draw_plus(box.x + 16, box.y + box.h / 2, blend(theme.muted, theme.fg_bright, plus_heat))
+        gui.text(box.x + 28, box.y + 8, "New Tab", 11, blend(theme.muted, theme.fg_bright, plus_heat))
     }
 }
 
-fn draw_address(handle: Int, theme: Chrome, address: Address, session: Session, fx: Fx) {
+// The collapsed sidebar: numbered tab marks, New Tab under them, and a floating
+// list of names while the pointer is on the rail.
+fn draw_rail(session: Session, theme: Chrome, fx: Fx, open: Bool) {
+    let strip = rail_width()
+    let panel = rail_panel_width()
+    let count = session.tabs.len()
+    let head = collapse_box(session)
+    let heat = slot(fx, 12)
+    if heat > 0 {
+        gui.round_rect(head.x, head.y, head.w, head.h, 7, blend(theme.panel, theme.elevated, heat))
+    }
+    draw_chevron_right(head.x + head.w / 2, head.y + head.h / 2, blend(theme.muted, theme.fg_bright, heat))
+
+    var i = 0
+    while i < count {
+        let tab = session.tabs[i]
+        let active = i == session.active
+        let x = 4
+        let y = tab_box_y(i, true)
+        let w = strip - 8
+        let h = slot(fx, 40 + i)
+        if active {
+            glow(x, y, w, 30, 8, theme.orange, 26)
+        }
+        gui.round_rect(x, y, w, 30, 8, if active { theme.elevated } else { blend(theme.bg_hard, theme.elevated, h) })
+        if active {
+            gui.rect(x + 1, y + 7, 2, 16, theme.orange)
+        }
+        let label = "${i + 1}"
+        gui.text(x + (w - gui.text_width(label, 12)) / 2, y + 9, label, 12, if active { theme.fg_bright } else { blend(theme.muted, theme.fg, h) })
+        if engine.page_state(tab.handle) == 1 {
+            gui.rect(x + w - 8, y + 6, 4, 4, theme.orange)
+        }
+        i = i + 1
+    }
+
+    let box = new_tab_box(session)
+    let plus_heat = slot(fx, 8)
+    gui.round_rect(box.x, box.y, box.w, box.h, 7, blend(theme.panel, theme.elevated, plus_heat))
+    draw_plus(box.x + box.w / 2, box.y + box.h / 2, blend(theme.muted, theme.fg_bright, plus_heat))
+
+    if !open {
+        return
+    }
+    // The page gives the panel its width back while it is open, so the names
+    // are not hidden under the WebView. Leaving the rail closes it.
+    gui.rect(0, chrome_height(true), panel, gui.height() - chrome_height(true), theme.panel)
+    gui.line(panel, chrome_height(true), panel, gui.height(), theme.border_strong)
+    gui.mono(14, 71, "TABS", 9, theme.faint)
+    var j = 0
+    while j < count {
+        let tab = session.tabs[j]
+        let active = j == session.active
+        let x = 8
+        let y = tab_box_y(j, true)
+        let w = panel - 16
+        let h = slot(fx, 40 + j)
+        if active {
+            glow(x, y, w, 32, 8, theme.orange, 26)
+        }
+        gui.round_rect(x, y, w, 32, 8, if active { theme.elevated } else { blend(theme.bg_hard, theme.elevated, h) })
+        if active {
+            gui.rect(x + 8, y + 30, w - 16, 2, theme.orange)
+        }
+        gui.clip(x + 10, y + 4, w - 20, 24)
+        gui.text(x + 10, y + 9, tab_title(tab), 11, if active { theme.fg_bright } else { blend(theme.muted, theme.fg, h) })
+        gui.clip_reset()
+        j = j + 1
+    }
+    let nb = panel_new_tab_box(session)
+    let nb_heat = slot(fx, 8)
+    gui.round_rect(nb.x, nb.y, nb.w, nb.h, 7, blend(theme.panel, theme.elevated, nb_heat))
+    draw_plus(nb.x + 16, nb.y + nb.h / 2, blend(theme.muted, theme.fg_bright, nb_heat))
+    gui.text(nb.x + 28, nb.y + 8, "New Tab", 11, blend(theme.muted, theme.fg_bright, nb_heat))
+}
+
+fn draw_address(handle: Int, theme: Chrome, address: Address, session: Session, fx: Fx, search: String) {
     let metrics = toolbar_metrics(session.vertical)
     let y = toolbar_y(session.vertical)
     let focus = if address.editing { fx.focus } else { 0 }
-    gui.round_rect(metrics.address, y, metrics.address_w, 34, 8, blend(theme.input, theme.elevated, focus / 6))
-    gui.stroke(metrics.address, y, metrics.address_w, 34, blend(theme.border, theme.orange, focus))
+    if address.editing {
+        glow(metrics.address, y, metrics.address_w, 34, 17, theme.orange, 26 + focus / 10)
+    }
+    // Border as a one-point rounded ring, then the fill inside it. stroke_rect
+    // cannot take a radius, and its square outline was the box drawn around
+    // the pill.
+    gui.round_rect(metrics.address - 1, y - 1, metrics.address_w + 2, 36, 18, blend(theme.border, theme.orange, focus))
+    gui.round_rect(metrics.address, y, metrics.address_w, 34, 17, blend(theme.input, theme.elevated, focus / 6))
 
     // Text starts at text_x; the field keeps 16 px of right padding. A long
     // URL scrolls with the caret instead of running under the padding.
-    let text_x = metrics.address + 18
+    let text_x = address_text_x(session.vertical, address.editing)
     // Ink is clipped 16 px from the field edge and the chip is allowed to run
     // 4 px past that, so a long URL never has a glyph touching the chip's
     // rounded corner (which is what made the last character look unselected).
@@ -1505,7 +2153,7 @@ fn draw_address(handle: Int, theme: Chrome, address: Address, session: Session, 
         if right > chip_right {
             right = chip_right
         }
-        if left < metrics.address + 8 {
+        if left < text_x - 6 {
             left = metrics.address + 8
         }
         if right > left {
@@ -1516,7 +2164,15 @@ fn draw_address(handle: Int, theme: Chrome, address: Address, session: Session, 
         }
     }
 
-    gui.clip(metrics.address + 12, y + 6, text_right - (metrics.address + 12), 24)
+    if address.editing {
+        // The chip names the engine that owns plain text; a press cycles it.
+        let chip = address_chip_box(session.vertical)
+        let heat = slot(fx, 10)
+        gui.round_rect(chip.x - 1, chip.y - 1, chip.w + 2, chip.h + 2, 8, blend(theme.border, theme.orange, heat))
+        gui.round_rect(chip.x, chip.y, chip.w, chip.h, 7, blend(theme.input, theme.elevated, heat))
+        gui.text(chip.x + 9, chip.y + 6, search_initial(search), 12, blend(theme.muted, theme.orange, heat))
+    }
+    gui.clip(text_x - 6, y + 6, text_right - (text_x - 6), 24)
     if address.editing {
         let shown = if address.text.len() > 0 { address.text } else { "Enter an http(s) address" }
         let ink = if address.text.len() > 0 { theme.fg_bright } else { theme.muted }
@@ -1540,14 +2196,8 @@ fn draw_address(handle: Int, theme: Chrome, address: Address, session: Session, 
         let live = engine.page_url(handle)
         let fallback = if session.active >= 0 && session.active < session.tabs.len() { session.tabs[session.active].url } else { "" }
         let shown = if live.len() > 0 { live } else if fallback.contains("fixture.nova.invalid") { "Nova Browser · trusted fixture" } else { fallback }
-        let dot = if shown.starts_with("https://") {
-            theme.green
-        } else if shown.starts_with("http://") {
-            theme.yellow
-        } else {
-            theme.faint
-        }
-        gui.rect(metrics.address + 12, y + 16, 6, 6, dot)
+        // The URL text already carries its scheme; the extra scheme square
+        // showed up as a stray amber glyph on http pages, so it is gone.
         gui.text(text_x, y + 8, shown, 13, theme.fg)
     }
     gui.clip_reset()
@@ -1870,17 +2520,26 @@ fn tooltip_text(target: Int) -> String {
     if target == 5 {
         return "Bookmark (Cmd+D)"
     }
+    if target == 14 {
+        return "Listen to this page (Cmd+Shift+L)"
+    }
     if target == 6 {
         return "Nova docs"
     }
     if target == 7 {
-        return "Tab layout (Cmd+Shift+E)"
+        return "Tabs: top / sidebar / rail (Cmd+Shift+E)"
+    }
+    if target == 11 {
+        return "Collapse or pin the tab sidebar"
     }
     if target == 8 {
         return "New tab (Cmd+T)"
     }
     if target == 9 {
         return "Downloads"
+    }
+    if target == 10 {
+        return "Search engine · click to switch"
     }
     return ""
 }
@@ -1912,29 +2571,38 @@ fn draw_toolbar(handle: Int, theme: Chrome, address: Address, session: Session, 
         gui.rect(0, 0, gui.width(), chrome_height(true) - 1, theme.panel)
         gui.line(0, chrome_height(true) - 1, gui.width(), chrome_height(true) - 1, theme.border_strong)
     } else {
+        // A shallow top-down wash instead of one flat fill: the strip picks up
+        // light near the window edge the way modern chrome does.
         gui.rect(0, 44, gui.width(), chrome_height(false) - 45, theme.panel)
+        var band = 0
+        while band < 6 {
+            gui.rect(0, 44 + band * 12, gui.width(), 12, blend(theme.panel, theme.elevated, 40 - band * 8))
+            band = band + 1
+        }
         gui.line(0, chrome_height(false) - 1, gui.width(), chrome_height(false) - 1, theme.border_strong)
     }
 
     let state = engine.page_state(handle)
     let loading = state == 1
-    draw_icon_button(metrics.back, y + 2, "‹", theme, slot(fx, 1), engine.can_go_back(handle), false)
-    draw_icon_button(metrics.forward, y + 2, "›", theme, slot(fx, 2), engine.can_go_forward(handle), false)
-    draw_icon_button(metrics.reload, y + 2, if loading { "×" } else { "↻" }, theme, slot(fx, 3), true, loading)
+    draw_icon_button(metrics.back, y + 2, 1, theme, slot(fx, 1), engine.can_go_back(handle), false)
+    draw_icon_button(metrics.forward, y + 2, 2, theme, slot(fx, 2), engine.can_go_forward(handle), false)
+    draw_icon_button(metrics.reload, y + 2, if loading { 4 } else { 3 }, theme, slot(fx, 3), true, loading)
 
-    draw_address(handle, theme, address, session, fx)
+    draw_address(handle, theme, address, session, fx, store.search)
+
+    draw_icon_button(metrics.voice, y + 2, 14, theme, slot(fx, 10), true, speech.speaking())
 
     let live = engine.page_url(handle)
     let bookmarked = library.has_bookmark(store.bookmarks, live)
-    draw_icon_button(metrics.star, y + 2, if bookmarked { "★" } else { "☆" }, theme, slot(fx, 5), true, bookmarked)
+    draw_icon_button(metrics.star, y + 2, if bookmarked { 6 } else { 5 }, theme, slot(fx, 5), true, bookmarked)
     let running = downloads_running(downloads)
-    draw_icon_button(metrics.downloads, y + 2, "↓", theme, slot(fx, 9), true, store.downloads_open)
+    draw_icon_button(metrics.downloads, y + 2, 7, theme, slot(fx, 9), true, store.downloads_open)
     if running > 0 {
         gui.round_rect(metrics.downloads + 21, y, 11, 11, 5, theme.orange)
         gui.text(metrics.downloads + 24, y - 1, "${running}", 8, theme.bg_hard)
     }
-    draw_icon_button(metrics.docs, y + 2, "?", theme, slot(fx, 6), true, false)
-    draw_icon_button(metrics.layout, y + 2, if vertical { "▥" } else { "▤" }, theme, slot(fx, 7), true, vertical)
+    draw_icon_button(metrics.docs, y + 2, 8, theme, slot(fx, 6), true, false)
+    draw_icon_button(metrics.layout, y + 2, 9, theme, slot(fx, 7), true, vertical)
 
     gui.mono(metrics.label, y + 10, "WEBKIT", 10, theme.orange)
 
@@ -1994,6 +2662,18 @@ fn draw_progress(handle: Int, theme: Chrome, session: Session) {
         }
         gui.rect(left + sheen, y, width, 2, theme.yellow)
     }
+    // Sparks ride the filled part of the bar. Positions come from the clock, so
+    // nothing is stored and there is no allocation per frame.
+    var spark = 0
+    while spark < 7 {
+        let phase = (gui.now() / 3 + spark * 137) % 1000
+        let px = left + bar * phase / 1000
+        let fade = 88 - phase / 12
+        if fade > 0 {
+            gui.rect_alpha(px, y - 2, 2, 5, theme.orange, fade)
+        }
+        spark = spark + 1
+    }
 }
 
 fn draw_suggestions(theme: Chrome, address: Address, session: Session, suggestions: List<String>, fx: Fx) {
@@ -2017,7 +2697,13 @@ fn draw_suggestions(theme: Chrome, address: Address, session: Session, suggestio
         let ry = top + 4 + i * sug_row_height()
         let heat = if address.highlight == i { 1000 } else { slot(fx, 60 + i) }
         gui.round_rect(metrics.address + 4, ry, metrics.address_w - 8, sug_row_height() - 2, 6, blend(theme.elevated, theme.selection, heat))
-        gui.text(metrics.address + 12, ry + 4, if kind == "bookmark" { "★" } else { "◦" }, 11, if kind == "bookmark" { theme.orange } else { theme.muted })
+        if kind == "search" {
+            // A drawn magnifier rather than a glyph: no font-coverage gamble.
+            gui.stroke(metrics.address + 13, ry + 8, 8, 8, theme.orange)
+            gui.line(metrics.address + 20, ry + 15, metrics.address + 24, ry + 19, theme.orange)
+        } else {
+            gui.text(metrics.address + 12, ry + 4, if kind == "bookmark" { "★" } else { "◦" }, 11, if kind == "bookmark" { theme.orange } else { theme.muted })
+        }
         gui.clip(metrics.address + 28, ry + 2, metrics.address_w - 40, sug_row_height() - 6)
         let shown = if title.len() > 0 { title } else { url }
         gui.text(metrics.address + 28, ry + 3, shown, 12, blend(theme.fg, theme.fg_bright, heat))
@@ -2025,6 +2711,9 @@ fn draw_suggestions(theme: Chrome, address: Address, session: Session, suggestio
         gui.clip_reset()
         i = i + 1
     }
+    // The list is taller than the chrome band, so the host must paint it above
+    // the page view; without this it is covered from page_top downward.
+    gui.overlay(metrics.address - 3, top, metrics.address_w + 6, height + 4, true)
 }
 
 // Local minimum: the GUI module already exports a `min`, and a qualified call
@@ -2132,7 +2821,11 @@ fn ax_chrome(handle: Int, session: Session, address: Address, suggestions: List<
         let tab = session.tabs[i]
         let shown = if tab.title.len() > 0 { tab.title } else if tab.fixture { "New Tab" } else { tab.url }
         let selected = if i == session.active { 1 } else { 0 }
-        gui.ax_tab(tab_box_x(session, i), tab_box_y(i, vertical), tab_box_w(count, vertical), tab_box_h(vertical), shown, selected)
+        if session.rail {
+            gui.ax_tab(4, tab_box_y(i, true), rail_width() - 8, 30, shown, selected)
+        } else {
+            gui.ax_tab(tab_box_x(session, i), tab_box_y(i, vertical), tab_box_w(count, vertical), tab_box_h(vertical), shown, selected)
+        }
         i = i + 1
     }
     let metrics = toolbar_metrics(vertical)
@@ -2152,15 +2845,22 @@ fn ax_chrome(handle: Int, session: Session, address: Address, suggestions: List<
         shown_address = if live.len() > 0 { live } else { fallback }
     }
     gui.ax_field(metrics.address, toolbar_y(vertical), metrics.address_w, 34, "Address", shown_address)
+    if address.editing {
+        let chip = address_chip_box(vertical)
+        gui.ax_button(chip.x, chip.y, chip.w, chip.h, "Search engine: " + address_edit.search_label(store.search))
+    }
+    let read_label = if speech.speaking() { "Stop reading" } else { "Listen to this page" }
+    gui.ax_button(metrics.voice, by, 30, 30, read_label)
     gui.ax_button(metrics.star, by, 30, 30, "Bookmark")
     gui.ax_button(metrics.downloads, by, 30, 30, "Downloads")
     gui.ax_button(metrics.docs, by, 30, 30, "Nova docs")
     gui.ax_button(metrics.layout, by, 30, 30, "Tab layout")
     gui.ax_label(metrics.label, toolbar_y(vertical) + 10, gui.mono_width("WEBKIT", 10), 14, "Rendering engine: WebKit")
     if vertical {
-        gui.ax_button(8, 64, sidebar_width() - 16, 28, "New tab")
-    } else {
-        gui.ax_button(gui.width() - 46, 8, 30, 30, "New tab")
+        let plus = new_tab_box(session)
+        gui.ax_button(plus.x, plus.y, plus.w, plus.h, "New tab")
+        let toggle = collapse_box(session)
+        gui.ax_button(toggle.x, toggle.y, toggle.w, toggle.h, if session.rail { "Expand tab sidebar" } else { "Collapse tab sidebar" })
     }
     if state == 3 {
         let retry = failure_retry(session)
@@ -2235,9 +2935,10 @@ fn ax_suggestions(address: Address, session: Session, suggestions: List<String>)
     }
 }
 
-fn draw_chrome(handle: Int, theme: Chrome, address: Address, session: Session, suggestions: List<String>, fx: Fx, notice: Notice, store: Store, hover: Int, downloads: Downloads, tooltip: Tooltip) {
+fn draw_chrome(handle: Int, theme: Chrome, address: Address, session: Session, suggestions: List<String>, fx: Fx, notice: Notice, store: Store, hover: Int, downloads: Downloads, tooltip: Tooltip, rail_open: Bool) {
     gui.clear(theme.bg_hard)
-    draw_tabs(session, theme, fx)
+    gui.overlay_begin()
+    draw_tabs(session, theme, fx, rail_open)
     draw_toolbar(handle, theme, address, session, fx, store, downloads)
     let state = engine.page_state(handle)
     if state == 1 {
@@ -2254,6 +2955,25 @@ fn draw_chrome(handle: Int, theme: Chrome, address: Address, session: Session, s
 }
 
 // ---------- input ----------
+
+// The pointer advertises what a press would do, the way a page shows a hand
+// over a link: a hand over anything that acts, an I-beam over the address
+// field, an arrow elsewhere and over buttons that are disabled.
+fn cursor_for(handle: Int, hover: Int) -> Int {
+    if hover == 4 {
+        return gui.cursor_text()
+    }
+    if hover == 1 && !engine.can_go_back(handle) {
+        return gui.cursor_arrow()
+    }
+    if hover == 2 && !engine.can_go_forward(handle) {
+        return gui.cursor_arrow()
+    }
+    if hover > 0 {
+        return gui.cursor_hand()
+    }
+    return gui.cursor_arrow()
+}
 
 fn hover_target(x: Int, y: Int, session: Session, address: Address, suggestions: List<String>, downloads: Downloads, shelf_open: Bool) -> Int {
     let vertical = session.vertical
@@ -2309,8 +3029,17 @@ fn hover_target(x: Int, y: Int, session: Session, address: Address, suggestions:
         if gui.inside(metrics.reload, by, 30, 30, x, y) {
             return 3
         }
+        if address.editing {
+            let chip = address_chip_box(vertical)
+            if gui.inside(chip.x, chip.y, chip.w, chip.h, x, y) {
+                return 10
+            }
+        }
         if gui.inside(metrics.address, toolbar_y(vertical), metrics.address_w, 34, x, y) {
             return 4
+        }
+        if gui.inside(metrics.voice, by, 30, 30, x, y) {
+            return 14
         }
         if gui.inside(metrics.star, by, 30, 30, x, y) {
             return 5
@@ -2337,28 +3066,63 @@ fn hover_target(x: Int, y: Int, session: Session, address: Address, suggestions:
                 }
                 i = i + 1
             }
-            if gui.inside(gui.width() - 46, 8, 30, 30, x, y) {
-                return 8
             }
-        }
     }
 
-    if vertical && x < sidebar_width() && y >= chrome_height(true) {
-        var i = 0
-        while i < session.tabs.len() {
-            let tx = tab_box_x(session, i)
-            let ty = tab_box_y(i, true)
-            let tw = tab_box_w(session.tabs.len(), true)
-            if gui.inside(tx, ty, tw, 32, x, y) {
-                if x >= tx + tw - 26 {
-                    return 50 + i
-                }
-                return 40 + i
-            }
-            i = i + 1
+    if vertical && y >= chrome_height(true) {
+        let toggle = collapse_box(session)
+        if gui.inside(toggle.x, toggle.y, toggle.w, toggle.h, x, y) {
+            return 11
         }
-        if gui.inside(8, 64, sidebar_width() - 16, 28, x, y) {
-            return 8
+        if session.rail {
+            let plus = new_tab_box(session)
+            if gui.inside(plus.x, plus.y, plus.w, plus.h, x, y) {
+                return 8
+            }
+            var i = 0
+            if x < rail_width() {
+                while i < session.tabs.len() {
+                    let box = rail_tab_box(i)
+                    if gui.inside(box.x, box.y, box.w, box.h, x, y) {
+                        return 40 + i
+                    }
+                    i = i + 1
+                }
+                return 0 - 1
+            }
+            if x < rail_panel_width() {
+                let nb = panel_new_tab_box(session)
+                if gui.inside(nb.x, nb.y, nb.w, nb.h, x, y) {
+                    return 8
+                }
+                while i < session.tabs.len() {
+                    let box = overlay_tab_box(i)
+                    if gui.inside(box.x, box.y, box.w, box.h, x, y) {
+                        return 40 + i
+                    }
+                    i = i + 1
+                }
+            }
+            return 0 - 1
+        }
+        if x < sidebar_width() {
+            var i = 0
+            while i < session.tabs.len() {
+                let tx = tab_box_x(session, i)
+                let ty = tab_box_y(i, true)
+                let tw = tab_box_w(session.tabs.len(), true)
+                if gui.inside(tx, ty, tw, 32, x, y) {
+                    if x >= tx + tw - 26 {
+                        return 50 + i
+                    }
+                    return 40 + i
+                }
+                i = i + 1
+            }
+            let plus = new_tab_box(session)
+            if gui.inside(plus.x, plus.y, plus.w, plus.h, x, y) {
+                return 8
+            }
         }
     }
     return 0 - 1
@@ -2390,6 +3154,12 @@ fn toggle_bookmark(handle: Int, store: Store) -> Imported {
     }
     next.dirty_bookmarks = true
     return Imported { store: next, message: message }
+}
+
+fn open_new_tab(session: Session, store: Store, notice: Notice) -> ClickAction {
+    let next = append_tab(session, new_fixture_tab(gui.native_view(), gui.width(), gui.height()))
+    engine.focus_chrome(active_handle(next))
+    return click_action(next, address_begin(""), store, notice)
 }
 
 fn handle_click(handle: Int, x: Int, y: Int, clicks: Int, current: Address, session: Session, suggestions: List<String>, store: Store, downloads: Downloads) -> ClickAction {
@@ -2521,33 +3291,67 @@ fn handle_click(handle: Int, x: Int, y: Int, clicks: Int, current: Address, sess
     }
 
     if session.vertical {
-        if x < sidebar_width() && y >= chrome_height(true) {
-            if gui.inside(8, 64, sidebar_width() - 16, 28, x, y) {
-                let next = append_tab(session, new_fixture_tab(gui.native_view(), gui.width(), gui.height()))
-                engine.focus_chrome(active_handle(next))
-                return click_action(next, address_begin(""), store, notice)
+        if y >= chrome_height(true) {
+            let toggle = collapse_box(session)
+            if gui.inside(toggle.x, toggle.y, toggle.w, toggle.h, x, y) {
+                var next = session
+                next.rail = !session.rail
+                save_layout(store, next.vertical, next.rail)
+                return click_action(next, address_idle(), store, Notice {
+                    text: if next.rail { "Sidebar collapsed · hover the rail" } else { "Sidebar pinned" },
+                    until: gui.now() + 2400,
+                })
             }
-            var i = 0
-            while i < count {
-                let tx = tab_box_x(session, i)
-                let ty = tab_box_y(i, true)
-                let tw = tab_box_w(count, true)
-                if gui.inside(tx, ty, tw, 32, x, y) {
-                    if x >= tx + tw - 26 {
-                        return click_action(close_tab(session, i, gui.native_view(), gui.width(), gui.height()), address_idle(), store, notice)
-                    }
-                    return click_action(select_tab(session, i), address_idle(), store, notice)
+            if session.rail && x >= rail_width() && x < rail_panel_width() {
+                let nb = panel_new_tab_box(session)
+                if gui.inside(nb.x, nb.y, nb.w, nb.h, x, y) {
+                    return open_new_tab(session, store, notice)
                 }
-                i = i + 1
+                var i = 0
+                while i < count {
+                    let box = overlay_tab_box(i)
+                    if gui.inside(box.x, box.y, box.w, box.h, x, y) {
+                        return click_action(select_tab(session, i), address_idle(), store, notice)
+                    }
+                    i = i + 1
+                }
+                return click_action(session, current, store, notice)
+            }
+            let plus = new_tab_box(session)
+            if gui.inside(plus.x, plus.y, plus.w, plus.h, x, y) {
+                return open_new_tab(session, store, notice)
+            }
+            if session.rail {
+                var i = 0
+                if x < rail_width() {
+                    while i < count {
+                        let box = rail_tab_box(i)
+                        if gui.inside(box.x, box.y, box.w, box.h, x, y) {
+                            return click_action(select_tab(session, i), address_idle(), store, notice)
+                        }
+                        i = i + 1
+                    }
+                }
+                return click_action(session, current, store, notice)
+            }
+            if x < sidebar_width() {
+                var i = 0
+                while i < count {
+                    let tx = tab_box_x(session, i)
+                    let ty = tab_box_y(i, true)
+                    let tw = tab_box_w(count, true)
+                    if gui.inside(tx, ty, tw, 32, x, y) {
+                        if x >= tx + tw - 26 {
+                            return click_action(close_tab(session, i, gui.native_view(), gui.width(), gui.height()), address_idle(), store, notice)
+                        }
+                        return click_action(select_tab(session, i), address_idle(), store, notice)
+                    }
+                    i = i + 1
+                }
             }
             return click_action(session, current, store, notice)
         }
     } else if y < 44 {
-        if gui.inside(gui.width() - 46, 8, 30, 30, x, y) {
-            let next = append_tab(session, new_fixture_tab(gui.native_view(), gui.width(), gui.height()))
-            engine.focus_chrome(active_handle(next))
-            return click_action(next, address_begin(""), store, notice)
-        }
         var i = 0
         while i < count {
             let tx = tab_box_x(session, i)
@@ -2569,12 +3373,28 @@ fn handle_click(handle: Int, x: Int, y: Int, clicks: Int, current: Address, sess
 
     let metrics = toolbar_metrics(session.vertical)
     let by = toolbar_y(session.vertical) + 2
+    if current.editing {
+        let chip = address_chip_box(session.vertical)
+        if gui.inside(chip.x, chip.y, chip.w, chip.h, x, y) {
+            let provider = address_edit.next_search_provider(store.search)
+            save_setting(store, "search", provider)
+            var next_store = store
+            next_store.search = provider
+            return click_action(session, current, next_store, Notice {
+                text: "Search: " + address_edit.search_label(provider),
+                until: gui.now() + 2600,
+            })
+        }
+    }
     if gui.inside(metrics.address, toolbar_y(session.vertical), metrics.address_w, 34, x, y) {
         engine.focus_chrome(handle)
         let live = engine.page_url(handle)
         let scroll = address_scroll(live, address_edit.char_count(live), metrics.address_w - 34)
-        let at = address_caret_at(live, x - (metrics.address + 18) + scroll)
-        if clicks >= 3 {
+        let at = address_caret_at(live, x - address_text_x(session.vertical, true) + scroll)
+        // Chrome's rule: a press on an unfocused field selects the whole URL,
+        // so typing replaces it; later presses place the caret, and a
+        // double-click takes the word under the pointer.
+        if clicks >= 3 || !current.editing {
             return click_action(session, address_select_all(address_begin_cursor(live, 0)), store, notice)
         }
         if clicks == 2 {
@@ -2603,6 +3423,9 @@ fn handle_click(handle: Int, x: Int, y: Int, clicks: Int, current: Address, sess
         }
         return click_action(session, next_address, store, notice)
     }
+    if gui.inside(metrics.voice, by, 30, 30, x, y) {
+        return click_action(session, next_address, store, toggle_listen(handle, store))
+    }
     if gui.inside(metrics.star, by, 30, 30, x, y) {
         let toggled = toggle_bookmark(handle, store)
         return click_action(session, next_address, toggled.store, Notice { text: toggled.message, until: gui.now() + 2600 })
@@ -2619,10 +3442,10 @@ fn handle_click(handle: Int, x: Int, y: Int, clicks: Int, current: Address, sess
     }
     if gui.inside(metrics.layout, by, 30, 30, x, y) {
         let next = toggle_layout(session)
-        save_layout(store, next.vertical)
+        save_layout(store, next.vertical, next.rail)
         return click_action(next, next_address, store, Notice {
-            text: if next.vertical { "Vertical tabs" } else { "Horizontal tabs" },
-            until: gui.now() + 2200,
+            text: layout_notice(next),
+            until: gui.now() + 2400,
         })
     }
     return click_action(session, next_address, store, notice)
@@ -2651,6 +3474,86 @@ fn notice_idle() -> Notice {
     return Notice { text: "", until: 0 }
 }
 
+// ---------- reading aloud ----------
+// The page text comes from WebKit (document.body.innerText); the voice comes
+// from the host. Nothing here claims a voice the machine does not have.
+
+fn stored_voice(store: Store) -> String {
+    if store.settings_path.len() == 0 {
+        return ""
+    }
+    return library.setting_value(gui.read(store.settings_path), "voice")
+}
+
+fn english_voices() -> List<String> {
+    var rows: List<String> = []
+    for row in speech.voice_rows() {
+        if library.field(row, 2).starts_with("en") {
+            rows.push(row)
+        }
+    }
+    return rows
+}
+
+fn voice_label(id: String) -> String {
+    for row in speech.voice_rows() {
+        if library.field(row, 0) == id {
+            return library.field(row, 1)
+        }
+    }
+    return "the system voice"
+}
+
+fn toggle_listen(handle: Int, store: Store) -> Notice {
+    if !speech.voice_available() {
+        return Notice { text: "Speech is not available on this system", until: gui.now() + 2600 }
+    }
+    if speech.speaking() {
+        speech.stop_reading()
+        return Notice { text: "Reading stopped", until: gui.now() + 1800 }
+    }
+    let text = engine.body_text(handle).trim()
+    if text.len() == 0 {
+        return Notice { text: "Nothing to read on this page", until: gui.now() + 2400 }
+    }
+    var id = stored_voice(store)
+    if id.len() == 0 {
+        id = speech.default_voice()
+    }
+    if !speech.say(text, id, 50) {
+        return Notice { text: "Could not start reading", until: gui.now() + 2400 }
+    }
+    let note = speech.voice_note()
+    if note.len() > 0 {
+        return Notice { text: note + " · reading with " + voice_label(id), until: gui.now() + 3800 }
+    }
+    return Notice { text: "Reading with " + voice_label(id), until: gui.now() + 2400 }
+}
+
+fn cycle_voice(store: Store) -> Notice {
+    let rows = english_voices()
+    if rows.len() == 0 {
+        return Notice { text: "No English voices installed", until: gui.now() + 2400 }
+    }
+    let current = stored_voice(store)
+    var next = 0
+    var i = 0
+    while i < rows.len() {
+        if library.field(rows[i], 0) == current {
+            next = (i + 1) % rows.len()
+        }
+        i = i + 1
+    }
+    let id = library.field(rows[next], 0)
+    save_setting(store, "voice", id)
+    let quality = library.field(rows[next], 3)
+    let tag = if quality == "2" { " · premium" } else if quality == "1" { " · enhanced" } else { "" }
+    return Notice {
+        text: "Voice: " + library.field(rows[next], 1) + " · " + library.field(rows[next], 2) + tag,
+        until: gui.now() + 3200,
+    }
+}
+
 fn handle_key(handle: Int, code: Int, mods: Int, current: Address, session: Session, suggestions: List<String>, store: Store) -> KeyAction {
     let command = mods % 2 == 1
     let shift = (mods / 2) % 2 == 1
@@ -2675,11 +3578,17 @@ fn handle_key(handle: Int, code: Int, mods: Int, current: Address, session: Sess
     }
     if command && shift && code == 101 {
         let next = toggle_layout(session)
-        save_layout(store, next.vertical)
+        save_layout(store, next.vertical, next.rail)
         return key_action(next, current, store, Notice {
-            text: if next.vertical { "Vertical tabs" } else { "Horizontal tabs" },
-            until: gui.now() + 2200,
+            text: layout_notice(next),
+            until: gui.now() + 2400,
         }, false)
+    }
+    if command && shift && code == 37 {
+        return key_action(session, current, store, toggle_listen(handle, store), false)
+    }
+    if command && shift && code == 9 {
+        return key_action(session, current, store, cycle_voice(store), false)
     }
     if command && shift && code == 105 {
         let imported = import_from_google(store)
@@ -2692,6 +3601,19 @@ fn handle_key(handle: Int, code: Int, mods: Int, current: Address, session: Sess
         let toggled = toggle_bookmark(handle, store)
         return key_action(session, current, toggled.store, Notice {
             text: toggled.message,
+            until: gui.now() + 2600,
+        }, false)
+    }
+
+    if command && shift && code == 112 {
+        // Cmd+Shift+P cycles the built-in themes; theme.tsv can override any
+        // role on top of whichever one is selected.
+        let next = cycle_theme(store.theme)
+        save_setting(store, "theme", next)
+        var next_store = store
+        next_store.theme = next
+        return key_action(session, current, next_store, Notice {
+            text: "Theme: " + theme_label(next),
             until: gui.now() + 2600,
         }, false)
     }
@@ -2816,9 +3738,14 @@ fn auto_close(session: Session, theme: Chrome, address: Address, store: Store) {
     let final_state = engine.wait(handle, 8000)
     sync_visibility(session)
     let merged = library.merge(store.bookmarks, store.visits)
-    let suggestions = if address.editing { library.suggest(merged, address.text, sug_rows()) } else { library.empty() }
+    let suggestions = if address.editing { with_search_row(library.suggest(merged, address.text, sug_rows()), address.text, store.search) } else { library.empty() }
+    let rail_open = session.rail && gui.env("NOVA_BROWSER_RAIL_OPEN") == "1"
+    if gui.env("NOVA_BROWSER_READER") == "1" {
+        let notice = toggle_listen(active_handle(session), store)
+        println("reader: chars=${engine.body_text(active_handle(session)).len()} backend=${speech.voice_backend()} voice=${stored_voice(store)} speaking=${flag(speech.speaking())} notice=${notice.text}")
+    }
     gui.begin()
-    draw_chrome(handle, theme, address, session, suggestions, fx_new(), notice_idle(), store, 0 - 1, downloads_view(store), Tooltip { text: "", x: 0, y: 0 })
+    draw_chrome(handle, theme, address, session, suggestions, fx_new(), notice_idle(), store, 0 - 1, downloads_view(store), Tooltip { text: "", x: 0, y: 0 }, rail_open)
     gui.present()
     settle(24)
     let target = gui.env("NOVA_BROWSER_SNAPSHOT")
@@ -2832,7 +3759,7 @@ fn auto_close(session: Session, theme: Chrome, address: Address, store: Store) {
         ui_saved = gui.save_png(ui_target)
     }
     let title = engine.page_title(handle)
-    let layout_word = if session.vertical { "vertical" } else { "horizontal" }
+    let layout_word = if session.rail { "rail" } else if session.vertical { "vertical" } else { "horizontal" }
     save_session(store, session)
     println("browser: state=${state_word(final_state)} title=${title} snapshot=${saved} ui=${ui_saved} tabs=${session.tabs.len()} layout=${layout_word}")
 }
@@ -2879,6 +3806,7 @@ fn mark_active_url(session: Session, url: String) -> Session {
         active: session.active,
         closed: session.closed,
         vertical: session.vertical,
+        rail: session.rail,
         seen: session.seen,
     }
 }
@@ -2898,6 +3826,7 @@ fn refresh_titles(session: Session) -> Session {
         active: session.active,
         closed: session.closed,
         vertical: session.vertical,
+        rail: session.rail,
         seen: session.seen,
     }
 }
@@ -2936,7 +3865,7 @@ fn save_session(store: Store, session: Session) {
     gui.write(store.session_path, library.session_encode(urls, saved_active))
 }
 
-fn restore_session(store: Store, vertical: Bool) -> Session {
+fn restore_session(store: Store, vertical: Bool, rail: Bool) -> Session {
     let text = if store.session_path.len() > 0 { gui.read(store.session_path) } else { "" }
     let urls = if gui.env("NOVA_BROWSER_NO_RESTORE").trim() != "1" {
         library.session_urls(text)
@@ -2957,7 +3886,7 @@ fn restore_session(store: Store, vertical: Bool) -> Session {
         if fresh.handle > 0 {
             tabs.push(fresh)
         }
-        return Session { tabs: tabs, active: 0, closed: [], vertical: vertical, seen: "" }
+        return Session { tabs: tabs, active: 0, closed: [], vertical: vertical, rail: rail, seen: "" }
     }
     var active = library.session_active(text)
     if active < 0 {
@@ -2966,19 +3895,19 @@ fn restore_session(store: Store, vertical: Bool) -> Session {
     if active >= tabs.len() {
         active = tabs.len() - 1
     }
-    return Session { tabs: tabs, active: active, closed: [], vertical: vertical, seen: "" }
+    return Session { tabs: tabs, active: active, closed: [], vertical: vertical, rail: rail, seen: "" }
 }
 
-fn open_session(store: Store, vertical: Bool, initial: String) -> Session {
+fn open_session(store: Store, vertical: Bool, rail: Bool, initial: String) -> Session {
     if initial.len() > 0 {
         let first = new_url_tab(gui.native_view(), gui.width(), gui.height(), initial)
         var tabs: List<Tab> = []
         if first.handle > 0 {
             tabs.push(first)
         }
-        return Session { tabs: tabs, active: 0, closed: [], vertical: vertical, seen: "" }
+        return Session { tabs: tabs, active: 0, closed: [], vertical: vertical, rail: rail, seen: "" }
     }
-    return restore_session(store, vertical)
+    return restore_session(store, vertical, rail)
 }
 
 
@@ -3085,7 +4014,7 @@ fn bench_run(session: Session, theme: Chrome, address: Address, store: Store) {
         let started = gui.now()
         let suggestions = library.suggest(merged, address.text, sug_rows())
         gui.begin()
-        draw_chrome(active_handle(session), theme, address, session, suggestions, fx, notice_idle(), store, 3, downloads_view(store), Tooltip { text: "", x: 0, y: 0 })
+        draw_chrome(active_handle(session), theme, address, session, suggestions, fx, notice_idle(), store, 3, downloads_view(store), Tooltip { text: "", x: 0, y: 0 }, false)
         gui.present()
         let spent = gui.now() - started
         total = total + spent
@@ -3135,14 +4064,23 @@ fn main() {
         return
     }
 
-    let theme = chrome_theme()
+    var theme = load_theme(store)
+    gui.set_appearance(theme_is_light(resolved_theme_name(store)))
     let settings_text = gui.read(store.settings_path)
-    var vertical = library.setting_value(settings_text, "layout") == "vertical"
+    let layout_setting = library.setting_value(settings_text, "layout")
+    var vertical = layout_setting == "vertical" || layout_setting == "rail"
+    var rail = layout_setting == "rail"
     if gui.env("NOVA_BROWSER_LAYOUT").trim() == "vertical" {
         vertical = true
+        rail = false
+    }
+    if gui.env("NOVA_BROWSER_LAYOUT").trim() == "rail" {
+        vertical = true
+        rail = true
     }
     if gui.env("NOVA_BROWSER_LAYOUT").trim() == "horizontal" {
         vertical = false
+        rail = false
     }
 
     var initial = gui.env("NOVA_BROWSER_URL")
@@ -3150,7 +4088,7 @@ fn main() {
         initial = gui.arg(1)
     }
 
-    var session = open_session(store, vertical, initial)
+    var session = open_session(store, vertical, rail, initial)
     if session.tabs.len() == 0 {
         println("browser: could not create the WebKit view")
         gui.close()
@@ -3224,12 +4162,16 @@ fn main() {
     var drawn_highlight = 0 - 2
     var drawn_bookmarks = 0 - 1
     var drawn_shelf = 0 - 1
+    var drawn_rail_open = 0 - 1
+    var drawn_speaking = 0 - 1
     var last_titles = 0
     var last_signature = ""
+    var drawn_theme = store.theme
     var suggestions: List<String> = []
     var sug_text = ""
     var sug_books = 0 - 1
     var sug_visits = 0 - 1
+    var sug_search = ""
     var sug_ready = false
     var drag_tab = 0 - 1
     var drag_origin = 0
@@ -3245,7 +4187,21 @@ fn main() {
         let height = gui.height()
         let handle = active_handle(session)
 
-        let left = page_left(session)
+        // Hovering the collapsed rail widens it for names, so the page gives
+        // that width back while it is open; the chrome draws under the page
+        // view and would otherwise hide the list.
+        var rail_hover = false
+        if have_pointer && session.vertical && session.rail {
+            rail_hover = pointer_x < rail_panel_width() && pointer_y >= chrome_height(true)
+        }
+        // Visual-check hook: open the rail's name panel without a pointer.
+        if session.rail && gui.env("NOVA_BROWSER_RAIL_OPEN") == "1" {
+            rail_hover = true
+        }
+        var left = page_left(session)
+        if rail_hover {
+            left = rail_panel_width() + 1
+        }
         let top = page_top(session)
         var page_w = width - left
         var page_h = height - top
@@ -3284,13 +4240,17 @@ fn main() {
         if address.editing {
             // Rebuilding the merged library and re-scoring it every frame was
             // the main source of hitching while typing in the field.
-            if !sug_ready || address.text != sug_text || store.bookmarks.len() != sug_books || store.visits.len() != sug_visits {
+            if !sug_ready || address.text != sug_text || store.bookmarks.len() != sug_books || store.visits.len() != sug_visits || store.search != sug_search {
                 let merged = library.merge(store.bookmarks, store.visits)
-                suggestions = library.suggest(merged, address.text, sug_rows())
+                suggestions = with_search_row(library.suggest(merged, address.text, sug_rows()), address.text, store.search)
                 sug_text = address.text
                 sug_books = store.bookmarks.len()
                 sug_visits = store.visits.len()
+                sug_search = store.search
                 sug_ready = true
+                if gui.env("NOVA_BROWSER_TRACE").len() > 0 {
+                    println("browser: suggestions=${suggestions.len()} provider=${store.search}")
+                }
             }
             if address.highlight >= suggestions.len() {
                 address.highlight = suggestions.len() - 1
@@ -3352,6 +4312,12 @@ fn main() {
             session.seen = ""
         }
         store = save_store(store)
+        if store.theme != drawn_theme {
+            theme = load_theme(store)
+            drawn_theme = store.theme
+            let now_name = resolved_theme_name(store)
+            gui.set_appearance(theme_is_light(now_name))
+        }
 
         let signature = session_signature(session)
         if signature != last_signature {
@@ -3376,6 +4342,7 @@ fn main() {
         } else {
             hover = 0 - 1
         }
+        gui.set_cursor(cursor_for(handle, hover))
         if hover != last_hover {
             last_hover = hover
             hover_since = now
@@ -3396,13 +4363,15 @@ fn main() {
                     flag(address.editing) != drawn_editing || address.text != drawn_text ||
                     address.cursor != drawn_cursor || address.highlight != drawn_highlight ||
                     store.bookmarks.len() != drawn_bookmarks || flag(store.downloads_open) != drawn_shelf ||
-                    flag(session.vertical) != drawn_vertical || notice.text.len() > 0 || drawn_notice == 1 ||
+                    flag(session.vertical) != drawn_vertical || flag(rail_hover) != drawn_rail_open ||
+                    flag(speech.speaking()) != drawn_speaking ||
+                    notice.text.len() > 0 || drawn_notice == 1 ||
                     fx_busy(fx) || flag(tip_visible) != drawn_tooltip || drag_started
 
         if dirty {
             fx = fx_step(fx, hover, address.editing)
             gui.begin()
-            draw_chrome(handle, theme, address, session, suggestions, fx, notice, store, hover, downloads, tooltip)
+            draw_chrome(handle, theme, address, session, suggestions, fx, notice, store, hover, downloads, tooltip, rail_hover)
             if drag_started && !session.vertical {
                 let slot = tab_slot_at(session, pointer_x)
                 gui.round_rect(tab_box_x(session, slot), 8, 2, 30, 1, theme.orange)
@@ -3423,6 +4392,8 @@ fn main() {
             drawn_highlight = address.highlight
             drawn_bookmarks = store.bookmarks.len()
             drawn_shelf = flag(store.downloads_open)
+            drawn_rail_open = flag(rail_hover)
+            drawn_speaking = flag(speech.speaking())
         }
 
         let event = gui.next_event()
@@ -3451,7 +4422,7 @@ fn main() {
             }
             // A press on a tab arms a drag; the move threshold below decides
             // whether it was a click or a reorder.
-            if event.code == 1 && !session.vertical && event.y < 44 && event.x >= 84 && event.x < gui.width() - 46 {
+            if event.code == 1 && !session.vertical && event.y < 44 && event.x >= 84 && event.x < gui.width() - 8 {
                 let slot = tab_slot_at(session, event.x)
                 let tx = tab_box_x(session, slot)
                 if event.x < tx + tab_width(session.tabs.len()) - 24 {
@@ -3505,10 +4476,14 @@ fn main() {
             }
         }
         gui.pump()
-        if dirty {
-            gui.sleep(6)
-        } else {
-            gui.sleep(12)
+        // Input already waiting: napping here is what made hover trail the
+        // pointer, so only truly idle passes sleep.
+        if event.kind == gui.event_none() {
+            if dirty {
+                gui.sleep(6)
+            } else {
+                gui.sleep(12)
+            }
         }
     }
 

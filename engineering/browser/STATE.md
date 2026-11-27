@@ -3,7 +3,7 @@
 Updated: 2026-11-26
 Branch: `main`
 Last known good compiler checkpoint: `cfa00e3` (before browser work)
-Browser: **0.7.6 installed at `/Applications/Nova Browser.app`**
+Browser: **0.8.6 installed at `/Applications/Nova Browser.app`**
 Browser working tree: uncommitted; see `git status`
 Active gate: G0 WebKit; G1 WebCore not started
 Active task: **WB-04.002 — downloads** (0.7.5 persisted completed downloads;
@@ -227,6 +227,94 @@ Active task: **WB-04.002 — downloads** (0.7.5 persisted completed downloads;
     accessibility tree. `tests/downloads.sh` requires the button after a
     restart, then relaunches with the hook and requires `downloads.tsv` to be
     empty.
+
+- **0.7.7 — hover and pointer**
+  - Motion events now coalesce in the host: a pass keeps only the newest
+    position instead of replaying a queue that grew while the loop slept 6 ms
+    per event. Idle passes sleep; passes with input waiting do not.
+  - The pointer says what a press would do: a hand over toolbar buttons, tabs,
+    suggestions, shelf rows and the failure-card buttons, an I-beam over the
+    address field, an arrow over disabled back/forward and plain chrome.
+    `gui.set_cursor` is re-applied through the view's cursor rects, so AppKit
+    resetting to an arrow on entry does not undo it.
+  - Hover fade step raised from 90 to 240 per pass, so a target lights up in
+    roughly four frames instead of eleven.
+
+- **0.7.8 — search from the address bar**
+  - Google is the default engine; plain text becomes a query, and with search
+    off it is still rejected rather than guessed. The `G` chip inside the field
+    names the engine and cycles Google → Brave → off → DuckDuckGo on a press,
+    persisting the choice; Cmd+Shift+S does the same.
+  - While typing a query, the first suggestion row reads `Search Google for
+    "…"` with the real query URL, drawn with a vector magnifier, so Enter's
+    destination is visible before it is pressed. The row is built locally; no
+    network request is made.
+  - The stray scheme square left of the URL (amber on `http://`) is gone; the
+    URL text already carries its scheme.
+- **0.7.9 / 0.8.0 — the field and the frame**
+  - The address field is a pill (radius 17) and glows orange while editing.
+    Hovered toolbar buttons and the active tab carry the same soft halo.
+  - The loading bar has seven clock-driven sparks and the toolbar has a six-band
+    top-down wash. Both are stateless; the bench stayed at 7 ms per frame.
+  - The **+** control in the tab strip already creates a tab (hover 8, AX
+    `New tab`); nothing new was needed for it.
+
+- **0.8.1 — address field like Chrome**
+  - Hovering the field shows the I-beam even before it is focused (hover
+    target 4 maps to the text cursor); the engine chip keeps its hand.
+  - A press on the unfocused field selects the whole URL, so typing replaces
+    it. Later presses place the caret, a double-click takes the word, and a
+    triple-click selects all.
+
+- **0.8.2–0.8.4 — themes and light mode**
+  - Gruvbox stays the default. `Cmd+Shift+P` cycles Gruvbox → Midnight →
+    Light → Solarized → Nova Dark, persists the choice as `theme` in
+    `settings.tsv`, and names the result in a notice; `NOVA_BROWSER_THEME`
+    forces one for a run.
+  - `theme.tsv` in the profile overrides any of the 15 roles with
+    `key<TAB>#rrggbb` (lines whose key starts with `#` are comments), which is
+    both "import a theme" and "make your own".
+  - Light and Solarized also switch the AppKit appearance, so native menus and
+    the page's `prefers-color-scheme` follow the chrome instead of staying dark.
+  - The field border is now a one-point rounded ring drawn under the fill;
+    `stroke_rect` has no radius, and its square outline was the box around the
+    pill. The engine chip uses the same ring.
+
+- **0.8.6 — reading aloud, chrome above the page**
+  - A speaker button and Cmd+Shift+L read the page with a system voice;
+    Cmd+Shift+V cycles the installed English voices and `settings.tsv voice`
+    keeps the choice. Text comes from WebKit's `document.body.innerText`.
+  - `runtime/speech.m` is a polled AVSpeechSynthesizer adapter (speak, stop,
+    pause, resume, voice list ordered by quality). nova-tool compiles it only
+    when the IR calls `nova_speech_*` and links AVFoundation.
+  - Kokoro is a semantic seam, not a shipped voice: `NOVA_BROWSER_FAT=1` or
+    `NOVA_BROWSER_VOICE=kokoro` asks for it, and the app reports the missing
+    model instead of pretending. No ONNX runtime is bundled.
+  - Chrome can now paint above a page. `gui.overlay` registers rectangles; the
+    host copies those pixels from the frame into a transparent view above the
+    WebView and re-enters clicks there through the normal event queue. The
+    address suggestion list is the first user, so it is visible and clickable
+    below the toolbar instead of hidden behind the page.
+
+- **0.8.5 — tab layouts, toolbar row, glyphs, imports, page agent**
+  - Tabs have three layouts: top strip, left sidebar, collapsed rail. The
+    toolbar button and Cmd+Shift+E cycle them; `settings.tsv layout` stores
+    `horizontal`, `vertical` or `rail`.
+  - The horizontal strip no longer has a plus, so tabs use the full width.
+    In both vertical layouts the New Tab row sits under the last tab; the rail
+    keeps a `+` there too.
+  - Hovering the rail opens a 210 px list of tab titles over the page; clicking
+    the chevron pins the sidebar back open. The page rect gives the panel its
+    width while open, because the chrome is painted under the WebView and a
+    floating panel would be hidden.
+  - Toolbar controls are 30 px buttons with an 8 px gap on each side of the
+    field, centred on its 34 px height. Back, forward, reload/stop, star,
+    download, help and the sidebar toggle are line-drawn glyphs, not font
+    characters, and a button paints a rounded wash and glow only on hover.
+  - Bookmark import now discovers Chromium, Brave, Edge, Arc and Vivaldi
+    profiles as well as Chrome; all share the same JSON file.
+  - The page user agent is a Safari/WebKit string so Google's embedded-WebView
+    OAuth refusal is not triggered; `NOVA_BROWSER_UA` overrides it.
 
 ## Limits
 

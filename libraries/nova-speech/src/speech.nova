@@ -1,0 +1,94 @@
+// nova-speech — a polled binding to macOS text-to-speech.
+//
+// Reading a page aloud is a host feature, not a WebKit one: the browser asks
+// WebKit for the page text and hands that text here. Speech is state, not a
+// callback, so a frame loop can draw a "speaking" control by polling.
+//
+// Voices are the ones macOS ships. A neural voice (Kokoro) lives in a fat
+// build; `backend` and `note` say what is actually installed instead of
+// implying a voice that cannot be synthesized.
+
+extern "C" fn nova_speech_available() -> Int
+extern "C" fn nova_speech_voice_count() -> Int
+extern "C" fn nova_speech_voice_id(index: Int) -> String
+extern "C" fn nova_speech_voice_name(index: Int) -> String
+extern "C" fn nova_speech_voice_language(index: Int) -> String
+extern "C" fn nova_speech_voice_quality(index: Int) -> Int
+extern "C" fn nova_speech_default_voice() -> String
+extern "C" fn nova_speech_speak(text: String, voice_id: String, rate: Int) -> Int
+extern "C" fn nova_speech_stop() -> Unit
+extern "C" fn nova_speech_pause() -> Unit
+extern "C" fn nova_speech_resume() -> Unit
+extern "C" fn nova_speech_speaking() -> Int
+extern "C" fn nova_speech_paused() -> Int
+extern "C" fn nova_speech_backend() -> String
+extern "C" fn nova_speech_kokoro_ready() -> Int
+extern "C" fn nova_speech_kokoro_wanted() -> Int
+extern "C" fn nova_speech_note() -> String
+
+// Names are prefixed where a plain verb would collide with an engine verb
+// (`stop`, `speak`) in a program that imports both modules.
+fn voice_available() -> Bool {
+    return nova_speech_available() == 1
+}
+
+// One row per installed voice: id, name, language, quality (0/1/2).
+fn voice_rows() -> List<String> {
+    var rows: List<String> = []
+    let count = nova_speech_voice_count()
+    var i = 0
+    while i < count {
+        rows.push(nova_speech_voice_id(i) + "\t" + nova_speech_voice_name(i) + "\t" + nova_speech_voice_language(i) + "\t" + "${nova_speech_voice_quality(i)}")
+        i = i + 1
+    }
+    return rows
+}
+
+fn default_voice() -> String {
+    return nova_speech_default_voice()
+}
+
+// rate is a percentage of the system default: 100 is normal, 50 is a calm
+// reader, 200 is fast.
+fn say(text: String, voice: String, rate: Int) -> Bool {
+    return nova_speech_speak(text, voice, rate) == 1
+}
+
+fn stop_reading() {
+    nova_speech_stop()
+}
+
+fn pause_reading() {
+    nova_speech_pause()
+}
+
+fn resume_reading() {
+    nova_speech_resume()
+}
+
+fn speaking() -> Bool {
+    return nova_speech_speaking() == 1
+}
+
+fn paused() -> Bool {
+    return nova_speech_paused() == 1
+}
+
+// "system" or "kokoro".
+fn voice_backend() -> String {
+    return nova_speech_backend()
+}
+
+fn kokoro_ready() -> Bool {
+    return nova_speech_kokoro_ready() == 1
+}
+
+// True when a fat build or NOVA_BROWSER_VOICE=kokoro asked for the neural voice.
+fn kokoro_wanted() -> Bool {
+    return nova_speech_kokoro_wanted() == 1
+}
+
+// Why the requested voice is not in use, or "".
+fn voice_note() -> String {
+    return nova_speech_note()
+}

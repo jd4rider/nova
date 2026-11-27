@@ -419,6 +419,17 @@ int64_t nova_webview_create(int64_t parent_handle, int64_t x, int64_t y,
         if (!web) return 0;
         web.allowsBackForwardNavigationGestures = YES;
         web.autoresizingMask = NSViewNotSizable;
+        /* Google refuses OAuth in an embedded WebView unless the agent looks
+         * like Safari; without this its "browser may not be secure" page is a
+         * dead end for sign-in. The engine underneath is the same WebKit, so a
+         * Safari token is accurate about the renderer, and NOVA_BROWSER_UA can
+         * override it with the full browser's own string. */
+        NSString *userAgent = [[[NSProcessInfo processInfo] environment] objectForKey:@"NOVA_BROWSER_UA"];
+        if (userAgent.length == 0) {
+            userAgent = @"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                        @"AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4 Safari/605.1.15";
+        }
+        web.customUserAgent = userAgent;
 
         NovaWebViewEntry *entry = [[NovaWebViewEntry alloc] init];
         entry.webView = web;

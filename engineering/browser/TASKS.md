@@ -33,8 +33,10 @@ Each task needs a reproducible acceptance check before it is marked done.
   and live trace: create count=2, close count=1, restore count=2.
 - **WB-03.002.a — Tab hardening.** PARTIAL. Restart session restore, overflow
   scrolling, drag/reorder and the tab context menu (New Tab, Duplicate Tab,
-  Close Tab, Close Other Tabs) landed in 0.6.0/0.7.0. Adversarial
-  stale-callback/focus stress still has no test.
+  Close Tab, Close Other Tabs) landed in 0.6.0/0.7.0. 0.8.5 adds the three tab
+  layouts (top, sidebar, rail), New Tab under the vertical list, the hover
+  reveal and a chevron that pins the sidebar, with the layout persisted.
+  Adversarial stale-callback/focus stress still has no test.
 - **WB-03.003 — Error and offline UI.** DONE. Nova-drawn panel, page view
   hidden while failed, category + WebKit detail + attempted URL, Try Again/Back,
   no certificate bypass. Evidence: failure snapshot, library failure-wording
@@ -42,6 +44,8 @@ Each task needs a reproducible acceptance check before it is marked done.
 - **WB-03.005 — Chrome polish and motion.** DONE. `gui.now()` easing, hover on
   tabs/close/buttons/suggestions, blinking caret, WebKit-driven loading bar,
   stop button, persisted tab layout. Evidence: horizontal/vertical snapshots.
+  0.8.5 lays the controls on an 8 px grid around the field and replaces font
+  glyphs with line-drawn marks so no icon depends on font coverage.
 - **WB-03.004 — Accessibility/IME/keyboard.** PARTIAL. `NovaGuiView` is a full
   `NSTextInputClient`; unmodified keys go through `interpretKeyEvents:`, editing
   selectors map back to Nova key codes, marked text is drawn under the caret,
@@ -60,6 +64,9 @@ Each task needs a reproducible acceptance check before it is marked done.
   `NOVA_BROWSER_NO_HISTORY=1` separation. Evidence: library suite 0 failures.
 - **WB-04.003 — Google bookmark import.** DONE. Chrome JSON and Netscape HTML,
   per-profile discovery, Cmd+Shift+I, `--import`, idempotent temp-profile test.
+  0.8.5 discovers Chromium, Brave, Edge, Arc and Vivaldi profiles too, since all
+  save the same `Bookmarks` JSON; Firefox/Safari come through the HTML export.
+  No history import from any browser (SQLite/WebKit stores).
 - **WB-04.002 — Downloads.** DONE. `WKDownloadDelegate` registry, attachment/
   MIME response policy, Nova shelf with cancel/reveal, `--download`, loopback
   test writing a real file. 0.7.3 adds pause/resume: clicking a running row
@@ -77,6 +84,13 @@ Each task needs a reproducible acceptance check before it is marked done.
   rows and the persisted record together and writes the emptied profile at once.
   The test requires the named `Clear finished downloads` button after a restart,
   then clears through `NOVA_BROWSER_CLEAR_DOWNLOADS=1` and requires an empty file.
+  0.7.7 fixes pointer lag: queued motion coalesces to the newest position, input
+  no longer waits behind the idle sleep, and the cursor becomes a hand over any
+  actionable chrome and an I-beam over the address field.
+  0.7.8 makes Google the default search engine and puts a chip in the field to
+  switch it; the first suggestion is a real `Search Google for …` row. 0.7.9 and
+  0.8.0 round the field and add glow, a toolbar wash and loading sparks through
+  a new `round_rect_alpha` host primitive.
 - **WB-04.004 — Session restore.** DONE. `session.tsv` (navigable tabs + active
   index), restart reopen, opt-out env. Evidence: library session assertions and
   restored-tab snapshot.
@@ -106,6 +120,21 @@ Each task needs a reproducible acceptance check before it is marked done.
 - **WC-07.001 — Input/scroll/links/forms.** PLANNED.
 - **WC-08.001 — Flex/grid/positioning.** PLANNED.
 - **WC-09.001 — Engine switching with visible identity.** PLANNED.
+
+## Reading aloud
+
+- **WB-05.001 — Page reading with a system voice.** DONE in 0.8.6. The browser
+  extracts `document.body.innerText` and `runtime/speech.m` speaks it through
+  AVSpeechSynthesizer; Cmd+Shift+L toggles, Cmd+Shift+V cycles installed
+  English voices, `settings.tsv voice` persists the pick. Verified by state
+  (`speaking=1`, chars from the fixture), not by listening.
+- **WB-05.002 — Kokoro neural voice.** PLANNED, fat build. Needs the model plus
+  an ONNX runtime in the bundle (~90 MB) and an audio path; `NOVA_BROWSER_FAT`
+  and the `backend`/`note` reporting are in place, nothing synthesizes yet.
+- **WB-03.006 — Chrome above the page view.** DONE in 0.8.6. `gui.overlay`
+  registers rectangles the host paints above the WebView and makes clickable;
+  the address suggestion list uses it. The rail name panel still resizes the
+  page instead of floating, which is fine but not the same mechanism.
 
 ## Compiler / library blockers
 

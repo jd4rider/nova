@@ -57,10 +57,11 @@ NOVA_GUI_TRACE=/tmp/nova-browser-trace.log NOVA_BROWSER_TRACE=1 \
 
 Click the address field or press Cmd+L, including while WebKit owns page focus.
 Type or paste; Cmd+A selects, Cmd+Backspace clears, Enter loads, Escape cancels.
-Bare hosts gain `https://`; `localhost` and `127.0.0.1` use `http://`. Search
-is opt-in: with a provider selected, plain text becomes that provider's query
-(UTF-8 percent-encoded); while search is off, plain text is still rejected
-rather than guessed.
+Bare hosts gain `https://`; `localhost` and `127.0.0.1` use `http://`. Plain
+text searches Google by default (UTF-8 percent-encoded). The G chip inside the
+field names the engine and cycles Google → Brave → off → DuckDuckGo on a press;
+the choice is remembered, and the first suggestion row spells out where Enter
+will send the text. With search off, plain text is rejected rather than guessed.
 
 Editing moves by grapheme cluster, not by Unicode scalar: Left/Right,
 Backspace/Delete and clicks stop only on cluster boundaries, so a combining
@@ -96,8 +97,11 @@ blinking caret, and the loading bar follows WebKit's own estimate.
 | Cmd+R | reload |
 | Cmd+D | bookmark the current page |
 | Cmd+Shift+I | import Google Chrome bookmarks |
-| Cmd+Shift+E | switch horizontal/vertical tabs |
-| Cmd+Shift+S | cycle search provider (off → DuckDuckGo → Google → Brave) |
+| Cmd+Shift+E | tabs: top → sidebar → rail → top |
+| Cmd+Shift+L | read the page aloud, or stop reading |
+| Cmd+Shift+V | choose the next reader voice |
+| Cmd+Shift+S | cycle search provider (same order as the field's chip) |
+| Cmd+Shift+P | cycle theme (Gruvbox → Midnight → Light → Solarized → Nova Dark) |
 | Cmd+T / Cmd+W / Cmd+Shift+T | new / close / restore tab |
 | Cmd+1–6 | select a tab |
 
@@ -112,14 +116,15 @@ open -a "/Applications/Nova Browser.app"
 ```
 
 The script rebuilds, renders the icon, assembles `Nova Browser.app`, ad-hoc
-signs it locally and replaces the installed copy. Version 0.7.6 is installed.
+signs it locally and replaces the installed copy. Version 0.8.6 is installed.
 Re-run it after every completed phase. This is not Developer ID signing or
 notarization.
 
 ## Tabs
 
-Each tab owns a separate WKWebView. Click a tab to select it, `x` to close it
-or `+` to create one. Cmd+T creates, Cmd+W closes, Cmd+Shift+T restores the last
+Each tab owns a separate WKWebView. Click a tab to select it, its `x` to close
+it, and use Cmd+T for a new one: the horizontal strip has no plus, so the tabs
+take the full width. Cmd+T creates, Cmd+W closes, Cmd+Shift+T restores the last
 closed tab, Cmd+1–6 selects a tab, and these shortcuts work while WebKit owns
 page focus through a narrow host-level request queue. The cap is six tabs. Drag
 a tab sideways to reorder it, and right-click a tab for New Tab, Duplicate Tab,
@@ -129,10 +134,40 @@ are written to `session.tsv`; the next launch reopens them unless
 `NOVA_BROWSER_NO_RESTORE=1`. Restored tabs reload their URLs, not scroll offsets
 or form state.
 
-Tabs can be a horizontal strip or a vertical left column. The toggle button in
-the toolbar or Cmd+Shift+E switches between them, and the choice is written to
-`settings.tsv` so the next launch keeps it. The page rectangle, tab hit boxes
-and tooltips all follow the active layout.
+Tabs are a horizontal strip, a left sidebar, or a collapsed rail. The toolbar
+button or Cmd+Shift+E cycles top → sidebar → rail → top, and `settings.tsv`
+keeps the choice (`layout=horizontal|vertical|rail`). In the vertical layouts
+the New Tab row sits under the last tab, not above it; in the rail it is a
+`+` under the numbered tab marks. Hovering the rail opens its list of titles
+over the page and clicking the chevron pins it back open. The page rectangle,
+tab hit boxes and tooltips all follow the active layout.
+
+Toolbar controls are one row of 30 px buttons with an 8 px gap on each side of
+the address field, vertically centred on it. Back, forward, reload/stop, star,
+downloads, help and the sidebar toggle are drawn from lines rather than font
+glyphs, so no control depends on font coverage, and a button only paints a
+wash or glow while the pointer is on it.
+
+## Reading aloud
+
+The speaker button next to the bookmark reads the page, and Cmd+Shift+L does
+the same from the keyboard. The text is the page's own `innerText` from WebKit,
+so it reads what a reader mode would: article text without the navigation
+around it. Click again to stop.
+
+The voice is a system voice, so it works offline and needs no download. Fresh
+profiles pick the best installed English voice; Cmd+Shift+V cycles the English
+voices macOS has, including the enhanced and premium ones from System Settings,
+and the choice is saved as `voice` in `settings.tsv`. The reader runs at half
+the system default rate.
+
+A neural voice (Kokoro) is a fat build, not a slim one: it needs a model and an
+inference runtime, roughly 90 MB, plus audio output. Neither is bundled here, so
+this build reports `backend=system`. `NOVA_BROWSER_FAT=1` or
+`NOVA_BROWSER_VOICE=kokoro` asks for the neural voice; when its model is absent
+the app says so in the notice instead of silently using a different voice.
+`NOVA_KOKORO_MODEL` points at a model outside the bundle. The split exists so a
+future fat build can add the model without making every download carry it.
 
 ## History, bookmarks and Google import
 
@@ -143,15 +178,17 @@ directory (`~/Library/Application Support/Nova Browser`, or `$NOVA_BROWSER_PROFI
 history.tsv     one line per visit, bounded at 400
 bookmarks.tsv   star toggles, one line per bookmark
 session.tsv     tabs to reopen plus the active index
-settings.tsv    tab layout and search provider (search=off by default)
+settings.tsv    tab layout (horizontal/vertical/rail), search (google), theme
+theme.tsv       optional role overrides, one key<TAB>#rrggbb per line
 ```
 
 Set `NOVA_BROWSER_NO_HISTORY=1` to keep a session out of history entirely; the
 file is then neither read nor written. Nothing is synced off the machine.
 
-Cmd+Shift+I imports bookmarks from every detected Google Chrome profile
-(`~/Library/Application Support/Google/Chrome/*/Bookmarks`) and reports how many
-were added. The same import runs headlessly:
+Cmd+Shift+I imports bookmarks from every detected Chromium-family profile —
+Chrome, Chromium, Brave, Edge, Arc and Vivaldi all save the same
+`Bookmarks` JSON — and reports how many were added. The same import runs
+headlessly:
 
 ```sh
 browser/target/nova/nova-browser --import                 # detected Chrome profiles
@@ -244,6 +281,13 @@ NOVA_BROWSER_LIFECYCLE_ONLY=1 sh browser/tests/webkit.sh
 
 - WebKit navigation is limited to `http`, `https` and `about`; unsupported
   schemes fail closed with an error.
+- Chrome drawn below the page rectangle is covered by the page view, so
+  overlays (the address suggestion list, the rail's name panel) are registered
+  with `gui.overlay` and the host paints them in a transparent view above the
+  page, routing clicks inside them back to the browser.
+- The page's user agent names the WebKit version the way Safari does, because
+  Google refuses OAuth in a WebView whose agent it cannot identify; the
+  renderer is still WebKit. `NOVA_BROWSER_UA` overrides it.
 - The address normalizer rejects `mailto:`, `javascript:`, `file:`, `data:` and
   unknown schemes instead of silently upgrading them.
 - No arbitrary external scheme launch, page-to-native bridge, file access from

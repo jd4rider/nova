@@ -49,6 +49,7 @@ extern "C" fn nova_gui_clear(rgb: Int) -> Unit
 extern "C" fn nova_gui_rect(x: Int, y: Int, w: Int, h: Int, rgb: Int) -> Unit
 extern "C" fn nova_gui_rect_alpha(x: Int, y: Int, w: Int, h: Int, rgb: Int, alpha: Int) -> Unit
 extern "C" fn nova_gui_round_rect(x: Int, y: Int, w: Int, h: Int, radius: Int, rgb: Int) -> Unit
+extern "C" fn nova_gui_round_rect_alpha(x: Int, y: Int, w: Int, h: Int, radius: Int, rgb: Int, alpha: Int) -> Unit
 extern "C" fn nova_gui_stroke_rect(x: Int, y: Int, w: Int, h: Int, rgb: Int) -> Unit
 extern "C" fn nova_gui_line(x0: Int, y0: Int, x1: Int, y1: Int, rgb: Int) -> Unit
 extern "C" fn nova_gui_text(x: Int, y: Int, text: String, size: Int, rgb: Int, mono: Int) -> Unit
@@ -82,6 +83,10 @@ extern "C" fn nova_gui_ax_begin() -> Unit
 extern "C" fn nova_gui_ax_push(role: Int, x: Int, y: Int, w: Int, h: Int, label: String) -> Unit
 extern "C" fn nova_gui_ax_value(value: String) -> Unit
 extern "C" fn nova_gui_ax_select(selected: Int) -> Unit
+extern "C" fn nova_gui_set_cursor(kind: Int) -> Unit
+extern "C" fn nova_gui_set_appearance(light: Int) -> Unit
+extern "C" fn nova_gui_overlay_begin() -> Unit
+extern "C" fn nova_gui_overlay_add(x: Int, y: Int, w: Int, h: Int, input: Int) -> Unit
 
 extern "C" fn nova_fs_read(path: String) -> String
 extern "C" fn nova_gui_resource(name: String) -> String
@@ -441,6 +446,31 @@ fn sleep(milliseconds: Int) {
     usleep(milliseconds * 1000)
 }
 
+// Pointer shapes. Like a web page, the app says what is under the cursor: a
+// hand over anything clickable, an I-beam over editable text, an arrow over
+// plain chrome. The host re-applies the choice in its cursor rects.
+fn cursor_arrow() -> Int {
+    return 0
+}
+
+fn cursor_hand() -> Int {
+    return 1
+}
+
+fn cursor_text() -> Int {
+    return 2
+}
+
+fn set_cursor(kind: Int) {
+    nova_gui_set_cursor(kind)
+}
+
+// Light or dark for everything the app does not paint itself: menus, native
+// dialogs and the page's prefers-color-scheme.
+fn set_appearance(light: Bool) {
+    nova_gui_set_appearance(if light { 1 } else { 0 })
+}
+
 // Saves the current frame as a PNG. Handy in tests and for bug reports.
 fn save_png(path: String) -> Bool {
     return nova_gui_save_png(path) == 1
@@ -454,6 +484,19 @@ fn begin() {
 
 fn present() {
     nova_gui_present()
+}
+
+// Chrome that must sit above a native page view. A WKWebView is a subview of
+// the chrome view, so the app's own painting stops at the page edge; anything
+// registered between `overlay_begin` and `present` is copied from this frame's
+// pixels into a transparent view above the page, and clicks inside an `input`
+// rectangle come back through the normal event queue.
+fn overlay_begin() {
+    nova_gui_overlay_begin()
+}
+
+fn overlay(x: Int, y: Int, w: Int, h: Int, input: Bool) {
+    nova_gui_overlay_add(x, y, w, h, if input { 1 } else { 0 })
 }
 
 // Drains input and lets AppKit finish deferred work without redrawing. Call it
@@ -477,6 +520,11 @@ fn rect_alpha(x: Int, y: Int, w: Int, h: Int, color: Int, alpha: Int) {
 
 fn round_rect(x: Int, y: Int, w: Int, h: Int, radius: Int, color: Int) {
     nova_gui_round_rect(x, y, w, h, radius, color)
+}
+
+// The same rounded shape at 0..255 opacity, for halos and overlays.
+fn round_rect_alpha(x: Int, y: Int, w: Int, h: Int, radius: Int, color: Int, alpha: Int) {
+    nova_gui_round_rect_alpha(x, y, w, h, radius, color, alpha)
 }
 
 fn stroke(x: Int, y: Int, w: Int, h: Int, color: Int) {

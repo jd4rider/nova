@@ -46,7 +46,7 @@ check 'role=AXTab label=New Tab value= selected=1' 'the active tab reports selec
 check 'role=AXTextField label=Address' 'the address field is a text field'
 check 'role=AXButton label=Back' 'back is a pressable button'
 check 'role=AXButton label=Reload' 'reload is a pressable button'
-check 'role=AXButton label=New tab' 'the new-tab control is exposed'
+check 'role=AXButton label=Tab layout' 'the tab-layout control is exposed'
 check 'role=AXStaticText label=Rendering engine: WebKit' 'the engine badge is readable'
 check 'browser: state=ready' 'the session still renders with accessibility on'
 
@@ -91,7 +91,8 @@ NOVA_BROWSER_FOCUS_ADDRESS=nov \
 NOVA_GUI_AX_DUMP=1 \
     "$BIN" >"$SUG_LOG" 2>&1
 check_in 'role=AXLink label=Nova docs value=https://nova.example/docs' "$SUG_LOG" 'suggestion rows are links with their URL'
-check_in 'ax: children=12 built=12' "$SUG_LOG" 'one suggestion adds exactly one element'
+check_in 'ax: children=14 built=14' "$SUG_LOG" 'a bookmark and the engine row add exactly one element each'
+check_in 'role=AXLink label=Search Google for "nov" value=https://www.google.com/search?q=nov' "$SUG_LOG" 'plain text offers a Google search row'
 
 # The dump is opt-in: a normal launch must not print accessibility lines.
 PLAIN=$(mktemp -d /tmp/nova-browser-ax-plain.XXXXXX)

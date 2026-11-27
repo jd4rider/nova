@@ -736,6 +736,184 @@ Not covered: Clear forgets every completed record at once — there is no per-ro
 removal or confirmation — and records for files these rows never held (cancelled
 and failed transfers) still do not exist.
 
+## 0.7.7 — hover and pointer shape
+
+Hover felt slow and landed on the wrong control because motion was queued, not
+sampled. `next_event` returned one event per pass and the loop slept 6 ms after
+every event, so moves arrived faster than the loop consumed them and the pointer
+position used for hit testing trailed the cursor. Two changes: the host now drops
+queued moves and drags when a newer one is already waiting (a move never swallows
+the click or drag that follows), and the browser sleeps only on passes with no
+event. The hover fade step went from 90 to 240 per pass.
+
+Hit testing and drawing were compared box by box for the toolbar: back, forward
+and reload are hit at `toolbar_y + 2, 30x30` and drawn at the same rectangle; the
+address field is 34 high in both; star/downloads/docs/layout use the same metrics
+for hit and paint. The offset was temporal, not geometric.
+
+The pointer shape now follows the hover target through a new
+`nova_gui_set_cursor` host call (0 arrow, 1 hand, 2 I-beam), applied from the
+view's cursor rects so an AppKit reset to arrow does not stick: hand over
+toolbar buttons, tabs, suggestions, shelf rows and failure buttons; I-beam over
+the address field; arrow over disabled back/forward and plain chrome.
+
+Checks on the installed 0.7.7: build clean, downloads PASS (including clear),
+accessibility, address (failures=0), history (failures=0), tabs, IME, lifecycle
+25/0, bench `frames=120 avg=7ms worst=182ms fx_step_2000=4ms
+stack=15KB/8176KB`. `Version 0.7.7 · dev.nova.browser.native · ad-hoc signed`,
+plist 0.7.7, signature valid, launch 1263 ms.
+
+Not covered: no automated test drives real pointer motion, so the lag and the
+cursor shape were reasoned from the queue and hit-box code, not measured under a
+moving hand. Frames are ~2 ms slower than 0.7.6 in this bench run, within the
+run-to-run spread but not proven to be noise.
+
+## 0.8.0 — search engines, pill field, glow
+
+Search existed but was opt-in and invisible: the default was `off`, the only
+control was Cmd+Shift+S, and the field had a small amber square for `http://`
+pages that read as a stray glyph. Now `load_store` defaults to Google, a chip
+inside the field shows the engine initial and cycles it on a press (persisted in
+`settings.tsv`), and `with_search_row` prepends `Search Google for "…"` with the
+real query URL whenever the text is not a URL. The suggestion row is exposed to
+AX as a link; the dump shows
+`role=AXLink label=Search Google for "nov" value=https://www.google.com/search?q=nov`.
+
+The scheme square is gone. The field is a pill (radius 17) with a glow while
+editing, hovered icon buttons and the active tab carry the same halo, the
+toolbar has a six-band wash, and the loading bar has seven sparks. Glow uses a
+new host primitive, `nova_gui_round_rect_alpha` (rounded path + opacity), so the
+halo is three cheap fills instead of an offscreen shadow pass.
+
+One real bug surfaced while testing: the autoclose path used by the AX test and
+the downloads test draws its own frame and rebuilt suggestions separately, so
+the engine row was missing there and the AX count changed by one. Both paths now
+call `with_search_row`.
+
+Checks on the installed 0.8.0: build clean, accessibility 17/17, address 0
+failures, downloads PASS (including clear), history failures=0, tabs 5/5, IME
+4/4, lifecycle 25/0, bench `frames=120 avg=7ms worst=179ms fx_step_2000=4ms
+stack=15KB/8176KB`, `Version 0.8.0 · dev.nova.browser.native · ad-hoc signed`,
+signature valid, launch 1226 ms.
+
+Not covered: the search row and Enter path are verified structurally and in the
+model tests, not by a live typing run; no real page was searched. Firefox
+`places.sqlite` is not read — only Netscape `bookmarks.html` exports through
+`--import`. The glow is not measured for visual quality, only for frame cost.
+
+## 0.8.1 — click-to-select-all in the address field
+
+Hover already produced an I-beam over the field (target 4 → `cursor_text`), but
+a press from outside edited at the clicked caret, so typing inserted into the
+middle of a URL instead of replacing it. The click path now treats
+`!current.editing` like a triple click: `address_select_all` over the whole live
+URL, with the same AX field value and the same selection chip. A second press in
+the focused field places the caret; a double-click selects the word.
+
+Checks on the installed 0.8.1: build clean, accessibility 17/17, address 0
+failures, downloads PASS, history failures=0, tabs 5/5, IME 4/4, lifecycle 25/0,
+bench `frames=120 avg=7ms worst=172ms`, signature valid, launch 1209 ms.
+
+Not covered: no automated mouse press drives this path — the rule is verified by
+inspection and by the unchanged AX field, not by a simulated click.
+
+## 0.8.4 — themes, light mode, no square around the pill
+
+The palette was hardcoded Gruvbox. Theme resolution is now a pipeline:
+`settings.tsv theme` (default `gruvbox`) or `NOVA_BROWSER_THEME`, through
+`theme_named` (gruvbox, midnight, light, solarized, nova), then `theme.tsv`
+overrides parsed with a new six-digit hex reader. `Cmd+Shift+P` cycles and
+persists; the notice names the result. Resolving each name headlessly prints
+`browser: theme=<name>` under `NOVA_BROWSER_TRACE`, which is how the five names
+were checked.
+
+One bug caught that way: the first Solarized insertion matched an ambiguous
+anchor and was skipped, so `theme=solarized` resolved to Gruvbox colours while
+reporting the Solarized name. The palette was inserted against the unique
+`gui.dark()` anchor and re-checked.
+
+Light and Solarized call `nova_gui_set_appearance(1)`, which sets
+`NSAppearanceNameAqua` on the app, window and view, so menus and the page's
+`prefers-color-scheme` are light too; dark themes set `DarkAqua`.
+
+The square around the rounded field was the border: `nova_gui_stroke_rect` draws
+a plain rectangle, so a pill fill was outlined by a box. The border is now a
+rounded ring one point outside the fill, and the engine chip does the same.
+
+Checks on the installed 0.8.4: build clean, accessibility 17/17, address 0
+failures, downloads PASS, history failures=0, tabs 5/5, IME 4/4, lifecycle 25/0,
+bench `frames=120 avg=7ms worst=184ms fx_step_2000=5ms`, signature valid, launch
+1238 ms. `theme.tsv` overrides are parsed but only unit-checked by inspection:
+no test asserts the resulting pixel colour, and no screenshot was taken.
+
+## 0.8.5 — tab layouts, one toolbar row, drawn glyphs
+
+`Session` gained `rail`. Layout geometry moved behind `sidebar_span`, so the
+page rect, tab boxes, hit tests and accessibility frames all follow the active
+layout instead of assuming a fixed sidebar. Widths that used to reserve space
+for the horizontal plus now use `gui.width() - 96`, and the plus itself is gone
+from both the drawing and the hit test.
+
+New Tab moved to `new_tab_box`, below `tab_box_y(count)`. That removed the
+fixed `(8, 64)` control which also carried the only New tab accessibility
+element in a top strip; `tests/accessibility.sh` now expects 10 chrome children
+and checks the Tab layout button instead, 12 with the shelf open and 13 with a
+suggestion.
+
+The rail's hover panel first rendered nothing. The cause is structural: the
+chrome is the window's content view and each WKWebView is its subview, so
+anything drawn below `page_top` is covered. The panel now takes page width
+while open (`left = rail_panel_width() + 1`) and a `NOVA_BROWSER_RAIL_OPEN=1`
+hook snapshots it; `/tmp/nova-rail-open2.png` shows titles and New Tab. The same
+ordering explains why the autocomplete list cannot float over the page.
+
+Icon buttons used to be a rounded fill plus a stroke plus a font glyph. They are
+now transparent at rest, with a wash and glow from the eased hover energy, and
+the marks are line-drawn (chevrons, octagon reload, star, tray, sidebar) so no
+control depends on font coverage. `draw_icon_button` takes an int kind.
+
+The page agent was verified end to end: a loopback page printing
+`navigator.userAgent` renders exactly
+`Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML,
+like Gecko) Version/18.4 Safari/605.1.15` (`/tmp/nova-ua.png`). That satisfies
+Google's documented requirement for its OAuth page; the Google flow itself was
+not exercised, and no account sign-in was verified.
+
+Checks: build clean, accessibility 17/17, address 0 failures, downloads PASS,
+history 0 failures, tabs 5/5, IME 4/4, lifecycle 25/0, bench `frames=120 avg=7ms
+worst=177ms fx_step_2000=4ms`, installed 0.8.5 ad-hoc signed. Snapshots:
+horizontal, vertical and rail layouts all report `layout=` in the autoclose line.
+
+## 0.8.6 — reading aloud and chrome above the page
+
+Reader: a temp-profile run of the fixture page with `NOVA_BROWSER_READER=1`
+printed `reader: chars=948 backend=system voice= speaking=1 notice=Reading with
+Albert`. That proves the text came out of WebKit, a system voice was selected
+(the empty stored voice fell back to the default English voice), and the
+synthesizer entered its speaking state. Audio itself is not verifiable here and
+was muted for the test with `NOVA_SPEECH_SILENT=1`; the UI snapshot shows the
+speaker lit while speaking.
+
+Kokoro was not exercised because nothing can synthesize it yet: no model and no
+ONNX runtime are in the bundle. `backend` reports `system` and the note says the
+model is missing; that is the honest slim-build result.
+
+Overlay: with four bookmarks seeded and `NOVA_BROWSER_FOCUS_ADDRESS=nov`, the
+suggestion list is taller than the 118 px chrome band. The GUI trace recorded
+`overlay rects=1 top=1`, so the host registered the list and ordered the overlay
+above the page view; the frame snapshot shows all five rows including the search
+row. Previously everything below 118 px was painted under the WebView.
+
+Two implementation notes: the topmost check is `subviews.lastObject`, because
+WebKit page views are created after the chrome and would otherwise bury the
+overlay; and `hitTest:` converts the superview point once, returning nil outside
+the registered rectangles so the page keeps its own clicks.
+
+Checks: build clean, accessibility 17/17 (one more control, expectations moved
+to 11/13/14), address 0 failures, tabs, IME, history, downloads PASS, bench
+`frames=120 avg=7ms worst=176ms fx_step_2000=4ms` after the change, and the app
+installed as 0.8.6 ad-hoc signed.
+
 ## Not yet evidenced
 
 - hosted CI run of the browser address/lifecycle steps;

@@ -109,6 +109,18 @@ static int nova_running = 0;
 static NSWindow *nova_window = nil;
 static NSView *nova_view = nil;
 static NSMutableString *nova_title = nil;
+/* Pointer shape requested by the app: 0 arrow, 1 pointing hand, 2 I-beam.
+ * A view that draws its own controls cannot rely on AppKit to pick a cursor
+ * from a hit-tested widget, so the app decides and this file applies it. */
+static int64_t nova_cursor_kind = 0;
+
+static NSCursor *nova_gui_cursor(int64_t kind) {
+    switch (kind) {
+        case 1: return [NSCursor pointingHandCursor];
+        case 2: return [NSCursor IBeamCursor];
+        default: return [NSCursor arrowCursor];
+    }
+}
 
 /* The chrome is one rasterized view, so AppKit cannot infer controls from a
  * widget tree. The app pushes a flat element list while it draws and this file
@@ -274,6 +286,13 @@ static int64_t nova_pending_mods = 0;
 @end
 
 @implementation NovaGuiView
+
+/* AppKit resets the pointer to an arrow whenever the mouse enters the view.
+ * Cursor rects are re-applied after that reset, so the app's current choice
+ * survives instead of only lasting until the pointer leaves and returns. */
+- (void)resetCursorRects {
+    [self addCursorRect:self.bounds cursor:nova_gui_cursor(nova_cursor_kind)];
+}
 
 - (BOOL)acceptsFirstResponder {
     return YES;
@@ -1207,6 +1226,29 @@ int64_t nova_gui_native_view(void) {
     return (int64_t)(intptr_t)(__bridge void *)nova_view;
 }
 
+/* Light/dark appearance for everything the chrome does not paint: menus,
+ * dialogs and the page's prefers-color-scheme. */
+void nova_gui_set_appearance(int64_t light) {
+    if (!nova_window) return;
+    NSAppearanceName name = light ? NSAppearanceNameAqua : NSAppearanceNameDarkAqua;
+    NSAppearance *appearance = [NSAppearance appearanceNamed:name];
+    if (!appearance) return;
+    nova_window.appearance = appearance;
+    if (nova_view) nova_view.appearance = appearance;
+    if (NSApp) NSApp.appearance = appearance;
+}
+
+/* The app decides the pointer shape from what its own hit test found. Called
+ * every pass, but only a change touches AppKit, so steady frames cost nothing. */
+void nova_gui_set_cursor(int64_t kind) {
+    if (!nova_view) return;
+    if (kind < 0 || kind > 2) kind = 0;
+    if (kind == nova_cursor_kind) return;
+    nova_cursor_kind = kind;
+    [nova_gui_cursor(kind) set];
+    [nova_view.window invalidateCursorRectsForView:nova_view];
+}
+
 int64_t nova_gui_height(void) {
     return nova_h;
 }
@@ -1262,6 +1304,37 @@ void nova_gui_round_rect(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rad
     if (r > limit) r = limit;
     CGRect rect = CGRectMake((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h);
     CGColorRef color = nova_gui_color(rgb);
+    if (r <= 0) {
+        CGContextSetFillColorWithColor(nova_ctx, color);
+        CGContextFillRect(nova_ctx, rect);
+    } else {
+        CGPathRef path = CGPathCreateWithRoundedRect(rect, r, r, NULL);
+        CGContextAddPath(nova_ctx, path);
+        CGContextSetFillColorWithColor(nova_ctx, color);
+        CGContextFillPath(nova_ctx);
+        CGPathRelease(path);
+    }
+    CGColorRelease(color);
+}
+
+/* Same shape as nova_gui_round_rect, with an opacity. Layered calls make a
+ * soft halo without a shadow filter, which would need an offscreen pass. */
+void nova_gui_round_rect_alpha(int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius, int64_t rgb, int64_t alpha) {
+    if (!nova_ctx || w <= 0 || h <= 0) return;
+    CGFloat a = (CGFloat)(alpha < 0 ? 0 : (alpha > 255 ? 255 : alpha)) / 255.0;
+    CGFloat r = (CGFloat)(radius > 0 ? radius : 0);
+    CGFloat limit = (CGFloat)(w < h ? w : h) / 2.0;
+    if (r > limit) r = limit;
+    CGRect rect = CGRectMake((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h);
+    CGFloat components[4] = {
+        (CGFloat)((rgb >> 16) & 0xFF) / 255.0,
+        (CGFloat)((rgb >> 8) & 0xFF) / 255.0,
+        (CGFloat)(rgb & 0xFF) / 255.0,
+        a,
+    };
+    CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    CGColorRef color = CGColorCreate(space, components);
+    CGColorSpaceRelease(space);
     if (r <= 0) {
         CGContextSetFillColorWithColor(nova_ctx, color);
         CGContextFillRect(nova_ctx, rect);
@@ -1561,6 +1634,136 @@ static void nova_gui_ax_dump(void) {
     fflush(stdout);
 }
 
+/* ---------- chrome above a native page view ----------
+ *
+ * The chrome is the window's content view and a WKWebView is its subview, so
+ * anything the app paints below the page rectangle is covered by the page.
+ * Menus and suggestion lists need to cross that line. The app registers the
+ * rectangles it wants on top; this view sits above the page views and copies
+ * the already-rasterized frame, clipped to those rectangles. Outside them it
+ * hit-tests to nil, so the page keeps its own clicks, and inside them a press
+ * re-enters the normal Nova input queue, so the chrome keeps its own.
+ */
+#define NOVA_GUI_OVERLAY_MAX 8
+
+typedef struct {
+    int64_t x, y, w, h;
+    int64_t input;
+} NovaOverlayRect;
+
+static NovaOverlayRect nova_ovl[NOVA_GUI_OVERLAY_MAX];
+static int nova_ovl_count = 0;
+static NSView *nova_overlay_view = nil;
+
+void nova_gui_overlay_begin(void) {
+    nova_ovl_count = 0;
+}
+
+void nova_gui_overlay_add(int64_t x, int64_t y, int64_t w, int64_t h, int64_t input) {
+    if (nova_ovl_count >= NOVA_GUI_OVERLAY_MAX) return;
+    if (w <= 0 || h <= 0) return;
+    NovaOverlayRect *rect = &nova_ovl[nova_ovl_count++];
+    rect->x = x;
+    rect->y = y;
+    rect->w = w;
+    rect->h = h;
+    rect->input = input;
+}
+
+@interface NovaOverlayView : NSView
+@end
+
+@implementation NovaOverlayView
+
+- (BOOL)isOpaque {
+    return NO;
+}
+
+/* The frame is drawn at native scale; the host copies pixels rather than
+ * re-running the app's drawing, so text and glyphs stay identical. */
+- (void)drawRect:(NSRect)dirtyRect {
+    (void)dirtyRect;
+    CGContextRef context = [[NSGraphicsContext currentContext] CGContext];
+    if (!context || !nova_image) return;
+    CGMutablePathRef path = CGPathCreateMutable();
+    int i = 0;
+    while (i < nova_ovl_count) {
+        NovaOverlayRect *rect = &nova_ovl[i];
+        CGRect clipped = CGRectMake((CGFloat)rect->x,
+                                    (CGFloat)(self.bounds.size.height - (CGFloat)rect->y - (CGFloat)rect->h),
+                                    (CGFloat)rect->w, (CGFloat)rect->h);
+        CGPathAddRect(path, NULL, clipped);
+        i++;
+    }
+    CGContextSaveGState(context);
+    CGContextAddPath(context, path);
+    CGContextClip(context);
+    CGContextSetInterpolationQuality(context, kCGInterpolationLow);
+    CGContextDrawImage(context, self.bounds, nova_image);
+    CGContextRestoreGState(context);
+    CGPathRelease(path);
+}
+
+- (NSPoint)nova_top_left:(NSEvent *)event {
+    NSPoint local = [self convertPoint:event.locationInWindow fromView:nil];
+    return NSMakePoint(local.x, self.bounds.size.height - local.y);
+}
+
+- (NSView *)hitTest:(NSPoint)point {
+    /* `point` arrives in the superview's coordinates; convert once into this
+     * view, then flip to the app's top-left space. */
+    NSPoint local = [self convertPoint:point fromView:self.superview];
+    CGFloat top = self.bounds.size.height - local.y;
+    int i = 0;
+    while (i < nova_ovl_count) {
+        NovaOverlayRect *rect = &nova_ovl[i];
+        if (rect->input && local.x >= (CGFloat)rect->x && local.x < (CGFloat)(rect->x + rect->w) &&
+            top >= (CGFloat)rect->y && top < (CGFloat)(rect->y + rect->h)) {
+            return self;
+        }
+        i++;
+    }
+    return nil;
+}
+
+- (BOOL)acceptsFirstMouse:(NSEvent *)event {
+    (void)event;
+    return YES;
+}
+
+- (void)updateTrackingAreas {
+    [super updateTrackingAreas];
+    for (NSTrackingArea *area in self.trackingAreas) {
+        [self removeTrackingArea:area];
+    }
+    NSTrackingArea *area = [[NSTrackingArea alloc] initWithRect:self.bounds
+                                                        options:(NSTrackingMouseMoved | NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect)
+                                                          owner:self
+                                                       userInfo:nil];
+    [self addTrackingArea:area];
+}
+
+- (void)mouseDown:(NSEvent *)event {
+    nova_gui_activate_window();
+    NSPoint point = [self nova_top_left:event];
+    nova_gui_emit(NOVA_GUI_MOUSE_DOWN, (int64_t)event.clickCount, (int64_t)point.x, (int64_t)point.y,
+                  nova_gui_modifiers(event.modifierFlags), 1);
+}
+
+- (void)mouseUp:(NSEvent *)event {
+    NSPoint point = [self nova_top_left:event];
+    nova_gui_emit(NOVA_GUI_MOUSE_UP, 0, (int64_t)point.x, (int64_t)point.y,
+                  nova_gui_modifiers(event.modifierFlags), 1);
+}
+
+- (void)mouseMoved:(NSEvent *)event {
+    NSPoint point = [self nova_top_left:event];
+    nova_gui_emit(NOVA_GUI_MOUSE_MOVE, 0, (int64_t)point.x, (int64_t)point.y,
+                  nova_gui_modifiers(event.modifierFlags), 0);
+}
+
+@end
+
 void nova_gui_present(void) {
     CFAbsoluteTime started = CFAbsoluteTimeGetCurrent();
     nova_gui_pump();
@@ -1575,6 +1778,26 @@ void nova_gui_present(void) {
         [nova_view display];
         [CATransaction flush];
         nova_gui_ax_dump();
+        if (nova_ovl_count > 0) {
+            if (!nova_overlay_view) {
+                nova_overlay_view = [[NovaOverlayView alloc] initWithFrame:nova_view.bounds];
+                nova_overlay_view.wantsLayer = YES;
+                nova_overlay_view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+            }
+            nova_overlay_view.frame = nova_view.bounds;
+            if (nova_overlay_view.superview != nova_view || nova_view.subviews.lastObject != nova_overlay_view) {
+                /* Page views are created after the chrome, so the overlay has to
+                 * be re-raised when a tab is added. */
+                [nova_view addSubview:nova_overlay_view positioned:NSWindowAbove relativeTo:nil];
+            }
+            nova_overlay_view.hidden = NO;
+            [nova_overlay_view setNeedsDisplay:YES];
+            [nova_overlay_view display];
+            nova_gui_trace("overlay rects=%d top=%d", nova_ovl_count,
+                           (int)(nova_view.subviews.lastObject == nova_overlay_view));
+        } else if (nova_overlay_view && !nova_overlay_view.hidden) {
+            nova_overlay_view.hidden = YES;
+        }
     }
     nova_gui_trace("present %.2fms", (CFAbsoluteTimeGetCurrent() - started) * 1000.0);
 }
@@ -1588,8 +1811,23 @@ int64_t nova_gui_next_event(void) {
         return NOVA_GUI_NONE;
     }
     static NovaGuiEvent current;
-    current = *event;
+    NovaGuiEvent *last = event;
     nova_q_head = (nova_q_head + 1) % NOVA_GUI_QUEUE;
+    /* Pointer motion outruns the frame loop: a 60 Hz pass can only use the
+     * newest position, but the mouse can report several between frames. Keep
+     * only the last move so hover answers to where the cursor is now instead
+     * of replaying a backlog. Drags coalesce the same way; a move never
+     * swallows the drag or click that follows it. */
+    if (last->kind == NOVA_GUI_MOUSE_MOVE || last->kind == NOVA_GUI_DRAG) {
+        int64_t kind = last->kind;
+        while (nova_q_head != nova_q_tail) {
+            NovaGuiEvent *next = &nova_queue[nova_q_head];
+            if (next->kind != kind) break;
+            last = next;
+            nova_q_head = (nova_q_head + 1) % NOVA_GUI_QUEUE;
+        }
+    }
+    current = *last;
     return current.kind;
 }
 
