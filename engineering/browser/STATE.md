@@ -1,13 +1,12 @@
 # Nova Browser checkpoint
 
-Updated: 2026-11-26
+Updated: 2026-11-27
 Branch: `main`
 Last known good compiler checkpoint: `cfa00e3` (before browser work)
-Browser: **0.9.7 installed at `/Applications/Nova Browser.app`**
-Browser working tree: uncommitted; see `git status`
+Browser: **0.9.8 installed at `/Applications/Nova Browser.app`**
+Browser working tree: clean after the 0.9.8 commit; see `git status`
 Active gate: G0 WebKit; G1 WebCore not started
-Active task: **WB-04.002 — downloads** (0.7.5 persisted completed downloads;
-0.7.6 lets the shelf forget them)
+Active task: **WB-03.013 — find in page and zoom** (0.9.8)
 
 ## Completed
 
@@ -324,6 +323,17 @@ Active task: **WB-04.002 — downloads** (0.7.5 persisted completed downloads;
     `lsregister -f`, `--set-default-browser` reports `set=1 state=1` and
     `NSWorkspace` resolves a web URL to `Nova Browser.app`. Revert in System
     Settings → Desktop & Dock → Default web browser.
+- **0.9.8 — find in page, page zoom**
+  - Cmd+F opens a find bar over the top right of the page. Typing searches as
+    you go, Enter/Shift+Enter step forward/back, Cmd+G repeats either, and
+    Escape closes the bar and clears the highlight. WebKit's WKFindResult has
+    no match count, so the bar says Found or No matches instead of a number.
+  - Cmd+= / Cmd+- step `WKWebView.pageZoom` by 10% and Cmd+0 resets it. The
+    page lays out at the new scale; zoom is per tab and starts at 100%.
+  - Both commands work while the page owns focus through the same host key
+    queue as Cmd+L. Evidence: `browser/tests/find.sh` finds a real word, reports
+    no match for a missing one, clears the state, and reads back zoom 150/100.
+
 - **0.9.7 — bookmarks panel, content blocking, Safari import**
   - A Bookmarks panel (toolbar list button, Cmd+Opt+B) lists saved pages newest
     first with their URLs; a press opens one, Escape or a press outside closes
@@ -452,8 +462,10 @@ Active task: **WB-04.002 — downloads** (0.7.5 persisted completed downloads;
   not back/forward stacks, scroll offsets or form state.
 - Search has no suggestion feed or per-provider settings UI; only the three
   built-in providers, cycled with Cmd+Shift+S.
-- No private windows, permissions, find, zoom, inspector, Developer ID
-  signing/notarization or release. The chrome accessibility tree covers tabs,
+- No private windows, permissions, inspector, Developer ID signing/notarization
+  or release. Find reports Found / No matches, not a match count, and its bar is
+  not yet in the accessibility tree; zoom is per tab and is not persisted per
+  host across launches. The chrome accessibility tree covers tabs,
   the address field, toolbar buttons, the engine badge, the open download shelf
   and autocomplete rows; notices, tooltips and the failure panel's body text are
   not exposed, `AXPress` is the only action, and no VoiceOver session was driven
@@ -464,12 +476,12 @@ Active task: **WB-04.002 — downloads** (0.7.5 persisted completed downloads;
 
 ## Exact next action
 
-0.7.2–0.7.5 exposed the whole chrome to assistive clients, made downloads
-pausable/resumable and kept completed transfers across restart (see `TASKS.md`).
-Pick the next slice: a hand-driven VoiceOver pass plus notices/tooltips in the
-tree (WB-03.004), per-row removal instead of one Clear for all finished files,
-or begin WC-01.001 with the trusted fixture harness. WebCore stays unstarted and
-must not borrow WebKit evidence.
+Find and zoom landed in 0.9.8 (see `TASKS.md`). Pick the next daily-use slice:
+private windows and permission prompts (site features are still unhandled),
+notices/tooltips/find bar in the accessibility tree plus a hand-driven
+VoiceOver pass (WB-03.004), per-host zoom persistence, or begin WC-01.001 with
+the trusted fixture harness. WebCore stays unstarted and must not borrow WebKit
+evidence.
 
 ## Install / verify
 

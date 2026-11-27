@@ -48,6 +48,7 @@ typedef struct {
 @property (nonatomic, copy) NSString *errorURL;
 @property (nonatomic, strong) WKNavigation *currentNavigation;
 @property (nonatomic, assign) int64_t generation;
+@property (nonatomic, assign) int64_t findState; /* 0 cleared 1 found 2 not found 3 searching */
 @end
 
 @implementation NovaWebViewEntry
@@ -289,6 +290,33 @@ static void nova_webview_install_key_monitor(void) {
         }
         if ([key isEqualToString:@"d"]) {
             nova_pending_shortcut = 100;
+            nova_pending_mods = 1;
+            return nil;
+        }
+        /* Find and page zoom are chrome commands too. The page must not keep
+         * Cmd+F for its own find or Cmd+= for its own zoom. */
+        if ([key isEqualToString:@"f"]) {
+            nova_pending_shortcut = 3;
+            nova_pending_mods = 1;
+            return nil;
+        }
+        if ([key isEqualToString:@"g"]) {
+            nova_pending_shortcut = 5;
+            nova_pending_mods = 1 | ((event.modifierFlags & NSEventModifierFlagShift) ? 2 : 0);
+            return nil;
+        }
+        if ([key isEqualToString:@"="] || [key isEqualToString:@"+"]) {
+            nova_pending_shortcut = 24;
+            nova_pending_mods = 1 | ([key isEqualToString:@"+"] ? 2 : 0);
+            return nil;
+        }
+        if ([key isEqualToString:@"-"]) {
+            nova_pending_shortcut = 27;
+            nova_pending_mods = 1;
+            return nil;
+        }
+        if ([key isEqualToString:@"0"]) {
+            nova_pending_shortcut = 29;
             nova_pending_mods = 1;
             return nil;
         }
@@ -674,6 +702,58 @@ int64_t nova_webview_take_shortcut(int64_t handle) {
     nova_pending_shortcut = 0;
     nova_pending_mods = 0;
     return encoded;
+}
+
+/* Find-in-page. WKFindResult reports whether something matched, not how many,
+ * so the chrome says Found / Not found instead of inventing a match count. */
+void nova_webview_find(int64_t handle, nova_str query, int64_t forward) {
+    NovaWebViewEntry *entry = nova_webview_entry(handle);
+    if (!entry || !entry.webView) return;
+    NSString *text = nova_webview_string(query);
+    if (text.length == 0) {
+        entry.findState = 0;
+        [entry.webView evaluateJavaScript:@"window.getSelection().removeAllRanges()"
+                        completionHandler:nil];
+        return;
+    }
+    entry.findState = 3;
+    WKFindConfiguration *config = [[WKFindConfiguration alloc] init];
+    config.backwards = (forward == 0);
+    config.wraps = YES;
+    config.caseSensitive = NO;
+    __weak NovaWebViewEntry *weakEntry = entry;
+    [entry.webView findString:text
+           withConfiguration:config
+           completionHandler:^(WKFindResult *result) {
+        NovaWebViewEntry *strongEntry = weakEntry;
+        if (strongEntry) strongEntry.findState = result.matchFound ? 1 : 2;
+    }];
+}
+
+int64_t nova_webview_find_state(int64_t handle) {
+    NovaWebViewEntry *entry = nova_webview_entry(handle);
+    return entry ? entry.findState : 0;
+}
+
+/* Page zoom is WebKit's own pageZoom, so text scales the way the page expects
+ * instead of the framebuffer being stretched. */
+void nova_webview_set_zoom(int64_t handle, int64_t percent) {
+    NovaWebViewEntry *entry = nova_webview_entry(handle);
+    if (!entry || !entry.webView) return;
+    if (percent < 25) percent = 25;
+    if (percent > 300) percent = 300;
+    if (@available(macOS 11.0, *)) {
+        entry.webView.pageZoom = (CGFloat)percent / 100.0;
+    }
+}
+
+int64_t nova_webview_zoom(int64_t handle) {
+    NovaWebViewEntry *entry = nova_webview_entry(handle);
+    if (!entry || !entry.webView) return 100;
+    if (@available(macOS 11.0, *)) {
+        return (int64_t)llround(entry.webView.pageZoom * 100.0);
+    }
+    return 100;
 }
 
 void nova_webview_destroy(int64_t handle) {

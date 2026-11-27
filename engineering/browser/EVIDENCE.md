@@ -1282,3 +1282,33 @@ and `bookmarks.json` style profile overrides (only the environment file exists).
 
 No compatibility, security, performance or WebCore-completion claim is made
 beyond the commands and outputs above.
+
+## 0.9.8 — find in page and page zoom
+
+- Cmd+F opens a Nova-drawn find bar over the page (320x34 at the top right),
+  registered with `gui.overlay` so it paints above the WebView. Text goes to
+  `WKWebView findString:withConfiguration:completionHandler:` on every typed
+  character; Enter/Shift+Enter and Cmd+G/Cmd+Shift+G re-run it forward or
+  backward, and Escape clears the selection and closes the bar.
+- `nova_webview_find_state` reports 0 cleared / 1 found / 2 not found /
+  3 searching. The completion handler writes the state and Nova polls it in the
+  frame loop, so the bar never blocks.
+- `WKFindResult` has no match count, so the bar says **Found** or **No
+  matches**. A count would have to be invented from DOM text and would not match
+  WebKit's own matching rules.
+- Cmd+= / Cmd+- step `WKWebView.pageZoom` by 10% between 50% and 300%; Cmd+0
+  resets to 100%. The host clamps and reports whole percent.
+- Cmd+F, Cmd+G, Cmd+=, Cmd+-, Cmd+0 join the host key queue, so all of them work
+  while the page owns focus.
+
+Evidence: `browser/tests/find.sh` serves a fixture over loopback and requires
+
+```
+find: zoom=150 reset=100 hit=1 miss=2 cleared=0 panel=320x34
+find: open=1 panel=320x34
+find: pass=7 fail=0
+```
+
+Regressions: accessibility 17/17 (exit 0), bookmarks 3/3.
+Not tested: an actual Cmd+F keystroke in a live window (the host queue and the
+engine calls are covered separately), and Cmd+F inside a page's own find field.

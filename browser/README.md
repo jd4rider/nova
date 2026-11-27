@@ -97,6 +97,10 @@ blinking caret, and the loading bar follows WebKit's own estimate.
 | Cmd+R | reload |
 | Cmd+D | bookmark the current page |
 | Cmd+Opt+B | open or close the bookmarks panel |
+| Cmd+F | find in the page |
+| Cmd+G / Cmd+Shift+G | next / previous match |
+| Cmd+= / Cmd+- | zoom the page in / out |
+| Cmd+0 | reset the page zoom |
 | Cmd+Shift+I | import Google Chrome bookmarks |
 | Cmd+Shift+E | tabs: top → sidebar → rail → top |
 | Cmd+Shift+L | read the page aloud, or stop reading |
@@ -118,7 +122,7 @@ open -a "/Applications/Nova Browser.app"
 ```
 
 The script rebuilds, renders the icon, assembles `Nova Browser.app`, ad-hoc
-signs it locally and replaces the installed copy. Version 0.8.6 is installed.
+signs it locally and replaces the installed copy. Version 0.9.8 is installed.
 Re-run it after every completed phase. This is not Developer ID signing or
 notarization.
 
@@ -298,6 +302,18 @@ The list button in the toolbar opens the bookmarks panel, and Cmd+Opt+B does the
 same. Newest first, twelve rows with each URL under its name; a press opens the
 page in the active tab, Escape or a press outside closes the panel. Cmd+D still
 saves or removes the current page.
+
+## Find and page zoom
+
+Cmd+F opens a find bar over the top right of the page. Typing searches as you
+go, Enter takes the next match, Shift+Enter the previous one, Cmd+G and
+Cmd+Shift+G repeat either, and Escape closes the bar and clears the highlight.
+WebKit's `WKFindResult` reports whether something matched but not how many, so
+the bar says **Found** or **No matches** rather than inventing a count.
+
+Cmd+= and Cmd+- step the page zoom by 10% through WebKit's own `pageZoom`, so
+the document lays out at the new scale instead of the pixels being stretched;
+Cmd+0 returns to 100%. Zoom is per tab and starts at 100% for a new tab.
 
 ## Downloads
 

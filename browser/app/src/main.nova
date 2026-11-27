@@ -87,6 +87,11 @@ struct Store {
     homepage: String,
     downloads_open: Bool,
     bookmarks_open: Bool,
+    // The find bar is chrome state, not page state: the query lives here so
+    // typing, redraws and the next/previous commands share one source.
+    find_open: Bool,
+    find_text: String,
+    find_found: Int,
     downloads_path: String,
     download_history: List<String>,
     dirty_downloads: Bool,
@@ -1776,7 +1781,10 @@ fn load_store() -> Store {
         startup_urls: startup_urls,
         homepage: homepage,
         downloads_open: false,
-    bookmarks_open: false,
+        bookmarks_open: false,
+        find_open: false,
+        find_text: "",
+        find_found: 0,
         downloads_path: downloads_path,
         download_history: download_history,
         dirty_downloads: false,
@@ -3253,6 +3261,60 @@ fn draw_bookmarks(session: Session, theme: Chrome, store: Store, fx: Fx) {
     gui.overlay(panel.x, panel.y, panel.w, panel.h, true)
 }
 
+// ---------- find in page ----------
+// Chrome's find bar floats over the page at the top right. WebKit does the
+// search, so highlights and match navigation are the engine's own; Nova only
+// owns the field, the status and the next/previous commands.
+
+fn find_box(session: Session) -> Box {
+    let panel_w = 320
+    let right = gui.width() - 16
+    var x = right - panel_w
+    let left = page_left(session) + 8
+    if x < left {
+        x = left
+    }
+    return Box { x: x, y: page_top(session) + 10, w: panel_w, h: 34 }
+}
+
+fn find_close_box(session: Session) -> Box {
+    let box = find_box(session)
+    return Box { x: box.x + box.w - 28, y: box.y + 4, w: 24, h: 26 }
+}
+
+fn draw_find(theme: Chrome, session: Session, store: Store, fx: Fx) {
+    if !store.find_open {
+        return
+    }
+    let box = find_box(session)
+    gui.rect_alpha(box.x + 3, box.y + 6, box.w, box.h, 0, 80)
+    gui.round_rect(box.x, box.y, box.w, box.h, 10, theme.elevated)
+    gui.stroke(box.x, box.y, box.w, box.h, theme.border_strong)
+    let query = if store.find_text.len() > 0 { store.find_text } else { "Find in page" }
+    let ink = if store.find_text.len() > 0 { theme.fg_bright } else { theme.faint }
+    gui.clip(box.x + 12, box.y + 4, box.w - 78, 26)
+    gui.text(box.x + 12, box.y + 10, query, 12, ink)
+    gui.clip_reset()
+    var status = ""
+    if store.find_text.len() > 0 {
+        if store.find_found == 2 {
+            status = "No matches"
+        } else if store.find_found == 1 {
+            status = "Found"
+        } else {
+            status = "…"
+        }
+    }
+    let status_x = box.x + box.w - 40 - gui.text_width(status, 10)
+    gui.text(status_x, box.y + 12, status, 10, if store.find_found == 2 { theme.red } else { theme.muted })
+    let close = find_close_box(session)
+    if slot(fx, 220) > 0 {
+        gui.round_rect(close.x, close.y, close.w, close.h, 5, blend(theme.elevated, theme.border_strong, slot(fx, 220)))
+    }
+    gui.text(close.x + 7, close.y + 3, "×", 12, theme.muted)
+    gui.overlay(box.x, box.y, box.w, box.h, true)
+}
+
 fn draw_downloads(theme: Chrome, store: Store, downloads: Downloads, fx: Fx) {
     if !store.downloads_open {
         return
@@ -3865,6 +3927,7 @@ fn draw_chrome(handle: Int, theme: Chrome, address: Address, session: Session, s
     }
     draw_downloads(theme, store, downloads, fx)
     draw_bookmarks(session, theme, store, fx)
+    draw_find(theme, session, store, fx)
     draw_suggestions(theme, address, session, suggestions, fx)
     draw_reader_panel(theme, store, reader_open, fetching, received, hover)
     draw_notice(theme, session, notice)
@@ -3879,7 +3942,7 @@ fn draw_chrome(handle: Int, theme: Chrome, address: Address, session: Session, s
 // over a link: a hand over anything that acts, an I-beam over the address
 // field, an arrow elsewhere and over buttons that are disabled.
 fn cursor_for(handle: Int, hover: Int) -> Int {
-    if hover == 4 {
+    if hover == 4 || hover == 221 {
         return gui.cursor_text()
     }
     if hover == 1 && !engine.can_go_back(handle) {
@@ -3896,6 +3959,16 @@ fn cursor_for(handle: Int, hover: Int) -> Int {
 
 fn hover_target(x: Int, y: Int, session: Session, address: Address, suggestions: List<String>, downloads: Downloads, shelf_open: Bool, store: Store, reader_open: Bool) -> Int {
     let vertical = session.vertical
+    if store.find_open {
+        let box = find_box(session)
+        if gui.inside(box.x, box.y, box.w, box.h, x, y) {
+            let close = find_close_box(session)
+            if gui.inside(close.x, close.y, close.w, close.h, x, y) {
+                return 220
+            }
+            return 221
+        }
+    }
     if store.bookmarks_open {
         let panel = bookmarks_box(session, store)
         if gui.inside(panel.x, panel.y, panel.w, panel.h, x, y) {
@@ -4164,6 +4237,23 @@ fn open_new_tab(session: Session, store: Store, notice: Notice) -> ClickAction {
 fn handle_click(handle: Int, x: Int, y: Int, clicks: Int, current: Address, session: Session, suggestions: List<String>, store: Store, downloads: Downloads, reader_open: Bool) -> ClickAction {
     let count = session.tabs.len()
     let notice = Notice { text: "", until: 0 }
+
+    // The find bar sits above the page, so it takes presses first.
+    if store.find_open {
+        let box = find_box(session)
+        if gui.inside(box.x, box.y, box.w, box.h, x, y) {
+            let close = find_close_box(session)
+            if gui.inside(close.x, close.y, close.w, close.h, x, y) {
+                engine.find_text(handle, "", true)
+                var closed = store
+                closed.find_open = false
+                closed.find_found = 0
+                return click_action(session, current, closed, notice)
+            }
+            engine.focus_chrome(handle)
+            return click_action(session, current, store, notice)
+        }
+    }
 
     // The reader panel floats above the page, so its rows take presses before
     // anything behind them.
@@ -4554,6 +4644,29 @@ fn handle_click(handle: Int, x: Int, y: Int, clicks: Int, current: Address, sess
         })
     }
     return click_action(session, next_address, store, notice)
+}
+
+// Page zoom steps by 10% and stops at the same bounds Chrome uses.
+fn zoom_step(handle: Int, delta: Int) -> Notice {
+    var next = engine.zoom(handle) + delta
+    if next < 50 {
+        next = 50
+    }
+    if next > 300 {
+        next = 300
+    }
+    engine.set_zoom(handle, next)
+    return Notice { text: "Zoom: ${next}%", until: gui.now() + 1600 }
+}
+
+// Query strings are short, so dropping the last character by rebuilding is
+// cheap and avoids depending on a range-slice builtin the compiler lacks.
+fn text_without_last(text: String) -> String {
+    let parts = text.chars()
+    if parts.len() == 0 {
+        return ""
+    }
+    return address_edit.slice_chars(parts, 0, parts.len() - 1)
 }
 
 fn key_action(session: Session, address: Address, store: Store, notice: Notice, close: Bool) -> KeyAction {
@@ -5227,6 +5340,53 @@ fn handle_key(handle: Int, code: Int, mods: Int, current: Address, session: Sess
         }, false)
     }
 
+    if command && code == 3 {
+        // Cmd+F. The query is kept between openings the way Chrome keeps it.
+        engine.focus_chrome(handle)
+        var opened = store
+        opened.find_open = true
+        return key_action(session, current, opened, notice_idle(), false)
+    }
+    if command && code == 24 {
+        return key_action(session, current, store, zoom_step(handle, 10), false)
+    }
+    if command && code == 27 {
+        return key_action(session, current, store, zoom_step(handle, 0 - 10), false)
+    }
+    if command && code == 29 {
+        engine.set_zoom(handle, 100)
+        return key_action(session, current, store, Notice { text: "Zoom: 100%", until: gui.now() + 1600 }, false)
+    }
+    if store.find_open && !current.editing {
+        if code == gui.key_escape() {
+            engine.find_text(handle, "", true)
+            engine.focus_page(handle)
+            var closed = store
+            closed.find_open = false
+            closed.find_found = 0
+            return key_action(session, current, closed, notice_idle(), false)
+        }
+        if code == gui.key_enter() {
+            engine.find_text(handle, store.find_text, !shift)
+            var searching = store
+            searching.find_found = 3
+            return key_action(session, current, searching, notice_idle(), false)
+        }
+        if code == gui.key_backspace() {
+            var edited = store
+            edited.find_text = text_without_last(store.find_text)
+            engine.find_text(handle, edited.find_text, true)
+            edited.find_found = if edited.find_text.len() > 0 { 3 } else { 0 }
+            return key_action(session, current, edited, notice_idle(), false)
+        }
+    }
+    if command && code == 5 && store.find_open {
+        engine.find_text(handle, store.find_text, !shift)
+        var searching = store
+        searching.find_found = 3
+        return key_action(session, current, searching, notice_idle(), false)
+    }
+
     if command && code == 100 {
         let toggled = toggle_bookmark(handle, store)
         return key_action(session, current, toggled.store, Notice {
@@ -5423,6 +5583,41 @@ fn auto_close(session: Session, theme: Chrome, address: Address, store: Store) {
         let panel = bookmarks_box(session, opened)
         println("bookmarks: open=1 rows=${bookmark_rows(store)} first=${bookmark_title(bookmark_at(store, 0))} panel=${panel.w}x${panel.h}")
     }
+    // Headless find check: WebKit searches the fixture, the result is polled,
+    // and the same accessors the bar uses report the zoom and the box.
+    if gui.env("NOVA_BROWSER_FIND_CHECK") == "1" {
+        engine.set_zoom(handle, 150)
+        let zoomed = engine.zoom(handle)
+        engine.find_text(handle, "Nova", true)
+        var waited = 0
+        while engine.find_state(handle) == 3 && waited < 3000 {
+            gui.pump()
+            gui.sleep(20)
+            waited = waited + 20
+        }
+        let hit = engine.find_state(handle)
+        engine.find_text(handle, "zzqx-no-such-word-zzqx", true)
+        var waited_miss = 0
+        while engine.find_state(handle) == 3 && waited_miss < 3000 {
+            gui.pump()
+            gui.sleep(20)
+            waited_miss = waited_miss + 20
+        }
+        let miss = engine.find_state(handle)
+        engine.find_text(handle, "", true)
+        let cleared = engine.find_state(handle)
+        engine.set_zoom(handle, 100)
+        let box = find_box(session)
+        println("find: zoom=${zoomed} reset=${engine.zoom(handle)} hit=${hit} miss=${miss} cleared=${cleared} panel=${box.w}x${box.h}")
+    }
+    var shown = store
+    if gui.env("NOVA_BROWSER_FIND_OPEN") == "1" {
+        shown.find_open = true
+        shown.find_text = "Nova"
+        shown.find_found = 1
+        let box = find_box(session)
+        println("find: open=1 panel=${box.w}x${box.h}")
+    }
     sync_visibility(session)
     // Headless blob-download check: the page builds a Blob, clicks a download
     // link, and the host must yield the same bytes plus a finished shelf row.
@@ -5513,7 +5708,7 @@ fn auto_close(session: Session, theme: Chrome, address: Address, store: Store) {
     }
     gui.begin()
     ensure_favicon(store, engine.page_url(handle), engine.icon_url(handle))
-    draw_chrome(handle, theme, address, session, suggestions, fx_new(), notice_idle(), store, 0 - 1, downloads_view(store), checked_tooltip(session), rail_open, panel_open, false, 0)
+    draw_chrome(handle, theme, address, session, suggestions, fx_new(), notice_idle(), shown, 0 - 1, downloads_view(shown), checked_tooltip(session), rail_open, panel_open, false, 0)
     gui.present()
     settle(24)
     let target = gui.env("NOVA_BROWSER_SNAPSHOT")
@@ -6004,6 +6199,9 @@ fn main() {
     var drawn_speaking = 0 - 1
     var drawn_paused = 0 - 1
     var drawn_reader = 0 - 1
+    var drawn_find = 0 - 1
+    var drawn_find_text = ""
+    var drawn_find_found = 0 - 1
     var drawn_fetch = 0 - 1
     var drawn_synth = 0 - 1
     var voice_engine = ""
@@ -6152,6 +6350,15 @@ fn main() {
             }
         }
 
+        // Find is asynchronous inside WebKit; poll the result the same way
+        // navigation state is polled, so the bar can say Found / Not found.
+        if store.find_open && store.find_found == 3 {
+            let found = engine.find_state(handle)
+            if found != 3 {
+                store.find_found = found
+            }
+        }
+
         if address.editing && engine.page_focused(handle) {
             address = address_cancel(address)
         }
@@ -6253,7 +6460,9 @@ fn main() {
                     store.bookmarks.len() != drawn_bookmarks || flag(store.downloads_open) != drawn_shelf || flag(store.bookmarks_open) != drawn_bookmarks_open ||
                     flag(session.vertical) != drawn_vertical || flag(rail_hover) != drawn_rail_open ||
                     flag(speech.speaking()) != drawn_speaking || flag(speech.paused()) != drawn_paused ||
-                    flag(reader_open) != drawn_reader || flag(voice_fetch) != drawn_fetch ||
+                    flag(reader_open) != drawn_reader || flag(store.find_open) != drawn_find ||
+                    store.find_text != drawn_find_text || store.find_found != drawn_find_found ||
+                    flag(voice_fetch) != drawn_fetch ||
                     flag(synth_active) == 1 || synth_phase != drawn_synth ||
                     voice_bytes != drawn_voice_bytes || flag(speech.kokoro_ready()) != drawn_ready ||
                     notice.text.len() > 0 || drawn_notice == 1 ||
@@ -6288,6 +6497,9 @@ fn main() {
             drawn_speaking = flag(speech.speaking())
             drawn_paused = flag(speech.paused())
             drawn_reader = flag(reader_open)
+            drawn_find = flag(store.find_open)
+            drawn_find_text = store.find_text
+            drawn_find_found = store.find_found
             drawn_fetch = flag(voice_fetch)
             drawn_synth = synth_phase
             drawn_voice_bytes = voice_bytes
@@ -6407,6 +6619,12 @@ fn main() {
                 if gui.env("NOVA_BROWSER_TRACE").len() > 0 {
                     println("browser: address text=${address.text}")
                 }
+            } else if store.find_open {
+                var edited = store
+                edited.find_text = store.find_text + gui.typed_text()
+                engine.find_text(handle, edited.find_text, true)
+                edited.find_found = 3
+                store = edited
             }
         }
         gui.pump()

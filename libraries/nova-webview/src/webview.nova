@@ -227,3 +227,27 @@ extern "C" fn nova_webview_icon_url(handle: Int) -> String
 fn wv_icon_url(handle: Int) -> String {
     return nova_webview_icon_url(handle)
 }
+
+// Find-in-page and page zoom. Find is asynchronous; the host keeps the result
+// and Nova polls it, the same way navigation state is polled.
+extern "C" fn nova_webview_find(handle: Int, query: String, forward: Int)
+extern "C" fn nova_webview_find_state(handle: Int) -> Int
+extern "C" fn nova_webview_set_zoom(handle: Int, percent: Int)
+extern "C" fn nova_webview_zoom(handle: Int) -> Int
+
+fn wv_find(handle: Int, query: String, forward: Bool) {
+    nova_webview_find(handle, query, if forward { 1 } else { 0 })
+}
+
+// 0 cleared, 1 found, 2 not found, 3 searching.
+fn wv_find_state(handle: Int) -> Int {
+    return nova_webview_find_state(handle)
+}
+
+fn wv_set_zoom(handle: Int, percent: Int) {
+    nova_webview_set_zoom(handle, percent)
+}
+
+fn wv_zoom(handle: Int) -> Int {
+    return nova_webview_zoom(handle)
+}

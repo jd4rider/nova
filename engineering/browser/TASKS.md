@@ -152,6 +152,15 @@ Each task needs a reproducible acceptance check before it is marked done.
   without Full Disk Access; the import then reports nothing rather than a guess.
   Evidence: `browser/tests/safari.sh` imports a binary plist and a history
   database and requires `bookmarks=1 history=1` plus both stored rows.
+- **WB-03.013 — Find in page and page zoom.** DONE in 0.9.8. Cmd+F opens a
+  find bar over the page; typing searches as you go, Enter/Shift+Enter and
+  Cmd+G/Cmd+Shift+G move between matches, Escape closes it and clears the
+  highlight. WebKit's `WKFindResult` reports only whether something matched, so
+  the bar says Found / No matches instead of a count. Cmd+= / Cmd+- step
+  `WKWebView.pageZoom` by 10% and Cmd+0 resets it. Evidence:
+  `browser/tests/find.sh` searches a real fixture over loopback and requires
+  `zoom=150 reset=100 hit=1 miss=2 cleared=0 panel=320x34`, plus the seeded bar
+  geometry. Zoom is per tab and not persisted per host.
 - **WB-04.002 — Downloads.** DONE. `WKDownloadDelegate` registry, attachment/
   MIME response policy, Nova shelf with cancel/reveal, `--download`, loopback
   test writing a real file. 0.7.3 adds pause/resume: clicking a running row

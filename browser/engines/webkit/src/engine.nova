@@ -226,3 +226,22 @@ fn blocklist(rules: String) -> Int {
 fn icon_url(handle: Int) -> String {
     return view.wv_icon_url(handle)
 }
+
+// Find-in-page. WebKit owns the search; the result is polled as 0 cleared,
+// 1 found, 2 not found, 3 searching.
+fn find_text(handle: Int, query: String, forward: Bool) {
+    view.wv_find(handle, query, forward)
+}
+
+fn find_state(handle: Int) -> Int {
+    return view.wv_find_state(handle)
+}
+
+// Page zoom through WKWebView.pageZoom, so the page lays out at that scale.
+fn set_zoom(handle: Int, percent: Int) {
+    view.wv_set_zoom(handle, percent)
+}
+
+fn zoom(handle: Int) -> Int {
+    return view.wv_zoom(handle)
+}
