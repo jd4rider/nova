@@ -1172,6 +1172,28 @@ Not evidenced: resolving every locale-encoded name (only the English locale is
 consulted), disabled-vs-enabled state, and any Chrome extension API behaviour —
 none exists to test.
 
+## 0.9.5 — Nova as the default web handler
+
+The bundle was registered and set with its own command:
+
+```sh
+lsregister -f "/Applications/Nova Browser.app"
+"/Applications/Nova Browser.app/Contents/MacOS/nova-browser" --set-default-browser
+# default: set=1 state=1
+```
+
+`--default-browser-status` reports `default: state=1`, and the system's own
+answer agrees — `NSWorkspace.urlForApplication(toOpen:)` for
+`https://example.com` resolves to `Nova Browser.app`. Before `lsregister -f` the
+same command reported `set=1 state=0`: LaunchServices accepted the request but
+kept Chrome, which is why the bundle is registered explicitly first.
+
+This is a real system setting, made because the owner asked for the followup. To
+revert: System Settings → Desktop & Dock → Default web browser, or Chrome's own
+"Make default" button. Not evidenced: a link clicked in another application
+opening Nova — there is no safe way to drive that here; the handler resolution
+above is the system's recorded answer.
+
 ## Not yet evidenced
 
 - hosted CI run of the browser address/lifecycle steps;

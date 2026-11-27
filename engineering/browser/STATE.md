@@ -320,6 +320,10 @@ Active task: **WB-04.002 — downloads** (0.7.5 persisted completed downloads;
   - WebKit has no Chrome extension runtime (`WKWebView` loads Safari web
     extensions). Replacements are tracked as `BROWSER-EXT-01`: content rules,
     userscripts, native features; none implemented yet.
+  - Nova is the system handler for http/https on this machine: after
+    `lsregister -f`, `--set-default-browser` reports `set=1 state=1` and
+    `NSWorkspace` resolves a web URL to `Nova Browser.app`. Revert in System
+    Settings → Desktop & Dock → Default web browser.
 - **0.9.1 — window buttons back on the strip, whole chrome drags**
   - The three traffic lights had been placed from the window's height while
     AppKit keeps them in its own 32 pt titlebar view, so they landed hundreds of
