@@ -1073,6 +1073,52 @@ reports no history and still imports bookmarks and the engine). Visit frequency
 is intentionally not transferred, so a Chrome-frequent page does not outrank a
 Nova-frequent one.
 
+## 0.9.3 — default browser, startup pages, real-profile import
+
+Importing the owner's own Chrome profile is now a routine check instead of an
+out-of-memory kill. The profile is read with `NOVA_BROWSER_IMPORT_DRY=1`, so
+nothing is written and no page URL or title is printed or recorded here; only
+counts are reported.
+
+```sh
+CH="$HOME/Library/Application Support/Google/Chrome/Default"
+NOVA_BROWSER_PROFILE=$(mktemp -d) NOVA_BROWSER_IMPORT_DRY=1 \
+  /usr/bin/time -l browser/target/nova/nova-browser --import "$CH"
+```
+
+- `import(dry): files=1 found=662 new=662 bookmarks=662 history=372 startup=0
+  homepage= search=`, exit 0, **peak RSS 455 MB** (7,239,426,048 bytes before,
+  which ended in `Killed: 9`, exit 137);
+- `--import` with no path (Chrome, Chromium, Edge, Brave and Vivaldi were
+  present) prints `files=3 found=662 new=662 bookmarks=662 history=400`,
+  **peak RSS 474 MB**, exit 0;
+- `sh browser/tests/history.sh` exits 0 with `failures=0`; the fixture profile
+  prints `import: files=1 found=2 new=2 bookmarks=2 history=2 startup=2
+  homepage=https://example.com/home search=duckduckgo`, then `new=0
+  history=0` on the repeat run, plus an `import(dry)` line and zero files
+  written;
+- `traffic.sh` 15/15, `address.sh` 0 failures, bundle installed as 0.9.3 with a
+  valid ad-hoc signature and `--default-browser-status` printing
+  `default: state=0`.
+
+The memory came from three separate quadratics, each measured by isolating one
+file in a fixture `HOME`:
+
+| Path | Before | Cause | After |
+|---|---|---|---|
+| `Bookmarks` (629 KB) | 7.9 GB | character-by-character decoding of every value, including a 300 KB `sync_metadata` string, plus an all-pairs dedupe | linear split scan, one-pass dedupe |
+| `History` (23 MB) | 6.3 GB | `sqlite3 -json` dump parsed by the generic JSON parser, which copies its document per node | `sqlite3 -separator` rows read as tab-separated lines |
+| full profile | 7.2 GB, killed | per-record `add_bookmark`/`add_visit` copying the whole store | `merge_bookmarks`/`merge_visits` in one pass |
+
+The underlying language costs are recorded as `BROWSER-STD-02`: appending to a
+`String` in a loop copies it, and `json.js_parse` copies the document per node.
+The import avoids both rather than hiding them.
+
+Default browser: the bundle carries `CFBundleURLTypes` for http/https and the
+app calls `LSRegisterURL` + `LSSetDefaultHandlerForURLScheme`. The *system*
+default is not changed by any test or by this session; the owner has not asked
+for that switch, so only the reporting path is evidenced (`state=0`).
+
 ## Not yet evidenced
 
 - hosted CI run of the browser address/lifecycle steps;

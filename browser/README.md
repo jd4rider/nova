@@ -243,11 +243,43 @@ A profile folder also brings over the parts of Chrome that map onto Nova:
 - **Search engine.** The default provider in `Preferences` is applied when it is
   Google, DuckDuckGo or Brave; any other engine leaves Nova's current choice
   alone and is not reported as imported.
+- **Startup pages.** Chrome's "Open a specific page or set of pages" becomes
+  Nova's own startup set (`startup.tsv` + `startup=pages`), so the next launch
+  opens those pages instead of the last session. "Continue where you left off"
+  imports as `startup=restore` and "Open the New Tab page" as `startup=newtab`.
+- **Homepage.** A real Chrome homepage (not the New Tab page) is saved as
+  `homepage` and opened with Cmd+Shift+H; without one, that shortcut opens
+  Nova's start page in a new tab.
 - **Bookmarks.** Bookmark bar and Other bookmarks, as above.
 
-Not imported: Chrome's startup pages, homepage, extensions, passwords, cookies,
-site permissions, open tabs, download history or themes. Passwords in particular
-stay in Chrome's Keychain-backed store; Nova reads no credential database.
+Not imported: extensions, passwords, cookies, site permissions, open tabs
+(the last session is not read), download history or themes. Passwords in
+particular stay in Chrome's Keychain-backed store; Nova reads no credential
+database.
+
+A dry run applies everything in memory and writes nothing, so you can see what
+would change first:
+
+```sh
+NOVA_BROWSER_IMPORT_DRY=1 browser/target/nova/nova-browser --import
+```
+
+## Default browser
+
+The bundle declares `http` and `https`, and two commands move the LaunchServices
+handler:
+
+```sh
+"/Applications/Nova Browser.app/Contents/MacOS/nova-browser" --default-browser-status
+"/Applications/Nova Browser.app/Contents/MacOS/nova-browser" --set-default-browser
+```
+
+The app menu also has **Make Nova Browser the Default Browser**. Both go through
+`LSSetDefaultHandlerForURLScheme` for both schemes, so macOS and every other app
+that opens a link follow the choice. A bare binary has no bundle identifier and
+reports `state=0` rather than pretending; the commands only mean something for
+the installed app. This ad-hoc signed build is not notarized, so macOS may still
+show a confirmation for a link opened from another app.
 
 ## Downloads
 

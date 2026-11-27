@@ -81,6 +81,27 @@ Each task needs a reproducible acceptance check before it is marked done.
   `history=2 search=duckduckgo` plus two visit lines, then `history=0` on the
   second run. Not imported: startup pages, homepage, passwords, cookies, open
   tabs, extensions, download history, themes.
+- **WB-03.009 — Default browser.** DONE in 0.9.3. The bundle declares http and
+  https in `CFBundleURLTypes`; `--set-default-browser`, `--default-browser-status`
+  and an app-menu item call LaunchServices (`LSRegisterURL`,
+  `LSSetDefaultHandlerForURLScheme`) and report what the system recorded. The
+  tests never flip the owner's default. Evidence: the installed bundle's
+  `--default-browser-status` prints `default: state=0`; a bare binary with no
+  bundle identifier reports 0 instead of claiming the position.
+- **WB-04.008 — Startup pages and homepage.** DONE in 0.9.3. The import reads
+  `session.restore_on_startup` (4 = pages, 1 = restore, 5 = New Tab),
+  `session.startup_urls` and `homepage`; `settings.tsv startup=` plus
+  `startup.tsv` drive launch, and Cmd+Shift+H opens the homepage or start page.
+  Evidence: `history.sh` requires `startup=2 homepage=https://example.com/home`
+  from the fixture and a launch probe that reports the two startup tabs.
+- **WB-04.009 — Import dry run and profile-sized reads.** DONE in 0.9.3.
+  `NOVA_BROWSER_IMPORT_DRY=1` prints `import(dry): ...` and writes nothing.
+  Reading the owner's real profile exposed three quadratic paths: the generic
+  JSON parser (a new document per node), per-record store insertion (a whole
+  list copy per record), and per-character value building with an all-pairs
+  dedupe. Bookmarks and history now use linear readers. Measured on the real
+  profile: killed at 7.2 GB before, 455 MB after, the same 662 bookmarks and
+  372 visits.
 - **WB-04.002 — Downloads.** DONE. `WKDownloadDelegate` registry, attachment/
   MIME response policy, Nova shelf with cancel/reveal, `--download`, loopback
   test writing a real file. 0.7.3 adds pause/resume: clicking a running row
@@ -187,4 +208,9 @@ Each task needs a reproducible acceptance check before it is marked done.
 - **BROWSER-COMP-02 — Native callbacks.** OPEN. Polling is used; the narrow
   AppKit monitor only queues Cmd+L and tab commands for the active window.
 - **BROWSER-STD-01 — URL parser and browser-owned HTTP/storage.** READY.
+- **BROWSER-STD-02 — String append and JSON copies.** OPEN. Appending to a
+  `String` in a loop copies the whole string, so building a 300 KB value one
+  character at a time costs gigabytes; `json.js_parse` returns a new document
+  per node. Profile import now avoids both, but there is no O(1) append or
+  range-slice builtin. Next: `String.slice(start, end)` (or a growable buffer).
 - **BROWSER-BOX-01 — Reusable webview/engine packages.** PLANNED.

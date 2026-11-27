@@ -232,6 +232,103 @@ fn add_visit(records: List<String>, url: String, title: String) -> List<String> 
     return kept
 }
 
+// Adds imported bookmarks in one pass. Adding them one at a time through
+// add_bookmark rebuilt the whole store per record, which made a real Chrome
+// profile cost gigabytes for a few hundred bookmarks. The membership scan is
+// inlined: calling a helper with the key list copies it on every lookup.
+fn merge_bookmarks(records: List<String>, found: List<String>) -> List<String> {
+    var keys: List<String> = []
+    for line in records {
+        if is_bookmark(line) {
+            let k = key(field(line, 1))
+            var known = false
+            var j = 0
+            while j < keys.len() {
+                if keys[j] == k {
+                    known = true
+                }
+                j = j + 1
+            }
+            if k.len() > 0 && !known {
+                keys.push(k)
+            }
+        }
+    }
+    var out = records
+    for line in found {
+        let url = field(line, 1)
+        let k = key(url)
+        var known = false
+        var j = 0
+        while j < keys.len() {
+            if keys[j] == k {
+                known = true
+            }
+            j = j + 1
+        }
+        if k.len() > 0 && allowed_url(url) && !known {
+            keys.push(k)
+            let title = field(line, 2)
+            let shown = if title.trim().len() > 0 { title.trim() } else { host_of(url) }
+            out.push(record("bookmark", url, shown))
+        }
+    }
+    return out
+}
+
+// Same for visits: pages already in the store are skipped, and the 400-visit
+// bound is applied once at the end instead of on every insertion.
+fn merge_visits(records: List<String>, found: List<String>) -> List<String> {
+    var keys: List<String> = []
+    for line in records {
+        if is_visit(line) {
+            let k = key(field(line, 1))
+            var known = false
+            var j = 0
+            while j < keys.len() {
+                if keys[j] == k {
+                    known = true
+                }
+                j = j + 1
+            }
+            if k.len() > 0 && !known {
+                keys.push(k)
+            }
+        }
+    }
+    var out = records
+    for line in found {
+        let url = field(line, 1)
+        let k = key(url)
+        var known = false
+        var j = 0
+        while j < keys.len() {
+            if keys[j] == k {
+                known = true
+            }
+            j = j + 1
+        }
+        if k.len() > 0 && allowed_url(url) && !known {
+            keys.push(k)
+            out.push(record("visit", url, field(line, 2)))
+        }
+    }
+    var visits = visit_count(out)
+    if visits <= 400 {
+        return out
+    }
+    var drop = visits - 400
+    var kept: List<String> = []
+    for line in out {
+        if drop > 0 && is_visit(line) {
+            drop = drop - 1
+        } else {
+            kept.push(line)
+        }
+    }
+    return kept
+}
+
 fn add_bookmark(records: List<String>, url: String, title: String) -> List<String> {
     let k = key(url)
     if k.len() == 0 {
@@ -419,67 +516,215 @@ fn suggest(records: List<String>, query: String, limit: Int) -> List<String> {
 // ---------- google import ----------
 
 fn dedupe_bookmarks(records: List<String>) -> List<String> {
+    // One pass with an inline membership scan. Comparing every record with every
+    // later one re-split each line and cost about a megabyte per bookmark.
+    var keys: List<String> = []
     var out: List<String> = []
-    var i = 0
-    while i < records.len() {
-        let line = records[i]
+    for line in records {
         let k = key(field(line, 1))
-        var keep = k.len() > 0
-        var j = i + 1
-        while j < records.len() {
-            if key(field(records[j], 1)) == k {
-                keep = false
+        var known = false
+        var j = 0
+        while j < keys.len() {
+            if keys[j] == k {
+                known = true
             }
             j = j + 1
         }
-        if keep {
+        if k.len() > 0 && !known {
+            keys.push(k)
             out.push(line)
         }
-        i = i + 1
     }
     return out
 }
 
-fn collect_chrome(doc: JsonDoc, node: Int, out: List<String>) -> List<String> {
-    if json.js_kind(doc, node) != 5 {
-        return out
+fn chrome_hex_digit(ch: String) -> Int {
+    let digits = "0123456789abcdef".chars()
+    var i = 0
+    while i < digits.len() {
+        if digits[i] == ch.lower() {
+            return i
+        }
+        i = i + 1
     }
-    var result = out
-    let kind = json.js_str(doc, json.js_get(doc, node, "type"))
-    let name = json.js_str(doc, json.js_get(doc, node, "name"))
-    let url = json.js_str(doc, json.js_get(doc, node, "url"))
-    if kind == "url" && allowed_url(url) {
-        result.push(record("bookmark", url, name))
-    }
-    let children = json.js_get(doc, node, "children")
-    if children >= 0 && json.js_kind(doc, children) == 4 {
-        var i = 0
-        while i < json.js_len(doc, children) {
-            result = collect_chrome(doc, json.js_at(doc, children, i), result)
+    return 0
+}
+
+// Decodes the JSON string that starts at the opening quote, returning the text
+// and the index just past the closing quote. \u escapes are decoded, including
+// surrogate pairs, so an emoji bookmark name survives the import.
+fn chrome_string(chars: List<String>, start: Int) -> (String, Int) {
+    var out = ""
+    var i = start + 1
+    while i < chars.len() {
+        let ch = chars[i]
+        if ch == "\"" {
+            return (out, i + 1)
+        }
+        if ch == "\\" && i + 1 < chars.len() {
+            let next = chars[i + 1]
+            if next == "u" && i + 5 < chars.len() {
+                var code = 0
+                var k = i + 2
+                while k < i + 6 {
+                    code = code * 16 + chrome_hex_digit(chars[k])
+                    k = k + 1
+                }
+                var step = 6
+                if code >= 55296 && code <= 56319 && i + 11 < chars.len() && chars[i + 6] == "\\" && chars[i + 7] == "u" {
+                    var low = 0
+                    var m = i + 8
+                    while m < i + 12 {
+                        low = low * 16 + chrome_hex_digit(chars[m])
+                        m = m + 1
+                    }
+                    if low >= 56320 && low <= 57343 {
+                        code = 65536 + (code - 55296) * 1024 + (low - 56320)
+                        step = 12
+                    }
+                }
+                out = out + char_string(code)
+                i = i + step
+            } else if next == "n" {
+                out = out + "\n"
+                i = i + 2
+            } else if next == "t" {
+                out = out + "\t"
+                i = i + 2
+            } else if next == "r" {
+                out = out + "\r"
+                i = i + 2
+            } else if next == "b" {
+                out = out + char_string(8)
+                i = i + 2
+            } else if next == "f" {
+                out = out + char_string(12)
+                i = i + 2
+            } else {
+                out = out + next
+                i = i + 2
+            }
+        } else {
+            out = out + ch
             i = i + 1
         }
     }
-    return result
+    return (out, i)
 }
 
-// Reads a Chrome "Bookmarks" profile file. Only http(s) entries are imported:
-// chrome://pages and javascript: bookmarks are not navigable here.
-fn import_chrome(text: String) -> List<String> {
-    let doc = json.js_parse(text)
-    if doc.error.len() > 0 || doc.nodes.len() == 0 {
-        return []
+// Chrome writes Bookmarks as JSON with one unrelated string of hundreds of
+// kilobytes (`sync_metadata`). The file is split on quotes and the pieces are
+// paired into keys and values, so every byte is touched once and only `type`,
+// `name` and `url` values are decoded. Scanning character by character and
+// appending each one to a value string was quadratic: a real 629 KB profile
+// needed gigabytes of memory for 662 bookmarks.
+fn chrome_unescape(text: String) -> String {
+    // Most names and URLs carry no escapes at all; copying them back character
+    // by character is quadratic in the length of the value.
+    if !text.contains("\\") {
+        return text
     }
-    let root = doc.nodes.len() - 1
-    let roots = json.js_get(doc, root, "roots")
-    var out: List<String> = []
-    if roots >= 0 && json.js_kind(doc, roots) == 5 {
-        var i = 0
-        while i < json.js_len(doc, roots) {
-            out = collect_chrome(doc, json.js_at(doc, roots, i), out)
+    let chars = text.chars()
+    var out = ""
+    var i = 0
+    while i < chars.len() {
+        if chars[i] == "\\" && i + 1 < chars.len() {
+            let next = chars[i + 1]
+            if next == "u" && i + 5 < chars.len() {
+                var code = 0
+                var k = i + 2
+                while k < i + 6 {
+                    code = code * 16 + chrome_hex_digit(chars[k])
+                    k = k + 1
+                }
+                var step = 6
+                if code >= 55296 && code <= 56319 && i + 11 < chars.len() && chars[i + 6] == "\\" && chars[i + 7] == "u" {
+                    var low = 0
+                    var m = i + 8
+                    while m < i + 12 {
+                        low = low * 16 + chrome_hex_digit(chars[m])
+                        m = m + 1
+                    }
+                    if low >= 56320 && low <= 57343 {
+                        code = 65536 + (code - 55296) * 1024 + (low - 56320)
+                        step = 12
+                    }
+                }
+                out = out + char_string(code)
+                i = i + step
+            } else if next == "n" {
+                out = out + "\n"
+                i = i + 2
+            } else if next == "t" {
+                out = out + "\t"
+                i = i + 2
+            } else if next == "r" {
+                out = out + "\r"
+                i = i + 2
+            } else if next == "b" {
+                out = out + char_string(8)
+                i = i + 2
+            } else if next == "f" {
+                out = out + char_string(12)
+                i = i + 2
+            } else {
+                out = out + next
+                i = i + 2
+            }
+        } else {
+            out = out + chars[i]
             i = i + 1
+        }
+    }
+    return out
+}
+
+fn scan_chrome_bookmarks(text: String) -> List<String> {
+    let parts = text.split("\"")
+    var out: List<String> = []
+    var kind = ""
+    var name = ""
+    var last_key = ""
+    var i = 0
+    while i < parts.len() {
+        i = i + 1
+        if i >= parts.len() {
+            break
+        }
+        var value = parts[i]
+        // A quote written as \" does not end the string: join the pieces back.
+        while value.ends_with("\\") && !value.ends_with("\\\\") && i + 1 < parts.len() {
+            value = value + "\"" + parts[i + 1]
+            i = i + 1
+        }
+        // A piece followed by ":" is a key; one followed by "," or "}" is a value.
+        let is_key = i + 1 < parts.len() && parts[i + 1].trim().starts_with(":")
+        i = i + 1
+        if is_key {
+            last_key = value
+        } else if last_key == "guid" {
+            name = ""
+        } else if last_key == "type" {
+            kind = chrome_unescape(value)
+        } else if last_key == "name" {
+            name = chrome_unescape(value)
+        } else if last_key == "url" {
+            let url = chrome_unescape(value).trim()
+            if kind == "url" && allowed_url(url) {
+                out.push(record("bookmark", url, name))
+            }
+            kind = ""
+            name = ""
         }
     }
     return dedupe_bookmarks(out)
+}
+
+
+// Reads a Chrome "Bookmarks" profile file. Only http(s) entries are imported:
+// chrome:// rules and javascript: bookmarks are not navigable here.
+fn import_chrome(text: String) -> List<String> {
+    return scan_chrome_bookmarks(text)
 }
 
 fn match_ci(chars: List<String>, at: Int, needle: String) -> Bool {
@@ -592,29 +837,33 @@ fn import_html(text: String) -> List<String> {
 
 // ---------- Chrome profile import ----------
 
-// One visit per URL from `sqlite3 -json` output, which is an array of
-// {url, title} objects. Chrome's own order (newest first) is kept, duplicates
-// collapse to their first row and only http(s) pages become visits; the shell
-// skips pages the store already knows, so importing twice adds nothing.
+// One visit per row of the tab-separated dump (`url<TAB>title`). Chrome's own
+// order (newest first) is kept, duplicates collapse and only http(s) pages
+// become visits; the shell skips pages the store already knows, so importing
+// twice adds nothing. A line format, not JSON: the generic parser copies its
+// document per node, which a history-sized payload cannot afford.
 fn import_chrome_history(text: String, limit: Int) -> List<String> {
-    let doc = json.js_parse(text)
-    if doc.error.len() > 0 || doc.nodes.len() == 0 {
-        return []
-    }
-    let root = doc.nodes.len() - 1
-    if json.js_kind(doc, root) != 4 {
-        return []
-    }
     var out: List<String> = []
     var keys: List<String> = []
+    let lines = text.split("\n")
     var i = 0
-    while i < json.js_len(doc, root) && out.len() < limit {
-        let row = json.js_at(doc, root, i)
-        let url = json.js_str(doc, json.js_get(doc, row, "url")).trim()
-        let k = key(url)
-        if allowed_url(url) && k.len() > 0 && !seen_key(keys, k) {
-            keys.push(k)
-            out.push(record("visit", url, json.js_str(doc, json.js_get(doc, row, "title")).trim()))
+    while i < lines.len() && out.len() < limit {
+        let parts = lines[i].split("\t")
+        if parts.len() >= 2 {
+            let url = parts[0].trim()
+            let k = key(url)
+            var known = false
+            var j = 0
+            while j < keys.len() {
+                if keys[j] == k {
+                    known = true
+                }
+                j = j + 1
+            }
+            if allowed_url(url) && k.len() > 0 && !known {
+                keys.push(k)
+                out.push(record("visit", url, parts[1].trim()))
+            }
         }
         i = i + 1
     }
@@ -638,30 +887,31 @@ fn chrome_search_engine(short_name: String, keyword: String) -> String {
     return ""
 }
 
-// The search engine out of a Chrome `Preferences` file. Since Chrome 90 the
-// provider sits under default_search_provider_data.template_url_data; older
-// profiles nest it one level up, so both shapes are read.
-fn import_chrome_preferences(text: String) -> String {
-    let doc = json.js_parse(text)
-    if doc.error.len() > 0 || doc.nodes.len() == 0 {
-        return ""
+// The startup pages Chrome would open, from the JSON array plutil prints for
+// `session.startup_urls`. Only http(s) URLs survive, duplicates collapse and
+// Chrome's order is kept.
+fn import_chrome_startup(text: String) -> List<String> {
+    // plutil prints a flat array of strings, so the quoted strings can be read
+    // in one pass. The generic JSON parser copies its document per node and is
+    // not used for profile-sized data.
+    let chars = text.chars()
+    var out: List<String> = []
+    var i = 0
+    while i < chars.len() {
+        if chars[i] == "\"" {
+            let scanned = chrome_string(chars, i)
+            let url = scanned.0.trim()
+            if allowed_url(url) && !seen_key(out, url) {
+                out.push(url)
+            }
+            i = scanned.1
+        } else {
+            i = i + 1
+        }
     }
-    let root = doc.nodes.len() - 1
-    var node = json.js_get(doc, root, "default_search_provider_data")
-    if node < 0 || json.js_kind(doc, node) != 5 {
-        node = json.js_get(doc, root, "default_search_provider")
-    }
-    if node < 0 || json.js_kind(doc, node) != 5 {
-        return ""
-    }
-    let template = json.js_get(doc, node, "template_url_data")
-    var source = node
-    if template >= 0 && json.js_kind(doc, template) == 5 {
-        source = template
-    }
-    return chrome_search_engine(json.js_str(doc, json.js_get(doc, source, "short_name")),
-                                json.js_str(doc, json.js_get(doc, source, "keyword")))
+    return out
 }
+
 
 // ---------- settings, session and download text ----------
 

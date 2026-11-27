@@ -3,7 +3,7 @@
 Updated: 2026-11-26
 Branch: `main`
 Last known good compiler checkpoint: `cfa00e3` (before browser work)
-Browser: **0.9.2 installed at `/Applications/Nova Browser.app`**
+Browser: **0.9.3 installed at `/Applications/Nova Browser.app`**
 Browser working tree: uncommitted; see `git status`
 Active gate: G0 WebKit; G1 WebCore not started
 Active task: **WB-04.002 — downloads** (0.7.5 persisted completed downloads;
@@ -292,6 +292,20 @@ Active task: **WB-04.002 — downloads** (0.7.5 persisted completed downloads;
     bound. Startup pages, extensions, passwords, cookies and open tabs are not
     imported and the docs say so.
 
+- **0.9.3 — default browser, startup pages, real-profile import**
+  - The bundle declares http/https in `CFBundleURLTypes` and asks LaunchServices
+    to become the handler (`LSRegisterURL`, `LSSetDefaultHandlerForURLScheme`);
+    `--set-default-browser`, `--default-browser-status` and the App menu report
+    the result. The tests never change the system default (`state=0`).
+  - Chrome `restore_on_startup` 4/1/5 imported: startup pages in `startup.tsv`,
+    mode in `settings.tsv startup=`, homepage honoured on launch and Cmd+Shift+H.
+  - `NOVA_BROWSER_IMPORT_DRY=1` prints `import(dry): ...` and writes nothing.
+  - The real Chrome profile now imports instead of dying: bookmarks scan
+    line-by-line over quote-split pieces, history is a tab-separated `sqlite3`
+    query, and imports merge in one pass. 7.2 GB/killed → 455 MB, 662 bookmarks,
+    372 visits, 400 on auto-discovery.
+  - Language snag filed as `BROWSER-STD-02`: loop string append copies the whole
+    string and `json.js_parse` copies per node; both are avoided, not fixed.
 - **0.9.1 — window buttons back on the strip, whole chrome drags**
   - The three traffic lights had been placed from the window's height while
     AppKit keeps them in its own 32 pt titlebar view, so they landed hundreds of

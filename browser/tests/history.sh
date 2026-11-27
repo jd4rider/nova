@@ -50,8 +50,11 @@ echo "--- chrome profile (bookmarks, history, search) ---"
 # macOS, which is where this profile format exists.
 mkdir -p "$CHROME/Default"
 cp "$HERE/fixtures/chrome-bookmarks.json" "$CHROME/Default/Bookmarks"
-cat > "$CHROME/Default/Preferences" <<'JSON'
-{"default_search_provider_data":{"template_url_data":{"short_name":"DuckDuckGo","keyword":"duckduckgo.com"}}}
+# A real Preferences file is tens of megabytes. A large filler proves the
+# import reads only the keys it needs instead of parsing the whole document.
+FILLER=$(dd if=/dev/zero bs=1024 count=1024 2>/dev/null | tr '\0' 'x')
+cat > "$CHROME/Default/Preferences" <<JSON
+{"junk":"$FILLER","default_search_provider_data":{"template_url_data":{"short_name":"DuckDuckGo","keyword":"duckduckgo.com"}},"homepage":"https://example.com/home","homepage_is_newtabpage":false,"session":{"restore_on_startup":4,"startup_urls":["https://fixture.nova.invalid/start","https://fixture.nova.invalid/start2","mailto:skip@example.com"]}}
 JSON
 sqlite3 "$CHROME/Default/History" <<'SQL'
 create table urls (id integer primary key, url text, title text, visit_count integer default 0,
@@ -64,17 +67,22 @@ SQL
 OUT4=$(cd "$ROOT" && NOVA_BROWSER_PROFILE="$SETTINGS_PROFILE" \
     "$ROOT/browser/target/nova/nova-browser" --import "$CHROME/Default" 2>&1)
 echo "$OUT4"
-echo "$OUT4" | grep -q 'files=1 found=2 new=2 bookmarks=2 history=2 search=duckduckgo'
+echo "$OUT4" | grep -q 'files=1 found=2 new=2 bookmarks=2 history=2 startup=2 homepage=https://example.com/home search=duckduckgo'
 [ -s "$SETTINGS_PROFILE/history.tsv" ] || { echo "history: imported visits missing" >&2; exit 1; }
 grep -q '^visit' "$SETTINGS_PROFILE/history.tsv"
 grep -q '^search=duckduckgo$' "$SETTINGS_PROFILE/settings.tsv"
+grep -q '^startup=pages$' "$SETTINGS_PROFILE/settings.tsv"
+grep -q '^homepage=https://example.com/home$' "$SETTINGS_PROFILE/settings.tsv"
 [ "$(grep -c '^visit' "$SETTINGS_PROFILE/history.tsv")" = "2" ] || { echo "history: expected two visits" >&2; exit 1; }
+# Startup pages keep Chrome's order; the mailto: entry is skipped.
+grep -q 'tab\thttps://fixture.nova.invalid/start$' "$SETTINGS_PROFILE/startup.tsv"
+[ "$(grep -c '^tab' "$SETTINGS_PROFILE/startup.tsv")" = "2" ] || { echo "history: expected two startup pages" >&2; exit 1; }
 
 # The same profile again adds no bookmarks and no visits.
 OUT5=$(cd "$ROOT" && NOVA_BROWSER_PROFILE="$SETTINGS_PROFILE" \
     "$ROOT/browser/target/nova/nova-browser" --import "$CHROME/Default" 2>&1)
 echo "$OUT5"
-echo "$OUT5" | grep -q 'new=0 bookmarks=2 history=0 search=duckduckgo'
+echo "$OUT5" | grep -q 'new=0 bookmarks=2 history=0 startup=2 homepage=https://example.com/home search=duckduckgo'
 
 # Cmd+Shift+I discovers profiles under the home directory. Point HOME at the
 # fixture so the real Chrome profile is never touched.
@@ -88,4 +96,23 @@ trap 'rm -rf "$PROFILE" "$CHROME" "$SETTINGS_PROFILE" "$FAKEHOME" "$DISCOVERED"'
 OUT6=$(cd "$ROOT" && HOME="$FAKEHOME" NOVA_BROWSER_PROFILE="$DISCOVERED" \
     "$ROOT/browser/target/nova/nova-browser" --import 2>&1)
 echo "$OUT6"
-echo "$OUT6" | grep -q 'files=1 found=2 new=2 bookmarks=2 history=2 search=duckduckgo'
+echo "$OUT6" | grep -q 'files=1 found=2 new=2 bookmarks=2 history=2 startup=2 homepage=https://example.com/home search=duckduckgo'
+
+# The imported startup choice is what the next launch actually opens.
+echo "--- startup pages at launch ---"
+OUT7=$(cd "$ROOT" && NOVA_BROWSER_PROFILE="$SETTINGS_PROFILE" NOVA_BROWSER_STARTUP_PROBE=1 \
+    NOVA_BROWSER_NO_HISTORY=1 NOVA_BROWSER_AUTOCLOSE=1 \
+    "$ROOT/browser/target/nova/nova-browser" 2>&1)
+echo "$OUT7" | grep -q 'startup: mode=pages tabs=2 first=https://fixture.nova.invalid/start'
+
+# A dry run reports the same counts and writes nothing at all.
+echo "--- dry run writes nothing ---"
+DRY=$(mktemp -d /tmp/nova-browser-profile.XXXXXX)
+trap 'rm -rf "$PROFILE" "$CHROME" "$SETTINGS_PROFILE" "$FAKEHOME" "$DISCOVERED" "$DRY"' EXIT
+OUT8=$(cd "$ROOT" && NOVA_BROWSER_PROFILE="$DRY" NOVA_BROWSER_IMPORT_DRY=1 \
+    "$ROOT/browser/target/nova/nova-browser" --import "$CHROME/Default" 2>&1)
+echo "$OUT8"
+echo "$OUT8" | grep -q 'import(dry): files=1 found=2 new=2 bookmarks=2 history=2 startup=2 homepage=https://example.com/home search=duckduckgo'
+for f in bookmarks.tsv history.tsv startup.tsv settings.tsv session.tsv downloads.tsv; do
+    [ ! -e "$DRY/$f" ] || { echo "history: dry run wrote $f" >&2; exit 1; }
+done

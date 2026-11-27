@@ -114,11 +114,43 @@ fn main() -> Int {
         failures = failures + 2
     }
     failures = failures + check("chrome scheme is skipped", lib.import_chrome("{bad json").len() == 0)
+    // A real Bookmarks file is hundreds of kilobytes; the scanner is linear, so
+    // 1,200 entries must stay cheap instead of multiplying the document.
+    var big = "{\"roots\":{\"bookmark_bar\":{\"children\":["
+    var b = 0
+    while b < 1200 {
+        if b > 0 {
+            big = big + ","
+        }
+        big = big + "{\"type\":\"url\",\"name\":\"Site ${b}\",\"url\":\"https://example.com/${b}\"}"
+        b = b + 1
+    }
+    big = big + "]}}}"
+    let many = lib.import_chrome(big)
+    failures = failures + check("large chrome import count", many.len() == 1200)
+    // Applying an import is one pass, not one store copy per record.
+    var bulk_store = lib.add_bookmark(lib.empty(), "https://existing.example/", "Existing")
+    let bulk_found = lib.merge(many, lib.import_chrome("{\"roots\":{\"x\":{\"children\":[{\"type\":\"url\",\"name\":\"Dup\",\"url\":\"https://example.com/0\"}]}}}"))
+    let merged_marks = lib.merge_bookmarks(bulk_store, bulk_found)
+    failures = failures + check("bulk bookmark merge count", lib.bookmark_count(merged_marks) == 1201)
+    var empty_visits: List<String> = []
+    let merged_visits = lib.merge_visits(empty_visits, lib.import_chrome_history("https://a.example/\tA\nhttps://a.example/\tAgain\nhttps://b.example/\tB\n", 100))
+    failures = failures + check("bulk visit merge count", lib.visit_count(merged_visits) == 2)
+    var big_visits = empty_visits
+    var vi = 0
+    var visit_rows = ""
+    while vi < 450 {
+        visit_rows = visit_rows + "https://v.example/${vi}\tV\n"
+        vi = vi + 1
+    }
+    big_visits = lib.merge_visits(big_visits, lib.import_chrome_history(visit_rows, 450))
+    failures = failures + check("bulk visit bound", lib.visit_count(big_visits) == 400)
+    failures = failures + check("unicode bookmark name", lib.field(lib.import_chrome("{\"roots\":{\"x\":{\"children\":[{\"type\":\"url\",\"name\":\"caf\\u00e9\",\"url\":\"https://example.com/u\"}]}}}")[0], 2) == "café")
 
     // Chrome history and settings import (0.9.2). The history dump is what
     // `sqlite3 -json` prints: an array of objects, newest row first.
-    let history_json = "[{\"url\":\"https://example.com/one\",\"title\":\"One\"},{\"url\":\"https://example.com/one\",\"title\":\"One again\"},{\"url\":\"chrome://settings\",\"title\":\"Settings\"},{\"url\":\"https://example.com/two\",\"title\":\"Two\"}]"
-    let chrome_history = lib.import_chrome_history(history_json, 10)
+    let history_dump = "https://example.com/one\tOne\nhttps://example.com/one\tOne again\nchrome://settings\tSettings\nhttps://example.com/two\tTwo\n"
+    let chrome_history = lib.import_chrome_history(history_dump, 10)
     failures = failures + check("history import count", chrome_history.len() == 2)
     if chrome_history.len() == 2 {
         failures = failures + check("history keeps page", lib.field(chrome_history[0], 1) == "https://example.com/one")
@@ -128,14 +160,27 @@ fn main() -> Int {
         println("FAIL history import details (no records)")
         failures = failures + 3
     }
-    failures = failures + check("history import limit", lib.import_chrome_history(history_json, 1).len() == 1)
+    failures = failures + check("history import limit", lib.import_chrome_history(history_dump, 1).len() == 1)
     failures = failures + check("history import rejects junk", lib.import_chrome_history("Error: no such file", 10).len() == 0)
-    let prefs = "{\"default_search_provider_data\":{\"template_url_data\":{\"short_name\":\"DuckDuckGo\",\"keyword\":\"duckduckgo.com\"}}}"
-    failures = failures + check("chrome search duckduckgo", lib.import_chrome_preferences(prefs) == "duckduckgo")
-    failures = failures + check("chrome search older shape", lib.import_chrome_preferences("{\"default_search_provider\":{\"short_name\":\"Brave\",\"keyword\":\"brave.com\"}}") == "brave")
-    failures = failures + check("chrome search google", lib.import_chrome_preferences("{\"default_search_provider_data\":{\"template_url_data\":{\"short_name\":\"Google\",\"keyword\":\"google.com\"}}}") == "google")
-    failures = failures + check("chrome search unknown engine", lib.import_chrome_preferences("{\"default_search_provider_data\":{\"template_url_data\":{\"short_name\":\"Yahoo\",\"keyword\":\"yahoo.com\"}}}") == "")
-    failures = failures + check("chrome search junk", lib.import_chrome_preferences("{bad") == "")
+    // The engine name plutil prints is free text; only usable engines map.
+    failures = failures + check("chrome search duckduckgo", lib.chrome_search_engine("DuckDuckGo", "duckduckgo.com") == "duckduckgo")
+    failures = failures + check("chrome search brave", lib.chrome_search_engine("Brave", "brave.com") == "brave")
+    failures = failures + check("chrome search google", lib.chrome_search_engine("Google", "google.com") == "google")
+    failures = failures + check("chrome search unknown engine", lib.chrome_search_engine("Yahoo", "yahoo.com") == "")
+
+    // Startup pages, from the JSON array plutil prints for the key.
+    let startup_json = "[\"https://example.com/start\",\"https://example.com/start\",\"mailto:x@example.com\"]"
+    let startup_pages = lib.import_chrome_startup(startup_json)
+    failures = failures + check("startup pages count", startup_pages.len() == 1)
+    if startup_pages.len() == 1 {
+        failures = failures + check("startup page url", startup_pages[0] == "https://example.com/start")
+    } else {
+        failures = failures + check("startup page url", false)
+    }
+    failures = failures + check("startup pages junk", lib.import_chrome_startup("not json").len() == 0)
+    failures = failures + check("startup pages empty", lib.import_chrome_startup("[]").len() == 0)
+    failures = failures + check("startup mode parse", lib.number_of("4") == 4)
+    failures = failures + check("startup mode absent", lib.number_of("") == 0)
 
     // Export HTML import
     let html = lib.import_html(export_html())

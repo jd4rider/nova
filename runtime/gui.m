@@ -16,6 +16,7 @@
  */
 
 #import <Cocoa/Cocoa.h>
+#import <CoreServices/CoreServices.h>
 #import <CoreText/CoreText.h>
 #import <ImageIO/ImageIO.h>
 #include <pthread.h>
@@ -167,10 +168,36 @@ static void nova_gui_trace(const char *format, ...) {
     if (!log) return;
     va_list args;
     va_start(args, format);
+    fprintf(log, "%.3f ", CFAbsoluteTimeGetCurrent());
     vfprintf(log, format, args);
     va_end(args);
     fputc('\n', log);
     fflush(log);
+}
+
+/* LaunchServices decides which app opens http and https. The bundle declares
+ * both schemes in Info.plist; these two calls ask for and report that position.
+ * A bare binary has no bundle identifier, so both report 0 rather than claiming
+ * a default the system never recorded. */
+int64_t nova_gui_default_browser_state(void) {
+    NSString *identifier = [[NSBundle mainBundle] bundleIdentifier];
+    if (!identifier) return 0;
+    CFStringRef handler = LSCopyDefaultHandlerForURLScheme(CFSTR("http"));
+    if (!handler) return 0;
+    int64_t state = CFStringCompare(handler, (__bridge CFStringRef)identifier,
+                                    kCFCompareCaseInsensitive) == kCFCompareEqualTo ? 1 : 0;
+    CFRelease(handler);
+    return state;
+}
+
+int64_t nova_gui_set_default_browser(void) {
+    NSBundle *bundle = [NSBundle mainBundle];
+    NSString *identifier = bundle.bundleIdentifier;
+    if (!identifier) return 0;
+    if (bundle.bundleURL) LSRegisterURL((__bridge CFURLRef)bundle.bundleURL, true);
+    OSStatus http = LSSetDefaultHandlerForURLScheme(CFSTR("http"), (__bridge CFStringRef)identifier);
+    OSStatus https = LSSetDefaultHandlerForURLScheme(CFSTR("https"), (__bridge CFStringRef)identifier);
+    return (http == noErr && https == noErr) ? 1 : 0;
 }
 
 /* Brings the app forward and makes the window key. A window launched from a
@@ -619,6 +646,16 @@ nova_str nova_gui_marked_text(void) {
 @end
 
 @implementation NovaGuiDelegate
+
+/* Menu action: ask LaunchServices to open web addresses with this bundle. The
+ * system can decline when the bundle is not registered; the result is logged
+ * and the status command reports it. */
+- (void)novaMakeDefaultBrowser:(id)sender {
+    (void)sender;
+    int64_t set = nova_gui_set_default_browser();
+    nova_gui_trace("default browser set=%lld state=%lld",
+                   (long long)set, (long long)nova_gui_default_browser_state());
+}
 
 /* LaunchServices sends an open/reopen Apple Event when the bundle is started
  * from Finder or `open`. This app has no restorable documents, so it declines

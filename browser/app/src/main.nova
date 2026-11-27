@@ -79,6 +79,12 @@ struct Store {
     session_path: String,
     search: String,
     theme: String,
+    // restore | pages | newtab, plus the pages themselves and an optional
+    // homepage. Chrome's startup and homepage settings land here on import.
+    startup: String,
+    startup_path: String,
+    startup_urls: List<String>,
+    homepage: String,
     downloads_open: Bool,
     downloads_path: String,
     download_history: List<String>,
@@ -162,6 +168,9 @@ struct ProfileImport {
     bookmarks: List<String>,
     history: List<String>,
     search: String,
+    startup: List<String>,
+    startup_mode: Int,
+    homepage: String,
 }
 
 struct ImportSummary {
@@ -169,6 +178,8 @@ struct ImportSummary {
     bookmarks: Int,
     history: Int,
     search: String,
+    startup: Int,
+    homepage: String,
 }
 
 fn gruvbox_theme() -> Chrome {
@@ -1736,6 +1747,13 @@ fn load_store() -> Store {
     if theme_name.len() == 0 {
         theme_name = "gruvbox"
     }
+    var startup = library.setting_value(settings, "startup")
+    if startup.len() == 0 {
+        startup = "restore"
+    }
+    let startup_path = root + "/startup.tsv"
+    let startup_urls = library.session_urls(gui.read(startup_path))
+    var homepage = library.setting_value(settings, "homepage")
     return Store {
         visits: visits,
         bookmarks: bookmarks,
@@ -1745,6 +1763,10 @@ fn load_store() -> Store {
         session_path: if history_enabled() { session_path } else { "" },
         search: search,
         theme: theme_name,
+        startup: startup,
+        startup_path: startup_path,
+        startup_urls: startup_urls,
+        homepage: homepage,
         downloads_open: false,
         downloads_path: downloads_path,
         download_history: download_history,
@@ -1794,6 +1816,15 @@ fn save_layout(store: Store, vertical: Bool, rail: Bool) {
         }
     }
     save_setting(store, "layout", value)
+}
+
+// Startup pages use the same escaped line format as session.tsv, so the same
+// reader covers both files.
+fn save_startup(store: Store, urls: List<String>) {
+    if store.startup_path.len() == 0 {
+        return
+    }
+    gui.write(store.startup_path, library.session_encode(urls, 0))
 }
 
 // Every Chromium-family browser saves the same JSON Bookmarks file, so
@@ -1852,19 +1883,40 @@ fn chrome_profile_dirs() -> List<String> {
     return dirs
 }
 
-// Chrome keeps history in SQLite. `sqlite3 -json` hands over URLs and titles
-// without a bespoke SQLite reader; `immutable=1` opens a snapshot, so a running
-// Chrome neither blocks the read nor fails it with a lock. If sqlite3 is not on
-// PATH the command fails and no history is imported -- the bookmarks and the
-// search engine still are.
+// Chrome keeps history in SQLite. `sqlite3` prints URL and title as one
+// tab-separated row each, which the reader scans linearly; `immutable=1` opens a
+// snapshot, so a running Chrome neither blocks the read nor fails it with a
+// lock. If sqlite3 is not on PATH the command fails and no history is imported
+// -- the bookmarks and the search engine still are.
 fn import_history(path: String) -> List<String> {
-    let query = "select url, coalesce(title, '') from urls where url like 'http%' order by last_visit_time desc limit 400"
-    let command = "sqlite3 -readonly -json 'file:" + path + "?immutable=1' \"" + query + "\""
+    let query = "select url, replace(replace(coalesce(title, ''), char(9), ' '), char(10), ' ') from urls where url like 'http%' order by last_visit_time desc limit 400"
+    let command = "sqlite3 -readonly -separator '\t' 'file:" + path + "?immutable=1' \"" + query + "\""
     let dump = gui.run(command, "/")
     if gui.exit_status() != 0 {
         return []
     }
     return library.import_chrome_history(dump, 400)
+}
+
+// One key out of a Chrome `Preferences` file, read by plutil. A real profile's
+// Preferences is tens of megabytes; parsing it whole in Nova was what killed
+// the import with an out-of-memory kill. plutil walks the file natively, so only
+// the value crosses into Nova. A missing key and a failed extraction both print
+// nothing and report a non-zero status.
+fn read_pref(path: String, key: String) -> String {
+    let value = gui.run("plutil -extract '" + key + "' raw -o - '" + path + "'", "/")
+    if gui.exit_status() != 0 {
+        return ""
+    }
+    return value.trim()
+}
+
+fn read_pref_json(path: String, key: String) -> String {
+    let value = gui.run("plutil -extract '" + key + "' json -o - '" + path + "'", "/")
+    if gui.exit_status() != 0 {
+        return ""
+    }
+    return value.trim()
 }
 
 fn import_profile(dir: String) -> ProfileImport {
@@ -1877,16 +1929,57 @@ fn import_profile(dir: String) -> ProfileImport {
         history = import_history(dir + "/History")
     }
     var search = ""
+    var startup: List<String> = []
+    var startup_mode = 0
+    var homepage = ""
     if gui.exists(dir + "/Preferences") {
-        search = library.import_chrome_preferences(gui.read(dir + "/Preferences"))
+        let prefs = dir + "/Preferences"
+        // Chrome 90+ nests the provider under default_search_provider_data;
+        // older profiles use default_search_provider.
+        search = library.chrome_search_engine(
+            read_pref(prefs, "default_search_provider_data.template_url_data.short_name"),
+            read_pref(prefs, "default_search_provider_data.template_url_data.keyword"))
+        if search.len() == 0 {
+            search = library.chrome_search_engine(
+                read_pref(prefs, "default_search_provider.short_name"),
+                read_pref(prefs, "default_search_provider.keyword"))
+        }
+        // 4 = open these pages, 1 = restore the last session, 5 = New Tab.
+        startup_mode = library.number_of(read_pref(prefs, "session.restore_on_startup"))
+        if startup_mode == 4 {
+            startup = library.import_chrome_startup(read_pref_json(prefs, "session.startup_urls"))
+        }
+        if read_pref(prefs, "homepage_is_newtabpage") != "true" {
+            let page = read_pref(prefs, "homepage")
+            if page.starts_with("http://") || page.starts_with("https://") {
+                homepage = page
+            }
+        }
     }
-    return ProfileImport { profiles: 1, bookmarks: marks, history: history, search: search }
+    return ProfileImport {
+        profiles: 1,
+        bookmarks: marks,
+        history: history,
+        search: search,
+        startup: startup,
+        startup_mode: startup_mode,
+        homepage: homepage,
+    }
 }
 
 fn empty_profile_import() -> ProfileImport {
     var bookmarks: List<String> = []
     var history: List<String> = []
-    return ProfileImport { profiles: 0, bookmarks: bookmarks, history: history, search: "" }
+    var startup: List<String> = []
+    return ProfileImport {
+        profiles: 0,
+        bookmarks: bookmarks,
+        history: history,
+        search: "",
+        startup: startup,
+        startup_mode: 0,
+        homepage: "",
+    }
 }
 
 fn profile_import_merge(first: ProfileImport, more: ProfileImport) -> ProfileImport {
@@ -1895,6 +1988,9 @@ fn profile_import_merge(first: ProfileImport, more: ProfileImport) -> ProfileImp
         bookmarks: library.merge(first.bookmarks, more.bookmarks),
         history: library.merge(first.history, more.history),
         search: if first.search.len() > 0 { first.search } else { more.search },
+        startup: if first.startup.len() > 0 { first.startup } else { more.startup },
+        startup_mode: if first.startup_mode > 0 { first.startup_mode } else { more.startup_mode },
+        homepage: if first.homepage.len() > 0 { first.homepage } else { more.homepage },
     }
 }
 
@@ -1935,53 +2031,75 @@ fn import_files(paths: List<String>) -> List<String> {
     return found
 }
 
-fn apply_import(store: Store, found: List<String>) -> Store {
-    var next = store
-    var added = 0
-    for line in found {
-        let url = library.field(line, 1)
-        if !library.has_bookmark(next.bookmarks, url) {
-            let title = library.field(line, 2)
-            next.bookmarks = library.add_bookmark(next.bookmarks, url, title)
-            added = added + 1
-        }
-    }
-    if added > 0 {
-        next.dirty_bookmarks = true
-    }
-    return next
-}
-
 // Adds the imported bookmarks, one visit per history page Nova does not already
 // know, and the search engine. Visits are not added twice, so a second run is a
 // no-op, and a page already opened in Nova keeps its own title and count.
-fn apply_profile_import(store: Store, found: ProfileImport) -> ImportSummary {
+// `write` is false for a dry run: the store is still filled in memory so the
+// report shows what would change, but nothing reaches the profile.
+fn apply_profile_import(store: Store, found: ProfileImport, write: Bool) -> ImportSummary {
     var next = store
+    // Bulk merges: one pass over the store per import instead of one per record.
+    // The per-record path copied the whole list each time and a real profile's
+    // history alone drove the process into gigabytes.
     let before = library.bookmark_count(next.bookmarks)
-    next = apply_import(next, found.bookmarks)
+    next.bookmarks = library.merge_bookmarks(next.bookmarks, found.bookmarks)
     let added_marks = library.bookmark_count(next.bookmarks) - before
+    if added_marks > 0 {
+        next.dirty_bookmarks = true
+    }
     var added_history = 0
     if next.history_path.len() > 0 {
-        var i = 0
-        while i < found.history.len() {
-            let url = library.field(found.history[i], 1)
-            if library.visits_for(next.visits, library.key(url)) == 0 {
-                next.visits = library.add_visit(next.visits, url, library.field(found.history[i], 2))
-                next.dirty_visits = true
-                added_history = added_history + 1
-            }
-            i = i + 1
+        let before_visits = library.visit_count(next.visits)
+        next.visits = library.merge_visits(next.visits, found.history)
+        added_history = library.visit_count(next.visits) - before_visits
+        if added_history > 0 {
+            next.dirty_visits = true
         }
     }
     var applied = ""
     if found.search.len() > 0 {
         if found.search != next.search {
-            save_setting(next, "search", found.search)
+            if write {
+                save_setting(next, "search", found.search)
+            }
             next.search = found.search
         }
         applied = found.search
     }
-    return ImportSummary { store: next, bookmarks: added_marks, history: added_history, search: applied }
+    var added_startup = 0
+    if found.startup_mode == 4 && found.startup.len() > 0 {
+        if write {
+            save_startup(next, found.startup)
+            if next.startup != "pages" {
+                save_setting(next, "startup", "pages")
+            }
+        }
+        next.startup = "pages"
+        next.startup_urls = found.startup
+        added_startup = found.startup.len()
+    } else if found.startup_mode == 1 || found.startup_mode == 5 {
+        let mode = if found.startup_mode == 1 { "restore" } else { "newtab" }
+        if write && next.startup != mode {
+            save_setting(next, "startup", mode)
+        }
+        next.startup = mode
+    }
+    var home = ""
+    if found.homepage.len() > 0 {
+        if write && found.homepage != next.homepage {
+            save_setting(next, "homepage", found.homepage)
+        }
+        next.homepage = found.homepage
+        home = found.homepage
+    }
+    return ImportSummary {
+        store: next,
+        bookmarks: added_marks,
+        history: added_history,
+        search: applied,
+        startup: added_startup,
+        homepage: home,
+    }
 }
 
 fn import_from_google(store: Store) -> Imported {
@@ -1993,8 +2111,8 @@ fn import_from_google(store: Store) -> Imported {
     for dir in dirs {
         found = profile_import_merge(found, import_profile(dir))
     }
-    let summary = apply_profile_import(store, found)
-    if summary.bookmarks == 0 && summary.history == 0 && summary.search.len() == 0 {
+    let summary = apply_profile_import(store, found, true)
+    if summary.bookmarks == 0 && summary.history == 0 && summary.startup == 0 && summary.homepage.len() == 0 && summary.search.len() == 0 {
         return Imported { store: summary.store, message: "Bookmarks and history already up to date" }
     }
     var parts: List<String> = []
@@ -2003,6 +2121,12 @@ fn import_from_google(store: Store) -> Imported {
     }
     if summary.history > 0 {
         parts.push("${summary.history} history pages")
+    }
+    if summary.startup > 0 {
+        parts.push("${summary.startup} startup pages")
+    }
+    if summary.homepage.len() > 0 {
+        parts.push("homepage")
     }
     if summary.search.len() > 0 {
         parts.push("search " + summary.search)
@@ -4522,6 +4646,19 @@ fn handle_key(handle: Int, code: Int, mods: Int, current: Address, session: Sess
             until: gui.now() + 3200,
         }, false)
     }
+    if command && shift && code == 104 {
+        // Home: Chrome's homepage when one was imported, otherwise Nova's own
+        // start page in a new tab. Cmd+Shift+H is the only door; no toolbar
+        // button was added for it.
+        if store.homepage.len() == 0 {
+            let next = append_tab(session, new_fixture_tab(gui.native_view(), gui.width(), gui.height()))
+            engine.focus_chrome(active_handle(next))
+            return key_action(next, address_idle(), store, Notice { text: "Home: the start page", until: gui.now() + 2400 }, false)
+        }
+        engine.navigate(handle, store.homepage)
+        engine.focus_page(handle)
+        return key_action(session, address_idle(), store, Notice { text: "Home: " + store.homepage, until: gui.now() + 2600 }, false)
+    }
     if command && code == 100 {
         let toggled = toggle_bookmark(handle, store)
         return key_action(session, current, toggled.store, Notice {
@@ -4686,6 +4823,13 @@ fn auto_close(session: Session, theme: Chrome, address: Address, store: Store) {
     if gui.env("NOVA_BROWSER_DRAG_CHECK") == "1" {
         drag_check(session)
     }
+    if gui.env("NOVA_BROWSER_STARTUP_PROBE") == "1" {
+        var first = ""
+        if session.tabs.len() > 0 {
+            first = session.tabs[0].url
+        }
+        println("startup: mode=${store.startup} tabs=${session.tabs.len()} first=${first}")
+    }
     speech.use_engine(stored_engine(store))
     let final_state = engine.wait(handle, 8000)
     sync_visibility(session)
@@ -4806,9 +4950,12 @@ fn run_cli_import(argument: String) -> Bool {
         found = profile_import_merge(found, import_profile(dir))
     }
     found.bookmarks = library.merge(found.bookmarks, import_files(files))
-    let summary = apply_profile_import(store, found)
-    let saved = save_store(summary.store)
-    println("import: files=${profiles.len() + files.len()} found=${found.bookmarks.len()} new=${summary.bookmarks} bookmarks=${library.bookmark_count(saved.bookmarks)} history=${summary.history} search=${summary.search} path=${saved.bookmarks_path}")
+    // NOVA_BROWSER_IMPORT_DRY=1 reports what would change and writes nothing.
+    let dry = gui.env("NOVA_BROWSER_IMPORT_DRY") == "1"
+    let summary = apply_profile_import(store, found, !dry)
+    let saved = if dry { summary.store } else { save_store(summary.store) }
+    let prefix = if dry { "import(dry)" } else { "import" }
+    println("${prefix}: files=${profiles.len() + files.len()} found=${found.bookmarks.len()} new=${summary.bookmarks} bookmarks=${library.bookmark_count(saved.bookmarks)} history=${summary.history} startup=${summary.startup} homepage=${summary.homepage} search=${summary.search} path=${saved.bookmarks_path}")
     return summary.bookmarks > 0 || summary.history > 0
 }
 
@@ -4935,6 +5082,30 @@ fn open_session(store: Store, vertical: Bool, rail: Bool, initial: String) -> Se
         var tabs: List<Tab> = []
         if first.handle > 0 {
             tabs.push(first)
+        }
+        return Session { tabs: tabs, active: 0, closed: [], vertical: vertical, rail: rail, seen: "" }
+    }
+    // Chrome's startup choice, when one was imported: a fixed set of pages, the
+    // start page, or (the default) whatever was open last time.
+    if store.startup == "pages" && store.startup_urls.len() > 0 {
+        var tabs: List<Tab> = []
+        var i = 0
+        while i < store.startup_urls.len() && i < max_tabs() {
+            let tab = new_url_tab(gui.native_view(), gui.width(), gui.height(), store.startup_urls[i])
+            if tab.handle > 0 {
+                tabs.push(tab)
+            }
+            i = i + 1
+        }
+        if tabs.len() > 0 {
+            return Session { tabs: tabs, active: 0, closed: [], vertical: vertical, rail: rail, seen: "" }
+        }
+    }
+    if store.startup == "newtab" {
+        let fresh = new_fixture_tab(gui.native_view(), gui.width(), gui.height())
+        var tabs: List<Tab> = []
+        if fresh.handle > 0 {
+            tabs.push(fresh)
         }
         return Session { tabs: tabs, active: 0, closed: [], vertical: vertical, rail: rail, seen: "" }
     }
@@ -5067,6 +5238,15 @@ fn main() {
                 target = gui.arg(2)
             }
             run_cli_import(target)
+            return
+        }
+        if argument == "--set-default-browser" {
+            let set = gui.set_default_browser()
+            println("default: set=${flag(set)} state=${flag(gui.is_default_browser())}")
+            return
+        }
+        if argument == "--default-browser-status" {
+            println("default: state=${flag(gui.is_default_browser())}")
             return
         }
         if argument == "--download" {
