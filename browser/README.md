@@ -309,11 +309,13 @@ Cmd+F opens a find bar over the top right of the page. Typing searches as you
 go, Enter takes the next match, Shift+Enter the previous one, Cmd+G and
 Cmd+Shift+G repeat either, and Escape closes the bar and clears the highlight.
 WebKit's `WKFindResult` reports whether something matched but not how many, so
-the bar says **Found** or **No matches** rather than inventing a count.
+the bar says **Found** or **No matches** rather than inventing a count. The
+query field and close button are in the accessibility tree.
 
 Cmd+= and Cmd+- step the page zoom by 10% through WebKit's own `pageZoom`, so
 the document lays out at the new scale instead of the pixels being stretched;
-Cmd+0 returns to 100%. Zoom is per tab and starts at 100% for a new tab.
+Cmd+0 returns to 100%. The setting is remembered per host in `settings.tsv` as
+`zoom:<host>`, so coming back to a site restores the zoom you left it at.
 
 ## Downloads
 

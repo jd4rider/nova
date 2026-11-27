@@ -1312,3 +1312,28 @@ find: pass=7 fail=0
 Regressions: accessibility 17/17 (exit 0), bookmarks 3/3.
 Not tested: an actual Cmd+F keystroke in a live window (the host queue and the
 engine calls are covered separately), and Cmd+F inside a page's own find field.
+
+## 0.9.9 — per-host zoom memory, find bar in the accessibility tree
+
+- Zoom changes are written to `settings.tsv` as `zoom:<host>` through
+  `setting_with`, and `stored_zoom` re-applies the value when a navigation
+  settles on a new URL. Cmd+0 writes 100%. The host comes from
+  `library.host_of`, so ports and paths do not split a site's zoom.
+- `ax_find` publishes the find query as an `AXTextField` labelled "Find in
+  page" and the × as an `AXButton` labelled "Close find bar", using the same
+  `find_box` geometry the mouse hit-test uses.
+- Evidence: `browser/tests/find.sh` is 11/11:
+
+```
+find: zoom=150 reset=100 hit=1 miss=2 cleared=0 panel=320x34
+PASS the open bar is in the accessibility tree
+PASS the query is an accessibility text field
+PASS the close control has a name
+PASS changing the zoom writes the host's setting
+PASS a fresh launch restores the host zoom
+find: pass=11 fail=0
+```
+
+- Regressions: accessibility 17/17 (the base chrome gained no controls).
+  Not tested: zoom restored on a page reached through a redirect, and a
+  VoiceOver session reading the find field by hand.

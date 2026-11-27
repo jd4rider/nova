@@ -3,10 +3,11 @@
 Updated: 2026-11-27
 Branch: `main`
 Last known good compiler checkpoint: `cfa00e3` (before browser work)
-Browser: **0.9.8 installed at `/Applications/Nova Browser.app`**
-Browser working tree: clean after the 0.9.8 commit; see `git status`
+Browser: **0.9.9 installed at `/Applications/Nova Browser.app`**
+Browser working tree: clean after the 0.9.9 commit; see `git status`
 Active gate: G0 WebKit; G1 WebCore not started
-Active task: **WB-03.013 — find in page and zoom** (0.9.8)
+Active task: **WB-03.013 — find in page and zoom** (0.9.9 adds per-host zoom
+memory and the find bar's field/close control to the accessibility tree)
 
 ## Completed
 
@@ -323,6 +324,15 @@ Active task: **WB-03.013 — find in page and zoom** (0.9.8)
     `lsregister -f`, `--set-default-browser` reports `set=1 state=1` and
     `NSWorkspace` resolves a web URL to `Nova Browser.app`. Revert in System
     Settings → Desktop & Dock → Default web browser.
+- **0.9.9 — per-host zoom memory, find bar in the accessibility tree**
+  - Zoom now persists per host in `settings.tsv` as `zoom:<host>` and is
+    re-applied on every navigation to that host; Cmd+0 stores 100%.
+  - The find bar publishes its query as an `AXTextField` and its × as a named
+    `Close find bar` button, so the bar is usable without the mouse.
+  - Evidence: `browser/tests/find.sh` is 11/11, including a second launch of the
+    same profile restoring `zoom: host=127.0.0.1 applied=150 stored=150`, and
+    the AX dump naming both find controls.
+
 - **0.9.8 — find in page, page zoom**
   - Cmd+F opens a find bar over the top right of the page. Typing searches as
     you go, Enter/Shift+Enter step forward/back, Cmd+G repeats either, and
@@ -463,9 +473,10 @@ Active task: **WB-03.013 — find in page and zoom** (0.9.8)
 - Search has no suggestion feed or per-provider settings UI; only the three
   built-in providers, cycled with Cmd+Shift+S.
 - No private windows, permissions, inspector, Developer ID signing/notarization
-  or release. Find reports Found / No matches, not a match count, and its bar is
-  not yet in the accessibility tree; zoom is per tab and is not persisted per
-  host across launches. The chrome accessibility tree covers tabs,
+  or release. Find reports Found / No matches, not a match count; the bar's field
+  and close control are in the accessibility tree, its status text is not. Zoom
+  is stored per host, so every tab showing that host shares one zoom level. The
+  chrome accessibility tree covers tabs,
   the address field, toolbar buttons, the engine badge, the open download shelf
   and autocomplete rows; notices, tooltips and the failure panel's body text are
   not exposed, `AXPress` is the only action, and no VoiceOver session was driven

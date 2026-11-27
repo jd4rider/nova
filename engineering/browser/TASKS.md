@@ -160,7 +160,10 @@ Each task needs a reproducible acceptance check before it is marked done.
   `WKWebView.pageZoom` by 10% and Cmd+0 resets it. Evidence:
   `browser/tests/find.sh` searches a real fixture over loopback and requires
   `zoom=150 reset=100 hit=1 miss=2 cleared=0 panel=320x34`, plus the seeded bar
-  geometry. Zoom is per tab and not persisted per host.
+  geometry. 0.9.9 adds per-host zoom memory (`zoom:<host>` in settings.tsv,
+  re-applied on navigation) and publishes the find query and close control to
+  the accessibility tree; the same test relaunches the profile and requires
+  `zoom: host=127.0.0.1 applied=150 stored=150` plus both AX names (11 PASS).
 - **WB-04.002 — Downloads.** DONE. `WKDownloadDelegate` registry, attachment/
   MIME response policy, Nova shelf with cancel/reveal, `--download`, loopback
   test writing a real file. 0.7.3 adds pause/resume: clicking a running row

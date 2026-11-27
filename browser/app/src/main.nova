@@ -3796,7 +3796,19 @@ fn ax_chrome(handle: Int, session: Session, address: Address, suggestions: List<
     if store.bookmarks_open {
         ax_bookmarks(session, store)
     }
+    if store.find_open {
+        ax_find(session, store)
+    }
     ax_suggestions(address, session, suggestions)
+}
+
+// The find bar is a real text field and a close button, so VoiceOver can read
+// the query and dismiss it without reaching for the mouse.
+fn ax_find(session: Session, store: Store) {
+    let box = find_box(session)
+    gui.ax_field(box.x + 12, box.y + 5, box.w - 80, 24, "Find in page", store.find_text)
+    let close = find_close_box(session)
+    gui.ax_button(close.x, close.y, close.w, close.h, "Close find bar")
 }
 
 fn ax_bookmarks(session: Session, store: Store) {
@@ -4646,8 +4658,38 @@ fn handle_click(handle: Int, x: Int, y: Int, clicks: Int, current: Address, sess
     return click_action(session, next_address, store, notice)
 }
 
+// Zoom is remembered per host, the way Chrome keeps a site's zoom across
+// visits, in settings.tsv under `zoom:<host>`.
+fn zoom_key(url: String) -> String {
+    let host = library.host_of(url)
+    if host.len() == 0 {
+        return ""
+    }
+    return "zoom:" + host
+}
+
+fn stored_zoom(store: Store, url: String) -> Int {
+    let key = zoom_key(url)
+    if key.len() == 0 || store.settings_path.len() == 0 {
+        return 100
+    }
+    let value = library.setting_value(gui.read(store.settings_path), key)
+    if value.len() == 0 {
+        return 100
+    }
+    return library.number_of(value)
+}
+
+fn save_zoom(store: Store, url: String, percent: Int) {
+    let key = zoom_key(url)
+    if key.len() == 0 {
+        return
+    }
+    save_setting(store, key, "${percent}")
+}
+
 // Page zoom steps by 10% and stops at the same bounds Chrome uses.
-fn zoom_step(handle: Int, delta: Int) -> Notice {
+fn zoom_step(handle: Int, delta: Int, store: Store) -> Notice {
     var next = engine.zoom(handle) + delta
     if next < 50 {
         next = 50
@@ -4656,6 +4698,7 @@ fn zoom_step(handle: Int, delta: Int) -> Notice {
         next = 300
     }
     engine.set_zoom(handle, next)
+    save_zoom(store, engine.page_url(handle), next)
     return Notice { text: "Zoom: ${next}%", until: gui.now() + 1600 }
 }
 
@@ -5348,13 +5391,14 @@ fn handle_key(handle: Int, code: Int, mods: Int, current: Address, session: Sess
         return key_action(session, current, opened, notice_idle(), false)
     }
     if command && code == 24 {
-        return key_action(session, current, store, zoom_step(handle, 10), false)
+        return key_action(session, current, store, zoom_step(handle, 10, store), false)
     }
     if command && code == 27 {
-        return key_action(session, current, store, zoom_step(handle, 0 - 10), false)
+        return key_action(session, current, store, zoom_step(handle, 0 - 10, store), false)
     }
     if command && code == 29 {
         engine.set_zoom(handle, 100)
+        save_zoom(store, engine.page_url(handle), 100)
         return key_action(session, current, store, Notice { text: "Zoom: 100%", until: gui.now() + 1600 }, false)
     }
     if store.find_open && !current.editing {
@@ -5609,6 +5653,19 @@ fn auto_close(session: Session, theme: Chrome, address: Address, store: Store) {
         engine.set_zoom(handle, 100)
         let box = find_box(session)
         println("find: zoom=${zoomed} reset=${engine.zoom(handle)} hit=${hit} miss=${miss} cleared=${cleared} panel=${box.w}x${box.h}")
+    }
+    // Per-host zoom probe: NOVA_BROWSER_ZOOM_SET changes and saves, the trace
+    // reports what a fresh launch restored from settings.tsv.
+    let zoom_request = gui.env("NOVA_BROWSER_ZOOM_SET").trim()
+    if zoom_request.len() > 0 {
+        let percent = library.number_of(zoom_request)
+        engine.set_zoom(handle, percent)
+        save_zoom(store, engine.page_url(handle), percent)
+    } else if gui.env("NOVA_BROWSER_ZOOM_TRACE") == "1" {
+        engine.set_zoom(handle, stored_zoom(store, engine.page_url(handle)))
+    }
+    if gui.env("NOVA_BROWSER_ZOOM_TRACE") == "1" {
+        println("zoom: host=${library.host_of(engine.page_url(handle))} applied=${engine.zoom(handle)} stored=${stored_zoom(store, engine.page_url(handle))}")
     }
     var shown = store
     if gui.env("NOVA_BROWSER_FIND_OPEN") == "1" {
@@ -6369,6 +6426,7 @@ fn main() {
             if live.len() > 0 && live != session.seen {
                 session.seen = live
                 ensure_favicon(store, live, engine.icon_url(handle))
+                engine.set_zoom(handle, stored_zoom(store, live))
                 session = mark_active_url(session, live)
                 if !live.contains("fixture.nova.invalid") && store.history_path.len() > 0 {
                     let title = engine.page_title(handle)
