@@ -1,0 +1,146 @@
+---
+import SiteLayout from '../layouts/SiteLayout.astro'
+import Badge from '../components/Badge.astro'
+import { href } from '../lib/url'
+import { links } from '../data/site'
+const source = `${links.github}/tree/main/browser`
+const capabilities = [
+  ['Tab strip, address bar and autocomplete', 'implemented'],
+  ['History, bookmarks and Chrome/Netscape import', 'implemented'],
+  ['Session restore across launches', 'implemented'],
+  ['Download shelf with pause and resume', 'implemented'],
+  ['Completed downloads kept across restart', 'implemented'],
+  ['Chrome accessibility tree (AXTab, buttons, shelf, links)', 'implemented'],
+  ['Page rendering by WebKit, labeled in the chrome', 'implemented'],
+  ['Nova WebCore rendering engine', 'planned'],
+  ['Windows and Linux builds', 'planned']
+] as const
+const evidence = [
+  ['Chrome accessibility', '16/16 checks in tests/accessibility.sh'],
+  ['Address normalization', 'failures=0 in tests/address.sh'],
+  ['History, bookmarks, imports', 'failures=0 in tests/history.sh'],
+  ['Tabs', '5/5 in tests/tabs.sh'],
+  ['Download pause/resume + restart', 'PASS in tests/downloads.sh (2 rows survived restart)'],
+  ['Lifecycle', '25 checks / 0 failures in tests/webkit.sh'],
+  ['Frame loop', 'frames=120 avg=6ms worst=180ms']
+] as const
+---
+<SiteLayout
+  title="Nova Browser"
+  path="browser"
+  description="Nova Browser is a native macOS browser whose chrome, downloads and accessibility tree are written in Nova, with WebKit rendering the page and saying so."
+>
+  <section class="page-hero">
+    <div class="wrap">
+      <span class="eyebrow"><span class="status-dot"></span> Native macOS · Nova chrome · WebKit page engine</span>
+      <h1>The browser is<br /><span style="color: var(--green)">a Nova program.</span></h1>
+      <p>
+        Nova Browser is what the language looks like when it has to hold a whole application: tabs,
+        an address bar that learns, history, bookmarks, downloads that survive a restart, and an
+        accessibility tree over all of it. Everything except the page is Nova calling AppKit and
+        WebKit through a small C surface.
+      </p>
+      <div class="hero-actions" style="margin-top: 26px;">
+        <a class="button primary" href={href('install')}>Build the toolchain</a>
+        <a class="button" href={href('roadmap')}>Roadmap and limits</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <p class="notice">
+        <strong>The engine label is not decoration.</strong> Pages are rendered by
+        <code>WKWebView</code>, and the toolbar says <code>WEBKIT</code> at all times. Nova WebCore,
+        the project's own engine, is not started; WebKit is not presented as it. Certificate errors
+        are never suppressed.
+      </p>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head">
+        <div>
+          <div class="kicker">Owned by Nova</div>
+          <h2>Chrome first, engine later.</h2>
+          <p class="section-intro">
+            The application layer is the hard part people skip. Nova draws the window chrome, keeps
+            the tab model, writes the profile files and publishes the accessibility children; WebKit
+            is handed one rectangle and a URL.
+          </p>
+        </div>
+      </div>
+      <div class="grid-3">
+        <article class="card">
+          <div class="card-icon" aria-hidden="true">⇥</div>
+          <h3>Tabs and commands</h3>
+          <p>Mouse, keyboard and a native tab context menu drive the same model. Session restore writes the navigable tabs and active index, then reopens them on the next launch.</p>
+          <div class="meta">Cmd+T · Cmd+W · Cmd+Shift+E</div>
+        </article>
+        <article class="card">
+          <div class="card-icon" aria-hidden="true">↓</div>
+          <h3>Downloads that persist</h3>
+          <p>A finished transfer is written once to the profile with its path, and the last 20 return as shelf rows after restart. Pause and resume use WebKit's resume data, and rows that cannot resume say so.</p>
+          <div class="meta">Loopback test pauses at 10,240 of 51,200 bytes</div>
+        </article>
+        <article class="card">
+          <div class="card-icon" aria-hidden="true">AX</div>
+          <h3>Accessibility in the chrome</h3>
+          <p>Tabs expose <code>AXTab</code> with selection, the address field its value, and the shelf and autocomplete rows are named buttons and links with screen frames. Acting on one performs the same click a pointer would.</p>
+          <div class="meta">NOVA_GUI_AX_DUMP=1 prints the tree</div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap grid-2" style="align-items: start;">
+      <div>
+        <div class="kicker">Feature ledger</div>
+        <h2 style="font-size: clamp(28px, 3.6vw, 42px); margin-bottom: 18px;">Implemented is not complete.</h2>
+        <p class="section-intro">
+          Each row is checked by a script in <code>browser/tests</code> or a recorded run. The engine,
+          other platforms and any claim that this replaces a mature browser stay planned.
+        </p>
+        <div class="card" style="margin-top: 20px;">
+          <table class="status-table">
+            <thead><tr><th>Capability</th><th>Status</th></tr></thead>
+            <tbody>{capabilities.map(([name, status]) => <tr><td>{name}</td><td><Badge status={status} /></td></tr>)}</tbody>
+          </table>
+        </div>
+      </div>
+      <div>
+        <div class="kicker">Recorded checks</div>
+        <h2 style="font-size: clamp(28px, 3.6vw, 42px); margin-bottom: 18px;">What actually ran.</h2>
+        <div class="card" style="padding: 8px 18px;">
+          <table class="status-table">
+            <thead><tr><th>Area</th><th>Result</th></tr></thead>
+            <tbody>{evidence.map(([area, result]) => <tr><td>{area}</td><td><code>{result}</code></td></tr>)}</tbody>
+          </table>
+        </div>
+        <p class="section-intro" style="margin-top: 18px;">
+          The installed app is ad-hoc signed, not notarized. A hand-driven VoiceOver pass has not been
+          done, so the accessibility tree is verified structurally only.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="cta">
+        <div>
+          <div class="kicker">Read the code</div>
+          <h2>A browser in a language with no browser library.</h2>
+          <p>
+            The app lives in <code>browser/app/src/main.nova</code>; the runtime shims are
+            <code>runtime/gui.m</code> and <code>runtime/webkit.m</code>. The engineering log records
+            every claim with the command that produced it.
+          </p>
+        </div>
+        <a class="button primary" href={source}>Read browser/ on GitHub <span aria-hidden="true">→</span></a>
+      </div>
+    </div>
+  </section>
+</SiteLayout>

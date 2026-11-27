@@ -1,0 +1,45 @@
+{
+  "checksum": "fixture",
+  "roots": {
+    "bookmark_bar": {
+      "children": [
+        {
+          "date_added": "13300000000000000",
+          "name": "Nova Docs",
+          "type": "url",
+          "url": "https://jd4rider.github.io/nova/"
+        },
+        {
+          "date_added": "13300000000000001",
+          "name": "Chrome settings",
+          "type": "url",
+          "url": "chrome://settings/"
+        },
+        {
+          "children": [
+            {
+              "name": "Example",
+              "type": "url",
+              "url": "https://example.com/"
+            }
+          ],
+          "name": "Reading",
+          "type": "folder"
+        }
+      ],
+      "name": "Bookmarks bar",
+      "type": "folder"
+    },
+    "other": {
+      "children": [],
+      "name": "Other bookmarks",
+      "type": "folder"
+    },
+    "synced": {
+      "children": [],
+      "name": "Mobile bookmarks",
+      "type": "folder"
+    }
+  },
+  "version": 1
+}

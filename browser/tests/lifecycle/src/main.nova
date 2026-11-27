@@ -1,0 +1,84 @@
+import std.io { println }
+import "../../../engines/webkit/src/engine.nova" as engine
+
+// Headless lifecycle evidence for the thin WebKit adapter. This is not a
+// rendering-conformance test and does not claim WebCore parity.
+
+fn check(label: String, condition: Bool) -> Int {
+    if condition {
+        println("PASS " + label)
+        return 0
+    }
+    println("FAIL " + label)
+    return 1
+}
+
+fn main() -> Int {
+    var failures = 0
+    failures = failures + check("engine identity", engine.name() == "WebKit")
+    failures = failures + check("engine runtime", engine.runtime_name() == "WebKit / WKWebView")
+    failures = failures + check("JavaScript engine declared", engine.script_engine() == "JavaScriptCore")
+    failures = failures + check("network declared", engine.network())
+    failures = failures + check("process isolation declared", engine.process_isolation())
+    failures = failures + check("independent layout not claimed", !engine.independent_layout())
+
+    let handle = engine.create(0, 0, 0, 900, 600)
+    failures = failures + check("view creation", handle > 0)
+    if handle <= 0 {
+        println("failures=${failures}")
+        return failures
+    }
+
+    let page_one = "<!doctype html><html><head><title>Fixture One</title></head><body><h1>WebKit engine online</h1><p>trusted fixture</p><script>document.body.setAttribute('data-script', 'yes');document.body.innerText += ' js-ran';</script></body></html>"
+    engine.load_html(handle, page_one, "https://fixture.nova.invalid/one")
+    let first_state = engine.wait(handle, 8000)
+    failures = failures + check("first navigation finished", first_state == 2)
+    failures = failures + check("first title", engine.page_title(handle) == "Fixture One")
+    let text = engine.body_text(handle)
+    failures = failures + check("DOM text visible", text.contains("WebKit engine online"))
+    failures = failures + check("page JavaScript ran", text.contains("js-ran"))
+
+    let generation_one = engine.generation(handle)
+    let page_two = "<!doctype html><html><head><title>Fixture Two</title></head><body><p>second document</p></body></html>"
+    engine.load_html(handle, page_two, "https://fixture.nova.invalid/two")
+    failures = failures + check("navigation generation advances", engine.generation(handle) > generation_one)
+    let second_state = engine.wait(handle, 8000)
+    failures = failures + check("second navigation finished", second_state == 2)
+    failures = failures + check("second title", engine.page_title(handle) == "Fixture Two")
+    // WKWebView's loadHTMLString replaces fixture history rather than adding
+    // entries; real http(s) navigations populate WebKit's history normally.
+    // Querying back must remain harmless for the fixture path.
+    println("fixture_history=${engine.can_go_back(handle)}")
+    engine.back(handle)
+    let back_state = engine.wait(handle, 2000)
+    failures = failures + check("back without fixture history is harmless", back_state == 2)
+    failures = failures + check("fixture page stays stable", engine.page_title(handle) == "Fixture Two")
+
+    let snapshot = engine.snapshot(handle, "/tmp/nova-browser-webkit.png")
+    println("snapshot=${snapshot} path=/tmp/nova-browser-webkit.png")
+
+    engine.navigate(handle, "mailto:test@example.invalid")
+    failures = failures + check("unsupported scheme fails closed", engine.page_state(handle) == 3)
+    failures = failures + check("unsupported scheme explained", engine.page_error(handle).contains("only http, https and about"))
+
+    // Two tabs must have independent WKWebView handles and state.
+    let second = engine.create(0, 0, 0, 700, 500)
+    failures = failures + check("second tab view", second > 0)
+    if second > 0 {
+        engine.load_html(second, "<!doctype html><html><head><title>Second Tab</title></head><body>independent</body></html>", "https://fixture.nova.invalid/tab-two")
+        let second_tab_state = engine.wait(second, 8000)
+        failures = failures + check("second tab loaded", second_tab_state == 2)
+        failures = failures + check("second tab title", engine.page_title(second) == "Second Tab")
+        failures = failures + check("first tab preserved", engine.page_title(handle) == "Fixture Two")
+        engine.set_visible(handle, false)
+        engine.set_visible(second, true)
+        failures = failures + check("tab visibility switches", engine.page_state(second) == 2)
+        engine.destroy(second)
+        failures = failures + check("second tab destroyed", engine.state(second) == 0 - 1)
+    }
+
+    engine.destroy(handle)
+    failures = failures + check("destroy invalidates handle", engine.state(handle) == 0 - 1)
+    println("failures=${failures}")
+    return failures
+}

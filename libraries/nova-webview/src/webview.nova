@@ -1,0 +1,213 @@
+// nova-webview — a small, polled binding to a native platform web view.
+//
+// This is browser infrastructure, not Nova WebCore. On macOS the host is
+// runtime/webkit.m, a WKWebView adapter. WebCore will expose the same kind of
+// lifecycle functions from its own Nova-owned pipeline and must not delegate
+// document, style, layout or paint work to this module.
+
+extern "C" fn nova_webview_create(parent: Int, x: Int, y: Int, width: Int, height: Int) -> Int
+extern "C" fn nova_webview_set_bounds(handle: Int, x: Int, y: Int, width: Int, height: Int)
+extern "C" fn nova_webview_destroy(handle: Int)
+extern "C" fn nova_webview_focus_chrome(handle: Int)
+extern "C" fn nova_webview_focus_page(handle: Int)
+extern "C" fn nova_webview_page_focused(handle: Int) -> Int
+extern "C" fn nova_webview_take_chrome_focus_request(handle: Int) -> Int
+extern "C" fn nova_webview_take_shortcut(handle: Int) -> Int
+extern "C" fn nova_webview_load_html(handle: Int, html: String, base_url: String)
+extern "C" fn nova_webview_navigate(handle: Int, address: String)
+extern "C" fn nova_webview_back(handle: Int)
+extern "C" fn nova_webview_forward(handle: Int)
+extern "C" fn nova_webview_reload(handle: Int)
+extern "C" fn nova_webview_stop(handle: Int)
+extern "C" fn nova_webview_can_go_back(handle: Int) -> Int
+extern "C" fn nova_webview_can_go_forward(handle: Int) -> Int
+extern "C" fn nova_webview_state(handle: Int) -> Int
+extern "C" fn nova_webview_generation(handle: Int) -> Int
+extern "C" fn nova_webview_set_visible(handle: Int, visible: Int)
+extern "C" fn nova_webview_wait(handle: Int, timeout_ms: Int) -> Int
+extern "C" fn nova_webview_title(handle: Int) -> String
+extern "C" fn nova_webview_url(handle: Int) -> String
+extern "C" fn nova_webview_error(handle: Int) -> String
+extern "C" fn nova_webview_error_url(handle: Int) -> String
+extern "C" fn nova_webview_progress(handle: Int) -> Int
+extern "C" fn nova_webview_body_text(handle: Int) -> String
+extern "C" fn nova_webview_engine() -> String
+extern "C" fn nova_webview_download_count() -> Int
+extern "C" fn nova_webview_download_id_at(index: Int) -> Int
+extern "C" fn nova_webview_download_name(ident: Int) -> String
+extern "C" fn nova_webview_download_path(ident: Int) -> String
+extern "C" fn nova_webview_download_received(ident: Int) -> Int
+extern "C" fn nova_webview_download_expected(ident: Int) -> Int
+extern "C" fn nova_webview_download_state(ident: Int) -> Int
+extern "C" fn nova_webview_download_cancel(ident: Int) -> Int
+extern "C" fn nova_webview_download_pause(ident: Int) -> Int
+extern "C" fn nova_webview_download_resume(ident: Int) -> Int
+extern "C" fn nova_webview_download_resumable(ident: Int) -> Int
+extern "C" fn nova_webview_download_reveal(ident: Int) -> Int
+extern "C" fn nova_webview_download_clear_finished() -> Unit
+extern "C" fn nova_webview_snapshot(handle: Int, path: String) -> Int
+
+fn wv_engine() -> String {
+    return nova_webview_engine()
+}
+
+fn wv_create(parent: Int, x: Int, y: Int, width: Int, height: Int) -> Int {
+    return nova_webview_create(parent, x, y, width, height)
+}
+
+fn wv_set_bounds(handle: Int, x: Int, y: Int, width: Int, height: Int) {
+    nova_webview_set_bounds(handle, x, y, width, height)
+}
+
+fn wv_destroy(handle: Int) {
+    nova_webview_destroy(handle)
+}
+
+fn wv_focus_chrome(handle: Int) {
+    nova_webview_focus_chrome(handle)
+}
+
+fn wv_focus_page(handle: Int) {
+    nova_webview_focus_page(handle)
+}
+
+fn wv_page_focused(handle: Int) -> Bool {
+    return nova_webview_page_focused(handle) == 1
+}
+
+fn wv_take_chrome_focus_request(handle: Int) -> Bool {
+    return nova_webview_take_chrome_focus_request(handle) == 1
+}
+
+fn wv_take_shortcut(handle: Int) -> Int {
+    return nova_webview_take_shortcut(handle)
+}
+
+fn wv_load_html(handle: Int, html: String, base_url: String) {
+    nova_webview_load_html(handle, html, base_url)
+}
+
+fn wv_navigate(handle: Int, address: String) {
+    nova_webview_navigate(handle, address)
+}
+
+fn wv_back(handle: Int) {
+    nova_webview_back(handle)
+}
+
+fn wv_forward(handle: Int) {
+    nova_webview_forward(handle)
+}
+
+fn wv_reload(handle: Int) {
+    nova_webview_reload(handle)
+}
+
+fn wv_stop(handle: Int) {
+    nova_webview_stop(handle)
+}
+
+fn wv_can_go_back(handle: Int) -> Bool {
+    return nova_webview_can_go_back(handle) == 1
+}
+
+fn wv_can_go_forward(handle: Int) -> Bool {
+    return nova_webview_can_go_forward(handle) == 1
+}
+
+fn wv_state(handle: Int) -> Int {
+    return nova_webview_state(handle)
+}
+
+fn wv_generation(handle: Int) -> Int {
+    return nova_webview_generation(handle)
+}
+
+fn wv_set_visible(handle: Int, visible: Bool) {
+    nova_webview_set_visible(handle, if visible { 1 } else { 0 })
+}
+
+fn wv_wait(handle: Int, timeout_ms: Int) -> Int {
+    return nova_webview_wait(handle, timeout_ms)
+}
+
+fn wv_title(handle: Int) -> String {
+    return nova_webview_title(handle)
+}
+
+fn wv_url(handle: Int) -> String {
+    return nova_webview_url(handle)
+}
+
+fn wv_error(handle: Int) -> String {
+    return nova_webview_error(handle)
+}
+
+fn wv_error_url(handle: Int) -> String {
+    return nova_webview_error_url(handle)
+}
+
+// WebKit's own load estimate, 0..1000.
+fn wv_progress(handle: Int) -> Int {
+    return nova_webview_progress(handle)
+}
+
+fn wv_body_text(handle: Int) -> String {
+    return nova_webview_body_text(handle)
+}
+
+fn wv_snapshot(handle: Int, path: String) -> Bool {
+    return nova_webview_snapshot(handle, path) == 1
+}
+
+fn wv_download_count() -> Int {
+    return nova_webview_download_count()
+}
+
+fn wv_download_id_at(index: Int) -> Int {
+    return nova_webview_download_id_at(index)
+}
+
+fn wv_download_name(ident: Int) -> String {
+    return nova_webview_download_name(ident)
+}
+
+fn wv_download_path(ident: Int) -> String {
+    return nova_webview_download_path(ident)
+}
+
+fn wv_download_received(ident: Int) -> Int {
+    return nova_webview_download_received(ident)
+}
+
+fn wv_download_expected(ident: Int) -> Int {
+    return nova_webview_download_expected(ident)
+}
+
+fn wv_download_state(ident: Int) -> Int {
+    return nova_webview_download_state(ident)
+}
+
+fn wv_download_cancel(ident: Int) -> Bool {
+    return nova_webview_download_cancel(ident) == 1
+}
+
+fn wv_download_pause(ident: Int) -> Bool {
+    return nova_webview_download_pause(ident) == 1
+}
+
+fn wv_download_resume(ident: Int) -> Bool {
+    return nova_webview_download_resume(ident) == 1
+}
+
+fn wv_download_resumable(ident: Int) -> Bool {
+    return nova_webview_download_resumable(ident) == 1
+}
+
+fn wv_download_reveal(ident: Int) -> Bool {
+    return nova_webview_download_reveal(ident) == 1
+}
+
+fn wv_download_clear_finished() {
+    nova_webview_download_clear_finished()
+}

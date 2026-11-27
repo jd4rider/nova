@@ -469,6 +469,22 @@ fn nt_wants_gui(ir: String) -> Bool {
     return ir.contains("@nova_env")
 }
 
+fn nt_find_webkit(runtime: String) -> String {
+    var base = runtime
+    if !base.starts_with("/") {
+        base = gui.cwd() + "/" + base
+    }
+    let candidate = rs_dirname(base) + "/webkit.m"
+    if gui.exists(candidate) {
+        return candidate
+    }
+    return ""
+}
+
+fn nt_wants_webkit(ir: String) -> Bool {
+    return ir.contains("@nova_webview_")
+}
+
 fn nt_build_project() -> Int {
     let root = nt_find_root()
     if root.len() == 0 {
@@ -740,6 +756,7 @@ fn nt_build_source(path: String, source: String, target: String) -> Int {
         return 1
     }
     let gui_source = nt_find_gui(runtime)
+    let webkit_source = nt_find_webkit(runtime)
     let host = gui.run("uname -s", gui.cwd()).trim()
     var wants_gui = false
     var gui_object = ""
@@ -756,9 +773,27 @@ fn nt_build_source(path: String, source: String, target: String) -> Int {
             return 1
         }
     }
+    var wants_webkit = false
+    var webkit_object = ""
+    if host == "Darwin" && webkit_source.len() > 0 && nt_wants_webkit(result.ir) {
+        wants_webkit = true
+        webkit_object = target + ".webkit.o"
+        let webkit_command = "clang -fobjc-arc -O2 -c " + nt_shell_quote(webkit_source) + " -o " + nt_shell_quote(webkit_object)
+        let webkit_output = gui.run(webkit_command, gui.cwd())
+        if gui.exit_status() != 0 {
+            println("error: clang failed to compile nova-webkit for " + path)
+            if webkit_output.len() > 0 {
+                println(webkit_output)
+            }
+            return 1
+        }
+    }
     var command = "clang -x ir " + nt_shell_quote(ir_path) + " -x none " + nt_shell_quote(runtime) + " -o " + nt_shell_quote(target) + " -lm"
     if wants_gui {
         command = command + " " + nt_shell_quote(gui_object) + " -framework Cocoa -framework CoreText -framework CoreGraphics -framework ImageIO -framework QuartzCore"
+    }
+    if wants_webkit {
+        command = command + " " + nt_shell_quote(webkit_object) + " -framework WebKit -framework Cocoa"
     }
     let output = gui.run(command, gui.cwd())
     if gui.exit_status() != 0 {
@@ -770,6 +805,9 @@ fn nt_build_source(path: String, source: String, target: String) -> Int {
     }
     if wants_gui {
         gui.run("rm -f " + nt_shell_quote(gui_object), gui.cwd())
+    }
+    if wants_webkit {
+        gui.run("rm -f " + nt_shell_quote(webkit_object), gui.cwd())
     }
     println("built " + target)
     return 0

@@ -1,0 +1,85 @@
+import std.io { println }
+import "../../../address/src/address.nova" as address
+
+fn check(label: String, condition: Bool) -> Int {
+    if condition {
+        println("PASS " + label)
+        return 0
+    }
+    println("FAIL " + label)
+    return 1
+}
+
+fn main() -> Int {
+    var failures = 0
+
+    failures = failures + check("bare host gains https", address.normalize("example.com") == "https://example.com")
+    failures = failures + check("path stays intact", address.normalize("example.com/docs?q=1") == "https://example.com/docs?q=1")
+    failures = failures + check("https is preserved", address.normalize("https://example.com/a") == "https://example.com/a")
+    failures = failures + check("http is preserved", address.normalize("http://example.com") == "http://example.com")
+    failures = failures + check("input is trimmed", address.normalize("  https://example.com  ") == "https://example.com")
+    failures = failures + check("localhost uses http", address.normalize("localhost:8080") == "http://localhost:8080")
+    failures = failures + check("loopback uses http", address.normalize("127.0.0.1:3000") == "http://127.0.0.1:3000")
+    failures = failures + check("about blank allowed", address.normalize("about:blank") == "about:blank")
+    failures = failures + check("empty rejected", address.normalize("   ") == "")
+    failures = failures + check("search text is not guessed", address.normalize("hello world") == "")
+    failures = failures + check("mailto rejected", address.normalize("mailto:test@example.com") == "")
+    failures = failures + check("bare colon scheme rejected", address.normalize("custom:payload") == "")
+    failures = failures + check("javascript rejected", address.normalize("javascript:alert(1)") == "")
+    failures = failures + check("file rejected", address.normalize("file:///etc/passwd") == "")
+    failures = failures + check("data rejected", address.normalize("data:text/html,hi") == "")
+    failures = failures + check("empty https rejected", address.normalize("https://") == "")
+    failures = failures + check("unknown scheme rejected", address.normalize("about:config") == "")
+
+    failures = failures + check("insert in middle", address.insert_text("ac", 1, "b") == "abc")
+    failures = failures + check("insert clamps cursor", address.insert_text("ab", 99, "c") == "abc")
+    failures = failures + check("insert unicode", address.insert_text("ab", 1, "é") == "aéb")
+    failures = failures + check("unicode count", address.char_count("aéb") == 3)
+    failures = failures + check("backspace middle", address.backspace_text("abc", 2) == "ac")
+    failures = failures + check("backspace at start", address.backspace_text("abc", 0) == "abc")
+    failures = failures + check("delete forward", address.delete_forward_text("abc", 1) == "ac")
+    failures = failures + check("delete at end", address.delete_forward_text("abc", 3) == "abc")
+
+    // Grapheme clusters: one caret step or one delete consumes the whole
+    // cluster, never a single scalar of it.
+    let accent = "e" + "́"        // e + U+0301 COMBINING ACUTE ACCENT
+    let family = "👨‍👩‍👧"        // man + ZWJ + woman + ZWJ + girl
+    let flag = "🇺🇸"              // two regional indicators
+    let thumb = "👍🏽"             // thumbs-up + skin-tone modifier
+    failures = failures + check("accent is two scalars", address.char_count(accent) == 2)
+    failures = failures + check("accent is one cluster", address.cluster_count(accent) == 1)
+    failures = failures + check("left skips the whole accent", address.char_left(accent, 2) == 0)
+    failures = failures + check("right skips the whole accent", address.char_right(accent, 0) == 2)
+    failures = failures + check("backspace removes the accent", address.backspace_text(accent, 2) == "")
+    failures = failures + check("delete removes the accent", address.delete_forward_text(accent, 0) == "")
+    failures = failures + check("family is five scalars", address.char_count(family) == 5)
+    failures = failures + check("family is one cluster", address.cluster_count(family) == 1)
+    failures = failures + check("left keeps the family whole", address.char_left(family, 5) == 0)
+    failures = failures + check("backspace keeps the family whole", address.backspace_text(family, 5) == "")
+    failures = failures + check("flag is two scalars", address.char_count(flag) == 2)
+    failures = failures + check("left keeps the flag whole", address.char_left(flag, 2) == 0)
+    failures = failures + check("thumb is two scalars", address.char_count(thumb) == 2)
+    failures = failures + check("delete keeps the thumb whole", address.delete_forward_text(thumb, 0) == "")
+    failures = failures + check("ascii still steps one", address.char_left("abc", 2) == 1)
+    failures = failures + check("snap inside a cluster", address.snap(accent, 1) == 0)
+    failures = failures + check("snap on a boundary", address.snap(accent, 2) == 2)
+    failures = failures + check("accent text survives insertion", address.insert_text(accent, 0, "x") == "x" + accent)
+
+    // Search provider (opt-in) and query encoding
+    failures = failures + check("percent encode space", address.percent_encode("nova browser") == "nova%20browser")
+    failures = failures + check("percent encode reserved", address.percent_encode("a&b=c") == "a%26b%3Dc")
+    failures = failures + check("percent encode unicode", address.percent_encode("café") == "caf%C3%A9")
+    failures = failures + check("search off rejects text", address.search_url("off", "nova") == "")
+    failures = failures + check("duckduckgo url", address.search_url("duckduckgo", " nova browser ") == "https://duckduckgo.com/?q=nova%20browser")
+    failures = failures + check("google url", address.search_url("google", "a b") == "https://www.google.com/search?q=a%20b")
+    failures = failures + check("brave url", address.search_url("brave", "a/b") == "https://search.brave.com/search?q=a%2Fb")
+    failures = failures + check("provider cycle 1", address.next_search_provider("off") == "duckduckgo")
+    failures = failures + check("provider cycle 2", address.next_search_provider("duckduckgo") == "google")
+    failures = failures + check("provider cycle 3", address.next_search_provider("google") == "brave")
+    failures = failures + check("provider cycle 4", address.next_search_provider("brave") == "off")
+    failures = failures + check("search label", address.search_label("brave") == "Brave")
+    failures = failures + check("search label off", address.search_label("off") == "Search off")
+
+    println("failures=${failures}")
+    return failures
+}

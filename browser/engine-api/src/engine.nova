@@ -1,0 +1,76 @@
+// Shared browser engine contract.
+//
+// Both engines expose the same lifecycle and capability shape. Nova has no
+// trait objects, so this is a struct/function contract rather than a dynamic
+// interface. The UI never receives an engine pointer or an Objective-C object.
+
+struct EngineInfo {
+    name: String,
+    script_engine: String,
+    network: Bool,
+    process_isolation: Bool,
+    independent_layout: Bool,
+}
+
+struct PageStatus {
+    state: Int,
+    title: String,
+    url: String,
+    error: String,
+}
+
+fn engine_info(name: String, script_engine: String, network: Bool,
+               process_isolation: Bool, independent_layout: Bool) -> EngineInfo {
+    return EngineInfo {
+        name: name,
+        script_engine: script_engine,
+        network: network,
+        process_isolation: process_isolation,
+        independent_layout: independent_layout,
+    }
+}
+
+fn page_status(state: Int, title: String, url: String, error: String) -> PageStatus {
+    return PageStatus {
+        state: state,
+        title: title,
+        url: url,
+        error: error,
+    }
+}
+
+fn state_empty() -> Int {
+    return 0
+}
+
+fn state_loading() -> Int {
+    return 1
+}
+
+fn state_loaded() -> Int {
+    return 2
+}
+
+fn state_failed() -> Int {
+    return 3
+}
+
+fn state_invalid() -> Int {
+    return 0 - 1
+}
+
+fn label(state: Int) -> String {
+    if state == state_loaded() {
+        return "ready"
+    }
+    if state == state_loading() {
+        return "loading"
+    }
+    if state == state_failed() {
+        return "error"
+    }
+    if state == state_invalid() {
+        return "missing"
+    }
+    return "idle"
+}

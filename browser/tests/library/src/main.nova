@@ -1,0 +1,174 @@
+import std.io { println }
+import "../../../history/src/history.nova" as lib
+import "../../../status/src/status.nova" as status
+
+// Headless checks for the browser library: record encoding, visit bounding,
+// bookmark identity, autocomplete ranking, Google bookmark import and the
+// failure wording. No GUI and no AppKit, so this runs in CI without a window.
+
+fn check(label: String, condition: Bool) -> Int {
+    if condition {
+        println("PASS " + label)
+        return 0
+    }
+    println("FAIL " + label)
+    return 1
+}
+
+fn chrome_json() -> String {
+    return "{\"roots\":{\"bookmark_bar\":{\"children\":[{\"name\":\"Nova Docs\",\"type\":\"url\",\"url\":\"https://jd4rider.github.io/nova/\"},{\"name\":\"Chrome settings\",\"type\":\"url\",\"url\":\"chrome://settings/\"}],\"name\":\"Bookmarks bar\",\"type\":\"folder\"},\"other\":{\"children\":[],\"name\":\"Other bookmarks\",\"type\":\"folder\"}},\"version\":1}"
+}
+
+fn export_html() -> String {
+    return "<!DOCTYPE NETSCAPE-Bookmark-file-1><DL><DT><A HREF=\"https://example.com/a?x=1&amp;y=2\" ADD_DATE=\"1\">Example &amp; Co</A><DT><A HREF='https://example.org/b'>Org &#39;quoted&#39;</A><DT><A HREF=\"javascript:alert(1)\">Bad</A></DL>"
+}
+
+fn main() -> Int {
+    var failures = 0
+
+    // Encoding
+    let encoded = lib.record("visit", "https://example.com/a b", "Tab\there")
+    failures = failures + check("record has three fields", encoded.split("\t").len() == 3)
+    failures = failures + check("url round-trips", lib.field(encoded, 1) == "https://example.com/a b")
+    failures = failures + check("title escape round-trips", lib.field(encoded, 2) == "Tab\there")
+    failures = failures + check("kind field", lib.field(encoded, 0) == "visit")
+    failures = failures + check("missing field is empty", lib.field(encoded, 9) == "")
+
+    let lines = lib.parse_records("visit\thttps://a.example/\tA\r\nbookmark\thttps://b.example/\tB\n\n")
+    failures = failures + check("load keeps two records", lines.len() == 2)
+    failures = failures + check("load strips carriage return", lib.field(lines[0], 2) == "A")
+    failures = failures + check("join round-trips", lib.parse_records(lib.join_records(lines)).len() == 2)
+
+    // URLs
+    failures = failures + check("key lowercases", lib.key("https://Example.COM/A") == "https://example.com/a")
+    failures = failures + check("key drops trailing slash", lib.key("https://example.com/") == "https://example.com")
+    failures = failures + check("key keeps scheme slashes", lib.key("https://example.com") == "https://example.com")
+    failures = failures + check("key drops fragment", lib.key("https://example.com/a#top") == "https://example.com/a")
+    failures = failures + check("host of url", lib.host_of("https://docs.example.com:8443/x") == "docs.example.com")
+    failures = failures + check("host of bare value", lib.host_of("about:blank") == "")
+
+    // Visits
+    var records: List<String> = []
+    records = lib.add_visit(records, "https://example.com/", "Example")
+    records = lib.add_visit(records, "https://example.com", "Example again")
+    failures = failures + check("two visits recorded", lib.visit_count(records) == 2)
+    failures = failures + check("visits share one key", lib.key(lib.field(records[0], 1)) == lib.key(lib.field(records[1], 1)))
+    failures = failures + check("empty url is ignored", lib.add_visit(records, "  ", "x").len() == records.len())
+
+    var bounded: List<String> = []
+    var i = 0
+    while i < 405 {
+        bounded = lib.add_visit(bounded, "https://bounded.example/${i}", "Bounded")
+        i = i + 1
+    }
+    failures = failures + check("history is bounded at 400", lib.visit_count(bounded) == 400)
+    failures = failures + check("newest visit survives bounding", lib.field(bounded[bounded.len() - 1], 1) == "https://bounded.example/404")
+    failures = failures + check("oldest visit is dropped", lib.field(bounded[0], 1) == "https://bounded.example/5")
+
+    // Bookmarks
+    var marks: List<String> = []
+    marks = lib.add_bookmark(marks, "https://example.com/", "Example")
+    marks = lib.add_bookmark(marks, "https://example.com", "Example renamed")
+    failures = failures + check("bookmark is unique", lib.bookmark_count(marks) == 1)
+    failures = failures + check("bookmark title updates", lib.field(marks[0], 2) == "Example renamed")
+    failures = failures + check("bookmark lookup matches slash", lib.has_bookmark(marks, "https://EXAMPLE.com/"))
+    failures = failures + check("unknown bookmark is absent", !lib.has_bookmark(marks, "https://other.example/"))
+    failures = failures + check("bookmark removal", lib.bookmark_count(lib.remove_bookmark(marks, "https://example.com")) == 0)
+
+    // Suggestions
+    var library: List<String> = []
+    library = lib.add_bookmark(library, "https://nova.dev/", "Nova")
+    library = lib.add_visit(library, "https://example.com/nova-guide", "Nova guide")
+    library = lib.add_visit(library, "https://docs.example.com/nova-guide", "Nova guide")
+    library = lib.add_visit(library, "https://docs.example.com/nova-guide", "Nova guide")
+    library = lib.add_visit(library, "https://unrelated.test/", "Other")
+
+    let matches = lib.suggest(library, "nov", 6)
+    failures = failures + check("suggestions found", matches.len() >= 2)
+    failures = failures + check("bookmark ranks first", lib.field(matches[0], 1) == "https://nova.dev/")
+    failures = failures + check("suggestion kind is bookmark", lib.field(matches[0], 0) == "bookmark")
+    failures = failures + check("other url excluded", matches.len() == 3)
+
+    let empty = lib.suggest(library, "", 2)
+    failures = failures + check("empty query is limited", empty.len() == 2)
+    failures = failures + check("empty query prefers bookmark", lib.field(empty[0], 0) == "bookmark")
+
+    let none = lib.suggest(library, "zzzznothing", 6)
+    failures = failures + check("non-match returns nothing", none.len() == 0)
+
+    let deduped = lib.suggest(lib.merge(marks, library), "nova.dev", 6)
+    failures = failures + check("bookmark hides its visit", deduped.len() == 1)
+
+    let title_only = lib.suggest(library, "guide", 6)
+    failures = failures + check("title match found", title_only.len() == 2)
+    failures = failures + check("repeated visit outranks single", lib.field(title_only[0], 1) == "https://docs.example.com/nova-guide")
+
+    // Chrome import
+    let imported = lib.import_chrome(chrome_json())
+    failures = failures + check("chrome import count", imported.len() == 1)
+    if imported.len() == 1 {
+        failures = failures + check("chrome import url", lib.field(imported[0], 1) == "https://jd4rider.github.io/nova/")
+        failures = failures + check("chrome import title", lib.field(imported[0], 2) == "Nova Docs")
+    } else {
+        println("FAIL chrome import details (no records)")
+        failures = failures + 2
+    }
+    failures = failures + check("chrome scheme is skipped", lib.import_chrome("{bad json").len() == 0)
+
+    // Export HTML import
+    let html = lib.import_html(export_html())
+    failures = failures + check("html import count", html.len() == 2)
+    if html.len() == 2 {
+        failures = failures + check("html entities decoded", lib.field(html[0], 2) == "Example & Co")
+        failures = failures + check("html url entities decoded", lib.field(html[0], 1) == "https://example.com/a?x=1&y=2")
+        failures = failures + check("html single quotes", lib.field(html[1], 2) == "Org 'quoted'")
+        failures = failures + check("html javascript skipped", lib.field(html[1], 1) == "https://example.org/b")
+    } else {
+        println("FAIL html import details (no records)")
+        failures = failures + 4
+    }
+
+    // Failure classification
+    failures = failures + check("offline detected", status.kind("The Internet connection appears to be offline.") == "offline")
+    failures = failures + check("certificate detected", status.kind("The certificate for this server is invalid.") == "certificate")
+    failures = failures + check("dns detected", status.kind("A server with the specified hostname could not be found.") == "dns")
+    failures = failures + check("refused detected", status.kind("Could not connect to the server.") == "unreachable")
+    failures = failures + check("blocked detected", status.kind("blocked unsupported scheme: mailto") == "blocked")
+    failures = failures + check("unknown falls back", status.kind("something odd") == "failed")
+    failures = failures + check("offline can retry", status.can_retry("offline"))
+    failures = failures + check("blocked cannot retry", !status.can_retry("blocked"))
+    failures = failures + check("certificate title", status.title("certificate") == "Certificate problem")
+    failures = failures + check("certificate hint refuses bypass", status.hint("certificate").contains("does not bypass"))
+    failures = failures + check("empty detail is explicit", status.detail("  ").contains("No detail"))
+
+    // Session restore, settings and byte formatting (0.5.0)
+    var links: List<String> = []
+    links.push("https://example.com/a")
+    links.push("mailto:test@example.com")
+    let saved = lib.session_encode(links, 1)
+    let restored = lib.session_urls(saved)
+    failures = failures + check("session skips disallowed", restored.len() == 1)
+    if restored.len() == 1 {
+        failures = failures + check("session keeps url", restored[0] == "https://example.com/a")
+    } else {
+        failures = failures + check("session keeps url", false)
+    }
+    failures = failures + check("session active index", lib.session_active(saved) == 1)
+    failures = failures + check("session marks tabs", saved.contains("tab\thttps"))
+    failures = failures + check("settings read", lib.setting_value("a=1\nsearch=brave\n", "search") == "brave")
+    failures = failures + check("settings missing", lib.setting_value("a=1\n", "search") == "")
+    failures = failures + check("settings replace", lib.setting_with("layout=vertical\n", "search", "google") == "layout=vertical\nsearch=google")
+    failures = failures + check("number_of digits", lib.number_of("5120") == 5120)
+    failures = failures + check("number_of stops", lib.number_of("12x") == 12)
+    failures = failures + check("number_of empty", lib.number_of("") == 0)
+    failures = failures + check("size bytes", lib.size_text(512) == "512 B")
+    failures = failures + check("size kb", lib.size_text(1536) == "1.5 KB")
+    failures = failures + check("size mb", lib.size_text(1572864) == "1.5 MB")
+    failures = failures + check("percent half", lib.percent_of(50, 100) == 50)
+    failures = failures + check("percent clamps", lib.percent_of(200, 100) == 100)
+    failures = failures + check("percent zero total", lib.percent_of(10, 0) == 0)
+    failures = failures + check("empty list", lib.empty().len() == 0)
+
+    println("failures=${failures}")
+    return failures
+}

@@ -1,0 +1,401 @@
+// Address-bar text model.
+//
+// This module is deliberately UI-free and headless-testable. It normalizes
+// user input to an allowed URL or rejects it; it never invents unsupported
+// schemes. Browser chrome owns the editing state and calls these primitives.
+
+fn slice_chars(chars: List<String>, start: Int, stop: Int) -> String {
+    var out = ""
+    var i = start
+    while i < stop && i < chars.len() {
+        if i >= 0 {
+            out = out + chars[i]
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn char_count(text: String) -> Int {
+    return text.chars().len()
+}
+
+// ---------- grapheme clusters ----------
+//
+// `chars()` is one element per Unicode scalar; `graphemes()` is one element per
+// extended grapheme cluster. Cursor positions are scalar offsets, so an editor
+// that stepped by one scalar per key would park the caret inside a combining
+// sequence ("e" + U+0301), split a ZWJ emoji ("👨‍👩‍👧"), half a flag (two
+// regional indicators) or separate an emoji from its skin-tone modifier.
+// These helpers only ever return cluster boundaries.
+//
+// Segmentation follows the same rules as the runtime's grapheme splitter (the
+// compiler used here has no `graphemes()` method, only `chars()`): combining
+// marks (U+0300-U+036F, U+1AB0-U+1AFF, U+1DC0-U+1DFF, U+20D0-U+20FF,
+// U+FE20-U+FE2F), variation selectors (U+FE00-U+FE0F, U+E0100-U+E01EF), emoji
+// skin tones (U+1F3FB-U+1F3FF), keycaps (U+20E3), regional-indicator pairs and
+// ZWJ sequences stay whole. Indic conjuncts, Arabic/Hebrew vowel marks and
+// Hangul jamo are not joined yet, matching the runtime.
+
+fn clamp_offset(at: Int, count: Int) -> Int {
+    if at < 0 {
+        return 0
+    }
+    if at > count {
+        return count
+    }
+    return at
+}
+
+// Code point of one `chars()` element, decoded from its UTF-8 bytes.
+fn code_point(ch: String) -> Int {
+    let bytes = ch.bytes()
+    if bytes.len() == 0 {
+        return 0
+    }
+    let first = bytes[0]
+    if first < 128 {
+        return first
+    }
+    if bytes.len() == 2 {
+        return (first % 32) * 64 + bytes[1] % 64
+    }
+    if bytes.len() == 3 {
+        return (first % 16) * 4096 + (bytes[1] % 64) * 64 + bytes[2] % 64
+    }
+    if bytes.len() == 4 {
+        return (first % 8) * 262144 + (bytes[1] % 64) * 4096 + (bytes[2] % 64) * 64 + bytes[3] % 64
+    }
+    return 0
+}
+
+// A scalar that extends the cluster before it instead of starting a new one.
+fn cluster_extend(cp: Int) -> Bool {
+    if cp >= 768 && cp <= 879 {
+        return true
+    }
+    if cp >= 6832 && cp <= 6911 {
+        return true
+    }
+    if cp >= 7616 && cp <= 7679 {
+        return true
+    }
+    if cp >= 8400 && cp <= 8447 {
+        return true
+    }
+    if cp >= 65056 && cp <= 65071 {
+        return true
+    }
+    if cp >= 65024 && cp <= 65039 {
+        return true
+    }
+    if cp >= 917760 && cp <= 917999 {
+        return true
+    }
+    if cp >= 127995 && cp <= 127999 {
+        return true
+    }
+    if cp == 8419 {
+        return true
+    }
+    return false
+}
+
+fn cluster_regional(cp: Int) -> Bool {
+    return cp >= 127462 && cp <= 127487
+}
+
+// Scalar offset of every cluster start, followed by the end of the text.
+fn cluster_starts(text: String) -> List<Int> {
+    let chars = text.chars()
+    var starts: List<Int> = []
+    starts.push(0)
+    if chars.len() == 0 {
+        return starts
+    }
+    var run = 0
+    if cluster_regional(code_point(chars[0])) {
+        run = 1
+    }
+    var i = 1
+    while i < chars.len() {
+        let prev = code_point(chars[i - 1])
+        let cp = code_point(chars[i])
+        var join = false
+        if cluster_extend(cp) {
+            join = true
+        }
+        if cp == 8205 {
+            join = true
+        }
+        if prev == 8205 {
+            join = true
+        }
+        if cluster_regional(cp) && cluster_regional(prev) && run % 2 == 1 {
+            join = true
+        }
+        if !join {
+            starts.push(i)
+        }
+        if cluster_regional(cp) {
+            if cluster_regional(prev) && run % 2 == 1 {
+                run = 0
+            } else {
+                run = run + 1
+            }
+        } else {
+            run = 0
+        }
+        i = i + 1
+    }
+    starts.push(chars.len())
+    return starts
+}
+
+fn cluster_count(text: String) -> Int {
+    return cluster_starts(text).len() - 1
+}
+
+// Nearest cluster start at or before `at`.
+fn cluster_floor(text: String, at: Int) -> Int {
+    let starts = cluster_starts(text)
+    let end = starts[starts.len() - 1]
+    let point = clamp_offset(at, end)
+    var best = 0
+    var i = 0
+    while i < starts.len() {
+        if starts[i] > point {
+            return best
+        }
+        best = starts[i]
+        i = i + 1
+    }
+    return best
+}
+
+// Next cluster start strictly after `at`.
+fn cluster_ceil(text: String, at: Int) -> Int {
+    let starts = cluster_starts(text)
+    let end = starts[starts.len() - 1]
+    let point = clamp_offset(at, end)
+    var i = 0
+    while i < starts.len() {
+        if starts[i] > point {
+            return starts[i]
+        }
+        i = i + 1
+    }
+    return end
+}
+
+// Largest cluster start strictly before `at`: the target of Left/Backspace.
+fn cluster_before(text: String, at: Int) -> Int {
+    let starts = cluster_starts(text)
+    let end = starts[starts.len() - 1]
+    let point = clamp_offset(at, end)
+    var best = 0
+    var i = 0
+    while i < starts.len() {
+        if starts[i] >= point {
+            return best
+        }
+        best = starts[i]
+        i = i + 1
+    }
+    return best
+}
+
+// Arrow step and backspace target: one whole cluster.
+fn char_left(text: String, at: Int) -> Int {
+    return cluster_before(text, at)
+}
+
+fn char_right(text: String, at: Int) -> Int {
+    return cluster_ceil(text, at)
+}
+
+// Word and click boundaries are recomputed from separators, which can land in
+// the middle of a cluster; this pulls them back to the cluster start.
+fn snap(text: String, at: Int) -> Int {
+    return cluster_floor(text, at)
+}
+
+fn has_whitespace(text: String) -> Bool {
+    for ch in text.chars() {
+        if ch == " " || ch == "\t" || ch == "\n" || ch == "\r" {
+            return true
+        }
+    }
+    return false
+}
+
+fn local_host(text: String) -> Bool {
+    let lower = text.lower()
+    return lower == "localhost" || lower.starts_with("localhost:") ||
+           lower.starts_with("localhost/") || lower == "127.0.0.1" ||
+           lower.starts_with("127.0.0.1:") || lower.starts_with("127.0.0.1/")
+}
+
+// A scheme is an alpha-led token followed by ':' before any path/host
+// punctuation. This catches mailto:, javascript: and custom: without treating
+// example.com:8080 as a scheme.
+fn explicit_scheme(text: String) -> Bool {
+    let chars = text.chars()
+    var i = 0
+    while i < chars.len() {
+        let ch = chars[i]
+        if ch == ":" {
+            return i > 0
+        }
+        if ch == "/" || ch == "?" || ch == "#" || ch == "." || ch == "@" {
+            return false
+        }
+        i = i + 1
+    }
+    return false
+}
+
+// Returns a navigable http(s)/about URL, or "" for anything the bridge must
+// not navigate to. Bare hosts are upgraded; arbitrary search text is not
+// silently interpreted as a URL or executed.
+fn normalize(input: String) -> String {
+    let text = input.trim()
+    if text.len() == 0 {
+        return ""
+    }
+    let lower = text.lower()
+    if lower.starts_with("http://") {
+        if text.len() > 7 {
+            return text
+        }
+        return ""
+    }
+    if lower.starts_with("https://") {
+        if text.len() > 8 {
+            return text
+        }
+        return ""
+    }
+    if lower == "about:blank" {
+        return "about:blank"
+    }
+    if local_host(text) {
+        return "http://" + text
+    }
+    if text.contains("://") || lower.starts_with("about:") || explicit_scheme(text) {
+        return ""
+    }
+    if has_whitespace(text) {
+        return ""
+    }
+    if text.contains(".") && !text.starts_with(".") && !text.ends_with(".") {
+        return "https://" + text
+    }
+    return ""
+}
+
+fn insert_text(text: String, cursor: Int, typed: String) -> String {
+    let chars = text.chars()
+    var at = cursor
+    if at < 0 {
+        at = 0
+    }
+    if at > chars.len() {
+        at = chars.len()
+    }
+    return slice_chars(chars, 0, at) + typed + slice_chars(chars, at, chars.len())
+}
+
+fn backspace_text(text: String, cursor: Int) -> String {
+    let chars = text.chars()
+    let at = clamp_offset(cursor, chars.len())
+    if at <= 0 {
+        return text
+    }
+    let start = cluster_before(text, at)
+    return slice_chars(chars, 0, start) + slice_chars(chars, at, chars.len())
+}
+
+fn delete_forward_text(text: String, cursor: Int) -> String {
+    let chars = text.chars()
+    let at = clamp_offset(cursor, chars.len())
+    if at >= chars.len() {
+        return text
+    }
+    let stop = cluster_ceil(text, at)
+    return slice_chars(chars, 0, at) + slice_chars(chars, stop, chars.len())
+}
+
+// ---------- search provider ----------
+
+// Percent-encodes a query for a provider URL. Unreserved characters pass
+// through; everything else becomes its UTF-8 bytes as %XX, so spaces are %20
+// and non-ASCII text survives the round trip.
+fn percent_encode(text: String) -> String {
+    let unreserved = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.~"
+    let hex = "0123456789ABCDEF".chars()
+    var out = ""
+    for ch in text.chars() {
+        if unreserved.contains(ch) {
+            out = out + ch
+        } else if ch == " " {
+            out = out + "%20"
+        } else {
+            for byte in ch.bytes() {
+                let hi = byte / 16
+                let lo = byte % 16
+                out = out + "%" + hex[hi] + hex[lo]
+            }
+        }
+    }
+    return out
+}
+
+// An empty template means "search off": plain text stays rejected rather than
+// being sent somewhere the owner did not choose.
+fn search_template(provider: String) -> String {
+    if provider == "google" {
+        return "https://www.google.com/search?q="
+    }
+    if provider == "brave" {
+        return "https://search.brave.com/search?q="
+    }
+    if provider == "duckduckgo" {
+        return "https://duckduckgo.com/?q="
+    }
+    return ""
+}
+
+fn search_url(provider: String, query: String) -> String {
+    let base = search_template(provider)
+    if base.len() == 0 {
+        return ""
+    }
+    return base + percent_encode(query.trim())
+}
+
+fn next_search_provider(current: String) -> String {
+    if current == "duckduckgo" {
+        return "google"
+    }
+    if current == "google" {
+        return "brave"
+    }
+    if current == "brave" {
+        return "off"
+    }
+    return "duckduckgo"
+}
+
+fn search_label(provider: String) -> String {
+    if provider == "duckduckgo" {
+        return "DuckDuckGo"
+    }
+    if provider == "google" {
+        return "Google"
+    }
+    if provider == "brave" {
+        return "Brave"
+    }
+    return "Search off"
+}

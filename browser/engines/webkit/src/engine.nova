@@ -1,0 +1,213 @@
+// WebKit engine adapter.
+//
+// This adapter is the only browser module that reaches WKWebView. It declares
+// its capabilities honestly: page layout belongs to WebKit, so
+// independent_layout is false. Switching to WebCore must recreate the view and
+// must never route fallback through this file.
+
+import "../../../engine-api/src/engine.nova" as contract
+import "../../../../libraries/nova-webview/src/webview.nova" as view
+
+// Qualified struct returns are not supported by the current compiler, so the
+// shared shape is exposed as primitive accessors until BROWSER-COMP-01 lands.
+fn name() -> String {
+    return "WebKit"
+}
+
+fn script_engine() -> String {
+    return "JavaScriptCore"
+}
+
+fn network() -> Bool {
+    return true
+}
+
+fn process_isolation() -> Bool {
+    return true
+}
+
+fn independent_layout() -> Bool {
+    return false
+}
+
+fn runtime_name() -> String {
+    return view.wv_engine()
+}
+
+fn create(parent: Int, x: Int, y: Int, width: Int, height: Int) -> Int {
+    return view.wv_create(parent, x, y, width, height)
+}
+
+fn set_bounds(handle: Int, x: Int, y: Int, width: Int, height: Int) {
+    view.wv_set_bounds(handle, x, y, width, height)
+}
+
+fn destroy(handle: Int) {
+    view.wv_destroy(handle)
+}
+
+fn focus_chrome(handle: Int) {
+    view.wv_focus_chrome(handle)
+}
+
+fn focus_page(handle: Int) {
+    view.wv_focus_page(handle)
+}
+
+fn page_focused(handle: Int) -> Bool {
+    return view.wv_page_focused(handle)
+}
+
+fn take_chrome_focus_request(handle: Int) -> Bool {
+    return view.wv_take_chrome_focus_request(handle)
+}
+
+fn take_shortcut(handle: Int) -> Int {
+    return view.wv_take_shortcut(handle)
+}
+
+fn load_html(handle: Int, html: String, base_url: String) {
+    view.wv_load_html(handle, html, base_url)
+}
+
+fn load_fixture(handle: Int, html: String) {
+    view.wv_load_html(handle, html, "https://fixture.nova.invalid/")
+}
+
+fn navigate(handle: Int, address: String) {
+    view.wv_navigate(handle, address)
+}
+
+fn back(handle: Int) {
+    view.wv_back(handle)
+}
+
+fn forward(handle: Int) {
+    view.wv_forward(handle)
+}
+
+fn reload(handle: Int) {
+    view.wv_reload(handle)
+}
+
+fn stop(handle: Int) {
+    view.wv_stop(handle)
+}
+
+fn can_go_back(handle: Int) -> Bool {
+    return view.wv_can_go_back(handle)
+}
+
+fn can_go_forward(handle: Int) -> Bool {
+    return view.wv_can_go_forward(handle)
+}
+
+fn state(handle: Int) -> Int {
+    return view.wv_state(handle)
+}
+
+fn generation(handle: Int) -> Int {
+    return view.wv_generation(handle)
+}
+
+fn set_visible(handle: Int, visible: Bool) {
+    view.wv_set_visible(handle, visible)
+}
+
+fn wait(handle: Int, timeout_ms: Int) -> Int {
+    return view.wv_wait(handle, timeout_ms)
+}
+
+fn page_state(handle: Int) -> Int {
+    return view.wv_state(handle)
+}
+
+fn page_title(handle: Int) -> String {
+    return view.wv_title(handle)
+}
+
+fn page_url(handle: Int) -> String {
+    return view.wv_url(handle)
+}
+
+fn page_error(handle: Int) -> String {
+    return view.wv_error(handle)
+}
+
+// The address the failed load was aimed at; WebKit keeps the previous URL
+// after a provisional failure, so the error panel cannot use page_url.
+fn page_error_url(handle: Int) -> String {
+    return view.wv_error_url(handle)
+}
+
+fn page_progress(handle: Int) -> Int {
+    return view.wv_progress(handle)
+}
+
+fn page_label(handle: Int) -> String {
+    return contract.label(view.wv_state(handle))
+}
+
+fn body_text(handle: Int) -> String {
+    return view.wv_body_text(handle)
+}
+
+fn snapshot(handle: Int, path: String) -> Bool {
+    return view.wv_snapshot(handle, path)
+}
+
+// Downloads belong to the browser window, not to a tab, and are polled.
+fn download_count() -> Int {
+    return view.wv_download_count()
+}
+
+fn download_id(index: Int) -> Int {
+    return view.wv_download_id_at(index)
+}
+
+fn download_name(ident: Int) -> String {
+    return view.wv_download_name(ident)
+}
+
+fn download_path(ident: Int) -> String {
+    return view.wv_download_path(ident)
+}
+
+fn download_received(ident: Int) -> Int {
+    return view.wv_download_received(ident)
+}
+
+fn download_expected(ident: Int) -> Int {
+    return view.wv_download_expected(ident)
+}
+
+// 0 waiting, 1 active, 2 done, 3 failed, 4 cancelled, 5 paused.
+fn download_state(ident: Int) -> Int {
+    return view.wv_download_state(ident)
+}
+
+fn download_cancel(ident: Int) -> Bool {
+    return view.wv_download_cancel(ident)
+}
+
+// Pause keeps the partial file; resume continues it through the originating
+// WKWebView when WebKit produced resume data for this server.
+fn download_pause(ident: Int) -> Bool {
+    return view.wv_download_pause(ident)
+}
+
+fn download_resume(ident: Int) -> Bool {
+    return view.wv_download_resume(ident)
+}
+
+fn download_resumable(ident: Int) -> Bool {
+    return view.wv_download_resumable(ident)
+}
+
+fn download_reveal(ident: Int) -> Bool {
+    return view.wv_download_reveal(ident)
+}
+
+fn download_clear_finished() {
+    view.wv_download_clear_finished()
+}

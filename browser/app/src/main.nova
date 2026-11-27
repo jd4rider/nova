@@ -1,0 +1,3519 @@
+import std.io { println }
+import "../../../libraries/nova-gui/src/gui.nova" as gui
+import "../../engines/webkit/src/engine.nova" as engine
+import "../../address/src/address.nova" as address_edit
+import "../../history/src/history.nova" as library
+import "../../status/src/status.nova" as status
+
+// The Nova Browser shell. Nova owns the window, tabs, toolbar, address
+// autocomplete, history/bookmarks and engine lifecycle. Each tab owns one
+// WKWebView. WebKit owns the page document and rendering; there is no hidden
+// Chromium/Electron path.
+//
+// Chrome is drawn every frame into the Nova framebuffer, with hover and focus
+// energies eased toward their targets against a monotonic clock. The native
+// page view sits on top of the page rectangle and is hidden while a failure
+// panel is showing, so a blocked load never leaves a stale page behind it.
+
+struct Chrome {
+    bg_hard: Int,
+    panel: Int,
+    border: Int,
+    border_strong: Int,
+    fg: Int,
+    fg_bright: Int,
+    muted: Int,
+    faint: Int,
+    input: Int,
+    elevated: Int,
+    orange: Int,
+    red: Int,
+    green: Int,
+    yellow: Int,
+    selection: Int,
+}
+
+struct Address {
+    editing: Bool,
+    text: String,
+    cursor: Int,
+    // The other end of the selection. `anchor == cursor` means no selection;
+    // keeping the anchor lets a double-click select a word and typing replace
+    // exactly that word instead of only knowing "everything is selected".
+    anchor: Int,
+    error: String,
+    highlight: Int,
+}
+
+struct Tab {
+    handle: Int,
+    url: String,
+    fixture: Bool,
+    title: String,
+}
+
+struct ClosedTab {
+    url: String,
+    fixture: Bool,
+}
+
+struct Session {
+    tabs: List<Tab>,
+    active: Int,
+    closed: List<ClosedTab>,
+    vertical: Bool,
+    seen: String,
+}
+
+struct Store {
+    visits: List<String>,
+    bookmarks: List<String>,
+    history_path: String,
+    bookmarks_path: String,
+    settings_path: String,
+    session_path: String,
+    search: String,
+    downloads_open: Bool,
+    downloads_path: String,
+    download_history: List<String>,
+    dirty_downloads: Bool,
+    dirty_visits: Bool,
+    dirty_bookmarks: Bool,
+}
+
+struct Fx {
+    slots: List<Int>,
+    focus: Int,
+}
+
+struct Notice {
+    text: String,
+    until: Int,
+}
+
+struct Box {
+    x: Int,
+    y: Int,
+    w: Int,
+    h: Int,
+}
+
+struct Tooltip {
+    text: String,
+    x: Int,
+    y: Int,
+}
+
+struct Downloads {
+    rows: List<String>,
+}
+
+struct Toolbar {
+    back: Int,
+    forward: Int,
+    reload: Int,
+    address: Int,
+    address_w: Int,
+    star: Int,
+    downloads: Int,
+    docs: Int,
+    layout: Int,
+    label: Int,
+}
+
+struct ClickAction {
+    session: Session,
+    address: Address,
+    store: Store,
+    notice: Notice,
+}
+
+struct KeyAction {
+    session: Session,
+    address: Address,
+    store: Store,
+    notice: Notice,
+    close: Bool,
+}
+
+struct Imported {
+    store: Store,
+    message: String,
+}
+
+fn chrome_theme() -> Chrome {
+    let theme = gui.gruvbox()
+    return Chrome {
+        bg_hard: theme.bg_hard,
+        panel: theme.panel,
+        border: theme.border,
+        border_strong: theme.border_strong,
+        fg: theme.fg,
+        fg_bright: theme.fg_bright,
+        muted: theme.muted,
+        faint: theme.faint,
+        input: theme.input,
+        elevated: theme.elevated,
+        orange: theme.orange,
+        red: theme.red,
+        green: theme.green,
+        yellow: theme.yellow,
+        selection: theme.selection,
+    }
+}
+
+// ---------- geometry ----------
+
+fn max_tabs() -> Int {
+    return 6
+}
+
+fn sug_rows() -> Int {
+    return 6
+}
+
+fn sug_row_height() -> Int {
+    return 36
+}
+
+fn chrome_height(vertical: Bool) -> Int {
+    if vertical {
+        return 58
+    }
+    return 118
+}
+
+fn toolbar_y(vertical: Bool) -> Int {
+    if vertical {
+        return 12
+    }
+    return 44
+}
+
+fn sidebar_width() -> Int {
+    var width = gui.width() / 4
+    if width < 176 {
+        width = 176
+    }
+    if width > 260 {
+        width = 260
+    }
+    return width
+}
+
+fn page_left(session: Session) -> Int {
+    if session.vertical {
+        return sidebar_width() + 1
+    }
+    return 0
+}
+
+fn page_top(session: Session) -> Int {
+    return chrome_height(session.vertical)
+}
+
+fn tab_width(count: Int) -> Int {
+    if count <= 0 {
+        return 160
+    }
+    var available = gui.width() - 142
+    if available < 300 {
+        available = 300
+    }
+    var width = available / count
+    if width > 200 {
+        width = 200
+    }
+    if width < 84 {
+        width = 84
+    }
+    return width
+}
+
+// Horizontal tabs scroll so the active one stays visible once they no longer
+// fit between the traffic lights and the new-tab button.
+fn tab_offset(session: Session) -> Int {
+    let count = session.tabs.len()
+    let width = tab_width(count)
+    let span = gui.width() - 136
+    let total = count * (width + 6)
+    if total <= span {
+        return 0
+    }
+    var offset = 0
+    let active_x = session.active * (width + 6)
+    if active_x + width > span {
+        offset = active_x + width - span
+    }
+    if offset > total - span {
+        offset = total - span
+    }
+    if offset < 0 {
+        offset = 0
+    }
+    return offset
+}
+
+fn tab_box_x(session: Session, index: Int) -> Int {
+    if session.vertical {
+        return 8
+    }
+    return 84 + index * (tab_width(session.tabs.len()) + 6) - tab_offset(session)
+}
+
+// Which slot a dragged tab would land in, by its midpoint.
+fn tab_slot_at(session: Session, x: Int) -> Int {
+    let count = session.tabs.len()
+    let width = tab_width(count)
+    var i = 0
+    while i < count {
+        let tx = tab_box_x(session, i)
+        if x < tx + width / 2 {
+            return i
+        }
+        i = i + 1
+    }
+    return count - 1
+}
+
+fn reorder_tab(session: Session, from: Int, to: Int) -> Session {
+    let count = session.tabs.len()
+    if from < 0 || from >= count || to < 0 || to >= count || from == to {
+        return session
+    }
+    var tabs: List<Tab> = []
+    var i = 0
+    while i < count {
+        if i == to {
+            tabs.push(session.tabs[from])
+        }
+        if i != from {
+            tabs.push(session.tabs[i])
+        }
+        i = i + 1
+    }
+    var next = session
+    next.tabs = tabs
+    next.active = to
+    next.seen = ""
+    sync_visibility(next)
+    return next
+}
+
+// Which tab a right-click landed on, or -1 when the point is not on a tab.
+fn tab_menu_target(x: Int, y: Int, session: Session) -> Int {
+    let count = session.tabs.len()
+    var i = 0
+    if session.vertical {
+        if x >= sidebar_width() || y < chrome_height(true) {
+            return 0 - 1
+        }
+        while i < count {
+            let tx = tab_box_x(session, i)
+            if gui.inside(tx, tab_box_y(i, true), tab_box_w(count, true), 32, x, y) {
+                return i
+            }
+            i = i + 1
+        }
+        return 0 - 1
+    }
+    if y >= 44 {
+        return 0 - 1
+    }
+    while i < count {
+        let tx = tab_box_x(session, i)
+        if gui.inside(tx, 8, tab_box_w(count, false), 30, x, y) {
+            return i
+        }
+        i = i + 1
+    }
+    return 0 - 1
+}
+
+// A duplicate opens the tab's live URL, or repeats the fixture for a fixture
+// tab. It goes through the same six-tab cap as every other create path.
+fn duplicate_tab(session: Session, index: Int, parent: Int, width: Int, height: Int) -> Session {
+    if index < 0 || index >= session.tabs.len() {
+        return session
+    }
+    let tab = session.tabs[index]
+    let live = engine.page_url(tab.handle)
+    let url = if live.len() > 0 { live } else { tab.url }
+    if tab.fixture || url.contains("fixture.nova.invalid") {
+        return append_tab(session, new_fixture_tab(parent, width, height))
+    }
+    if url.len() == 0 {
+        return session
+    }
+    return append_tab(session, new_url_tab(parent, width, height, url))
+}
+
+// Close everything except `keep`, then leave that tab selected. Closing is
+// always done by index 0 for the tabs before it so the survivor's index is
+// known at every step.
+fn close_other_tabs(session: Session, keep: Int, parent: Int, width: Int, height: Int) -> Session {
+    if keep < 0 || keep >= session.tabs.len() {
+        return session
+    }
+    var next = session
+    while next.tabs.len() - 1 > keep {
+        next = close_tab(next, next.tabs.len() - 1, parent, width, height)
+    }
+    var left = keep
+    while left > 0 {
+        next = close_tab(next, 0, parent, width, height)
+        left = left - 1
+    }
+    return select_tab(next, 0)
+}
+
+fn tab_menu_apply(choice: Int, index: Int, session: Session) -> Session {
+    let parent = gui.native_view()
+    let width = gui.width()
+    let height = gui.height()
+    if choice == 1 {
+        return append_tab(session, new_fixture_tab(parent, width, height))
+    }
+    if choice == 2 {
+        return duplicate_tab(session, index, parent, width, height)
+    }
+    if choice == 3 {
+        return close_tab(session, index, parent, width, height)
+    }
+    if choice == 4 {
+        return close_other_tabs(session, index, parent, width, height)
+    }
+    return session
+}
+
+fn tab_box_y(index: Int, vertical: Bool) -> Int {
+    if vertical {
+        return 100 + index * 36
+    }
+    return 8
+}
+
+fn tab_box_w(count: Int, vertical: Bool) -> Int {
+    if vertical {
+        return sidebar_width() - 16
+    }
+    return tab_width(count)
+}
+
+fn tab_box_h(vertical: Bool) -> Int {
+    if vertical {
+        return 32
+    }
+    return 30
+}
+
+fn toolbar_metrics(vertical: Bool) -> Toolbar {
+    let label = gui.width() - 12 - gui.mono_width("WEBKIT", 10)
+    let layout_x = label - 38
+    let docs_x = layout_x - 36
+    let downloads_x = docs_x - 36
+    let star_x = downloads_x - 36
+    let address_x = 214
+    var address_w = star_x - address_x - 10
+    if address_w < 120 {
+        address_w = 120
+    }
+    return Toolbar {
+        back: 88,
+        forward: 128,
+        reload: 168,
+        address: address_x,
+        address_w: address_w,
+        star: star_x,
+        downloads: downloads_x,
+        docs: docs_x,
+        layout: layout_x,
+        label: label,
+    }
+}
+
+fn suggestion_top(vertical: Bool) -> Int {
+    return toolbar_y(vertical) + 38
+}
+
+fn failure_card(session: Session) -> Box {
+    let left = page_left(session)
+    let top = page_top(session)
+    let width = gui.width() - left
+    let height = gui.height() - top
+    var card_w = 520
+    if card_w > width - 48 {
+        card_w = width - 48
+    }
+    if card_w < 260 {
+        card_w = 260
+    }
+    var card_h = 292
+    if card_h > height - 48 {
+        card_h = height - 48
+    }
+    return Box {
+        x: left + (width - card_w) / 2,
+        y: top + (height - card_h) / 2,
+        w: card_w,
+        h: card_h,
+    }
+}
+
+fn failure_retry(session: Session) -> Box {
+    let card = failure_card(session)
+    return Box { x: card.x + 24, y: card.y + card.h - 58, w: 112, h: 34 }
+}
+
+fn failure_back(session: Session) -> Box {
+    let card = failure_card(session)
+    return Box { x: card.x + 148, y: card.y + card.h - 58, w: 84, h: 34 }
+}
+
+// ---------- animation ----------
+
+fn fx_new() -> Fx {
+    var slots: List<Int> = []
+    var i = 0
+    while i < 160 {
+        slots.push(0)
+        i = i + 1
+    }
+    return Fx { slots: slots, focus: 0 }
+}
+
+fn slot(fx: Fx, index: Int) -> Int {
+    if index < 0 || index >= fx.slots.len() {
+        return 0
+    }
+    return fx.slots[index]
+}
+
+fn approach(current: Int, target: Int, step: Int) -> Int {
+    if current < target {
+        let next = current + step
+        if next > target {
+            return target
+        }
+        return next
+    }
+    if current > target {
+        let next = current - step
+        if next < target {
+            return target
+        }
+        return next
+    }
+    return current
+}
+
+// One pass, one list allocation. The previous version rebuilt the whole slot
+// list once per slot (160 lists of 160 ints per frame) to change a single
+// element, which cost more than drawing the chrome.
+fn fx_step(fx: Fx, hover: Int, editing: Bool) -> Fx {
+    var slots: List<Int> = []
+    var i = 0
+    while i < fx.slots.len() {
+        let target = if i == hover { 1000 } else { 0 }
+        slots.push(approach(fx.slots[i], target, 90))
+        i = i + 1
+    }
+    let focus_target = if editing { 1000 } else { 0 }
+    return Fx { slots: slots, focus: approach(fx.focus, focus_target, 120) }
+}
+
+fn fx_busy(fx: Fx) -> Bool {
+    if fx.focus > 0 && fx.focus < 1000 {
+        return true
+    }
+    for value in fx.slots {
+        if value > 0 && value < 1000 {
+            return true
+        }
+    }
+    return false
+}
+
+// Mixes two RGB values. amount is 0..1000, so drawing code can fade a border
+// or a fill without needing alpha compositing.
+fn blend(first: Int, second: Int, amount: Int) -> Int {
+    var t = amount
+    if t < 0 {
+        t = 0
+    }
+    if t > 1000 {
+        t = 1000
+    }
+    let r = ((first / 65536) * (1000 - t) + (second / 65536) * t) / 1000
+    let g = (((first / 256) % 256) * (1000 - t) + ((second / 256) % 256) * t) / 1000
+    let b = ((first % 256) * (1000 - t) + (second % 256) * t) / 1000
+    return r * 65536 + g * 256 + b
+}
+
+// ---------- address model ----------
+
+fn state_word(state: Int) -> String {
+    if state == 2 {
+        return "ready"
+    }
+    if state == 1 {
+        return "loading"
+    }
+    if state == 3 {
+        return "error"
+    }
+    return "idle"
+}
+
+fn address_idle() -> Address {
+    return Address {
+        editing: false,
+        text: "",
+        cursor: 0,
+        anchor: 0,
+        error: "",
+        highlight: 0 - 1,
+    }
+}
+
+fn address_clamp(at: Int, count: Int) -> Int {
+    if at < 0 {
+        return 0
+    }
+    if at > count {
+        return count
+    }
+    return at
+}
+
+// Cmd+L and the first focus of the field select the whole URL.
+fn address_begin(current: String) -> Address {
+    return Address {
+        editing: true,
+        text: current,
+        cursor: address_edit.char_count(current),
+        anchor: 0,
+        error: "",
+        highlight: 0 - 1,
+    }
+}
+
+fn address_begin_cursor(current: String, cursor: Int) -> Address {
+    let at = address_clamp(cursor, address_edit.char_count(current))
+    return Address {
+        editing: true,
+        text: current,
+        cursor: at,
+        anchor: at,
+        error: "",
+        highlight: 0 - 1,
+    }
+}
+
+fn address_lo(current: Address) -> Int {
+    if current.anchor < current.cursor {
+        return current.anchor
+    }
+    return current.cursor
+}
+
+fn address_hi(current: Address) -> Int {
+    if current.anchor < current.cursor {
+        return current.cursor
+    }
+    return current.anchor
+}
+
+fn address_selected(current: Address) -> Bool {
+    return current.anchor != current.cursor
+}
+
+fn address_at(current: Address, cursor: Int) -> Address {
+    let at = address_clamp(cursor, address_edit.char_count(current.text))
+    return Address {
+        editing: true,
+        text: current.text,
+        cursor: at,
+        anchor: at,
+        error: "",
+        highlight: current.highlight,
+    }
+}
+
+fn address_with_text(current: Address, text: String, cursor: Int) -> Address {
+    let at = address_clamp(cursor, address_edit.char_count(text))
+    return Address {
+        editing: true,
+        text: text,
+        cursor: at,
+        anchor: at,
+        error: "",
+        highlight: 0 - 1,
+    }
+}
+
+fn address_splice(text: String, start: Int, stop: Int, insert: String) -> String {
+    let chars = text.chars()
+    return address_edit.slice_chars(chars, 0, start) + insert + address_edit.slice_chars(chars, stop, chars.len())
+}
+
+// Horizontal offset that keeps the caret inside the visible part of the field.
+fn address_scroll(text: String, cursor: Int, width: Int) -> Int {
+    let prefix = address_edit.slice_chars(text.chars(), 0, cursor)
+    let caret = gui.text_width(prefix, 13)
+    if caret > width {
+        return caret - width
+    }
+    return 0
+}
+
+// Nearest character boundary to a click, in the text's own coordinates. Widths
+// accumulate left to right; re-measuring every prefix made a click on a long
+// URL quadratic.
+fn address_caret_at(text: String, local_x: Int) -> Int {
+    let chars = text.chars()
+    let starts = address_edit.cluster_starts(text)
+    var best = 0
+    var best_gap = 0 - 1
+    var width = 0
+    var measured = 0
+    var i = 0
+    // Candidate carets are cluster boundaries only, so a click never lands in
+    // the middle of a combining sequence or an emoji. Widths accumulate once.
+    while i < starts.len() {
+        let at = starts[i]
+        while measured < at {
+            width = width + gui.text_width(chars[measured], 13)
+            measured = measured + 1
+        }
+        let gap = if width > local_x { width - local_x } else { local_x - width }
+        if best_gap < 0 || gap < best_gap {
+            best_gap = gap
+            best = at
+        }
+        i = i + 1
+    }
+    return best
+}
+
+// Word boundaries for Option+arrow: a URL is one long token, so punctuation
+// that separates host, path and query counts as a boundary.
+fn address_break(ch: String) -> Bool {
+    if ch.len() == 0 {
+        return true
+    }
+    return " /:?&=#.-_%@+~,;|".contains(ch)
+}
+
+fn address_word_left(text: String, at: Int) -> Int {
+    let chars = text.chars()
+    var i = address_clamp(at, chars.len())
+    while i > 0 && address_break(chars[i - 1]) {
+        i = i - 1
+    }
+    while i > 0 && !address_break(chars[i - 1]) {
+        i = i - 1
+    }
+    return address_edit.snap(text, i)
+}
+
+fn address_word_right(text: String, at: Int) -> Int {
+    let chars = text.chars()
+    let count = chars.len()
+    var i = address_clamp(at, count)
+    while i < count && !address_break(chars[i]) {
+        i = i + 1
+    }
+    while i < count && address_break(chars[i]) {
+        i = i + 1
+    }
+    return address_edit.snap(text, i)
+}
+
+fn address_cancel(current: Address) -> Address {
+    return Address {
+        editing: false,
+        text: current.text,
+        cursor: current.cursor,
+        anchor: current.cursor,
+        error: "",
+        highlight: 0 - 1,
+    }
+}
+
+fn address_type(current: Address, typed: String) -> Address {
+    if !current.editing || typed.len() == 0 {
+        return current
+    }
+    let text = address_splice(current.text, address_lo(current), address_hi(current), typed)
+    return address_with_text(current, text, address_lo(current) + address_edit.char_count(typed))
+}
+
+fn address_backspace(current: Address) -> Address {
+    if !current.editing {
+        return current
+    }
+    if address_selected(current) {
+        let lo = address_lo(current)
+        return address_with_text(current, address_splice(current.text, lo, address_hi(current), ""), lo)
+    }
+    let at = address_clamp(current.cursor, address_edit.char_count(current.text))
+    let start = address_edit.char_left(current.text, at)
+    return address_with_text(current, address_edit.backspace_text(current.text, at), start)
+}
+
+fn address_delete(current: Address) -> Address {
+    if !current.editing {
+        return current
+    }
+    if address_selected(current) {
+        let lo = address_lo(current)
+        return address_with_text(current, address_splice(current.text, lo, address_hi(current), ""), lo)
+    }
+    let at = address_clamp(current.cursor, address_edit.char_count(current.text))
+    return address_with_text(current, address_edit.delete_forward_text(current.text, at), at)
+}
+
+fn address_left(current: Address) -> Address {
+    if !current.editing {
+        return current
+    }
+    if address_selected(current) {
+        return address_at(current, address_lo(current))
+    }
+    return address_at(current, address_edit.char_left(current.text, current.cursor))
+}
+
+fn address_right(current: Address) -> Address {
+    if !current.editing {
+        return current
+    }
+    if address_selected(current) {
+        return address_at(current, address_hi(current))
+    }
+    return address_at(current, address_edit.char_right(current.text, current.cursor))
+}
+
+fn address_edge(current: Address, start: Bool) -> Address {
+    if !current.editing {
+        return current
+    }
+    if start {
+        return address_at(current, 0)
+    }
+    return address_at(current, address_edit.char_count(current.text))
+}
+
+// Option+arrow: one word at a time; with a selection it collapses to that edge.
+fn address_word_step(current: Address, direction: Int) -> Address {
+    if !current.editing {
+        return current
+    }
+    if address_selected(current) {
+        if direction < 0 {
+            return address_at(current, address_lo(current))
+        }
+        return address_at(current, address_hi(current))
+    }
+    if direction < 0 {
+        return address_at(current, address_word_left(current.text, current.cursor))
+    }
+    return address_at(current, address_word_right(current.text, current.cursor))
+}
+
+// Option+Backspace / Option+Delete: delete to the previous / next boundary.
+fn address_word_erase(current: Address, forward: Bool) -> Address {
+    if !current.editing {
+        return current
+    }
+    if address_selected(current) {
+        let lo = address_lo(current)
+        return address_with_text(current, address_splice(current.text, lo, address_hi(current), ""), lo)
+    }
+    let at = current.cursor
+    if forward {
+        let stop = address_word_right(current.text, at)
+        return address_with_text(current, address_splice(current.text, at, stop, ""), at)
+    }
+    let start = address_word_left(current.text, at)
+    return address_with_text(current, address_splice(current.text, start, at, ""), start)
+}
+
+// Double-click: the separator run under the pointer, or the token around it.
+fn address_select_word(current: Address, at: Int) -> Address {
+    let text = current.text
+    let chars = text.chars()
+    let count = chars.len()
+    let point = address_edit.snap(text, address_clamp(at, count))
+    var start = point
+    var stop = point
+    if point < count && address_break(chars[point]) {
+        while start > 0 && address_break(chars[start - 1]) {
+            start = start - 1
+        }
+        while stop < count && address_break(chars[stop]) {
+            stop = stop + 1
+        }
+    } else {
+        while start > 0 && !address_break(chars[start - 1]) {
+            start = start - 1
+        }
+        while stop < count && !address_break(chars[stop]) {
+            stop = stop + 1
+        }
+    }
+    if start == stop {
+        stop = address_edit.char_right(text, start)
+    }
+    return Address {
+        editing: true,
+        text: text,
+        cursor: stop,
+        anchor: start,
+        error: "",
+        highlight: 0 - 1,
+    }
+}
+
+fn address_select_all(current: Address) -> Address {
+    return Address {
+        editing: true,
+        text: current.text,
+        cursor: address_edit.char_count(current.text),
+        anchor: 0,
+        error: "",
+        highlight: 0 - 1,
+    }
+}
+
+fn address_clear(current: Address) -> Address {
+    return Address {
+        editing: true,
+        text: "",
+        cursor: 0,
+        anchor: 0,
+        error: "",
+        highlight: 0 - 1,
+    }
+}
+
+fn address_move(current: Address, delta: Int, count: Int) -> Address {
+    if count <= 0 {
+        return current
+    }
+    var next = current.highlight
+    if next < 0 {
+        next = if delta > 0 { 0 } else { count - 1 }
+    } else {
+        next = next + delta
+        if next < 0 {
+            next = count - 1
+        }
+        if next >= count {
+            next = 0
+        }
+    }
+    return Address {
+        editing: current.editing,
+        text: current.text,
+        cursor: current.cursor,
+        anchor: current.anchor,
+        error: current.error,
+        highlight: next,
+    }
+}
+
+// Tab completes the highlighted suggestion into the field without opening it.
+fn address_accept(current: Address, suggestions: List<String>) -> Address {
+    if current.highlight < 0 || current.highlight >= suggestions.len() {
+        return current
+    }
+    let url = library.field(suggestions[current.highlight], 1)
+    return Address {
+        editing: true,
+        text: url,
+        cursor: address_edit.char_count(url),
+        anchor: address_edit.char_count(url),
+        error: "",
+        highlight: 0 - 1,
+    }
+}
+
+fn address_open(current: Address, url: String) -> Address {
+    return Address {
+        editing: false,
+        text: url,
+        cursor: address_edit.char_count(url),
+        anchor: address_edit.char_count(url),
+        error: "",
+        highlight: 0 - 1,
+    }
+}
+
+fn address_submit(handle: Int, current: Address, suggestions: List<String>, search: String) -> Address {
+    var url = ""
+    if current.highlight >= 0 && current.highlight < suggestions.len() {
+        url = library.field(suggestions[current.highlight], 1)
+    } else {
+        url = address_edit.normalize(current.text)
+        if url.len() == 0 && search != "off" && current.text.trim().len() > 0 {
+            url = address_edit.search_url(search, current.text)
+        }
+    }
+    if url.len() == 0 {
+        return Address {
+            editing: true,
+            text: current.text,
+            cursor: current.cursor,
+            anchor: current.anchor,
+            error: "Enter an address or turn on search (Cmd+Shift+S)",
+            highlight: current.highlight,
+        }
+    }
+    engine.navigate(handle, url)
+    engine.focus_page(handle)
+    if gui.env("NOVA_BROWSER_TRACE").len() > 0 {
+        println("browser: navigate " + url)
+    }
+    return address_open(current, url)
+}
+
+// ---------- tabs ----------
+
+fn fixture_paths() -> List<String> {
+    return [
+        "browser/fixtures/start.html",
+        "fixtures/start.html",
+        "../fixtures/start.html",
+    ]
+}
+
+fn fixture_html() -> String {
+    let bundled = gui.resource("start.html")
+    if bundled.contains("Nova Browser") {
+        return bundled
+    }
+    for path in fixture_paths() {
+        let data = gui.read(path)
+        if data.contains("Nova Browser") {
+            return data
+        }
+    }
+    return "<!doctype html><html><head><title>Nova Browser</title></head><body style=\"background:#1d2021;color:#ebdbb2;font:20px -apple-system;padding:40px\"><h1>Nova Browser</h1><p>Fixture file not found. WebKit is still running.</p></body></html>"
+}
+
+fn tab_create(parent: Int, width: Int, height: Int, url: String, fixture: Bool) -> Tab {
+    var page_height = height - chrome_height(false)
+    if page_height < 1 {
+        page_height = 1
+    }
+    let handle = engine.create(parent, 0, chrome_height(false), width, page_height)
+    if handle <= 0 {
+        return Tab {
+            handle: 0,
+            url: url,
+            fixture: fixture,
+            title: "",
+        }
+    }
+    if fixture {
+        engine.load_fixture(handle, fixture_html())
+    } else {
+        engine.navigate(handle, url)
+    }
+    return Tab {
+        handle: handle,
+        url: url,
+        fixture: fixture,
+        title: "",
+    }
+}
+
+fn new_fixture_tab(parent: Int, width: Int, height: Int) -> Tab {
+    return tab_create(parent, width, height, "https://fixture.nova.invalid/", true)
+}
+
+fn new_url_tab(parent: Int, width: Int, height: Int, url: String) -> Tab {
+    return tab_create(parent, width, height, url, false)
+}
+
+fn active_handle(session: Session) -> Int {
+    if session.active < 0 || session.active >= session.tabs.len() {
+        return 0
+    }
+    return session.tabs[session.active].handle
+}
+
+// The page view is visible only for the active tab, and never while its own
+// failure panel is on screen: a hidden native view is what lets Nova draw the
+// error surface over the page area.
+fn sync_visibility(session: Session) {
+    var i = 0
+    while i < session.tabs.len() {
+        let tab = session.tabs[i]
+        var visible = i == session.active
+        if visible && engine.page_state(tab.handle) == 3 {
+            visible = false
+        }
+        engine.set_visible(tab.handle, visible)
+        i = i + 1
+    }
+}
+
+fn select_tab(session: Session, index: Int) -> Session {
+    if index < 0 || index >= session.tabs.len() {
+        return session
+    }
+    var next = session
+    next.active = index
+    next.seen = ""
+    sync_visibility(next)
+    engine.focus_page(active_handle(next))
+    if gui.env("NOVA_BROWSER_TRACE").len() > 0 {
+        println("browser: tab selected index=${index}")
+    }
+    return next
+}
+
+fn append_tab(session: Session, tab: Tab) -> Session {
+    if tab.handle <= 0 {
+        return session
+    }
+    if session.tabs.len() >= max_tabs() {
+        engine.destroy(tab.handle)
+        return session
+    }
+    var tabs = session.tabs
+    tabs.push(tab)
+    var next = Session {
+        tabs: tabs,
+        active: tabs.len() - 1,
+        closed: session.closed,
+        vertical: session.vertical,
+        seen: "",
+    }
+    sync_visibility(next)
+    if gui.env("NOVA_BROWSER_TRACE").len() > 0 {
+        println("browser: tab created count=${tabs.len()}")
+    }
+    return next
+}
+
+fn close_tab(session: Session, index: Int, parent: Int, width: Int, height: Int) -> Session {
+    if index < 0 || index >= session.tabs.len() {
+        return session
+    }
+    let closing = session.tabs[index]
+    let live = engine.page_url(closing.handle)
+    let closed_url = if live.len() > 0 { live } else { closing.url }
+    let closed_fixture = closing.fixture && closed_url.contains("fixture.nova.invalid")
+    var closed = session.closed
+    closed.push(ClosedTab {
+        url: closed_url,
+        fixture: closed_fixture,
+    })
+    if closed.len() > 8 {
+        var trimmed: List<ClosedTab> = []
+        var c = 1
+        while c < closed.len() {
+            trimmed.push(closed[c])
+            c = c + 1
+        }
+        closed = trimmed
+    }
+
+    engine.destroy(closing.handle)
+    var rest: List<Tab> = []
+    var i = 0
+    while i < session.tabs.len() {
+        if i != index {
+            rest.push(session.tabs[i])
+        }
+        i = i + 1
+    }
+
+    var active = session.active
+    if index < active {
+        active = active - 1
+    }
+    if rest.len() == 0 {
+        let fresh = new_fixture_tab(parent, width, height)
+        rest.push(fresh)
+        active = 0
+    }
+    if active >= rest.len() {
+        active = rest.len() - 1
+    }
+
+    var next = Session {
+        tabs: rest,
+        active: active,
+        closed: closed,
+        vertical: session.vertical,
+        seen: "",
+    }
+    sync_visibility(next)
+    engine.focus_page(active_handle(next))
+    if gui.env("NOVA_BROWSER_TRACE").len() > 0 {
+        println("browser: tab closed count=${rest.len()}")
+    }
+    return next
+}
+
+fn restore_closed(session: Session, parent: Int, width: Int, height: Int) -> Session {
+    if session.closed.len() == 0 || session.tabs.len() >= max_tabs() {
+        return session
+    }
+    let item = session.closed[session.closed.len() - 1]
+    var remaining: List<ClosedTab> = []
+    var i = 0
+    while i < session.closed.len() - 1 {
+        remaining.push(session.closed[i])
+        i = i + 1
+    }
+    let tab = if item.fixture {
+        new_fixture_tab(parent, width, height)
+    } else {
+        new_url_tab(parent, width, height, item.url)
+    }
+    if tab.handle <= 0 {
+        return session
+    }
+    var tabs = session.tabs
+    tabs.push(tab)
+    var next = Session {
+        tabs: tabs,
+        active: tabs.len() - 1,
+        closed: remaining,
+        vertical: session.vertical,
+        seen: "",
+    }
+    sync_visibility(next)
+    engine.focus_page(active_handle(next))
+    if gui.env("NOVA_BROWSER_TRACE").len() > 0 {
+        println("browser: tab restored count=${tabs.len()}")
+    }
+    return next
+}
+
+fn toggle_layout(session: Session) -> Session {
+    var next = session
+    next.vertical = !session.vertical
+    return next
+}
+
+fn destroy_session(session: Session) {
+    var i = 0
+    while i < session.tabs.len() {
+        engine.destroy(session.tabs[i].handle)
+        i = i + 1
+    }
+}
+
+// ---------- profile, history and bookmarks ----------
+
+fn profile_root() -> String {
+    let explicit = gui.env("NOVA_BROWSER_PROFILE").trim()
+    if explicit.len() > 0 {
+        return explicit
+    }
+    return gui.env("HOME") + "/Library/Application Support/Nova Browser"
+}
+
+fn history_enabled() -> Bool {
+    return gui.env("NOVA_BROWSER_NO_HISTORY").trim() != "1"
+}
+
+fn load_store() -> Store {
+    let root = profile_root()
+    gui.mkdir(root)
+    let history_path = root + "/history.tsv"
+    let bookmarks_path = root + "/bookmarks.tsv"
+    let settings_path = root + "/settings.tsv"
+    let session_path = root + "/session.tsv"
+    let downloads_path = root + "/downloads.tsv"
+    var visits: List<String> = []
+    if history_enabled() {
+        let raw = gui.read(history_path)
+        visits = library.parse_records(raw)
+    }
+    let raw_marks = gui.read(bookmarks_path)
+    let bookmarks = library.parse_records(raw_marks)
+    let download_history = library.parse_records(gui.read(downloads_path))
+    let settings = gui.read(settings_path)
+    var search = library.setting_value(settings, "search")
+    if search.len() == 0 {
+        search = "off"
+    }
+    return Store {
+        visits: visits,
+        bookmarks: bookmarks,
+        history_path: if history_enabled() { history_path } else { "" },
+        bookmarks_path: bookmarks_path,
+        settings_path: settings_path,
+        session_path: if history_enabled() { session_path } else { "" },
+        search: search,
+        downloads_open: false,
+        downloads_path: downloads_path,
+        download_history: download_history,
+        dirty_downloads: false,
+        dirty_visits: false,
+        dirty_bookmarks: false,
+    }
+}
+
+fn save_store(store: Store) -> Store {
+    var next = store
+    if next.dirty_visits && next.history_path.len() > 0 {
+        let text = library.join_records(next.visits)
+        if gui.write(next.history_path, text) {
+            next.dirty_visits = false
+        }
+    }
+    if next.dirty_bookmarks && next.bookmarks_path.len() > 0 {
+        let text = library.join_records(next.bookmarks)
+        if gui.write(next.bookmarks_path, text) {
+            next.dirty_bookmarks = false
+        }
+    }
+    if next.dirty_downloads && next.downloads_path.len() > 0 {
+        let text = library.join_records(next.download_history)
+        if gui.write(next.downloads_path, text) {
+            next.dirty_downloads = false
+        }
+    }
+    return next
+}
+
+fn save_setting(store: Store, key: String, value: String) {
+    if store.settings_path.len() == 0 {
+        return
+    }
+    let text = gui.read(store.settings_path)
+    gui.write(store.settings_path, library.setting_with(text, key, value))
+}
+
+fn save_layout(store: Store, vertical: Bool) {
+    save_setting(store, "layout", if vertical { "vertical" } else { "horizontal" })
+}
+
+fn chrome_profile_paths() -> List<String> {
+    let base = gui.env("HOME") + "/Library/Application Support/Google/Chrome"
+    var paths: List<String> = []
+    if !gui.is_dir(base) {
+        return paths
+    }
+    let listing = gui.list(base)
+    for line in listing.split("\n") {
+        if line.starts_with("d\t") {
+            let parts = line.split("\t")
+            if parts.len() > 1 {
+                let candidate = base + "/" + parts[1] + "/Bookmarks"
+                if gui.exists(candidate) {
+                    paths.push(candidate)
+                }
+            }
+        }
+    }
+    return paths
+}
+
+fn import_file(path: String) -> List<String> {
+    let text = gui.read(path)
+    if text.len() == 0 {
+        return []
+    }
+    let lower = text.lower()
+    if lower.contains("<a href=") || lower.contains("<!doctype netscape") {
+        return library.import_html(text)
+    }
+    return library.import_chrome(text)
+}
+
+fn import_files(paths: List<String>) -> List<String> {
+    var found: List<String> = []
+    for path in paths {
+        if gui.is_dir(path) {
+            let listing = gui.list(path)
+            for line in listing.split("\n") {
+                if line.starts_with("f\t") {
+                    let parts = line.split("\t")
+                    if parts.len() > 1 {
+                        let name = parts[1].lower()
+                        if name == "bookmarks" || name.ends_with(".html") || name.ends_with(".htm") {
+                            let nested = import_file(path + "/" + parts[1])
+                            found = library.merge(found, nested)
+                        }
+                    }
+                }
+            }
+        } else {
+            let imported = import_file(path)
+            found = library.merge(found, imported)
+        }
+    }
+    return found
+}
+
+fn apply_import(store: Store, found: List<String>) -> Store {
+    var next = store
+    var added = 0
+    for line in found {
+        let url = library.field(line, 1)
+        if !library.has_bookmark(next.bookmarks, url) {
+            let title = library.field(line, 2)
+            next.bookmarks = library.add_bookmark(next.bookmarks, url, title)
+            added = added + 1
+        }
+    }
+    if added > 0 {
+        next.dirty_bookmarks = true
+    }
+    return next
+}
+
+fn import_from_google(store: Store) -> Imported {
+    let paths = chrome_profile_paths()
+    if paths.len() == 0 {
+        return Imported { store: store, message: "No Google Chrome profile found" }
+    }
+    let found = import_files(paths)
+    let before = library.bookmark_count(store.bookmarks)
+    let next = apply_import(store, found)
+    let added = library.bookmark_count(next.bookmarks) - before
+    if added == 0 {
+        return Imported { store: next, message: "Bookmarks already up to date" }
+    }
+    return Imported { store: next, message: "Imported ${added} Google bookmarks" }
+}
+
+// ---------- drawing ----------
+
+fn draw_icon_button(x: Int, y: Int, glyph: String, theme: Chrome, heat: Int, enabled: Bool, active: Bool) {
+    let fill = if active { theme.elevated } else { blend(theme.panel, theme.elevated, heat) }
+    gui.round_rect(x, y, 30, 30, 7, fill)
+    gui.stroke(x, y, 30, 30, blend(theme.border, theme.border_strong, heat))
+    let ink = if enabled {
+        blend(theme.muted, theme.fg_bright, heat)
+    } else {
+        blend(theme.panel, theme.muted, 420)
+    }
+    let width = gui.text_width(glyph, 15)
+    gui.text(x + (30 - width) / 2, y + 7, glyph, 15, ink)
+}
+
+fn draw_tabs(session: Session, theme: Chrome, fx: Fx) {
+    let vertical = session.vertical
+    let width = gui.width()
+    let count = session.tabs.len()
+
+    if vertical {
+        let strip = sidebar_width()
+        gui.rect(0, chrome_height(true), strip + 1, gui.height() - chrome_height(true), theme.panel)
+        gui.line(strip, chrome_height(true), strip, gui.height(), theme.border_strong)
+
+        let plus_heat = slot(fx, 8)
+        gui.round_rect(8, 64, strip - 16, 28, 7, blend(theme.panel, theme.elevated, plus_heat))
+        gui.stroke(8, 64, strip - 16, 28, blend(theme.border, theme.border_strong, plus_heat))
+        gui.text(18, 69, "+  New Tab", 12, blend(theme.muted, theme.fg_bright, plus_heat))
+    } else {
+        gui.rect(0, 0, width, 44, theme.panel)
+        gui.line(0, 43, width, 43, theme.border_strong)
+
+        gui.clip(84, 0, width - 136, 44)
+        let plus_heat = slot(fx, 8)
+        let plus_x = width - 46
+        gui.round_rect(plus_x, 8, 30, 30, 8, blend(theme.bg_hard, theme.elevated, plus_heat))
+        gui.stroke(plus_x, 8, 30, 30, blend(theme.border, theme.border_strong, plus_heat))
+        gui.text(plus_x + 10, 11, "+", 16, blend(theme.muted, theme.fg_bright, plus_heat))
+    }
+
+    var i = 0
+    while i < count {
+        let tab = session.tabs[i]
+        let active = i == session.active
+        let x = tab_box_x(session, i)
+        let y = tab_box_y(i, vertical)
+        let box_w = tab_box_w(count, vertical)
+        let box_h = tab_box_h(vertical)
+        let heat = slot(fx, 40 + i)
+        let fill = if active { theme.elevated } else { blend(theme.bg_hard, theme.elevated, heat) }
+        gui.round_rect(x, y, box_w, box_h, 8, fill)
+        gui.stroke(x, y, box_w, box_h, if active { theme.border_strong } else { blend(theme.border, theme.border_strong, heat) })
+        if active {
+            gui.rect(x + 8, y + box_h - 2, box_w - 16, 2, theme.orange)
+        }
+        let shown = if tab.title.len() > 0 { tab.title } else if tab.fixture { "New Tab" } else { tab.url }
+        let ink = if active { theme.fg_bright } else { blend(theme.muted, theme.fg, heat) }
+        gui.clip(x + 10, y + 4, box_w - 34, box_h - 8)
+        gui.text(x + 10, y + 7, shown, 11, ink)
+        gui.clip_reset()
+        let close_heat = slot(fx, 50 + i)
+        if close_heat > 0 {
+            gui.round_rect(x + box_w - 24, y + 6, 18, 18, 5, blend(theme.panel, theme.red, close_heat))
+        }
+        gui.text(x + box_w - 20, y + 7, "×", 11, if close_heat > 0 { theme.fg_bright } else { ink })
+        if engine.page_state(tab.handle) == 1 {
+            gui.rect(x + box_w - 34, y + 13, 5, 5, theme.orange)
+        }
+        i = i + 1
+    }
+    if !vertical {
+        gui.clip_reset()
+    }
+}
+
+fn draw_address(handle: Int, theme: Chrome, address: Address, session: Session, fx: Fx) {
+    let metrics = toolbar_metrics(session.vertical)
+    let y = toolbar_y(session.vertical)
+    let focus = if address.editing { fx.focus } else { 0 }
+    gui.round_rect(metrics.address, y, metrics.address_w, 34, 8, blend(theme.input, theme.elevated, focus / 6))
+    gui.stroke(metrics.address, y, metrics.address_w, 34, blend(theme.border, theme.orange, focus))
+
+    // Text starts at text_x; the field keeps 16 px of right padding. A long
+    // URL scrolls with the caret instead of running under the padding.
+    let text_x = metrics.address + 18
+    // Ink is clipped 16 px from the field edge and the chip is allowed to run
+    // 4 px past that, so a long URL never has a glyph touching the chip's
+    // rounded corner (which is what made the last character look unselected).
+    let text_right = metrics.address + metrics.address_w - 16
+    let chip_right = text_right + 4
+    let visible = text_right - text_x
+    let width = gui.text_width(address.text, 13)
+    let lo = address_lo(address)
+    let hi = address_hi(address)
+    let selected = lo != hi
+    let characters = address.text.chars()
+    var scroll = 0
+    if address.editing && address.text.len() > 0 {
+        if selected && lo == 0 && hi == address_edit.char_count(address.text) && width > visible {
+            // Chrome shows the end of the URL when everything is selected. With
+            // the start pinned the tail was cut mid-glyph at the ink limit.
+            scroll = width - visible
+        } else {
+            scroll = address_scroll(address.text, address.cursor, visible)
+        }
+    }
+
+    if address.editing && selected && address.text.len() > 0 {
+        // The chip hugs the selected glyphs; a whole-URL selection overflows it
+        // to the ink limit, so the clipped end stays inside the highlight.
+        let before = gui.text_width(address_edit.slice_chars(characters, 0, lo), 13)
+        let span = gui.text_width(address_edit.slice_chars(characters, lo, hi), 13)
+        var left = text_x - scroll + before - 3
+        var right = left + span + 6
+        if right > chip_right {
+            right = chip_right
+        }
+        if left < metrics.address + 8 {
+            left = metrics.address + 8
+        }
+        if right > left {
+            // Gruvbox's selection token matches the border colour, which reads
+            // as a border rather than a selection here; blend towards the blue
+            // so the chip is obvious against the dark input.
+            gui.round_rect(left, y + 7, right - left, 20, 4, blend(theme.input, gui.rgb(131, 165, 152), 480))
+        }
+    }
+
+    gui.clip(metrics.address + 12, y + 6, text_right - (metrics.address + 12), 24)
+    if address.editing {
+        let shown = if address.text.len() > 0 { address.text } else { "Enter an http(s) address" }
+        let ink = if address.text.len() > 0 { theme.fg_bright } else { theme.muted }
+        gui.text(text_x - scroll, y + 8, shown, 13, ink)
+        if !selected && (gui.now() / 530) % 2 == 0 {
+            let prefix = address_edit.slice_chars(address.text.chars(), 0, address.cursor)
+            let caret_x = text_x + gui.text_width(prefix, 13) - scroll
+            gui.rect(caret_x, y + 9, 1, 16, theme.orange)
+        }
+        // IME composition: committed text stays in the field, the marked text
+        // is painted after the caret with a rule under it until the input
+        // method commits or cancels it.
+        let preedit = gui.marked_text()
+        if preedit.len() > 0 {
+            let prefix = address_edit.slice_chars(address.text.chars(), 0, address.cursor)
+            let preedit_x = text_x + gui.text_width(prefix, 13) - scroll
+            gui.text(preedit_x, y + 8, preedit, 13, theme.yellow)
+            gui.rect(preedit_x, y + 25, gui.text_width(preedit, 13), 1, theme.yellow)
+        }
+    } else {
+        let live = engine.page_url(handle)
+        let fallback = if session.active >= 0 && session.active < session.tabs.len() { session.tabs[session.active].url } else { "" }
+        let shown = if live.len() > 0 { live } else if fallback.contains("fixture.nova.invalid") { "Nova Browser · trusted fixture" } else { fallback }
+        let dot = if shown.starts_with("https://") {
+            theme.green
+        } else if shown.starts_with("http://") {
+            theme.yellow
+        } else {
+            theme.faint
+        }
+        gui.rect(metrics.address + 12, y + 16, 6, 6, dot)
+        gui.text(text_x, y + 8, shown, 13, theme.fg)
+    }
+    gui.clip_reset()
+
+    if address.error.len() > 0 {
+        gui.clip(metrics.address + 12, y + 36, metrics.address_w - 24, 16)
+        gui.text(metrics.address + 12, y + 35, address.error, 10, theme.red)
+        gui.clip_reset()
+    }
+}
+
+// Downloads are encoded as one line each so a list of them can cross function
+// signatures: the current compiler rejects List<Struct> parameters.
+//   ident<TAB>state<TAB>received<TAB>expected<TAB>escaped name<TAB>resumable
+//   <TAB>escaped path
+fn downloads_empty() -> Downloads {
+    return Downloads { rows: [] }
+}
+
+// One encoded row per download so the shelf, the click paths and the frame
+// signature all read the same snapshot:
+//   ident<TAB>state<TAB>received<TAB>expected<TAB>escaped name<TAB>resumable
+//   <TAB>escaped path
+fn downloads_snapshot() -> Downloads {
+    var rows: List<String> = []
+    let count = engine.download_count()
+    var i = 0
+    while i < count {
+        let ident = engine.download_id(i)
+        let state = engine.download_state(ident)
+        let received = engine.download_received(ident)
+        let expected = engine.download_expected(ident)
+        let name = library.escape(engine.download_name(ident))
+        let path = library.escape(engine.download_path(ident))
+        let resumable = if engine.download_resumable(ident) { 1 } else { 0 }
+        rows.push("${ident}\t${state}\t${received}\t${expected}\t" + name + "\t${resumable}\t" + path)
+        i = i + 1
+    }
+    return Downloads { rows: rows }
+}
+
+fn download_part(line: String, index: Int) -> String {
+    let parts = line.split("\t")
+    if index < 0 || index >= parts.len() {
+        return ""
+    }
+    return parts[index]
+}
+
+fn download_ident(line: String) -> Int {
+    return library.number_of(download_part(line, 0))
+}
+
+fn download_state_of(line: String) -> Int {
+    return library.number_of(download_part(line, 1))
+}
+
+fn download_received_of(line: String) -> Int {
+    return library.number_of(download_part(line, 2))
+}
+
+fn download_expected_of(line: String) -> Int {
+    return library.number_of(download_part(line, 3))
+}
+
+fn download_name_of(line: String) -> String {
+    return library.field(line, 4)
+}
+
+// 1 when WebKit produced resume data and the originating view is still alive.
+fn download_resumable_of(line: String) -> Int {
+    return library.number_of(download_part(line, 5))
+}
+
+// The destination path is kept on the row so a history row can reveal its file
+// after the WebKit download object is gone.
+fn download_path_of(line: String) -> String {
+    return library.field(line, 6)
+}
+
+fn path_in(paths: List<String>, path: String) -> Bool {
+    for item in paths {
+        if item == path {
+            return true
+        }
+    }
+    return false
+}
+
+// One persisted line per completed download:
+//   bytes<TAB>when<TAB>escaped path<TAB>escaped name
+fn download_history_has_path(history: List<String>, path: String) -> Bool {
+    for line in history {
+        if library.field(line, 2) == path {
+            return true
+        }
+    }
+    return false
+}
+
+// History rows reuse the shelf encoding with a negative ident, so they can never
+// collide with a live WebKit download and the click paths stay the same.
+fn download_history_row(line: String, index: Int) -> String {
+    let bytes = library.number_of(download_part(line, 0))
+    let name = library.field(line, 3)
+    let path = library.field(line, 2)
+    let ident = 0 - (index + 1)
+    return "${ident}\t2\t${bytes}\t${bytes}\t" + library.escape(name) + "\t0\t" + library.escape(path)
+}
+
+// Live transfers first, then completed files from earlier sessions. A history
+// row hides while a live row with the same path is still on screen.
+fn downloads_view(store: Store) -> Downloads {
+    var rows: List<String> = []
+    var live_paths: List<String> = []
+    let live = downloads_snapshot()
+    for item in live.rows {
+        rows.push(item)
+        live_paths.push(download_path_of(item))
+    }
+    var i = 0
+    while i < store.download_history.len() {
+        let line = store.download_history[i]
+        let path = library.field(line, 2)
+        if path.len() > 0 && !path_in(live_paths, path) {
+            rows.push(download_history_row(line, i))
+        }
+        i = i + 1
+    }
+    return Downloads { rows: rows }
+}
+
+// Persists one completed download straight to disk. `--download` runs exit
+// before the frame loop, so they use this instead of `record_downloads`.
+fn remember_download(path: String, name: String, bytes: Int) {
+    let store = load_store()
+    if path.len() == 0 || download_history_has_path(store.download_history, path) {
+        return
+    }
+    var listed: List<String> = []
+    for existing in store.download_history {
+        listed.push(existing)
+    }
+    listed.push("${bytes}\t${gui.now()}\t" + library.escape(path) + "\t" + library.escape(name))
+    gui.write(store.downloads_path, library.join_records(listed))
+}
+
+// Writes a completed download into the profile once. Called from the frame loop
+// with the merged list; the path check makes repeated frames idempotent.
+fn record_downloads(store: Store, downloads: Downloads) -> Store {
+    var next = store
+    for item in downloads.rows {
+        if download_state_of(item) == 2 {
+            let path = download_path_of(item)
+            if path.len() > 0 && !download_history_has_path(next.download_history, path) {
+                var listed: List<String> = []
+                for existing in next.download_history {
+                    listed.push(existing)
+                }
+                listed.push("${download_received_of(item)}\t${gui.now()}\t" + library.escape(path) + "\t" + library.escape(download_name_of(item)))
+                if listed.len() > 20 {
+                    var kept: List<String> = []
+                    var i = listed.len() - 20
+                    while i < listed.len() {
+                        kept.push(listed[i])
+                        i = i + 1
+                    }
+                    listed = kept
+                }
+                next.download_history = listed
+                next.dirty_downloads = true
+            }
+        }
+    }
+    return next
+}
+
+// Drops WebKit's finished rows and the persisted history together, so the next
+// frame cannot re-record the paths that were just cleared.
+fn clear_finished_downloads(store: Store) -> Store {
+    engine.download_clear_finished()
+    var next = store
+    if next.download_history.len() > 0 {
+        next.download_history = library.empty()
+        next.dirty_downloads = true
+    }
+    return next
+}
+
+fn downloads_running(downloads: Downloads) -> Int {
+    var count = 0
+    for item in downloads.rows {
+        let state = download_state_of(item)
+        if state == 0 || state == 1 {
+            count = count + 1
+        }
+    }
+    return count
+}
+
+fn download_shelf_box(downloads: Downloads) -> Box {
+    var rows = downloads.rows.len()
+    if rows == 0 {
+        rows = 1
+    }
+    let width = 348
+    let height = 40 + rows * 46 + 8
+    return Box { x: gui.width() - width - 18, y: gui.height() - height - 18, w: width, h: height }
+}
+
+fn download_row_box(downloads: Downloads, index: Int) -> Box {
+    let shelf = download_shelf_box(downloads)
+    return Box { x: shelf.x + 8, y: shelf.y + 40 + index * 46, w: shelf.w - 16, h: 42 }
+}
+
+fn download_action_box(downloads: Downloads, index: Int) -> Box {
+    let row = download_row_box(downloads, index)
+    return Box { x: row.x + row.w - 34, y: row.y + 8, w: 26, h: 26 }
+}
+
+fn download_close_box(downloads: Downloads) -> Box {
+    let shelf = download_shelf_box(downloads)
+    return Box { x: shelf.x + shelf.w - 30, y: shelf.y + 8, w: 22, h: 22 }
+}
+
+// Only drawn while the profile has completed files to forget.
+fn download_clear_box(downloads: Downloads) -> Box {
+    let shelf = download_shelf_box(downloads)
+    return Box { x: shelf.x + shelf.w - 96, y: shelf.y + 8, w: 58, h: 22 }
+}
+
+fn draw_downloads(theme: Chrome, store: Store, downloads: Downloads, fx: Fx) {
+    if !store.downloads_open {
+        return
+    }
+    let shelf = download_shelf_box(downloads)
+    gui.rect_alpha(shelf.x + 3, shelf.y + 6, shelf.w, shelf.h, 0, 80)
+    gui.round_rect(shelf.x, shelf.y, shelf.w, shelf.h, 12, theme.elevated)
+    gui.stroke(shelf.x, shelf.y, shelf.w, shelf.h, theme.border_strong)
+    gui.text(shelf.x + 14, shelf.y + 13, "Downloads", 13, theme.fg_bright)
+    let close = download_close_box(downloads)
+    if slot(fx, 120) > 0 {
+        gui.round_rect(close.x, close.y, close.w, close.h, 5, blend(theme.elevated, theme.border_strong, slot(fx, 120)))
+    }
+    gui.text(close.x + 7, close.y + 4, "×", 12, theme.muted)
+    if store.download_history.len() > 0 {
+        let clear = download_clear_box(downloads)
+        if slot(fx, 121) > 0 {
+            gui.round_rect(clear.x, clear.y, clear.w, clear.h, 5, blend(theme.elevated, theme.border_strong, slot(fx, 121)))
+        }
+        gui.text(clear.x + 12, clear.y + 4, "Clear", 10, theme.muted)
+    }
+
+    if downloads.rows.len() == 0 {
+        gui.text(shelf.x + 14, shelf.y + 46, "No downloads yet", 11, theme.muted)
+    }
+
+    var i = 0
+    while i < downloads.rows.len() {
+        let item = downloads.rows[i]
+        let state = download_state_of(item)
+        let received = download_received_of(item)
+        let expected = download_expected_of(item)
+        let row = download_row_box(downloads, i)
+        let heat = slot(fx, 130 + i)
+        gui.round_rect(row.x, row.y, row.w, row.h, 8, blend(theme.elevated, theme.selection, heat))
+        gui.clip(row.x + 10, row.y + 4, row.w - 54, 18)
+        gui.text(row.x + 10, row.y + 5, download_name_of(item), 11, theme.fg_bright)
+        gui.clip_reset()
+        let resumable = download_resumable_of(item)
+        var status_text = "Starting…"
+        if state == 1 {
+            status_text = "${library.size_text(received)} of ${library.size_text(expected)}"
+        } else if state == 5 {
+            if resumable == 1 {
+                status_text = "Paused · click to resume"
+            } else {
+                status_text = "Paused · cannot resume"
+            }
+        } else if state == 2 {
+            status_text = "Done · ${library.size_text(received)}"
+        } else if state == 3 {
+            if resumable == 1 {
+                status_text = "Failed · click to retry"
+            } else {
+                status_text = "Failed"
+            }
+        } else if state == 4 {
+            status_text = "Cancelled"
+        }
+        gui.text(row.x + 10, row.y + 22, status_text, 10, theme.muted)
+        if (state == 1 || state == 5) && expected > 0 {
+            let percent = library.percent_of(received, expected)
+            gui.rect(row.x + 10, row.y + row.h - 6, row.w - 56, 2, theme.panel)
+            gui.rect(row.x + 10, row.y + row.h - 6, (row.w - 56) * percent / 100, 2, theme.orange)
+        }
+        let action = download_action_box(downloads, i)
+        let action_heat = slot(fx, 140 + i)
+        let action_fill = if state == 0 || state == 1 { theme.red } else { theme.border_strong }
+        gui.round_rect(action.x, action.y, action.w, action.h, 6, blend(theme.elevated, action_fill, action_heat))
+        gui.text(action.x + 8, action.y + 5, if state == 0 || state == 1 { "×" } else { "↗" }, 12, theme.fg)
+        i = i + 1
+    }
+}
+
+fn download_signature(downloads: Downloads) -> String {
+    return library.join_records(downloads.rows)
+}
+
+fn tooltip_text(target: Int) -> String {
+    if target == 1 {
+        return "Back"
+    }
+    if target == 2 {
+        return "Forward"
+    }
+    if target == 3 {
+        return "Reload"
+    }
+    if target == 5 {
+        return "Bookmark (Cmd+D)"
+    }
+    if target == 6 {
+        return "Nova docs"
+    }
+    if target == 7 {
+        return "Tab layout (Cmd+Shift+E)"
+    }
+    if target == 8 {
+        return "New tab (Cmd+T)"
+    }
+    if target == 9 {
+        return "Downloads"
+    }
+    return ""
+}
+
+fn draw_tooltip(theme: Chrome, tooltip: Tooltip) {
+    if tooltip.text.len() == 0 {
+        return
+    }
+    let width = gui.text_width(tooltip.text, 11) + 20
+    var x = tooltip.x + 10
+    var y = tooltip.y + 18
+    if x + width > gui.width() - 8 {
+        x = gui.width() - width - 8
+    }
+    if y + 26 > gui.height() - 8 {
+        y = tooltip.y - 32
+    }
+    gui.round_rect(x, y, width, 26, 7, theme.bg_hard)
+    gui.stroke(x, y, width, 26, theme.border_strong)
+    gui.text(x + 10, y + 6, tooltip.text, 11, theme.fg_bright)
+}
+
+fn draw_toolbar(handle: Int, theme: Chrome, address: Address, session: Session, fx: Fx, store: Store, downloads: Downloads) {
+    let vertical = session.vertical
+    let metrics = toolbar_metrics(vertical)
+    let y = toolbar_y(vertical)
+
+    if vertical {
+        gui.rect(0, 0, gui.width(), chrome_height(true) - 1, theme.panel)
+        gui.line(0, chrome_height(true) - 1, gui.width(), chrome_height(true) - 1, theme.border_strong)
+    } else {
+        gui.rect(0, 44, gui.width(), chrome_height(false) - 45, theme.panel)
+        gui.line(0, chrome_height(false) - 1, gui.width(), chrome_height(false) - 1, theme.border_strong)
+    }
+
+    let state = engine.page_state(handle)
+    let loading = state == 1
+    draw_icon_button(metrics.back, y + 2, "‹", theme, slot(fx, 1), engine.can_go_back(handle), false)
+    draw_icon_button(metrics.forward, y + 2, "›", theme, slot(fx, 2), engine.can_go_forward(handle), false)
+    draw_icon_button(metrics.reload, y + 2, if loading { "×" } else { "↻" }, theme, slot(fx, 3), true, loading)
+
+    draw_address(handle, theme, address, session, fx)
+
+    let live = engine.page_url(handle)
+    let bookmarked = library.has_bookmark(store.bookmarks, live)
+    draw_icon_button(metrics.star, y + 2, if bookmarked { "★" } else { "☆" }, theme, slot(fx, 5), true, bookmarked)
+    let running = downloads_running(downloads)
+    draw_icon_button(metrics.downloads, y + 2, "↓", theme, slot(fx, 9), true, store.downloads_open)
+    if running > 0 {
+        gui.round_rect(metrics.downloads + 21, y, 11, 11, 5, theme.orange)
+        gui.text(metrics.downloads + 24, y - 1, "${running}", 8, theme.bg_hard)
+    }
+    draw_icon_button(metrics.docs, y + 2, "?", theme, slot(fx, 6), true, false)
+    draw_icon_button(metrics.layout, y + 2, if vertical { "▥" } else { "▤" }, theme, slot(fx, 7), true, vertical)
+
+    gui.mono(metrics.label, y + 10, "WEBKIT", 10, theme.orange)
+
+    if !vertical {
+        let title = engine.page_title(handle)
+        gui.clip(88, 84, gui.width() - 320, 22)
+        gui.text(88, 84, if title.len() > 0 { title } else { "Nova Browser" }, 13, theme.fg_bright)
+        gui.clip_reset()
+
+        let loaded = state == 2
+        let detail = if state == 3 {
+            "error"
+        } else if address.error.len() > 0 {
+            address.error
+        } else if address.editing {
+            "editing · Enter opens · Tab completes"
+        } else if loading {
+            "loading"
+        } else if session.tabs.len() > 1 {
+            "ready · ${session.tabs.len()} tabs"
+        } else {
+            state_word(state)
+        }
+        let color = if state == 3 || address.error.len() > 0 {
+            theme.red
+        } else if address.editing || loading {
+            theme.orange
+        } else if loaded {
+            theme.green
+        } else {
+            theme.muted
+        }
+        gui.mono(gui.width() - 12 - gui.mono_width(detail, 10), 86, detail, 10, color)
+    }
+}
+
+fn draw_progress(handle: Int, theme: Chrome, session: Session) {
+    let left = page_left(session)
+    let span = gui.width() - left
+    if span <= 0 {
+        return
+    }
+    let y = page_top(session) - 2
+    gui.rect(left, y, span, 2, theme.panel)
+    var value = engine.page_progress(handle)
+    if value < 40 {
+        value = 40
+    }
+    let bar = span * value / 1000
+    gui.rect(left, y, bar, 2, theme.orange)
+    let span_full = span + 160
+    let sheen = (gui.now() / 5) % span_full - 80
+    if sheen > 0 && sheen < bar {
+        var width = 60
+        if width > bar - sheen {
+            width = bar - sheen
+        }
+        gui.rect(left + sheen, y, width, 2, theme.yellow)
+    }
+}
+
+fn draw_suggestions(theme: Chrome, address: Address, session: Session, suggestions: List<String>, fx: Fx) {
+    if !address.editing || suggestions.len() == 0 {
+        return
+    }
+    let metrics = toolbar_metrics(session.vertical)
+    let top = suggestion_top(session.vertical)
+    let rows = smaller(suggestions.len(), sug_rows())
+    let height = rows * sug_row_height() + 8
+    gui.rect_alpha(metrics.address - 3, top + 4, metrics.address_w + 6, height, 0, 90)
+    gui.round_rect(metrics.address, top, metrics.address_w, height, 10, theme.elevated)
+    gui.stroke(metrics.address, top, metrics.address_w, height, theme.border_strong)
+
+    var i = 0
+    while i < rows {
+        let item = suggestions[i]
+        let kind = library.field(item, 0)
+        let url = library.field(item, 1)
+        let title = library.field(item, 2)
+        let ry = top + 4 + i * sug_row_height()
+        let heat = if address.highlight == i { 1000 } else { slot(fx, 60 + i) }
+        gui.round_rect(metrics.address + 4, ry, metrics.address_w - 8, sug_row_height() - 2, 6, blend(theme.elevated, theme.selection, heat))
+        gui.text(metrics.address + 12, ry + 4, if kind == "bookmark" { "★" } else { "◦" }, 11, if kind == "bookmark" { theme.orange } else { theme.muted })
+        gui.clip(metrics.address + 28, ry + 2, metrics.address_w - 40, sug_row_height() - 6)
+        let shown = if title.len() > 0 { title } else { url }
+        gui.text(metrics.address + 28, ry + 3, shown, 12, blend(theme.fg, theme.fg_bright, heat))
+        gui.mono(metrics.address + 28, ry + 19, url, 10, theme.muted)
+        gui.clip_reset()
+        i = i + 1
+    }
+}
+
+// Local minimum: the GUI module already exports a `min`, and a qualified call
+// to it is mis-resolved by the current compiler.
+fn smaller(a: Int, b: Int) -> Int {
+    if a < b {
+        return a
+    }
+    return b
+}
+
+fn wrap_text(text: String, size: Int, width: Int) -> List<String> {
+    var lines: List<String> = []
+    var current = ""
+    for word in text.split(" ") {
+        let candidate = if current.len() == 0 { word } else { current + " " + word }
+        if current.len() > 0 && gui.text_width(candidate, size) > width {
+            lines.push(current)
+            current = word
+        } else {
+            current = candidate
+        }
+    }
+    if current.len() > 0 {
+        lines.push(current)
+    }
+    return lines
+}
+
+fn draw_failure(handle: Int, theme: Chrome, session: Session, fx: Fx) {
+    let left = page_left(session)
+    let top = page_top(session)
+    let width = gui.width() - left
+    let height = gui.height() - top
+    gui.rect(left, top, width, height, theme.bg_hard)
+
+    let card = failure_card(session)
+    let message = engine.page_error(handle)
+    let kind = status.kind(message)
+    let accent = if kind == "certificate" { theme.red } else if kind == "offline" { theme.yellow } else { theme.orange }
+    gui.round_rect(card.x, card.y, card.w, card.h, 14, theme.panel)
+    gui.stroke(card.x, card.y, card.w, card.h, theme.border_strong)
+    gui.rect(card.x + 24, card.y + 24, 40, 4, accent)
+    gui.text(card.x + 24, card.y + 40, status.title(kind), 22, theme.fg_bright)
+
+    let lines = wrap_text(status.hint(kind), 13, card.w - 48)
+    var i = 0
+    while i < lines.len() {
+        gui.text(card.x + 24, card.y + 78 + i * 20, lines[i], 13, theme.fg)
+        i = i + 1
+    }
+
+    let target = engine.page_error_url(handle)
+    let live = engine.page_url(handle)
+    let fallback = if session.active >= 0 && session.active < session.tabs.len() { session.tabs[session.active].url } else { "" }
+    let shown = if target.len() > 0 { target } else if live.len() > 0 { live } else { fallback }
+    gui.clip(card.x + 24, card.y + 128, card.w - 48, 18)
+    gui.mono(card.x + 24, card.y + 128, shown, 10, theme.muted)
+    gui.clip_reset()
+
+    let detail = status.detail(message)
+    gui.clip(card.x + 24, card.y + 152, card.w - 48, 18)
+    gui.text(card.x + 24, card.y + 152, detail, 11, theme.faint)
+    gui.clip_reset()
+
+    if status.can_retry(kind) {
+        let button = failure_retry(session)
+        gui.round_rect(button.x, button.y, button.w, button.h, 8, blend(theme.orange, theme.fg_bright, slot(fx, 90)))
+        gui.text(button.x + 22, button.y + 9, "Try Again", 13, theme.bg_hard)
+    }
+    if engine.can_go_back(handle) {
+        let button = failure_back(session)
+        gui.round_rect(button.x, button.y, button.w, button.h, 8, blend(theme.elevated, theme.border_strong, slot(fx, 91)))
+        gui.text(button.x + 18, button.y + 9, "Back", 13, theme.fg)
+    }
+    if !status.can_retry(kind) && !engine.can_go_back(handle) {
+        gui.text(card.x + 24, card.y + card.h - 50, "Press Cmd+L to edit the address", 12, theme.muted)
+    }
+}
+
+fn draw_notice(theme: Chrome, session: Session, notice: Notice) {
+    if notice.text.len() == 0 || gui.now() > notice.until {
+        return
+    }
+    let width = gui.text_width(notice.text, 12) + 32
+    let x = page_left(session) + 18
+    let y = gui.height() - 54
+    gui.round_rect(x, y, width, 34, 9, theme.elevated)
+    gui.stroke(x, y, width, 34, theme.border_strong)
+    gui.text(x + 16, y + 9, notice.text, 12, theme.fg_bright)
+}
+
+// ---------- accessibility ----------
+
+// Pushes the chrome controls for the frame that was just drawn. Living in the
+// draw path keeps labels and rectangles from drifting away from the pixels; the
+// host turns the list into NSAccessibilityElement children on demand. The page
+// is a WKWebView and brings its own tree, so only Nova-owned chrome is listed.
+fn ax_chrome(handle: Int, session: Session, address: Address, suggestions: List<String>, downloads: Downloads, store: Store) {
+    gui.ax_begin()
+    let vertical = session.vertical
+    let count = session.tabs.len()
+    var i = 0
+    while i < count {
+        let tab = session.tabs[i]
+        let shown = if tab.title.len() > 0 { tab.title } else if tab.fixture { "New Tab" } else { tab.url }
+        let selected = if i == session.active { 1 } else { 0 }
+        gui.ax_tab(tab_box_x(session, i), tab_box_y(i, vertical), tab_box_w(count, vertical), tab_box_h(vertical), shown, selected)
+        i = i + 1
+    }
+    let metrics = toolbar_metrics(vertical)
+    let by = toolbar_y(vertical) + 2
+    let state = engine.page_state(handle)
+    gui.ax_button(metrics.back, by, 30, 30, "Back")
+    gui.ax_button(metrics.forward, by, 30, 30, "Forward")
+    if state == 1 {
+        gui.ax_button(metrics.reload, by, 30, 30, "Stop loading")
+    } else {
+        gui.ax_button(metrics.reload, by, 30, 30, "Reload")
+    }
+    var shown_address = address.text
+    if !address.editing {
+        let live = engine.page_url(handle)
+        let fallback = if session.active >= 0 && session.active < count { session.tabs[session.active].url } else { "" }
+        shown_address = if live.len() > 0 { live } else { fallback }
+    }
+    gui.ax_field(metrics.address, toolbar_y(vertical), metrics.address_w, 34, "Address", shown_address)
+    gui.ax_button(metrics.star, by, 30, 30, "Bookmark")
+    gui.ax_button(metrics.downloads, by, 30, 30, "Downloads")
+    gui.ax_button(metrics.docs, by, 30, 30, "Nova docs")
+    gui.ax_button(metrics.layout, by, 30, 30, "Tab layout")
+    gui.ax_label(metrics.label, toolbar_y(vertical) + 10, gui.mono_width("WEBKIT", 10), 14, "Rendering engine: WebKit")
+    if vertical {
+        gui.ax_button(8, 64, sidebar_width() - 16, 28, "New tab")
+    } else {
+        gui.ax_button(gui.width() - 46, 8, 30, 30, "New tab")
+    }
+    if state == 3 {
+        let retry = failure_retry(session)
+        gui.ax_button(retry.x, retry.y, retry.w, retry.h, "Try Again")
+        if engine.can_go_back(handle) {
+            let back = failure_back(session)
+            gui.ax_button(back.x, back.y, back.w, back.h, "Back")
+        }
+    }
+    if store.downloads_open {
+        ax_downloads(downloads, store)
+    }
+    ax_suggestions(address, session, suggestions)
+}
+
+// The shelf draws its own rows, so its controls must be named here too: the
+// label carries the file name because VoiceOver reads children out of order.
+fn ax_downloads(downloads: Downloads, store: Store) {
+    let shelf = download_shelf_box(downloads)
+    let close = download_close_box(downloads)
+    gui.ax_button(close.x, close.y, close.w, close.h, "Close downloads")
+    if store.download_history.len() > 0 {
+        let clear = download_clear_box(downloads)
+        gui.ax_button(clear.x, clear.y, clear.w, clear.h, "Clear finished downloads")
+    }
+    if downloads.rows.len() == 0 {
+        gui.ax_label(shelf.x + 14, shelf.y + 46, 140, 14, "No downloads yet")
+        return
+    }
+    var i = 0
+    while i < downloads.rows.len() {
+        let item = downloads.rows[i]
+        let name = download_name_of(item)
+        let state = download_state_of(item)
+        let row = download_row_box(downloads, i)
+        let action = download_action_box(downloads, i)
+        if state == 1 {
+            gui.ax_button(row.x, row.y, row.w, row.h, "Pause " + name)
+            gui.ax_button(action.x, action.y, action.w, action.h, "Cancel " + name)
+        } else if state == 5 {
+            gui.ax_button(row.x, row.y, row.w, row.h, "Resume " + name)
+            gui.ax_button(action.x, action.y, action.w, action.h, "Cancel " + name)
+        } else if state == 3 && download_resumable_of(item) == 1 {
+            gui.ax_button(row.x, row.y, row.w, row.h, "Retry " + name)
+            gui.ax_button(action.x, action.y, action.w, action.h, "Show " + name + " in Finder")
+        } else if state == 0 {
+            gui.ax_label(row.x, row.y, row.w, row.h, name)
+            gui.ax_button(action.x, action.y, action.w, action.h, "Cancel " + name)
+        } else {
+            gui.ax_label(row.x, row.y, row.w, row.h, name)
+            gui.ax_button(action.x, action.y, action.w, action.h, "Show " + name + " in Finder")
+        }
+        i = i + 1
+    }
+}
+
+fn ax_suggestions(address: Address, session: Session, suggestions: List<String>) {
+    if !address.editing || suggestions.len() == 0 {
+        return
+    }
+    let metrics = toolbar_metrics(session.vertical)
+    let top = suggestion_top(session.vertical)
+    let rows = smaller(suggestions.len(), sug_rows())
+    var i = 0
+    while i < rows {
+        let item = suggestions[i]
+        let url = library.field(item, 1)
+        let title = library.field(item, 2)
+        let shown = if title.len() > 0 { title } else { url }
+        gui.ax_link(metrics.address + 4, top + 4 + i * sug_row_height(), metrics.address_w - 8, sug_row_height() - 2, shown, url)
+        i = i + 1
+    }
+}
+
+fn draw_chrome(handle: Int, theme: Chrome, address: Address, session: Session, suggestions: List<String>, fx: Fx, notice: Notice, store: Store, hover: Int, downloads: Downloads, tooltip: Tooltip) {
+    gui.clear(theme.bg_hard)
+    draw_tabs(session, theme, fx)
+    draw_toolbar(handle, theme, address, session, fx, store, downloads)
+    let state = engine.page_state(handle)
+    if state == 1 {
+        draw_progress(handle, theme, session)
+    }
+    if state == 3 {
+        draw_failure(handle, theme, session, fx)
+    }
+    draw_downloads(theme, store, downloads, fx)
+    draw_suggestions(theme, address, session, suggestions, fx)
+    draw_notice(theme, session, notice)
+    draw_tooltip(theme, tooltip)
+    ax_chrome(handle, session, address, suggestions, downloads, store)
+}
+
+// ---------- input ----------
+
+fn hover_target(x: Int, y: Int, session: Session, address: Address, suggestions: List<String>, downloads: Downloads, shelf_open: Bool) -> Int {
+    let vertical = session.vertical
+    if address.editing && suggestions.len() > 0 {
+        let metrics = toolbar_metrics(vertical)
+        let top = suggestion_top(vertical)
+        let rows = smaller(suggestions.len(), sug_rows())
+        let bottom = top + rows * sug_row_height() + 8
+        if x >= metrics.address && x <= metrics.address + metrics.address_w && y >= top && y < bottom {
+            var row = (y - top - 4) / sug_row_height()
+            if row < 0 {
+                row = 0
+            }
+            if row >= rows {
+                row = rows - 1
+            }
+            return 60 + row
+        }
+    }
+
+    if shelf_open {
+        let shelf = download_shelf_box(downloads)
+        if gui.inside(shelf.x, shelf.y, shelf.w, shelf.h, x, y) {
+            let close = download_close_box(downloads)
+            if gui.inside(close.x, close.y, close.w, close.h, x, y) {
+                return 120
+            }
+            var row = 0
+            while row < downloads.rows.len() {
+                let action = download_action_box(downloads, row)
+                if gui.inside(action.x, action.y, action.w, action.h, x, y) {
+                    return 140 + row
+                }
+                let box = download_row_box(downloads, row)
+                if gui.inside(box.x, box.y, box.w, box.h, x, y) {
+                    return 130 + row
+                }
+                row = row + 1
+            }
+            return 0 - 1
+        }
+    }
+
+    if y < chrome_height(vertical) {
+        let metrics = toolbar_metrics(vertical)
+        let by = toolbar_y(vertical) + 2
+        if gui.inside(metrics.back, by, 30, 30, x, y) {
+            return 1
+        }
+        if gui.inside(metrics.forward, by, 30, 30, x, y) {
+            return 2
+        }
+        if gui.inside(metrics.reload, by, 30, 30, x, y) {
+            return 3
+        }
+        if gui.inside(metrics.address, toolbar_y(vertical), metrics.address_w, 34, x, y) {
+            return 4
+        }
+        if gui.inside(metrics.star, by, 30, 30, x, y) {
+            return 5
+        }
+        if gui.inside(metrics.docs, by, 30, 30, x, y) {
+            return 6
+        }
+    if gui.inside(metrics.layout, by, 30, 30, x, y) {
+            return 7
+        }
+        if gui.inside(metrics.downloads, by, 30, 30, x, y) {
+            return 9
+        }
+        if !vertical && y < 44 {
+            var i = 0
+            while i < session.tabs.len() {
+                let tx = tab_box_x(session, i)
+                let tw = tab_box_w(session.tabs.len(), false)
+                if gui.inside(tx, 8, tw, 30, x, y) {
+                    if x >= tx + tw - 24 {
+                        return 50 + i
+                    }
+                    return 40 + i
+                }
+                i = i + 1
+            }
+            if gui.inside(gui.width() - 46, 8, 30, 30, x, y) {
+                return 8
+            }
+        }
+    }
+
+    if vertical && x < sidebar_width() && y >= chrome_height(true) {
+        var i = 0
+        while i < session.tabs.len() {
+            let tx = tab_box_x(session, i)
+            let ty = tab_box_y(i, true)
+            let tw = tab_box_w(session.tabs.len(), true)
+            if gui.inside(tx, ty, tw, 32, x, y) {
+                if x >= tx + tw - 26 {
+                    return 50 + i
+                }
+                return 40 + i
+            }
+            i = i + 1
+        }
+        if gui.inside(8, 64, sidebar_width() - 16, 28, x, y) {
+            return 8
+        }
+    }
+    return 0 - 1
+}
+
+fn click_action(session: Session, address: Address, store: Store, notice: Notice) -> ClickAction {
+    return ClickAction {
+        session: session,
+        address: address,
+        store: store,
+        notice: notice,
+    }
+}
+
+fn toggle_bookmark(handle: Int, store: Store) -> Imported {
+    let url = engine.page_url(handle)
+    if url.len() == 0 || url.contains("fixture.nova.invalid") {
+        return Imported { store: store, message: "Nothing to bookmark yet" }
+    }
+    var next = store
+    let host = library.host_of(url)
+    var message = "Bookmarked " + host
+    if library.has_bookmark(store.bookmarks, url) {
+        next.bookmarks = library.remove_bookmark(store.bookmarks, url)
+        message = "Bookmark removed"
+    } else {
+        let title = engine.page_title(handle)
+        next.bookmarks = library.add_bookmark(store.bookmarks, url, title)
+    }
+    next.dirty_bookmarks = true
+    return Imported { store: next, message: message }
+}
+
+fn handle_click(handle: Int, x: Int, y: Int, clicks: Int, current: Address, session: Session, suggestions: List<String>, store: Store, downloads: Downloads) -> ClickAction {
+    let count = session.tabs.len()
+    let notice = Notice { text: "", until: 0 }
+
+    // Failure panel owns the page area while it is visible.
+    if engine.page_state(handle) == 3 {
+        if gui.inside(failure_retry(session).x, failure_retry(session).y, failure_retry(session).w, failure_retry(session).h, x, y) {
+            engine.reload(handle)
+            engine.focus_page(handle)
+            return click_action(session, address_cancel(current), store, notice)
+        }
+        if gui.inside(failure_back(session).x, failure_back(session).y, failure_back(session).w, failure_back(session).h, x, y) {
+            engine.back(handle)
+            return click_action(session, address_cancel(current), store, notice)
+        }
+        return click_action(session, current, store, notice)
+    }
+
+    // Downloads shelf owns its own rectangle.
+    if store.downloads_open {
+        let shelf = download_shelf_box(downloads)
+        if gui.inside(shelf.x, shelf.y, shelf.w, shelf.h, x, y) {
+            let close = download_close_box(downloads)
+            if gui.inside(close.x, close.y, close.w, close.h, x, y) {
+                var closed = store
+                closed.downloads_open = false
+                return click_action(session, current, closed, notice)
+            }
+            if store.download_history.len() > 0 {
+                let clear = download_clear_box(downloads)
+                if gui.inside(clear.x, clear.y, clear.w, clear.h, x, y) {
+                    return click_action(session, current, clear_finished_downloads(store), Notice {
+                        text: "Cleared finished downloads",
+                        until: gui.now() + 2200,
+                    })
+                }
+            }
+            var row = 0
+            while row < downloads.rows.len() {
+                let action = download_action_box(downloads, row)
+                if gui.inside(action.x, action.y, action.w, action.h, x, y) {
+                    let item = downloads.rows[row]
+                    let state = download_state_of(item)
+                    if state == 0 || state == 1 {
+                        engine.download_cancel(download_ident(item))
+                        return click_action(session, current, store, Notice {
+                            text: "Download cancelled",
+                            until: gui.now() + 2200,
+                        })
+                    }
+                    if state == 2 {
+                        let path = download_path_of(item)
+                        if gui.reveal(path) {
+                            return click_action(session, current, store, notice)
+                        }
+                        return click_action(session, current, store, Notice {
+                            text: "This file is no longer there",
+                            until: gui.now() + 2400,
+                        })
+                    }
+                    engine.download_reveal(download_ident(item))
+                    return click_action(session, current, store, notice)
+                }
+                let box = download_row_box(downloads, row)
+                if gui.inside(box.x, box.y, box.w, box.h, x, y) {
+                    let item = downloads.rows[row]
+                    let ident = download_ident(item)
+                    let state = download_state_of(item)
+                    if state == 1 {
+                        if engine.download_pause(ident) {
+                            return click_action(session, current, store, Notice {
+                                text: "Download paused · click to resume",
+                                until: gui.now() + 2600,
+                            })
+                        }
+                    }
+                    if state == 2 {
+                        let path = download_path_of(item)
+                        if gui.reveal(path) {
+                            return click_action(session, current, store, notice)
+                        }
+                        return click_action(session, current, store, Notice {
+                            text: "This file is no longer there",
+                            until: gui.now() + 2400,
+                        })
+                    }
+                    if state == 3 || state == 5 {
+                        if download_resumable_of(item) == 1 {
+                            if engine.download_resume(ident) {
+                                return click_action(session, current, store, Notice {
+                                    text: "Download resumed",
+                                    until: gui.now() + 2200,
+                                })
+                            }
+                        }
+                        return click_action(session, current, store, Notice {
+                            text: "This download cannot resume",
+                            until: gui.now() + 2400,
+                        })
+                    }
+                    return click_action(session, current, store, notice)
+                }
+                row = row + 1
+            }
+            return click_action(session, current, store, notice)
+        }
+    }
+
+    // Open suggestion rows.
+    if current.editing && suggestions.len() > 0 {
+        let metrics = toolbar_metrics(session.vertical)
+        let top = suggestion_top(session.vertical)
+        let rows = smaller(suggestions.len(), sug_rows())
+        if x >= metrics.address && x <= metrics.address + metrics.address_w && y >= top && y < top + rows * sug_row_height() + 8 {
+            var row = (y - top - 4) / sug_row_height()
+            if row < 0 {
+                row = 0
+            }
+            if row >= rows {
+                row = rows - 1
+            }
+            let url = library.field(suggestions[row], 1)
+            engine.navigate(handle, url)
+            engine.focus_page(handle)
+            return click_action(session, address_open(current, url), store, notice)
+        }
+    }
+
+    if session.vertical {
+        if x < sidebar_width() && y >= chrome_height(true) {
+            if gui.inside(8, 64, sidebar_width() - 16, 28, x, y) {
+                let next = append_tab(session, new_fixture_tab(gui.native_view(), gui.width(), gui.height()))
+                engine.focus_chrome(active_handle(next))
+                return click_action(next, address_begin(""), store, notice)
+            }
+            var i = 0
+            while i < count {
+                let tx = tab_box_x(session, i)
+                let ty = tab_box_y(i, true)
+                let tw = tab_box_w(count, true)
+                if gui.inside(tx, ty, tw, 32, x, y) {
+                    if x >= tx + tw - 26 {
+                        return click_action(close_tab(session, i, gui.native_view(), gui.width(), gui.height()), address_idle(), store, notice)
+                    }
+                    return click_action(select_tab(session, i), address_idle(), store, notice)
+                }
+                i = i + 1
+            }
+            return click_action(session, current, store, notice)
+        }
+    } else if y < 44 {
+        if gui.inside(gui.width() - 46, 8, 30, 30, x, y) {
+            let next = append_tab(session, new_fixture_tab(gui.native_view(), gui.width(), gui.height()))
+            engine.focus_chrome(active_handle(next))
+            return click_action(next, address_begin(""), store, notice)
+        }
+        var i = 0
+        while i < count {
+            let tx = tab_box_x(session, i)
+            let tw = tab_box_w(count, false)
+            if gui.inside(tx, 8, tw, 30, x, y) {
+                if x >= tx + tw - 24 {
+                    return click_action(close_tab(session, i, gui.native_view(), gui.width(), gui.height()), address_idle(), store, notice)
+                }
+                return click_action(select_tab(session, i), address_idle(), store, notice)
+            }
+            i = i + 1
+        }
+        return click_action(session, current, store, notice)
+    }
+
+    if y >= page_top(session) {
+        return click_action(session, current, store, notice)
+    }
+
+    let metrics = toolbar_metrics(session.vertical)
+    let by = toolbar_y(session.vertical) + 2
+    if gui.inside(metrics.address, toolbar_y(session.vertical), metrics.address_w, 34, x, y) {
+        engine.focus_chrome(handle)
+        let live = engine.page_url(handle)
+        let scroll = address_scroll(live, address_edit.char_count(live), metrics.address_w - 34)
+        let at = address_caret_at(live, x - (metrics.address + 18) + scroll)
+        if clicks >= 3 {
+            return click_action(session, address_select_all(address_begin_cursor(live, 0)), store, notice)
+        }
+        if clicks == 2 {
+            return click_action(session, address_select_word(address_begin_cursor(live, at), at), store, notice)
+        }
+        return click_action(session, address_begin_cursor(live, at), store, notice)
+    }
+
+    var next_address = current
+    if next_address.editing {
+        next_address = address_cancel(next_address)
+    }
+    if gui.inside(metrics.back, by, 30, 30, x, y) {
+        engine.back(handle)
+        return click_action(session, next_address, store, notice)
+    }
+    if gui.inside(metrics.forward, by, 30, 30, x, y) {
+        engine.forward(handle)
+        return click_action(session, next_address, store, notice)
+    }
+    if gui.inside(metrics.reload, by, 30, 30, x, y) {
+        if engine.page_state(handle) == 1 {
+            engine.stop(handle)
+        } else {
+            engine.reload(handle)
+        }
+        return click_action(session, next_address, store, notice)
+    }
+    if gui.inside(metrics.star, by, 30, 30, x, y) {
+        let toggled = toggle_bookmark(handle, store)
+        return click_action(session, next_address, toggled.store, Notice { text: toggled.message, until: gui.now() + 2600 })
+    }
+    if gui.inside(metrics.downloads, by, 30, 30, x, y) {
+        var opened = store
+        opened.downloads_open = !store.downloads_open
+        return click_action(session, next_address, opened, notice)
+    }
+    if gui.inside(metrics.docs, by, 30, 30, x, y) {
+        engine.navigate(handle, "https://jd4rider.github.io/nova/")
+        engine.focus_page(handle)
+        return click_action(session, next_address, store, notice)
+    }
+    if gui.inside(metrics.layout, by, 30, 30, x, y) {
+        let next = toggle_layout(session)
+        save_layout(store, next.vertical)
+        return click_action(next, next_address, store, Notice {
+            text: if next.vertical { "Vertical tabs" } else { "Horizontal tabs" },
+            until: gui.now() + 2200,
+        })
+    }
+    return click_action(session, next_address, store, notice)
+}
+
+fn key_action(session: Session, address: Address, store: Store, notice: Notice, close: Bool) -> KeyAction {
+    return KeyAction {
+        session: session,
+        address: address,
+        store: store,
+        notice: notice,
+        close: close,
+    }
+}
+
+// Boolean comparison is not accepted in a compound condition, so frame
+// signatures keep bivalent state as 0/1.
+fn flag(value: Bool) -> Int {
+    if value {
+        return 1
+    }
+    return 0
+}
+
+fn notice_idle() -> Notice {
+    return Notice { text: "", until: 0 }
+}
+
+fn handle_key(handle: Int, code: Int, mods: Int, current: Address, session: Session, suggestions: List<String>, store: Store) -> KeyAction {
+    let command = mods % 2 == 1
+    let shift = (mods / 2) % 2 == 1
+    let option = (mods / 4) % 2 == 1
+
+    if command && code == 116 && shift {
+        let next = restore_closed(session, gui.native_view(), gui.width(), gui.height())
+        return key_action(next, address_idle(), store, notice_idle(), false)
+    }
+    if command && code == 116 {
+        let next = append_tab(session, new_fixture_tab(gui.native_view(), gui.width(), gui.height()))
+        engine.focus_chrome(active_handle(next))
+        return key_action(next, address_begin(""), store, notice_idle(), false)
+    }
+    if command && code == 119 {
+        let next = close_tab(session, session.active, gui.native_view(), gui.width(), gui.height())
+        return key_action(next, address_idle(), store, notice_idle(), false)
+    }
+    if command && code >= 49 && code <= 54 {
+        let next = select_tab(session, code - 49)
+        return key_action(next, address_idle(), store, notice_idle(), false)
+    }
+    if command && shift && code == 101 {
+        let next = toggle_layout(session)
+        save_layout(store, next.vertical)
+        return key_action(next, current, store, Notice {
+            text: if next.vertical { "Vertical tabs" } else { "Horizontal tabs" },
+            until: gui.now() + 2200,
+        }, false)
+    }
+    if command && shift && code == 105 {
+        let imported = import_from_google(store)
+        return key_action(session, current, imported.store, Notice {
+            text: imported.message,
+            until: gui.now() + 3200,
+        }, false)
+    }
+    if command && code == 100 {
+        let toggled = toggle_bookmark(handle, store)
+        return key_action(session, current, toggled.store, Notice {
+            text: toggled.message,
+            until: gui.now() + 2600,
+        }, false)
+    }
+
+    if command && shift && code == 115 {
+        let provider = address_edit.next_search_provider(store.search)
+        save_setting(store, "search", provider)
+        var next_store = store
+        next_store.search = provider
+        return key_action(session, current, next_store, Notice {
+            text: "Search: " + address_edit.search_label(provider),
+            until: gui.now() + 2800,
+        }, false)
+    }
+
+    if current.editing {
+        if code == gui.key_escape() {
+            engine.focus_page(handle)
+            return key_action(session, address_cancel(current), store, notice_idle(), false)
+        }
+        if code == gui.key_enter() {
+            let next_address = address_submit(handle, current, suggestions, store.search)
+            return key_action(session, next_address, store, notice_idle(), false)
+        }
+        if code == gui.key_tab() {
+            return key_action(session, address_accept(current, suggestions), store, notice_idle(), false)
+        }
+        if code == gui.key_up() {
+            return key_action(session, address_move(current, 0 - 1, suggestions.len()), store, notice_idle(), false)
+        }
+        if code == gui.key_down() {
+            return key_action(session, address_move(current, 1, suggestions.len()), store, notice_idle(), false)
+        }
+        if code == gui.key_backspace() {
+            if option {
+                return key_action(session, address_word_erase(current, false), store, notice_idle(), false)
+            }
+            if command {
+                return key_action(session, address_clear(current), store, notice_idle(), false)
+            }
+            return key_action(session, address_backspace(current), store, notice_idle(), false)
+        }
+        if code == gui.key_delete() {
+            if option {
+                return key_action(session, address_word_erase(current, true), store, notice_idle(), false)
+            }
+            return key_action(session, address_delete(current), store, notice_idle(), false)
+        }
+        if code == gui.key_left() {
+            if option {
+                return key_action(session, address_word_step(current, 0 - 1), store, notice_idle(), false)
+            }
+            if command {
+                return key_action(session, address_edge(current, true), store, notice_idle(), false)
+            }
+            return key_action(session, address_left(current), store, notice_idle(), false)
+        }
+        if code == gui.key_right() {
+            if option {
+                return key_action(session, address_word_step(current, 1), store, notice_idle(), false)
+            }
+            if command {
+                return key_action(session, address_edge(current, false), store, notice_idle(), false)
+            }
+            return key_action(session, address_right(current), store, notice_idle(), false)
+        }
+        if code == gui.key_home() {
+            return key_action(session, address_edge(current, true), store, notice_idle(), false)
+        }
+        if code == gui.key_end() {
+            return key_action(session, address_edge(current, false), store, notice_idle(), false)
+        }
+        if command && code == 97 {
+            return key_action(session, address_select_all(current), store, notice_idle(), false)
+        }
+        if command && code == 118 {
+            let pasted = gui.clipboard().trim()
+            return key_action(session, address_type(current, pasted), store, notice_idle(), false)
+        }
+        if command && code == 108 {
+            engine.focus_chrome(handle)
+            return key_action(session, address_select_all(current), store, notice_idle(), false)
+        }
+        return key_action(session, current, store, notice_idle(), false)
+    }
+
+    if command && code == 108 {
+        engine.focus_chrome(handle)
+        return key_action(session, address_begin(engine.page_url(handle)), store, notice_idle(), false)
+    }
+    if command && code == 114 {
+        engine.reload(handle)
+        return key_action(session, current, store, notice_idle(), false)
+    }
+    if command && code == 1004 {
+        engine.back(handle)
+        return key_action(session, current, store, notice_idle(), false)
+    }
+    if command && code == 1003 {
+        engine.forward(handle)
+        return key_action(session, current, store, notice_idle(), false)
+    }
+    if code == gui.key_escape() {
+        return key_action(session, current, store, notice_idle(), true)
+    }
+    return key_action(session, current, store, notice_idle(), false)
+}
+
+// ---------- entry ----------
+
+fn settle(frames: Int) {
+    var i = 0
+    while i < frames {
+        gui.pump()
+        gui.sleep(16)
+        i = i + 1
+    }
+}
+
+fn auto_close(session: Session, theme: Chrome, address: Address, store: Store) {
+    let handle = active_handle(session)
+    let final_state = engine.wait(handle, 8000)
+    sync_visibility(session)
+    let merged = library.merge(store.bookmarks, store.visits)
+    let suggestions = if address.editing { library.suggest(merged, address.text, sug_rows()) } else { library.empty() }
+    gui.begin()
+    draw_chrome(handle, theme, address, session, suggestions, fx_new(), notice_idle(), store, 0 - 1, downloads_view(store), Tooltip { text: "", x: 0, y: 0 })
+    gui.present()
+    settle(24)
+    let target = gui.env("NOVA_BROWSER_SNAPSHOT")
+    var saved = false
+    if target.len() > 0 {
+        saved = engine.snapshot(handle, target)
+    }
+    let ui_target = gui.env("NOVA_BROWSER_UI_SNAPSHOT")
+    var ui_saved = false
+    if ui_target.len() > 0 {
+        ui_saved = gui.save_png(ui_target)
+    }
+    let title = engine.page_title(handle)
+    let layout_word = if session.vertical { "vertical" } else { "horizontal" }
+    save_session(store, session)
+    println("browser: state=${state_word(final_state)} title=${title} snapshot=${saved} ui=${ui_saved} tabs=${session.tabs.len()} layout=${layout_word}")
+}
+
+fn run_cli_import(argument: String) -> Bool {
+    var paths: List<String> = []
+    if argument.len() > 0 {
+        paths.push(argument)
+    } else {
+        paths = chrome_profile_paths()
+    }
+    let store = load_store()
+    let found = import_files(paths)
+    let before = library.bookmark_count(store.bookmarks)
+    let next = apply_import(store, found)
+    let after = library.bookmark_count(next.bookmarks)
+    let saved = save_store(next)
+    println("import: files=${paths.len()} found=${found.len()} new=${after - before} bookmarks=${after} path=${saved.bookmarks_path}")
+    return after > 0
+}
+
+fn mark_active_url(session: Session, url: String) -> Session {
+    if url.contains("fixture.nova.invalid") {
+        return session
+    }
+    var tabs: List<Tab> = []
+    var i = 0
+    while i < session.tabs.len() {
+        let tab = session.tabs[i]
+        if i == session.active {
+            tabs.push(Tab {
+                handle: tab.handle,
+                url: url,
+                fixture: false,
+                title: tab.title,
+            })
+        } else {
+            tabs.push(tab)
+        }
+        i = i + 1
+    }
+    return Session {
+        tabs: tabs,
+        active: session.active,
+        closed: session.closed,
+        vertical: session.vertical,
+        seen: session.seen,
+    }
+}
+
+fn refresh_titles(session: Session) -> Session {
+    var tabs: List<Tab> = []
+    for tab in session.tabs {
+        tabs.push(Tab {
+            handle: tab.handle,
+            url: tab.url,
+            fixture: tab.fixture,
+            title: engine.page_title(tab.handle),
+        })
+    }
+    return Session {
+        tabs: tabs,
+        active: session.active,
+        closed: session.closed,
+        vertical: session.vertical,
+        seen: session.seen,
+    }
+}
+
+fn session_signature(session: Session) -> String {
+    var out = "${session.active}"
+    for tab in session.tabs {
+        let live = if tab.fixture { "fixture" } else { engine.page_url(tab.handle) }
+        out = out + "|" + live
+    }
+    return out
+}
+
+fn save_session(store: Store, session: Session) {
+    if store.session_path.len() == 0 {
+        return
+    }
+    var urls: List<String> = []
+    var saved_active = 0
+    var i = 0
+    while i < session.tabs.len() {
+        let tab = session.tabs[i]
+        if !tab.fixture {
+            let live = engine.page_url(tab.handle)
+            if live.len() > 0 {
+                urls.push(live)
+            } else if tab.url.len() > 0 {
+                urls.push(tab.url)
+            }
+            if i < session.active {
+                saved_active = saved_active + 1
+            }
+        }
+        i = i + 1
+    }
+    gui.write(store.session_path, library.session_encode(urls, saved_active))
+}
+
+fn restore_session(store: Store, vertical: Bool) -> Session {
+    let text = if store.session_path.len() > 0 { gui.read(store.session_path) } else { "" }
+    let urls = if gui.env("NOVA_BROWSER_NO_RESTORE").trim() != "1" {
+        library.session_urls(text)
+    } else {
+        library.empty()
+    }
+    var tabs: List<Tab> = []
+    var i = 0
+    while i < urls.len() && i < max_tabs() {
+        let tab = new_url_tab(gui.native_view(), gui.width(), gui.height(), urls[i])
+        if tab.handle > 0 {
+            tabs.push(tab)
+        }
+        i = i + 1
+    }
+    if tabs.len() == 0 {
+        let fresh = new_fixture_tab(gui.native_view(), gui.width(), gui.height())
+        if fresh.handle > 0 {
+            tabs.push(fresh)
+        }
+        return Session { tabs: tabs, active: 0, closed: [], vertical: vertical, seen: "" }
+    }
+    var active = library.session_active(text)
+    if active < 0 {
+        active = 0
+    }
+    if active >= tabs.len() {
+        active = tabs.len() - 1
+    }
+    return Session { tabs: tabs, active: active, closed: [], vertical: vertical, seen: "" }
+}
+
+fn open_session(store: Store, vertical: Bool, initial: String) -> Session {
+    if initial.len() > 0 {
+        let first = new_url_tab(gui.native_view(), gui.width(), gui.height(), initial)
+        var tabs: List<Tab> = []
+        if first.handle > 0 {
+            tabs.push(first)
+        }
+        return Session { tabs: tabs, active: 0, closed: [], vertical: vertical, seen: "" }
+    }
+    return restore_session(store, vertical)
+}
+
+
+fn run_download_test(url: String) -> Bool {
+    if url.len() == 0 {
+        println("download: usage: --download <http(s) url>")
+        return false
+    }
+    let handle = engine.create(0, 0, 0, 900, 600)
+    if handle <= 0 {
+        println("download: could not create a view")
+        return false
+    }
+    engine.navigate(handle, url)
+    engine.wait(handle, 8000)
+    // NOVA_BROWSER_DOWNLOAD_PAUSE=1 pauses as soon as bytes arrive, checks the
+    // resume data, resumes, and still requires the finished file. It is the
+    // automated form of the shelf's row-click pause/resume.
+    let pause_wanted = gui.env("NOVA_BROWSER_DOWNLOAD_PAUSE") == "1"
+    var paused = false
+    var resumed = false
+    var resume_attempted = false
+    var pause_waited = 0
+    var waited = 0
+    while waited < 15000 {
+        gui.pump()
+        gui.sleep(20)
+        waited = waited + 20
+        let count = engine.download_count()
+        if count > 0 {
+            let ident = engine.download_id(count - 1)
+            let state = engine.download_state(ident)
+            if pause_wanted && !paused && state == 1 {
+                let got = engine.download_received(ident)
+                if got > 0 {
+                    if engine.download_pause(ident) {
+                        paused = true
+                        println("download: paused at ${got}")
+                    }
+                }
+            }
+            if paused && !resumed && !resume_attempted {
+                if engine.download_state(ident) == 5 {
+                    if pause_waited < 300 {
+                        pause_waited = pause_waited + 20
+                    } else {
+                        resume_attempted = true
+                        let resumable = engine.download_resumable(ident)
+                        let resumable_text = if resumable { "1" } else { "0" }
+                        println("download: paused state received=${engine.download_received(ident)} resumable=" + resumable_text)
+                        if resumable {
+                            if engine.download_resume(ident) {
+                                resumed = true
+                                println("download: resumed")
+                            }
+                        } else {
+                            println("download: state=unresumable")
+                            engine.destroy(handle)
+                            return false
+                        }
+                    }
+                }
+            }
+            if state == 2 || state == 3 || state == 4 {
+                let name = engine.download_name(ident)
+                let path = engine.download_path(ident)
+                let bytes = engine.download_received(ident)
+                let word = if state == 2 { "done" } else if state == 3 { "failed" } else { "cancelled" }
+                println("download: state=${word} name=${name} bytes=${bytes} path=${path}")
+                if state == 2 {
+                    remember_download(path, name, bytes)
+                }
+                engine.destroy(handle)
+                if !pause_wanted {
+                    return state == 2
+                }
+                return state == 2 && resumed
+            }
+        }
+    }
+    println("download: state=timeout downloads=${engine.download_count()}")
+    engine.destroy(handle)
+    return false
+}
+
+fn bench_run(session: Session, theme: Chrome, address: Address, store: Store) {
+    let frames = library.number_of(gui.env("NOVA_BROWSER_BENCH"))
+    if frames <= 0 {
+        return
+    }
+    var fx = fx_new()
+    var i = 0
+    let fx_start = gui.now()
+    while i < 2000 {
+        fx = fx_step(fx, i % 12, true)
+        i = i + 1
+    }
+    let fx_ms = gui.now() - fx_start
+    var total = 0
+    var worst = 0
+    var frames_done = 0
+    let merged = library.merge(store.bookmarks, store.visits)
+    while frames_done < frames {
+        let started = gui.now()
+        let suggestions = library.suggest(merged, address.text, sug_rows())
+        gui.begin()
+        draw_chrome(active_handle(session), theme, address, session, suggestions, fx, notice_idle(), store, 3, downloads_view(store), Tooltip { text: "", x: 0, y: 0 })
+        gui.present()
+        let spent = gui.now() - started
+        total = total + spent
+        if spent > worst {
+            worst = spent
+        }
+        fx = fx_step(fx, 3, address.editing)
+        frames_done = frames_done + 1
+    }
+    println("bench: frames=${frames} avg=${total / frames}ms worst=${worst}ms fx_step_2000=${fx_ms}ms stack=${gui.stack_peak() / 1024}KB/${gui.stack_span() / 1024}KB")
+}
+
+fn main() {
+    if gui.args_count() >= 2 {
+        let argument = gui.arg(1)
+        if argument == "--import" || argument == "--import-google" {
+            var target = ""
+            if gui.args_count() >= 3 {
+                target = gui.arg(2)
+            }
+            run_cli_import(target)
+            return
+        }
+        if argument == "--download" {
+            var target = ""
+            if gui.args_count() >= 3 {
+                target = gui.arg(2)
+            }
+            run_download_test(target)
+            return
+        }
+    }
+
+    var store = load_store()
+    // Test hook: open the shelf before the first frame so its accessibility
+    // elements can be inspected without a live download.
+    if gui.env("NOVA_BROWSER_DOWNLOADS_OPEN") == "1" {
+        store.downloads_open = true
+    }
+    // Test hook: apply the Clear control before the first frame.
+    if gui.env("NOVA_BROWSER_CLEAR_DOWNLOADS") == "1" {
+        store = save_store(clear_finished_downloads(store))
+    }
+
+    if !gui.open("Nova Browser", 1180, 800) {
+        println("browser: could not open a window")
+        return
+    }
+
+    let theme = chrome_theme()
+    let settings_text = gui.read(store.settings_path)
+    var vertical = library.setting_value(settings_text, "layout") == "vertical"
+    if gui.env("NOVA_BROWSER_LAYOUT").trim() == "vertical" {
+        vertical = true
+    }
+    if gui.env("NOVA_BROWSER_LAYOUT").trim() == "horizontal" {
+        vertical = false
+    }
+
+    var initial = gui.env("NOVA_BROWSER_URL")
+    if initial.len() == 0 && gui.args_count() >= 2 {
+        initial = gui.arg(1)
+    }
+
+    var session = open_session(store, vertical, initial)
+    if session.tabs.len() == 0 {
+        println("browser: could not create the WebKit view")
+        gui.close()
+        return
+    }
+    session = refresh_titles(session)
+    sync_visibility(session)
+
+    // Headless check for the tab context-menu actions: the menu itself is
+    // AppKit's, but the two multi-tab commands it dispatches are exercised
+    // here so they have a repeatable assertion.
+    if gui.env("NOVA_BROWSER_TAB_ACTION").trim() == "1" {
+        session = duplicate_tab(session, 0, gui.native_view(), gui.width(), gui.height())
+        println("browser: action duplicate tabs=${session.tabs.len()}")
+        session = close_other_tabs(session, 0, gui.native_view(), gui.width(), gui.height())
+        println("browser: action close-others tabs=${session.tabs.len()}")
+    }
+
+    engine.focus_page(active_handle(session))
+
+    var address = address_idle()
+    let focus_address_env = gui.env("NOVA_BROWSER_FOCUS_ADDRESS")
+    if focus_address_env.len() > 0 {
+        // Visual-check hook: open with the field focused and its text selected.
+        // Any value other than "1" is the seed text, for long-URL checks.
+        var seed = engine.page_url(active_handle(session))
+        if focus_address_env != "1" {
+            seed = focus_address_env
+        }
+        if seed.len() == 0 {
+            seed = "https://nova.example/browser/releases/0.5.0/notes?tab=downloads"
+        }
+        address = address_begin(seed)
+        engine.focus_chrome(active_handle(session))
+    }
+
+    if gui.env("NOVA_BROWSER_AUTOCLOSE") == "1" {
+        auto_close(session, theme, address, store)
+        destroy_session(session)
+        gui.close()
+        return
+    }
+
+    if library.number_of(gui.env("NOVA_BROWSER_BENCH")) > 0 {
+        bench_run(session, theme, address, store)
+        destroy_session(session)
+        gui.close()
+        return
+    }
+
+    var fx = fx_new()
+    var notice = notice_idle()
+    var pointer_x = 0
+    var pointer_y = 0
+    var have_pointer = false
+    var hover = 0 - 1
+    var hover_since = 0
+    var last_hover = 0 - 2
+    var drawn_state = 0 - 2
+    var drawn_url = ""
+    var drawn_progress = 0 - 1
+    var drawn_downloads = ""
+    var drawn_download_count = 0 - 1
+    var drawn_hover = 0 - 2
+    var drawn_editing = 0 - 1
+    var drawn_vertical = 0 - 1
+    var drawn_tooltip = 0 - 1
+    var drawn_notice = 0 - 1
+    var drawn_text = ""
+    var drawn_cursor = 0 - 1
+    var drawn_highlight = 0 - 2
+    var drawn_bookmarks = 0 - 1
+    var drawn_shelf = 0 - 1
+    var last_titles = 0
+    var last_signature = ""
+    var suggestions: List<String> = []
+    var sug_text = ""
+    var sug_books = 0 - 1
+    var sug_visits = 0 - 1
+    var sug_ready = false
+    var drag_tab = 0 - 1
+    var drag_origin = 0
+    var drag_started = false
+    // Which tab the open context menu belongs to (-1 when none).
+    var menu_tab = 0 - 1
+    var drawn_preedit = ""
+    var running = true
+
+    while running {
+        let now = gui.now()
+        let width = gui.width()
+        let height = gui.height()
+        let handle = active_handle(session)
+
+        let left = page_left(session)
+        let top = page_top(session)
+        var page_w = width - left
+        var page_h = height - top
+        if page_w < 1 {
+            page_w = 1
+        }
+        if page_h < 1 {
+            page_h = 1
+        }
+        engine.set_bounds(handle, left, top, page_w, page_h)
+        sync_visibility(session)
+
+        if engine.take_chrome_focus_request(handle) {
+            address = address_begin(engine.page_url(handle))
+        }
+
+        // A tab context menu is modal in the host, so its choice is polled
+        // here once the menu has closed.
+        let menu_choice = gui.menu_result()
+        if menu_choice > 0 && menu_tab >= 0 {
+            session = tab_menu_apply(menu_choice, menu_tab, session)
+            if menu_choice == 1 {
+                engine.focus_chrome(active_handle(session))
+                address = address_begin("")
+            } else {
+                address = address_idle()
+            }
+            menu_tab = 0 - 1
+        }
+
+        if now - last_titles > 500 {
+            session = refresh_titles(session)
+            last_titles = now
+        }
+
+        if address.editing {
+            // Rebuilding the merged library and re-scoring it every frame was
+            // the main source of hitching while typing in the field.
+            if !sug_ready || address.text != sug_text || store.bookmarks.len() != sug_books || store.visits.len() != sug_visits {
+                let merged = library.merge(store.bookmarks, store.visits)
+                suggestions = library.suggest(merged, address.text, sug_rows())
+                sug_text = address.text
+                sug_books = store.bookmarks.len()
+                sug_visits = store.visits.len()
+                sug_ready = true
+            }
+            if address.highlight >= suggestions.len() {
+                address.highlight = suggestions.len() - 1
+            }
+        } else {
+            address.highlight = 0 - 1
+            if sug_ready {
+                suggestions = library.empty()
+                sug_ready = false
+            }
+        }
+
+        // The IME's in-progress composition is drawn by the chrome, so the
+        // trace reports it here where it becomes visible for a frame.
+        let preedit = if address.editing { gui.marked_text() } else { "" }
+        if preedit != drawn_preedit {
+            if preedit.len() > 0 && gui.env("NOVA_BROWSER_TRACE").len() > 0 {
+                println("browser: preedit=${preedit}")
+            }
+            drawn_preedit = preedit
+        }
+
+        let shortcut = engine.take_shortcut(handle)
+        if shortcut > 0 {
+            let code = shortcut / 16
+            let mods = shortcut % 16
+            if gui.env("NOVA_BROWSER_TRACE").len() > 0 {
+                println("browser: shortcut code=${code} mods=${mods}")
+            }
+            let action = handle_key(handle, code, mods, address, session, suggestions, store)
+            session = action.session
+            address = action.address
+            store = action.store
+            if action.notice.text.len() > 0 {
+                notice = action.notice
+            }
+            if action.close {
+                running = false
+            }
+        }
+
+        if address.editing && engine.page_focused(handle) {
+            address = address_cancel(address)
+        }
+
+        let state = engine.page_state(handle)
+        let live = engine.page_url(handle)
+        if state == 2 {
+            if live.len() > 0 && live != session.seen {
+                session.seen = live
+                session = mark_active_url(session, live)
+                if !live.contains("fixture.nova.invalid") && store.history_path.len() > 0 {
+                    let title = engine.page_title(handle)
+                    store.visits = library.add_visit(store.visits, live, title)
+                    store.dirty_visits = true
+                }
+            }
+        } else if state == 3 {
+            session.seen = ""
+        }
+        store = save_store(store)
+
+        let signature = session_signature(session)
+        if signature != last_signature {
+            last_signature = signature
+            save_session(store, session)
+        }
+
+        if notice.text.len() > 0 && now > notice.until {
+            notice.text = ""
+        }
+
+        let downloads = downloads_view(store)
+        store = record_downloads(store, downloads)
+        store = save_store(store)
+        let download_sig = download_signature(downloads)
+        if drawn_download_count >= 0 && downloads.rows.len() > drawn_download_count {
+            store.downloads_open = true
+        }
+
+        if have_pointer {
+            hover = hover_target(pointer_x, pointer_y, session, address, suggestions, downloads, store.downloads_open)
+        } else {
+            hover = 0 - 1
+        }
+        if hover != last_hover {
+            last_hover = hover
+            hover_since = now
+        }
+
+        var tooltip = Tooltip { text: "", x: 0, y: 0 }
+        if hover > 0 && now - hover_since > 450 && !address.editing {
+            let text = tooltip_text(hover)
+            if text.len() > 0 {
+                tooltip = Tooltip { text: text, x: pointer_x, y: pointer_y }
+            }
+        }
+        let tip_visible = tooltip.text.len() > 0
+        let progress = engine.page_progress(handle)
+
+        let dirty = state != drawn_state || live != drawn_url || progress != drawn_progress ||
+                    download_sig != drawn_downloads || hover != drawn_hover ||
+                    flag(address.editing) != drawn_editing || address.text != drawn_text ||
+                    address.cursor != drawn_cursor || address.highlight != drawn_highlight ||
+                    store.bookmarks.len() != drawn_bookmarks || flag(store.downloads_open) != drawn_shelf ||
+                    flag(session.vertical) != drawn_vertical || notice.text.len() > 0 || drawn_notice == 1 ||
+                    fx_busy(fx) || flag(tip_visible) != drawn_tooltip || drag_started
+
+        if dirty {
+            fx = fx_step(fx, hover, address.editing)
+            gui.begin()
+            draw_chrome(handle, theme, address, session, suggestions, fx, notice, store, hover, downloads, tooltip)
+            if drag_started && !session.vertical {
+                let slot = tab_slot_at(session, pointer_x)
+                gui.round_rect(tab_box_x(session, slot), 8, 2, 30, 1, theme.orange)
+            }
+            gui.present()
+            drawn_state = state
+            drawn_url = live
+            drawn_progress = progress
+            drawn_downloads = download_sig
+            drawn_download_count = downloads.rows.len()
+            drawn_hover = hover
+            drawn_editing = flag(address.editing)
+            drawn_vertical = flag(session.vertical)
+            drawn_tooltip = flag(tip_visible)
+            drawn_notice = flag(notice.text.len() > 0)
+            drawn_text = address.text
+            drawn_cursor = address.cursor
+            drawn_highlight = address.highlight
+            drawn_bookmarks = store.bookmarks.len()
+            drawn_shelf = flag(store.downloads_open)
+        }
+
+        let event = gui.next_event()
+        if event.kind == gui.event_close() {
+            running = false
+        } else if event.kind == gui.event_mouse_down() {
+            pointer_x = event.x
+            pointer_y = event.y
+            have_pointer = true
+            drag_tab = 0 - 1
+            drag_started = false
+            if event.delta == 2 {
+                // The host marks a right click in delta; Nova owns the tab
+                // geometry, so it decides whether a menu is due.
+                menu_tab = tab_menu_target(event.x, event.y, session)
+                if menu_tab >= 0 {
+                    gui.tab_menu(session.tabs.len())
+                }
+            } else {
+            let click = handle_click(handle, event.x, event.y, event.code, address, session, suggestions, store, downloads)
+            session = click.session
+            address = click.address
+            store = click.store
+            if click.notice.text.len() > 0 {
+                notice = click.notice
+            }
+            // A press on a tab arms a drag; the move threshold below decides
+            // whether it was a click or a reorder.
+            if event.code == 1 && !session.vertical && event.y < 44 && event.x >= 84 && event.x < gui.width() - 46 {
+                let slot = tab_slot_at(session, event.x)
+                let tx = tab_box_x(session, slot)
+                if event.x < tx + tab_width(session.tabs.len()) - 24 {
+                    drag_tab = slot
+                    drag_origin = event.x
+                }
+            }
+            }
+        } else if event.kind == gui.event_mouse_up() {
+            if drag_tab >= 0 && drag_started {
+                session = reorder_tab(session, drag_tab, tab_slot_at(session, event.x))
+            }
+            drag_tab = 0 - 1
+            drag_started = false
+        } else if event.kind == gui.event_mouse_move() || event.kind == gui.event_drag() {
+            pointer_x = event.x
+            pointer_y = event.y
+            have_pointer = true
+            if drag_tab >= 0 && !drag_started {
+                let dx = if event.x > drag_origin { event.x - drag_origin } else { drag_origin - event.x }
+                if dx > 4 {
+                    drag_started = true
+                }
+            }
+        } else if event.kind == gui.event_scroll() {
+            if address.editing && suggestions.len() > 0 && event.delta != 0 {
+                if event.delta < 0 {
+                    address = address_move(address, 1, suggestions.len())
+                } else {
+                    address = address_move(address, 0 - 1, suggestions.len())
+                }
+            }
+        } else if event.kind == gui.event_key() {
+            let action = handle_key(handle, event.code, event.mods, address, session, suggestions, store)
+            session = action.session
+            address = action.address
+            store = action.store
+            if action.notice.text.len() > 0 {
+                notice = action.notice
+            }
+            if action.close {
+                running = false
+            }
+        } else if event.kind == gui.event_text() {
+            if address.editing {
+                let typed = gui.typed_text()
+                address = address_type(address, typed)
+                if gui.env("NOVA_BROWSER_TRACE").len() > 0 {
+                    println("browser: address text=${address.text}")
+                }
+            }
+        }
+        gui.pump()
+        if dirty {
+            gui.sleep(6)
+        } else {
+            gui.sleep(12)
+        }
+    }
+
+    store = save_store(store)
+    save_session(store, session)
+    destroy_session(session)
+    gui.close()
+}

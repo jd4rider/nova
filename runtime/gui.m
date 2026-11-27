@@ -57,6 +57,7 @@ typedef struct {
 #define NOVA_GUI_CLOSE 8
 #define NOVA_GUI_REPAINT 9
 #define NOVA_GUI_KEY_UP 10
+#define NOVA_GUI_TEXT 11
 
 #define NOVA_KEY_ENTER 13
 #define NOVA_KEY_TAB 9
@@ -89,10 +90,14 @@ typedef struct {
 } NovaGuiEvent;
 
 #define NOVA_GUI_QUEUE 1024
+#define NOVA_GUI_TEXT_MAX 255
 
 static NovaGuiEvent nova_queue[NOVA_GUI_QUEUE];
+static char nova_text_queue[NOVA_GUI_QUEUE][NOVA_GUI_TEXT_MAX];
 static int nova_q_head = 0;
 static int nova_q_tail = 0;
+
+static nova_str nova_gui_empty(void);
 
 static CGContextRef nova_ctx = NULL;
 static CGImageRef nova_image = NULL;
@@ -104,6 +109,34 @@ static int nova_running = 0;
 static NSWindow *nova_window = nil;
 static NSView *nova_view = nil;
 static NSMutableString *nova_title = nil;
+
+/* The chrome is one rasterized view, so AppKit cannot infer controls from a
+ * widget tree. The app pushes a flat element list while it draws and this file
+ * turns each entry into an NSAccessibilityElement child. Roles are small
+ * integers (0 button, 1 text field, 2 tab, 3 static text, 4 group, 5 link) so
+ * the Nova side never has to join strings for the FFI. */
+#define NOVA_GUI_AX_MAX 64
+#define NOVA_GUI_AX_TEXT 192
+
+typedef struct {
+    int64_t role;
+    int64_t x, y, w, h;
+    int64_t selected;
+    char label[NOVA_GUI_AX_TEXT];
+    char value[NOVA_GUI_AX_TEXT];
+} NovaAxItem;
+
+static NovaAxItem nova_ax[NOVA_GUI_AX_MAX];
+static int nova_ax_count = 0;
+static int nova_ax_dumped = 0;
+
+static NSString *nova_ax_role_name(int64_t role);
+static void nova_gui_ax_dump(void);
+
+@interface NovaAxElement : NSAccessibilityElement
+@property (assign) NSInteger novaIndex;
+@property (assign) BOOL novaSelected;
+@end
 
 /* Opt-in event trace: NOVA_GUI_TRACE=/path appends one line per input and
  * activation change. Headless checks read it to tell "the click never arrived"
@@ -162,6 +195,38 @@ static void nova_gui_emit(int64_t kind, int64_t code, int64_t x, int64_t y, int6
     nova_q_tail = next;
 }
 
+/* Printable keys also emit their composed UTF-8 text. The key event stays for
+ * shortcuts and games; text events let an input field accept real characters
+ * without reconstructing them from key codes. */
+static void nova_gui_emit_text(NSString *text) {
+    if (!text || text.length == 0) return;
+    const char *utf8 = text.UTF8String;
+    if (!utf8) return;
+    size_t length = strlen(utf8);
+    if (length == 0) return;
+    if (length >= NOVA_GUI_TEXT_MAX) {
+        length = NOVA_GUI_TEXT_MAX - 1;
+        /* Do not split a multi-byte UTF-8 sequence at the cap. */
+        while (length > 0 && ((unsigned char)utf8[length] & 0xC0) == 0x80) {
+            length--;
+        }
+    }
+    int next = (nova_q_tail + 1) % NOVA_GUI_QUEUE;
+    if (next == nova_q_head) return;
+    int slot = nova_q_tail;
+    memcpy(nova_text_queue[slot], utf8, length);
+    nova_text_queue[slot][length] = '\0';
+    nova_gui_trace("text bytes=%zu", length);
+    NovaGuiEvent *event = &nova_queue[slot];
+    event->kind = NOVA_GUI_TEXT;
+    event->code = 0;
+    event->x = 0;
+    event->y = 0;
+    event->mods = 0;
+    event->delta = slot;
+    nova_q_tail = next;
+}
+
 static int64_t nova_gui_modifiers(NSEventModifierFlags flags) {
     int64_t mods = 0;
     if (flags & NSEventModifierFlagCommand) mods |= NOVA_MOD_COMMAND;
@@ -171,7 +236,41 @@ static int64_t nova_gui_modifiers(NSEventModifierFlags flags) {
     return mods;
 }
 
-@interface NovaGuiView : NSView
+/* Marked text is the IME's in-progress composition. It is owned here rather
+ * than in Nova so the candidate window and the app agree on the same string. */
+static NSMutableString *nova_marked_text_store = nil;
+static int64_t nova_pending_mods = 0;
+
+@implementation NovaAxElement
+
+- (BOOL)accessibilitySelected {
+    return self.novaSelected;
+}
+
+- (BOOL)isAccessibilitySelected {
+    return self.novaSelected;
+}
+
+- (NSArray<NSString *> *)accessibilityActionNames {
+    return @[NSAccessibilityPressAction];
+}
+
+/* An immediate-mode UI has no retained action object: a press is exactly the
+ * click event the mouse would send, so VoiceOver drives the existing chrome
+ * hit-testing instead of a second, drifting action path. */
+- (void)accessibilityPerformPress {
+    if (self.novaIndex < 0 || self.novaIndex >= nova_ax_count) return;
+    NovaAxItem *item = &nova_ax[self.novaIndex];
+    int64_t center_x = item->x + item->w / 2;
+    int64_t center_y = item->y + item->h / 2;
+    nova_gui_emit(NOVA_GUI_MOUSE_DOWN, 1, center_x, center_y, 0, 1);
+    nova_gui_emit(NOVA_GUI_MOUSE_UP, 0, center_x, center_y, 0, 1);
+    nova_gui_trace("ax press role=%lld label=%s", (long long)item->role, item->label);
+}
+
+@end
+
+@interface NovaGuiView : NSView <NSTextInputClient>
 @end
 
 @implementation NovaGuiView
@@ -194,6 +293,51 @@ static int64_t nova_gui_modifiers(NSEventModifierFlags flags) {
         CGContextDrawImage(context, self.bounds, nova_image);
         CGContextRestoreGState(context);
     }
+}
+
+/* The page itself is a WKWebView and brings its own accessibility tree. This
+ * view owns the chrome around it, which Nova paints into a single bitmap. */
+- (BOOL)isAccessibilityElement {
+    return YES;
+}
+
+- (NSString *)accessibilityRole {
+    return NSAccessibilityGroupRole;
+}
+
+- (NSString *)accessibilityLabel {
+    return nova_window.title.length > 0 ? nova_window.title : @"Nova Browser";
+}
+
+/* Children come from the list the app last pushed. Frames are converted from
+ * the top-left drawing space to bottom-left view space and then to screen
+ * coordinates, which is the space accessibility clients expect. */
+- (NSArray *)accessibilityChildren {
+    if (nova_ax_count <= 0) return @[];
+    NSMutableArray *children = [NSMutableArray arrayWithCapacity:(NSUInteger)nova_ax_count];
+    int index = 0;
+    while (index < nova_ax_count) {
+        NovaAxItem *item = &nova_ax[index];
+        NSRect local = NSMakeRect((CGFloat)item->x, (CGFloat)(nova_h - item->y - item->h),
+                                  (CGFloat)item->w, (CGFloat)item->h);
+        NSRect in_window = [self convertRect:local toView:nil];
+        NSRect frame = self.window ? [self.window convertRectToScreen:in_window] : in_window;
+        NSString *label = [[NSString alloc] initWithUTF8String:item->label] ?: @"";
+        NovaAxElement *element = (NovaAxElement *)[NovaAxElement accessibilityElementWithRole:nova_ax_role_name(item->role)
+                                                                                       frame:frame
+                                                                                       label:label
+                                                                                      parent:self];
+        if (element) {
+            element.novaIndex = index;
+            element.novaSelected = item->selected != 0;
+            if (item->value[0] != '\0') {
+                element.accessibilityValue = [[NSString alloc] initWithUTF8String:item->value];
+            }
+            [children addObject:element];
+        }
+        index++;
+    }
+    return children;
 }
 
 /* View coordinates are bottom-left; the drawing API is top-left. */
@@ -234,11 +378,119 @@ static int64_t nova_gui_key_code(NSEvent *event, int64_t mods) {
 
 - (void)keyDown:(NSEvent *)event {
     int64_t mods = nova_gui_modifiers(event.modifierFlags);
-    int64_t code = nova_gui_key_code(event, mods);
-    nova_gui_trace("keyDown keyCode=%d mods=%lld key=%d repeat=%d active=%d",
+    nova_pending_mods = mods;
+    nova_gui_trace("keyDown keyCode=%d mods=%lld key=%d repeat=%d active=%d marked=%d",
                    (int)event.keyCode, mods, (int)nova_window.isKeyWindow,
-                   (int)event.isARepeat, (int)NSApp.isActive);
+                   (int)event.isARepeat, (int)NSApp.isActive,
+                   (int)(nova_marked_text_store.length > 0));
+    if (!(mods & (NOVA_MOD_COMMAND | NOVA_MOD_CONTROL))) {
+        /* Editable keys go through the input context: that is what lets a
+         * Japanese, Chinese or Korean IME compose marked text and show its
+         * candidate window. AppKit answers with insertText: for committed
+         * text or doCommandBySelector: for the editing keys we translate
+         * back into the Nova key vocabulary. */
+        [self interpretKeyEvents:@[event]];
+        return;
+    }
+    int64_t code = nova_gui_key_code(event, mods);
     nova_gui_emit(NOVA_GUI_KEY, code, 0, 0, mods, 0);
+}
+
+- (NSArray<NSString *> *)validAttributesForMarkedText {
+    /* AppKit asks for this the moment the view becomes an input client, before
+     * any key arrives; without it the protocol throws at launch. */
+    return @[];
+}
+
+- (NSAttributedString *)attributedSubstringForProposedRange:(NSRange)range actualRange:(NSRangePointer)actualRange {
+    (void)range;
+    if (actualRange) *actualRange = NSMakeRange(NSNotFound, 0);
+    return nil;
+}
+
+- (NSUInteger)characterIndexForPoint:(NSPoint)point {
+    (void)point;
+    return 0;
+}
+
+- (BOOL)hasMarkedText {
+    return nova_marked_text_store.length > 0;
+}
+
+- (NSRange)markedRange {
+    if (nova_marked_text_store.length == 0) return NSMakeRange(NSNotFound, 0);
+    return NSMakeRange(0, nova_marked_text_store.length);
+}
+
+- (NSRange)selectedRange {
+    return NSMakeRange(nova_marked_text_store.length, 0);
+}
+
+- (void)setMarkedText:(id)string selectedRange:(NSRange)selectedRange replacementRange:(NSRange)replacementRange {
+    (void)selectedRange;
+    (void)replacementRange;
+    if ([string isKindOfClass:[NSAttributedString class]]) string = [string string];
+    nova_marked_text_store = [NSMutableString stringWithString:([string isKindOfClass:[NSString class]] ? string : @"")];
+}
+
+- (void)unmarkText {
+    nova_marked_text_store = nil;
+}
+
+- (void)insertText:(id)string replacementRange:(NSRange)replacementRange {
+    (void)replacementRange;
+    if ([string isKindOfClass:[NSAttributedString class]]) string = [string string];
+    if (![string isKindOfClass:[NSString class]] || [string length] == 0) return;
+    nova_marked_text_store = nil;
+    nova_gui_emit_text((NSString *)string);
+}
+
+/* Candidate windows anchor to this rectangle; the field sits just under the
+ * toolbar, so the caret is reported at the top of the view. */
+- (NSRect)firstRectForCharacterRange:(NSRange)range actualRange:(NSRangePointer)actualRange {
+    (void)range;
+    if (actualRange) *actualRange = NSMakeRange(0, nova_marked_text_store.length);
+    NSRect bounds = self.bounds;
+    return NSMakeRect(bounds.size.width / 2, bounds.size.height - 64, 2, 20);
+}
+
+- (void)doCommandBySelector:(SEL)selector {
+    int64_t code = -1;
+    int64_t mods = nova_pending_mods;
+    if (selector == @selector(moveLeft:)) code = NOVA_KEY_LEFT;
+    else if (selector == @selector(moveRight:)) code = NOVA_KEY_RIGHT;
+    else if (selector == @selector(moveUp:)) code = NOVA_KEY_UP;
+    else if (selector == @selector(moveDown:)) code = NOVA_KEY_DOWN;
+    else if (selector == @selector(moveWordLeft:)) { code = NOVA_KEY_LEFT; mods |= NOVA_MOD_OPTION; }
+    else if (selector == @selector(moveWordRight:)) { code = NOVA_KEY_RIGHT; mods |= NOVA_MOD_OPTION; }
+    else if (selector == @selector(deleteWordBackward:)) { code = NOVA_KEY_BACKSPACE; mods |= NOVA_MOD_OPTION; }
+    else if (selector == @selector(deleteWordForward:)) { code = NOVA_KEY_DELETE; mods |= NOVA_MOD_OPTION; }
+    else if (selector == @selector(moveToBeginningOfLine:) || selector == @selector(moveToLeftEndOfLine:) ||
+             selector == @selector(moveToBeginningOfDocument:)) code = NOVA_KEY_HOME;
+    else if (selector == @selector(moveToEndOfLine:) || selector == @selector(moveToRightEndOfLine:) ||
+             selector == @selector(moveToEndOfDocument:)) code = NOVA_KEY_END;
+    else if (selector == @selector(deleteBackward:)) code = NOVA_KEY_BACKSPACE;
+    else if (selector == @selector(deleteForward:)) code = NOVA_KEY_DELETE;
+    else if (selector == @selector(insertNewline:)) code = NOVA_KEY_ENTER;
+    else if (selector == @selector(insertTab:)) code = NOVA_KEY_TAB;
+    else if (selector == @selector(cancelOperation:)) code = NOVA_KEY_ESCAPE;
+    else if (selector == @selector(pageUp:) || selector == @selector(scrollPageUp:)) code = NOVA_KEY_PAGE_UP;
+    else if (selector == @selector(pageDown:) || selector == @selector(scrollPageDown:)) code = NOVA_KEY_PAGE_DOWN;
+    if (code >= 0) nova_gui_emit(NOVA_GUI_KEY, code, 0, 0, mods, 0);
+}
+
+/* Marked (uncommitted) text, so the address field can paint the composition
+ * under the caret while the IME's candidate window is open. */
+nova_str nova_gui_marked_text(void) {
+    if (nova_marked_text_store.length == 0) return nova_gui_empty();
+    const char *utf8 = [nova_marked_text_store UTF8String];
+    if (!utf8) return nova_gui_empty();
+    size_t length = strlen(utf8);
+    char *copy = (char *)malloc(length + 1);
+    if (!copy) return nova_gui_empty();
+    memcpy(copy, utf8, length + 1);
+    nova_str result = {copy, (int64_t)length};
+    return result;
 }
 
 /* Key releases let a program distinguish "held" from "tapped": the arrows are
@@ -267,7 +519,10 @@ static int64_t nova_gui_key_code(NSEvent *event, int64_t mods) {
     /* The first click on an inactive window has to pull the app forward. */
     nova_gui_activate_window();
     NSPoint point = [self nova_point:event];
-    nova_gui_emit(NOVA_GUI_MOUSE_DOWN, 0, (int64_t)point.x, (int64_t)point.y, nova_gui_modifiers(event.modifierFlags), 1);
+    /* The click count rides in the event code so the app can tell a single
+     * click (place the caret) from a double (select word) or triple (select
+     * all) without a second host API. */
+    nova_gui_emit(NOVA_GUI_MOUSE_DOWN, (int64_t)event.clickCount, (int64_t)point.x, (int64_t)point.y, nova_gui_modifiers(event.modifierFlags), 1);
     nova_gui_trace("mouseDown point=%.0f,%.0f frame=%dx%d viewH=%.0f key=%d active=%d",
                    point.x, point.y, (int)nova_w, (int)nova_h, self.bounds.size.height,
                    (int)nova_window.isKeyWindow, (int)NSApp.isActive);
@@ -331,6 +586,25 @@ static int64_t nova_gui_key_code(NSEvent *event, int64_t mods) {
 
 @implementation NovaGuiDelegate
 
+/* LaunchServices sends an open/reopen Apple Event when the bundle is started
+ * from Finder or `open`. This app has no restorable documents, so it declines
+ * state restoration in both directions. */
+
+- (BOOL)applicationShouldSaveApplicationState:(NSApplication *)sender {
+    (void)sender;
+    return NO;
+}
+
+- (BOOL)applicationShouldRestoreApplicationState:(NSApplication *)sender {
+    (void)sender;
+    return NO;
+}
+
+- (BOOL)applicationSupportsSecureRestorableState:(NSApplication *)app {
+    (void)app;
+    return YES;
+}
+
 - (BOOL)windowShouldClose:(NSWindow *)sender {
     (void)sender;
     nova_running = 0;
@@ -367,7 +641,10 @@ static int64_t nova_gui_key_code(NSEvent *event, int64_t mods) {
         if (!visible) [nova_window makeKeyAndOrderFront:nil];
         nova_gui_activate_window();
     }
-    return YES;
+    /* NO means "handled here": returning YES also asks AppKit to run its own
+     * window-restoration pass, which has nothing to restore and never returns
+     * when the bundle is started by LaunchServices. */
+    return NO;
 }
 
 - (void)windowDidResignKey:(NSNotification *)notification {
@@ -396,6 +673,8 @@ static NovaGuiDelegate *nova_delegate = nil;
 @end
 
 static NovaGuiMenuTarget *nova_menu_target = nil;
+/* Tag of the item picked from a context menu, polled by the Nova loop. */
+static int64_t nova_menu_choice = 0;
 
 @implementation NovaGuiMenuTarget
 
@@ -408,6 +687,12 @@ static NovaGuiMenuTarget *nova_menu_target = nil;
     (void)sender;
     NSURL *url = [NSURL URLWithString:@"https://jd4rider.github.io/nova/"];
     if (url) [[NSWorkspace sharedWorkspace] openURL:url];
+}
+
+/* Context-menu item: the choice is polled next frame rather than delivered as
+ * a callback, which matches the rest of the host's input contract. */
+- (void)takeTabMenuChoice:(id)sender {
+    nova_menu_choice = (int64_t)[(NSMenuItem *)sender tag];
 }
 
 @end
@@ -430,20 +715,24 @@ static void nova_gui_build_menu(void) {
 
     NSMenuItem *app_item = [[NSMenuItem alloc] init];
     [menubar addItem:app_item];
-    NSMenu *app = [[NSMenu alloc] initWithTitle:@"Nova Studio"];
-    [app addItemWithTitle:@"About Nova Studio" action:@selector(orderFrontStandardAboutPanel:)
+    NSString *app_name = nova_title.length > 0 ? nova_title : @"Nova";
+    NSMenu *app = [[NSMenu alloc] initWithTitle:app_name];
+    [app addItemWithTitle:[NSString stringWithFormat:@"About %@", app_name]
+                  action:@selector(orderFrontStandardAboutPanel:)
            keyEquivalent:@""];
     [app addItem:[NSMenuItem separatorItem]];
     nova_gui_menu_item(app, @"Settings…", @",", command, NOVA_MOD_COMMAND, ',');
     [app addItem:[NSMenuItem separatorItem]];
-    [app addItemWithTitle:@"Hide Nova Studio" action:@selector(hide:) keyEquivalent:@"h"];
+    [app addItemWithTitle:[NSString stringWithFormat:@"Hide %@", app_name]
+                  action:@selector(hide:) keyEquivalent:@"h"];
     NSMenuItem *hide_others = [app addItemWithTitle:@"Hide Others"
                                             action:@selector(hideOtherApplications:)
                                      keyEquivalent:@"h"];
     hide_others.keyEquivalentModifierMask = command | NSEventModifierFlagOption;
     [app addItemWithTitle:@"Show All" action:@selector(unhideAllApplications:) keyEquivalent:@""];
     [app addItem:[NSMenuItem separatorItem]];
-    [app addItemWithTitle:@"Quit Nova Studio" action:@selector(terminate:) keyEquivalent:@"q"];
+    [app addItemWithTitle:[NSString stringWithFormat:@"Quit %@", app_name]
+                  action:@selector(terminate:) keyEquivalent:@"q"];
     app_item.submenu = app;
 
     NSMenuItem *file_item = [[NSMenuItem alloc] init];
@@ -656,6 +945,7 @@ static CTLineRef nova_gui_make_line(nova_str text, int64_t size, int64_t mono) {
 
 #include <stdint.h>
 #include <string.h>
+#include <pthread.h>
 
 /* An immediate-mode loop redraws the same strings many times a second, and
  * building a CTLine (attribute dictionary, font lookup, shaping) costs far more
@@ -707,6 +997,127 @@ static CTLineRef nova_gui_cached_line(nova_str text, int64_t size, int64_t mono)
 /* Public API                                                         */
 /* ------------------------------------------------------------------ */
 
+/* Persistent UI is AppKit's own window memory: it has nothing to restore here
+ * (the browser restores a text session itself), and after a crash it raises a
+ * modal "restore windows?" alert that can sit behind the window and block the
+ * main loop forever. `ApplePersistenceIgnoreState` is read before AppKit builds
+ * the restorer, so it must be set before NSApplication exists. */
+static void nova_gui_disable_persistence(void) {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setBool:YES forKey:@"ApplePersistenceIgnoreState"];
+    [defaults setBool:NO forKey:@"NSQuitAlwaysKeepsWindows"];
+    NSString *bundle_id = [[NSBundle mainBundle] bundleIdentifier];
+    if (bundle_id.length == 0) return;
+    NSString *dir = [@"~/Library/Saved Application State" stringByExpandingTildeInPath];
+    NSString *path = [dir stringByAppendingPathComponent:[bundle_id stringByAppendingString:@".savedState"]];
+    [[NSFileManager defaultManager] removeItemAtPath:path error:NULL];
+}
+
+/* Last line of defence: a system modal (the crash-restore alert, a permission
+ * prompt) runs its own nested loop and the Nova loop simply stops. Aborting it
+ * is better than an app that looks hung; the trace records what happened. */
+/* Set while this file runs one of its own modal panels; the guard must not
+ * dismiss a dialog the app itself opened. */
+static int nova_gui_own_modal = 0;
+
+static void nova_gui_install_modal_guard(void) {
+    NSTimer *guard = [NSTimer timerWithTimeInterval:0.25 repeats:YES block:^(NSTimer *timer) {
+        (void)timer;
+        NSWindow *modal = [NSApp modalWindow];
+        if (modal && !nova_gui_own_modal) {
+            nova_gui_trace("aborting modal window");
+            [NSApp abortModal];
+        }
+    }];
+    [[NSRunLoop mainRunLoop] addTimer:guard forMode:NSDefaultRunLoopMode];
+    [[NSRunLoop mainRunLoop] addTimer:guard forMode:NSModalPanelRunLoopMode];
+    [[NSRunLoop mainRunLoop] addTimer:guard forMode:NSRunLoopCommonModes];
+}
+
+/* Tab context menu. Nova decides which tab was right-clicked (it owns the tab
+ * geometry) and only asks for the menu; the picked tag comes back through
+ * nova_gui_menu_result(). The menu runs AppKit's tracking loop, so the modal
+ * guard is told this is the app's own panel. */
+static NSMenu *nova_gui_build_tab_menu(int64_t tabs) {
+    if (!nova_menu_target) return nil;
+    NSMenu *menu = [[NSMenu alloc] initWithTitle:@"Tab"];
+
+    NSMenuItem *item = [menu addItemWithTitle:@"New Tab"
+                                       action:@selector(takeTabMenuChoice:)
+                                keyEquivalent:@"t"];
+    item.tag = 1;
+    item.target = nova_menu_target;
+    item.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+
+    item = [menu addItemWithTitle:@"Duplicate Tab"
+                           action:@selector(takeTabMenuChoice:)
+                    keyEquivalent:@""];
+    item.tag = 2;
+    item.target = nova_menu_target;
+    item.enabled = tabs < 6;
+
+    item = [menu addItemWithTitle:@"Close Tab"
+                           action:@selector(takeTabMenuChoice:)
+                    keyEquivalent:@"w"];
+    item.tag = 3;
+    item.target = nova_menu_target;
+    item.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+
+    item = [menu addItemWithTitle:@"Close Other Tabs"
+                           action:@selector(takeTabMenuChoice:)
+                    keyEquivalent:@""];
+    item.tag = 4;
+    item.target = nova_menu_target;
+    item.enabled = tabs > 1;
+    return menu;
+}
+
+/* NOVA_BROWSER_TAB_MENU_ITEMS builds the menu once and reports it without
+ * showing it, so the item set and target wiring are testable without a click. */
+static void nova_gui_menu_probe(void) {
+    const char *env = getenv("NOVA_BROWSER_TAB_MENU_ITEMS");
+    if (!env || !env[0]) return;
+    static int done = 0;
+    if (done) return;
+    done = 1;
+    NSMenu *menu = nova_gui_build_tab_menu(1);
+    if (!menu) return;
+    NSMutableString *titles = [NSMutableString string];
+    NSMutableString *enabled = [NSMutableString string];
+    for (NSMenuItem *item in menu.itemArray) {
+        if (titles.length > 0) {
+            [titles appendString:@"|"];
+            [enabled appendString:@","];
+        }
+        [titles appendString:item.title];
+        [enabled appendString:(item.isEnabled ? @"1" : @"0")];
+    }
+    printf("menu: items=%s enabled=%s\n", [titles UTF8String], [enabled UTF8String]);
+    fflush(stdout);
+}
+
+void nova_gui_tab_menu(int64_t tabs) {
+    if (!nova_window || !nova_view) return;
+    if (tabs < 1) return;
+    NSMenu *menu = nova_gui_build_tab_menu(tabs);
+    if (!menu) return;
+
+    /* The menu opens at the pointer, not at the tab: that is where the user
+     * looked when they right-clicked. */
+    NSPoint screen = [NSEvent mouseLocation];
+    NSPoint window_point = [nova_window convertPointFromScreen:screen];
+    NSPoint view_point = [nova_view convertPoint:window_point fromView:nil];
+    nova_gui_own_modal = 1;
+    [menu popUpMenuPositioningItem:nil atLocation:view_point inView:nova_view];
+    nova_gui_own_modal = 0;
+}
+
+int64_t nova_gui_menu_result(void) {
+    int64_t choice = nova_menu_choice;
+    nova_menu_choice = 0;
+    return choice;
+}
+
 int64_t nova_gui_open(nova_str title, int64_t width, int64_t height) {
     @autoreleasepool {
         nova_title = [[NSMutableString alloc] initWithBytes:title.ptr ? title.ptr : ""
@@ -714,9 +1125,11 @@ int64_t nova_gui_open(nova_str title, int64_t width, int64_t height) {
                                                    encoding:NSUTF8StringEncoding];
         if (!nova_title) nova_title = [NSMutableString stringWithString:@"Nova"];
 
+        nova_gui_disable_persistence();
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
         [NSApp finishLaunching];
+        nova_gui_install_modal_guard();
 
         nova_gui_build_menu();
 
@@ -728,6 +1141,11 @@ int64_t nova_gui_open(nova_str title, int64_t width, int64_t height) {
                                                   styleMask:style
                                                     backing:NSBackingStoreBuffered
                                                       defer:NO];
+    /* The window is owned by the Nova loop and has no document model, so
+     * AppKit's restorable-state bookkeeping cannot do anything useful with it.
+     * Leaving it on makes the reopen Apple Event run a restoration pass that
+     * never completes, which hangs the app when it is launched from Finder. */
+    [nova_window setRestorable:NO];
         if (!nova_window) return 0;
 
         nova_window.title = nova_title;
@@ -779,6 +1197,14 @@ int64_t nova_gui_is_open(void) {
 
 int64_t nova_gui_width(void) {
     return nova_w;
+}
+
+/* Opaque native content-view handle for trusted platform adapters. The value
+ * is an NSView pointer valid until nova_gui_close(); callers must stay on the
+ * main thread. Browser and other embedders use this instead of exposing raw
+ * Objective-C objects through the Nova type system. */
+int64_t nova_gui_native_view(void) {
+    return (int64_t)(intptr_t)(__bridge void *)nova_view;
 }
 
 int64_t nova_gui_height(void) {
@@ -899,6 +1325,15 @@ int64_t nova_gui_text_width(nova_str text, int64_t size, int64_t mono) {
 }
 
 /* Width of one space, which is the cell width a monospaced layout needs. */
+/* Monotonic milliseconds. Chrome animations interpolate against this rather
+ * than counting frames, so they run at the same speed on a 60Hz and a 120Hz
+ * display. It never jumps backwards, unlike wall-clock time. */
+int64_t nova_gui_now_ms(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
+    return (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000);
+}
+
 int64_t nova_gui_advance(int64_t size, int64_t mono) {
     static int64_t cache[2][80];
     int index = (int)(size < 1 ? 1 : (size > 79 ? 79 : size));
@@ -928,6 +1363,86 @@ void nova_gui_clip_reset(void) {
     CGContextSetLineWidth(nova_ctx, 1.0);
 }
 
+/* ------------------------------------------------------------------ */
+/* Stack headroom and IME probe                                       */
+/* ------------------------------------------------------------------ */
+
+/* The main thread's stack was exhausted once with a backtrace only three Nova
+ * frames deep and no function reserving more than 2160 bytes (engineering/
+ * browser/BLOCKERS.md). That shape means the stack pointer arrived at the loop
+ * already below the usable stack, so the loop now measures its own headroom: a
+ * single unbalanced frame or a runaway recursion shows up as a falling number
+ * instead of a silent SIGSEGV inside mach_msg. */
+static int64_t nova_stack_peak = 0;
+
+int64_t nova_gui_stack_span(void) {
+    return (int64_t)pthread_get_stacksize_np(pthread_self());
+}
+
+int64_t nova_gui_stack_used(void) {
+    char probe;
+    intptr_t base = (intptr_t)pthread_get_stackaddr_np(pthread_self());
+    intptr_t here = (intptr_t)&probe;
+    int64_t used = (int64_t)(base - here);
+    if (used < 0) used = 0;
+    if (used > nova_stack_peak) nova_stack_peak = used;
+    return used;
+}
+
+int64_t nova_gui_stack_peak(void) {
+    return nova_stack_peak;
+}
+
+int64_t nova_gui_stack_headroom(void) {
+    int64_t room = nova_gui_stack_span() - nova_gui_stack_used();
+    return room < 0 ? 0 : room;
+}
+
+static void nova_gui_stack_check(void) {
+    static int ticks = 0;
+    /* Sampling the peak on every pump is two pointer reads; the trace line is
+     * what stays periodic so the log does not grow with the frame count. */
+    (void)nova_gui_stack_used();
+    ticks++;
+    if (ticks % 300 != 0) return;
+    if (nova_gui_stack_headroom() < 256 * 1024) {
+        nova_gui_trace("stack: low headroom used=%lldKB", (long long)(nova_gui_stack_used() / 1024));
+    } else {
+        nova_gui_trace("stack: used=%lldKB headroom=%lldKB",
+                       (long long)(nova_gui_stack_used() / 1024),
+                       (long long)(nova_gui_stack_headroom() / 1024));
+    }
+}
+
+/* A real Japanese/Chinese/Korean input source cannot be driven from a test
+ * harness, but the two entry points AppKit uses can: setMarkedText: puts the
+ * composition in front of the app, insertText: commits it. NOVA_BROWSER_IME_PROBE
+ * drives exactly that pair, so the marked-text drawing and the commit path have
+ * automated coverage; the converter itself is still a manual check. */
+static void nova_gui_ime_probe(void) {
+    const char *env = getenv("NOVA_BROWSER_IME_PROBE");
+    if (!env || !env[0] || !nova_view) return;
+    NovaGuiView *view = (NovaGuiView *)nova_view;
+    static CFAbsoluteTime started = 0;
+    static int stage = 0;
+    if (started == 0) started = CFAbsoluteTimeGetCurrent();
+    double elapsed = CFAbsoluteTimeGetCurrent() - started;
+    if (stage == 0 && elapsed > 0.40) {
+        NSString *marked = @"にほ";
+        [view setMarkedText:marked selectedRange:NSMakeRange(2, 0)
+           replacementRange:NSMakeRange(NSNotFound, 0)];
+        printf("ime: marked=%s has=%d\n", [marked UTF8String], (int)[view hasMarkedText]);
+        fflush(stdout);
+        stage = 1;
+    } else if (stage == 1 && elapsed > 1.20) {
+        NSString *commit = @"日本";
+        [view insertText:commit replacementRange:NSMakeRange(NSNotFound, 0)];
+        printf("ime: committed=%s has=%d\n", [commit UTF8String], (int)[view hasMarkedText]);
+        fflush(stdout);
+        stage = 2;
+    }
+}
+
 /* Drains the platform queue and gives AppKit one turn to finish deferred work.
  * A program that only pumps when it draws will go unresponsive the moment it
  * idles, and a window whose layer transaction never commits stays blank, so
@@ -945,6 +1460,9 @@ void nova_gui_pump(void) {
         }
     }
     @autoreleasepool {
+        nova_gui_stack_check();
+        nova_gui_ime_probe();
+        nova_gui_menu_probe();
         for (;;) {
             NSEvent *event = [NSApp nextEventMatchingMask:NSEventMaskAny
                                                 untilDate:[NSDate distantPast]
@@ -956,6 +1474,91 @@ void nova_gui_pump(void) {
         /* `[NSDate date]` as the deadline means: run what is ready, never block. */
         [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate date]];
     }
+}
+
+static void nova_gui_ax_copy(char *out, size_t capacity, nova_str text) {
+    if (capacity == 0) return;
+    size_t length = (text.ptr && text.len > 0) ? (size_t)text.len : 0;
+    if (length > capacity - 1) {
+        length = capacity - 1;
+        /* Never cut a UTF-8 sequence in half. */
+        while (length > 0 && ((unsigned char)text.ptr[length] & 0xC0) == 0x80) length--;
+    }
+    if (length > 0) memcpy(out, text.ptr, length);
+    out[length] = '\0';
+}
+
+static NSString *nova_ax_role_name(int64_t role) {
+    switch (role) {
+        case 1: return NSAccessibilityTextFieldRole;
+        case 2: return @"AXTab";
+        case 3: return NSAccessibilityStaticTextRole;
+        case 4: return NSAccessibilityGroupRole;
+        case 5: return NSAccessibilityLinkRole;
+        default: return NSAccessibilityButtonRole;
+    }
+}
+
+void nova_gui_ax_begin(void) {
+    nova_ax_count = 0;
+}
+
+/* One call carries one string at most: the bundled compiler miscompiles an
+ * extern call that passes two nova_str arguments plus a trailing integer (the
+ * second string and the integer arrive as register garbage), so value and
+ * selection are attached to the element just pushed by their own tiny calls. */
+void nova_gui_ax_push(int64_t role, int64_t x, int64_t y, int64_t w, int64_t h, nova_str label) {
+    if (nova_ax_count >= NOVA_GUI_AX_MAX) return;
+    NovaAxItem *item = &nova_ax[nova_ax_count];
+    item->role = role;
+    item->x = x;
+    item->y = y;
+    item->w = w;
+    item->h = h;
+    item->selected = 0;
+    nova_gui_ax_copy(item->label, sizeof(item->label), label);
+    item->value[0] = '\0';
+    nova_ax_count++;
+}
+
+void nova_gui_ax_value(nova_str value) {
+    if (nova_ax_count <= 0) return;
+    nova_gui_ax_copy(nova_ax[nova_ax_count - 1].value, sizeof(nova_ax[0].value), value);
+}
+
+void nova_gui_ax_select(int64_t selected) {
+    if (nova_ax_count <= 0) return;
+    nova_ax[nova_ax_count - 1].selected = selected;
+}
+
+/* One-shot dump for a shell test. It asks for the same children AppKit gets,
+ * so a broken role, label or frame shows up as a missing or wrong line rather
+ * than as an untested claim. */
+static void nova_gui_ax_dump(void) {
+    if (nova_ax_dumped) return;
+    const char *env = getenv("NOVA_GUI_AX_DUMP");
+    if (!env || env[0] == '\0') return;
+    if (!nova_view || nova_ax_count <= 0) return;
+    nova_ax_dumped = 1;
+    NSArray *children = [nova_view accessibilityChildren];
+    fprintf(stdout, "ax: children=%d built=%lu\n", nova_ax_count, (unsigned long)children.count);
+    NSUInteger index = 0;
+    while (index < children.count) {
+        NovaAxElement *element = children[index];
+        if (![element isKindOfClass:[NovaAxElement class]]) { index++; continue; }
+        NSRect frame = element.accessibilityFrame;
+        NSString *role = element.accessibilityRole ?: @"";
+        NSString *label = element.accessibilityLabel ?: @"";
+        NSString *value = @"";
+        id raw = element.accessibilityValue;
+        if ([raw isKindOfClass:[NSString class]]) value = raw;
+        fprintf(stdout, "ax: role=%s label=%s value=%s selected=%d frame=%.0f,%.0f,%.0f,%.0f\n",
+                role.UTF8String ?: "", label.UTF8String ?: "", value.UTF8String ?: "",
+                (int)element.novaSelected,
+                frame.origin.x, frame.origin.y, frame.size.width, frame.size.height);
+        index++;
+    }
+    fflush(stdout);
 }
 
 void nova_gui_present(void) {
@@ -971,6 +1574,7 @@ void nova_gui_present(void) {
         [nova_view setNeedsDisplay:YES];
         [nova_view display];
         [CATransaction flush];
+        nova_gui_ax_dump();
     }
     nova_gui_trace("present %.2fms", (CFAbsoluteTimeGetCurrent() - started) * 1000.0);
 }
@@ -1007,6 +1611,18 @@ int64_t nova_gui_event_mods(void) {
 
 int64_t nova_gui_event_delta(void) {
     return nova_queue[(nova_q_head + NOVA_GUI_QUEUE - 1) % NOVA_GUI_QUEUE].delta;
+}
+
+nova_str nova_gui_event_text(void) {
+    int index = (nova_q_head + NOVA_GUI_QUEUE - 1) % NOVA_GUI_QUEUE;
+    if (nova_queue[index].kind != NOVA_GUI_TEXT) return nova_gui_empty();
+    const char *text = nova_text_queue[index];
+    size_t length = strlen(text);
+    char *copy = (char *)malloc(length + 1);
+    if (!copy) return nova_gui_empty();
+    memcpy(copy, text, length + 1);
+    nova_str result = {copy, (int64_t)length};
+    return result;
 }
 
 void nova_gui_set_title(nova_str title) {
@@ -1158,6 +1774,31 @@ nova_str nova_fs_read(nova_str path) {
     return result;
 }
 
+/* Reads a text resource from the running app bundle. Unbundled development
+ * runs simply return empty and let the caller fall back to a repo path. */
+nova_str nova_gui_resource(nova_str name) {
+    char *filename = nova_gui_cstr(name);
+    if (!filename || filename[0] == '\0') {
+        free(filename);
+        return nova_gui_empty();
+    }
+    @autoreleasepool {
+        NSString *resource = [NSString stringWithUTF8String:filename];
+        free(filename);
+        if (!resource) return nova_gui_empty();
+        NSString *path = [[NSBundle mainBundle] pathForResource:resource ofType:nil];
+        if (!path) return nova_gui_empty();
+        NSData *data = [NSData dataWithContentsOfFile:path];
+        if (!data) return nova_gui_empty();
+        char *copy = (char *)malloc(data.length + 1);
+        if (!copy) return nova_gui_empty();
+        memcpy(copy, data.bytes, data.length);
+        copy[data.length] = '\0';
+        nova_str result = {copy, (int64_t)data.length};
+        return result;
+    }
+}
+
 int64_t nova_fs_write(nova_str path, nova_str data) {
     char *name = nova_gui_cstr(path);
     if (!name) return 0;
@@ -1168,6 +1809,22 @@ int64_t nova_fs_write(nova_str path, nova_str data) {
     if (data.len > 0 && data.ptr) ok = fwrite(data.ptr, 1, (size_t)data.len, file) == (size_t)data.len;
     if (fclose(file) != 0) ok = 0;
     return ok ? 1 : 0;
+}
+
+/* Shows a file in Finder. A path that no longer exists is not revealed and
+ * returns 0, so download history rows can report a moved file instead of
+ * pretending the Finder was opened. */
+int64_t nova_gui_reveal(nova_str path) {
+    char *name = nova_gui_cstr(path);
+    if (!name) return 0;
+    @autoreleasepool {
+        NSString *target = [NSString stringWithUTF8String:name];
+        free(name);
+        if (!target) return 0;
+        if (![[NSFileManager defaultManager] fileExistsAtPath:target]) return 0;
+        [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:target]]];
+        return 1;
+    }
 }
 
 /* Raw byte reads use the same binary-safe path as nova_fs_read; the Nova
@@ -1842,7 +2499,10 @@ nova_str nova_gui_panel(int64_t mode) {
         /* A borderless Nova window can leave the app inactive, and an inactive
          * app's modal panel never comes forward: activate first. */
         [NSApp activateIgnoringOtherApps:YES];
-        if ([panel runModal] != NSModalResponseOK) return nova_gui_empty();
+        nova_gui_own_modal = 1;
+        NSModalResponse panel_response = [panel runModal];
+        nova_gui_own_modal = 0;
+        if (panel_response != NSModalResponseOK) return nova_gui_empty();
         NSURL *url = [[panel URLs] firstObject];
         if (!url || ![url path]) return nova_gui_empty();
         const char *utf8 = [[url path] UTF8String];

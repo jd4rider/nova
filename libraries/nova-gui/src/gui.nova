@@ -43,6 +43,7 @@ extern "C" fn nova_gui_open(title: String, width: Int, height: Int) -> Int
 extern "C" fn nova_gui_is_open() -> Int
 extern "C" fn nova_gui_width() -> Int
 extern "C" fn nova_gui_height() -> Int
+extern "C" fn nova_gui_native_view() -> Int
 extern "C" fn nova_gui_begin() -> Unit
 extern "C" fn nova_gui_clear(rgb: Int) -> Unit
 extern "C" fn nova_gui_rect(x: Int, y: Int, w: Int, h: Int, rgb: Int) -> Unit
@@ -53,6 +54,7 @@ extern "C" fn nova_gui_line(x0: Int, y0: Int, x1: Int, y1: Int, rgb: Int) -> Uni
 extern "C" fn nova_gui_text(x: Int, y: Int, text: String, size: Int, rgb: Int, mono: Int) -> Unit
 extern "C" fn nova_gui_text_width(text: String, size: Int, mono: Int) -> Int
 extern "C" fn nova_gui_advance(size: Int, mono: Int) -> Int
+extern "C" fn nova_gui_now_ms() -> Int
 extern "C" fn nova_gui_clip(x: Int, y: Int, w: Int, h: Int) -> Unit
 extern "C" fn nova_gui_clip_reset() -> Unit
 extern "C" fn nova_gui_present() -> Unit
@@ -63,12 +65,26 @@ extern "C" fn nova_gui_event_x() -> Int
 extern "C" fn nova_gui_event_y() -> Int
 extern "C" fn nova_gui_event_mods() -> Int
 extern "C" fn nova_gui_event_delta() -> Int
+extern "C" fn nova_gui_event_text() -> String
+extern "C" fn nova_gui_marked_text() -> String
+extern "C" fn nova_gui_stack_used() -> Int
+extern "C" fn nova_gui_stack_peak() -> Int
+extern "C" fn nova_gui_stack_span() -> Int
+extern "C" fn nova_gui_stack_headroom() -> Int
+extern "C" fn nova_gui_tab_menu(tabs: Int)
+extern "C" fn nova_gui_menu_result() -> Int
 extern "C" fn nova_gui_activate() -> Unit
 extern "C" fn nova_gui_set_title(title: String) -> Unit
 extern "C" fn nova_gui_close() -> Unit
 extern "C" fn nova_gui_save_png(path: String) -> Int
+extern "C" fn nova_gui_reveal(path: String) -> Int
+extern "C" fn nova_gui_ax_begin() -> Unit
+extern "C" fn nova_gui_ax_push(role: Int, x: Int, y: Int, w: Int, h: Int, label: String) -> Unit
+extern "C" fn nova_gui_ax_value(value: String) -> Unit
+extern "C" fn nova_gui_ax_select(selected: Int) -> Unit
 
 extern "C" fn nova_fs_read(path: String) -> String
+extern "C" fn nova_gui_resource(name: String) -> String
 extern "C" fn nova_fs_read_bytes(path: String) -> String
 extern "C" fn nova_fs_write_bytes(path: String, data: String) -> Int
 extern "C" fn nova_sha256_file(path: String) -> String
@@ -256,6 +272,51 @@ fn event_key_up() -> Int {
     return 10
 }
 
+// Composed UTF-8 text for a printable key. This is separate from event_key so
+// input fields can accept shifted, composed and non-ASCII characters without
+// reconstructing them from key codes. Read it with typed_text().
+fn event_text() -> Int {
+    return 11
+}
+
+fn typed_text() -> String {
+    return nova_gui_event_text()
+}
+
+// In-progress IME composition (marked text), empty when nothing is composing.
+fn marked_text() -> String {
+    return nova_gui_marked_text()
+}
+
+// Bytes of the main thread's stack in use, and its peak since launch. The
+// browser loop reports these so an exhausted stack is visible as a number.
+fn stack_used() -> Int {
+    return nova_gui_stack_used()
+}
+
+fn stack_peak() -> Int {
+    return nova_gui_stack_peak()
+}
+
+fn stack_span() -> Int {
+    return nova_gui_stack_span()
+}
+
+fn stack_headroom() -> Int {
+    return nova_gui_stack_headroom()
+}
+
+// Native context menu for a tab: 1 New, 2 Duplicate, 3 Close, 4 Close Others.
+// The choice is polled with menu_result(), like every other input event.
+fn tab_menu(tabs: Int) {
+    nova_gui_tab_menu(tabs)
+}
+
+fn menu_result() -> Int {
+    return nova_gui_menu_result()
+}
+
+
 fn key_enter() -> Int {
     return 13
 }
@@ -358,6 +419,11 @@ fn height() -> Int {
     return nova_gui_height()
 }
 
+// Opaque NSView handle for trusted native adapters. Valid until close().
+fn native_view() -> Int {
+    return nova_gui_native_view()
+}
+
 fn set_title(title: String) {
     nova_gui_set_title(title)
 }
@@ -444,12 +510,58 @@ fn advance(size: Int) -> Int {
     return nova_gui_advance(size, 1)
 }
 
+// Monotonic milliseconds, for easing and other time-based animation.
+fn now() -> Int {
+    return nova_gui_now_ms()
+}
+
 fn clip(x: Int, y: Int, w: Int, h: Int) {
     nova_gui_clip(x, y, w, h)
 }
 
 fn clip_reset() {
     nova_gui_clip_reset()
+}
+
+// ---------- accessibility ----------
+
+// The rasterized chrome is a single view, so the host cannot discover controls
+// on its own. Each frame the app pushes the controls it just drew and the host
+// turns them into NSAccessibilityElement children: role, geometry, label and,
+// for tabs and fields, the selected flag and current value.
+//
+// Roles stay integers so the FFI needs no string joins: 0 button, 1 text
+// field, 2 tab, 3 static text, 4 group, 5 link. Pressing an element emits the
+// ordinary click event at its centre, which reuses the app's hit-testing.
+fn ax_begin() {
+    nova_gui_ax_begin()
+}
+
+fn ax_button(x: Int, y: Int, w: Int, h: Int, label: String) {
+    nova_gui_ax_push(0, x, y, w, h, label)
+}
+
+// Value and selection are follow-up calls because an extern call with two
+// strings plus a trailing integer is miscompiled by the bundled compiler.
+fn ax_field(x: Int, y: Int, w: Int, h: Int, label: String, value: String) {
+    nova_gui_ax_push(1, x, y, w, h, label)
+    nova_gui_ax_value(value)
+}
+
+fn ax_tab(x: Int, y: Int, w: Int, h: Int, label: String, selected: Int) {
+    nova_gui_ax_push(2, x, y, w, h, label)
+    nova_gui_ax_select(selected)
+}
+
+fn ax_label(x: Int, y: Int, w: Int, h: Int, text: String) {
+    nova_gui_ax_push(3, x, y, w, h, text)
+}
+
+// A link keeps its visible text in the label and its target in the value, so a
+// screen reader announces both without the app formatting a sentence.
+fn ax_link(x: Int, y: Int, w: Int, h: Int, label: String, value: String) {
+    nova_gui_ax_push(5, x, y, w, h, label)
+    nova_gui_ax_value(value)
 }
 
 // ---------- geometry helpers ----------
@@ -496,6 +608,11 @@ fn read(path: String) -> String {
     return nova_fs_read(path)
 }
 
+// Reads a UTF-8 resource from the running app bundle. Empty when unbundled.
+fn resource(name: String) -> String {
+    return nova_gui_resource(name)
+}
+
 fn write(path: String, data: String) -> Bool {
     return nova_fs_write(path, data) == 1
 }
@@ -508,6 +625,12 @@ fn read_bytes(path: String) -> List<Int> {
 
 fn write_bytes(path: String, data: List<Int>) -> Bool {
     return nova_fs_write_bytes(path, data.utf8()) == 1
+}
+
+// Reveals a file in Finder. False when it has been moved or deleted, which is
+// what download history rows need to report rather than opening an empty view.
+fn reveal(path: String) -> Bool {
+    return nova_gui_reveal(path) == 1
 }
 
 fn sha256(path: String) -> String {

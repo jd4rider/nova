@@ -1,0 +1,88 @@
+// Failure classification for the Nova Browser error surface.
+//
+// WebKit reports a navigation failure as an NSError description. The chrome
+// turns that into a title, an explanation and whether a retry makes sense.
+// Pure string logic, so the wording is testable without a window.
+//
+// A certificate failure is deliberately not special-cased into a "proceed"
+// path: Nova never bypasses certificate errors.
+
+fn kind(message: String) -> String {
+    let text = message.lower()
+    if text.contains("offline") || text.contains("internet connection") ||
+       text.contains("network connection was lost") || text.contains("not connected") {
+        return "offline"
+    }
+    if text.contains("certificate") || text.contains("ssl") || text.contains("tls") ||
+       text.contains("secure connection") {
+        return "certificate"
+    }
+    if (text.contains("hostname") || text.contains("host")) &&
+       (text.contains("find") || text.contains("found") || text.contains("resolve") || text.contains("lookup")) {
+        return "dns"
+    }
+    if text.contains("could not connect") || text.contains("connection refused") ||
+       text.contains("timed out") || text.contains("timeout") ||
+       text.contains("server") && text.contains("connect") {
+        return "unreachable"
+    }
+    if text.contains("blocked") || text.contains("not allowed") ||
+       text.contains("unsupported") || text.contains("only http") {
+        return "blocked"
+    }
+    return "failed"
+}
+
+fn title(category: String) -> String {
+    if category == "offline" {
+        return "You're offline"
+    }
+    if category == "certificate" {
+        return "Certificate problem"
+    }
+    if category == "dns" {
+        return "Site not found"
+    }
+    if category == "unreachable" {
+        return "Can't reach this site"
+    }
+    if category == "blocked" {
+        return "Unsupported address"
+    }
+    return "This page didn't load"
+}
+
+fn hint(category: String) -> String {
+    if category == "offline" {
+        return "Nova Browser could not reach the network. Check Wi-Fi or Ethernet, then try again."
+    }
+    if category == "certificate" {
+        return "Nova does not bypass certificate errors. Check the site's certificate, your system clock or this network."
+    }
+    if category == "dns" {
+        return "The host name did not resolve. Check the address for a typo."
+    }
+    if category == "unreachable" {
+        return "The server refused the connection or did not answer in time. Try again in a moment."
+    }
+    if category == "blocked" {
+        return "Nova Browser opens http, https and about URLs only."
+    }
+    return "WebKit reported a navigation failure. The page may have moved or the server may be down."
+}
+
+// A blocked address will fail identically until it is edited, so the panel
+// offers only "Back" there. Everything else may succeed on a retry.
+fn can_retry(category: String) -> Bool {
+    return category != "blocked"
+}
+
+// Visible detail: WebKit's own description, kept verbatim so nothing is
+// disguised, unless it is empty.
+fn detail(message: String) -> String {
+    let text = message.trim()
+    if text.len() == 0 {
+        return "No detail was reported."
+    }
+    return text
+}

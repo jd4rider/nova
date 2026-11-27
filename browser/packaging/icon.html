@@ -1,0 +1,270 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 1024px;
+    height: 1024px;
+    background: transparent;
+  }
+  .icon {
+    position: relative;
+    width: 1024px;
+    height: 1024px;
+    border-radius: 228px;
+    overflow: hidden;
+    background:
+      radial-gradient(circle at 73% 19%, rgba(254, 128, 25, 0.30) 0%, rgba(254, 128, 25, 0) 42%),
+      radial-gradient(circle at 25% 82%, rgba(142, 192, 124, 0.18) 0%, rgba(142, 192, 124, 0) 46%),
+      linear-gradient(155deg, #32302f 0%, #1d2021 58%, #141617 100%);
+    box-shadow: inset 0 0 0 7px rgba(251, 241, 199, 0.06);
+    font-family: -apple-system, "Helvetica Neue", sans-serif;
+  }
+  .orbit {
+    position: absolute;
+    left: 86px;
+    top: 90px;
+    width: 852px;
+    height: 852px;
+    border-radius: 50%;
+    border: 3px solid rgba(254, 128, 25, 0.22);
+    transform: rotate(-18deg);
+  }
+  .orbit.two {
+    left: 152px;
+    top: 154px;
+    width: 720px;
+    height: 720px;
+    border-color: rgba(142, 192, 124, 0.16);
+    transform: rotate(22deg);
+  }
+  .window {
+    position: absolute;
+    left: 146px;
+    top: 196px;
+    width: 732px;
+    height: 632px;
+    border-radius: 52px;
+    background: #282828;
+    border: 4px solid #504945;
+    box-shadow:
+      0 54px 100px rgba(0, 0, 0, 0.52),
+      0 0 0 10px rgba(29, 32, 33, 0.75),
+      0 0 70px rgba(254, 128, 25, 0.13);
+    overflow: hidden;
+  }
+  .titlebar {
+    height: 76px;
+    background: #1d2021;
+    border-bottom: 3px solid #3c3836;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding-left: 32px;
+  }
+  .dot {
+    width: 19px;
+    height: 19px;
+    border-radius: 50%;
+  }
+  .red { background: #fb4934; }
+  .yellow { background: #fabd2f; }
+  .green { background: #b8bb26; }
+  .tab {
+    margin-left: 28px;
+    width: 250px;
+    height: 42px;
+    border-radius: 12px 12px 0 0;
+    background: #32302f;
+    border: 2px solid #504945;
+    border-bottom: 0;
+    position: relative;
+    top: 17px;
+  }
+  .tab::before {
+    content: "";
+    position: absolute;
+    left: 18px;
+    top: 14px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #fe8019;
+  }
+  .tab::after {
+    content: "";
+    position: absolute;
+    left: 44px;
+    top: 18px;
+    width: 110px;
+    height: 8px;
+    border-radius: 4px;
+    background: #665c54;
+  }
+  .toolbar {
+    height: 88px;
+    background: #32302f;
+    border-bottom: 3px solid #3c3836;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding-left: 28px;
+    padding-right: 28px;
+  }
+  .button {
+    width: 28px;
+    height: 28px;
+    border-radius: 9px;
+    background: #3c3836;
+    border: 2px solid #504945;
+    flex: none;
+  }
+  .address {
+    flex: 1;
+    height: 42px;
+    border-radius: 12px;
+    background: #1d2021;
+    border: 2px solid #665c54;
+    display: flex;
+    align-items: center;
+    padding-left: 17px;
+  }
+  .address::before {
+    content: "";
+    width: 13px;
+    height: 13px;
+    border-radius: 4px;
+    border: 3px solid #8ec07c;
+    margin-right: 12px;
+  }
+  .address::after {
+    content: "";
+    width: 236px;
+    height: 8px;
+    border-radius: 4px;
+    background: #665c54;
+  }
+  .page {
+    position: relative;
+    height: 465px;
+    padding: 52px 58px;
+    background:
+      radial-gradient(circle at 82% 34%, rgba(254, 128, 25, 0.16), rgba(254, 128, 25, 0) 40%),
+      #282828;
+  }
+  .headline {
+    width: 330px;
+    height: 34px;
+    border-radius: 17px;
+    background: #ebdbb2;
+    margin-bottom: 18px;
+  }
+  .headline.short {
+    width: 238px;
+    height: 24px;
+    background: #a89984;
+    margin-bottom: 36px;
+  }
+  .line {
+    height: 14px;
+    border-radius: 7px;
+    background: #504945;
+    margin-bottom: 18px;
+  }
+  .line.one { width: 390px; }
+  .line.two { width: 460px; }
+  .line.three { width: 340px; }
+  .cards {
+    display: flex;
+    gap: 18px;
+    margin-top: 40px;
+  }
+  .card {
+    width: 172px;
+    height: 104px;
+    border-radius: 15px;
+    background: #32302f;
+    border: 2px solid #504945;
+    position: relative;
+  }
+  .card::before {
+    content: "";
+    position: absolute;
+    left: 18px;
+    top: 20px;
+    width: 46px;
+    height: 9px;
+    border-radius: 5px;
+    background: #fe8019;
+  }
+  .card::after {
+    content: "";
+    position: absolute;
+    left: 18px;
+    top: 42px;
+    width: 120px;
+    height: 8px;
+    border-radius: 4px;
+    background: #665c54;
+    box-shadow: 0 18px 0 #504945;
+  }
+  .star {
+    position: absolute;
+    right: 72px;
+    bottom: 58px;
+    width: 210px;
+    height: 210px;
+    background: linear-gradient(145deg, #fabd2f 0%, #fe8019 58%, #d65d0e 100%);
+    clip-path: polygon(50% 0%, 61% 36%, 100% 50%, 61% 64%, 50% 100%, 39% 64%, 0% 50%, 39% 36%);
+    filter: drop-shadow(0 0 42px rgba(254, 128, 25, 0.58));
+    opacity: 0.96;
+    transform: rotate(9deg);
+  }
+  .star.small {
+    right: 244px;
+    bottom: 204px;
+    width: 64px;
+    height: 64px;
+    opacity: 0.72;
+    transform: rotate(-18deg);
+  }
+</style>
+</head>
+<body>
+  <div class="icon">
+    <div class="orbit"></div>
+    <div class="orbit two"></div>
+    <div class="window">
+      <div class="titlebar">
+        <div class="dot red"></div>
+        <div class="dot yellow"></div>
+        <div class="dot green"></div>
+        <div class="tab"></div>
+      </div>
+      <div class="toolbar">
+        <div class="button"></div>
+        <div class="button"></div>
+        <div class="button"></div>
+        <div class="address"></div>
+      </div>
+      <div class="page">
+        <div class="headline"></div>
+        <div class="headline short"></div>
+        <div class="line one"></div>
+        <div class="line two"></div>
+        <div class="line three"></div>
+        <div class="cards">
+          <div class="card"></div>
+          <div class="card"></div>
+          <div class="card"></div>
+        </div>
+      </div>
+    </div>
+    <div class="star"></div>
+    <div class="star small"></div>
+  </div>
+</body>
+</html>

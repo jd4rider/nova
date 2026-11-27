@@ -1,0 +1,708 @@
+// Nova Browser library: visits, bookmarks, autocomplete ranking and Google
+// bookmark import.
+//
+// Records are plain UTF-8 lines so a profile file stays inspectable and the
+// headless tests run without a window:
+//
+//   visit<TAB>https://example.com/docs<TAB>Docs
+//   bookmark<TAB>https://example.com/<TAB>Example
+//
+// Tabs, newlines and backslashes inside a URL or title are escaped, so
+// splitting a line on a tab is always safe. A visit appends one line, which
+// means a suggestion can count real visits without storing a mutable counter
+// and a corrupt line can be dropped without losing the rest of the store.
+//
+// This module is pure: no GUI, no AppKit, no file access. The browser shell
+// owns paths and persistence.
+
+import "../../../libraries/nova-boxes/src/json.nova" as json
+
+// ---------- encoding ----------
+
+fn history_slice_chars(chars: List<String>, start: Int, stop: Int) -> String {
+    var out = ""
+    var i = start
+    while i < stop && i < chars.len() {
+        if i >= 0 {
+            out = out + chars[i]
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn history_drop_last(text: String) -> String {
+    let chars = text.chars()
+    if chars.len() == 0 {
+        return text
+    }
+    return history_slice_chars(chars, 0, chars.len() - 1)
+}
+
+fn escape(text: String) -> String {
+    var out = ""
+    for ch in text.chars() {
+        if ch == "\\" {
+            out = out + "\\\\"
+        } else if ch == "\t" {
+            out = out + "\\t"
+        } else if ch == "\n" {
+            out = out + "\\n"
+        } else if ch == "\r" {
+            out = out + "\\r"
+        } else {
+            out = out + ch
+        }
+    }
+    return out
+}
+
+fn unescape(text: String) -> String {
+    let chars = text.chars()
+    var out = ""
+    var i = 0
+    while i < chars.len() {
+        if chars[i] == "\\" && i + 1 < chars.len() {
+            let next = chars[i + 1]
+            if next == "t" {
+                out = out + "\t"
+            } else if next == "n" {
+                out = out + "\n"
+            } else if next == "r" {
+                out = out + "\r"
+            } else {
+                out = out + next
+            }
+            i = i + 2
+        } else {
+            out = out + chars[i]
+            i = i + 1
+        }
+    }
+    return out
+}
+
+fn record(kind: String, url: String, title: String) -> String {
+    return kind + "\t" + escape(url) + "\t" + escape(title)
+}
+
+fn field(line: String, index: Int) -> String {
+    let parts = line.split("\t")
+    if index < 0 || index >= parts.len() {
+        return ""
+    }
+    return unescape(parts[index])
+}
+
+fn join_records(records: List<String>) -> String {
+    var out = ""
+    var i = 0
+    while i < records.len() {
+        if i > 0 {
+            out = out + "\n"
+        }
+        out = out + records[i]
+        i = i + 1
+    }
+    return out
+}
+
+fn empty() -> List<String> {
+    return []
+}
+
+fn strip_cr(line: String) -> String {
+    if line.ends_with("\r") {
+        return history_drop_last(line)
+    }
+    return line
+}
+
+fn parse_records(text: String) -> List<String> {
+    var records: List<String> = []
+    for line in text.split("\n") {
+        let item = strip_cr(line)
+        if item.len() > 0 {
+            records.push(item)
+        }
+    }
+    return records
+}
+
+fn merge(first: List<String>, second: List<String>) -> List<String> {
+    var out: List<String> = []
+    var i = 0
+    while i < first.len() {
+        out.push(first[i])
+        i = i + 1
+    }
+    i = 0
+    while i < second.len() {
+        out.push(second[i])
+        i = i + 1
+    }
+    return out
+}
+
+// ---------- urls ----------
+
+// Deduplication key: case-insensitive, no trailing slash, no fragment.
+fn key(url: String) -> String {
+    var text = url.trim().lower()
+    let hash = text.split("#")
+    if hash.len() > 1 {
+        text = hash[0]
+    }
+    if text.ends_with("/") && !text.ends_with("://") {
+        text = history_drop_last(text)
+    }
+    return text
+}
+
+fn host_of(url: String) -> String {
+    let lower = url.lower()
+    let scheme = lower.split("://")
+    if scheme.len() < 2 {
+        return ""
+    }
+    let slash = scheme[1].split("/")
+    let colon = slash[0].split(":")
+    return colon[0]
+}
+
+fn allowed_url(url: String) -> Bool {
+    let lower = url.trim().lower()
+    return lower.starts_with("http://") || lower.starts_with("https://")
+}
+
+// ---------- record predicates ----------
+
+fn is_visit(line: String) -> Bool {
+    return field(line, 0) == "visit"
+}
+
+fn is_bookmark(line: String) -> Bool {
+    return field(line, 0) == "bookmark"
+}
+
+fn visit_count(records: List<String>) -> Int {
+    var count = 0
+    for line in records {
+        if is_visit(line) {
+            count = count + 1
+        }
+    }
+    return count
+}
+
+fn bookmark_count(records: List<String>) -> Int {
+    var count = 0
+    for line in records {
+        if is_bookmark(line) {
+            count = count + 1
+        }
+    }
+    return count
+}
+
+// ---------- mutation ----------
+
+// Appends one visit and bounds the store. Re-visiting a URL intentionally
+// keeps every line: the count is what ranks a suggestion, and a reload that
+// the shell already de-duplicated does not reach here.
+fn add_visit(records: List<String>, url: String, title: String) -> List<String> {
+    if key(url).len() == 0 {
+        return records
+    }
+    var out = records
+    out.push(record("visit", url, title))
+    var visits = visit_count(out)
+    if visits <= 400 {
+        return out
+    }
+    var drop = visits - 400
+    var kept: List<String> = []
+    for line in out {
+        if drop > 0 && is_visit(line) {
+            drop = drop - 1
+        } else {
+            kept.push(line)
+        }
+    }
+    return kept
+}
+
+fn add_bookmark(records: List<String>, url: String, title: String) -> List<String> {
+    let k = key(url)
+    if k.len() == 0 {
+        return records
+    }
+    let shown = if title.trim().len() > 0 { title.trim() } else { host_of(url) }
+    var out: List<String> = []
+    var placed = false
+    for line in records {
+        if is_bookmark(line) && key(field(line, 1)) == k {
+            if !placed {
+                out.push(record("bookmark", url, shown))
+                placed = true
+            }
+        } else {
+            out.push(line)
+        }
+    }
+    if !placed {
+        out.push(record("bookmark", url, shown))
+    }
+    return out
+}
+
+fn remove_bookmark(records: List<String>, url: String) -> List<String> {
+    let k = key(url)
+    var out: List<String> = []
+    for line in records {
+        if is_bookmark(line) && key(field(line, 1)) == k {
+            // dropped
+        } else {
+            out.push(line)
+        }
+    }
+    return out
+}
+
+fn has_bookmark(records: List<String>, url: String) -> Bool {
+    let k = key(url)
+    if k.len() == 0 {
+        return false
+    }
+    for line in records {
+        if is_bookmark(line) && key(field(line, 1)) == k {
+            return true
+        }
+    }
+    return false
+}
+
+// ---------- suggestions ----------
+
+fn visits_for(records: List<String>, k: String) -> Int {
+    var count = 0
+    for line in records {
+        if is_visit(line) && key(field(line, 1)) == k {
+            count = count + 1
+        }
+    }
+    return count
+}
+
+// Higher is better, -1 means "does not match". A host-name prefix beats a
+// path match, a title prefix beats a title substring, and a bookmark always
+// outranks a visit with the same match.
+fn score(url: String, title: String, kind: String, visits: Int, query: String) -> Int {
+    let q = query.trim().lower()
+    let bookmark = kind == "bookmark"
+    var visits_bonus = visits
+    if visits_bonus > 12 {
+        visits_bonus = 12
+    }
+    let bonus = visits_bonus + (if bookmark { 6 } else { 0 })
+    if q.len() == 0 {
+        return 20 + bonus
+    }
+    let host = host_of(url)
+    let lower_url = url.lower()
+    let lower_title = title.lower()
+    var value = 0 - 1
+    if host.starts_with(q) {
+        value = 120
+    } else if host.contains(q) {
+        value = 90
+    } else if lower_url.contains(q) {
+        value = 50
+    } else if lower_title.starts_with(q) {
+        value = 70
+    } else if lower_title.contains(q) {
+        value = 40
+    }
+    if value < 0 {
+        return 0 - 1
+    }
+    return value + bonus
+}
+
+fn drop_text(list: List<String>, index: Int) -> List<String> {
+    var out: List<String> = []
+    var i = 0
+    while i < list.len() {
+        if i != index {
+            out.push(list[i])
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn drop_int(list: List<Int>, index: Int) -> List<Int> {
+    var out: List<Int> = []
+    var i = 0
+    while i < list.len() {
+        if i != index {
+            out.push(list[i])
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn seen_key(keys: List<String>, candidate: String) -> Bool {
+    for existing in keys {
+        if existing == candidate {
+            return true
+        }
+    }
+    return false
+}
+
+// Ranked suggestions as encoded records, best first. Bookmarks are collected
+// first so a bookmarked URL hides its own history entries instead of showing
+// twice.
+fn suggest(records: List<String>, query: String, limit: Int) -> List<String> {
+    var keys: List<String> = []
+    var urls: List<String> = []
+    var titles: List<String> = []
+    var kinds: List<String> = []
+    var scores: List<Int> = []
+
+    var pass = 0
+    while pass < 2 {
+        let wanted = if pass == 0 { "bookmark" } else { "visit" }
+        for line in records {
+            if field(line, 0) == wanted {
+                let url = field(line, 1)
+                let k = key(url)
+                if k.len() > 0 && !seen_key(keys, k) {
+                    let title = field(line, 2)
+                    let count = visits_for(records, k)
+                    let value = score(url, title, wanted, count, query)
+                    if value >= 0 {
+                        keys.push(k)
+                        urls.push(url)
+                        titles.push(title)
+                        kinds.push(wanted)
+                        scores.push(value)
+                    }
+                }
+            }
+        }
+        pass = pass + 1
+    }
+
+    var out: List<String> = []
+    while out.len() < limit && urls.len() > 0 {
+        var best = 0
+        var i = 1
+        while i < scores.len() {
+            if scores[i] > scores[best] {
+                best = i
+            }
+            i = i + 1
+        }
+        out.push(record(kinds[best], urls[best], titles[best]))
+        keys = drop_text(keys, best)
+        urls = drop_text(urls, best)
+        titles = drop_text(titles, best)
+        kinds = drop_text(kinds, best)
+        scores = drop_int(scores, best)
+    }
+    return out
+}
+
+// ---------- google import ----------
+
+fn dedupe_bookmarks(records: List<String>) -> List<String> {
+    var out: List<String> = []
+    var i = 0
+    while i < records.len() {
+        let line = records[i]
+        let k = key(field(line, 1))
+        var keep = k.len() > 0
+        var j = i + 1
+        while j < records.len() {
+            if key(field(records[j], 1)) == k {
+                keep = false
+            }
+            j = j + 1
+        }
+        if keep {
+            out.push(line)
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn collect_chrome(doc: JsonDoc, node: Int, out: List<String>) -> List<String> {
+    if json.js_kind(doc, node) != 5 {
+        return out
+    }
+    var result = out
+    let kind = json.js_str(doc, json.js_get(doc, node, "type"))
+    let name = json.js_str(doc, json.js_get(doc, node, "name"))
+    let url = json.js_str(doc, json.js_get(doc, node, "url"))
+    if kind == "url" && allowed_url(url) {
+        result.push(record("bookmark", url, name))
+    }
+    let children = json.js_get(doc, node, "children")
+    if children >= 0 && json.js_kind(doc, children) == 4 {
+        var i = 0
+        while i < json.js_len(doc, children) {
+            result = collect_chrome(doc, json.js_at(doc, children, i), result)
+            i = i + 1
+        }
+    }
+    return result
+}
+
+// Reads a Chrome "Bookmarks" profile file. Only http(s) entries are imported:
+// chrome://pages and javascript: bookmarks are not navigable here.
+fn import_chrome(text: String) -> List<String> {
+    let doc = json.js_parse(text)
+    if doc.error.len() > 0 || doc.nodes.len() == 0 {
+        return []
+    }
+    let root = doc.nodes.len() - 1
+    let roots = json.js_get(doc, root, "roots")
+    var out: List<String> = []
+    if roots >= 0 && json.js_kind(doc, roots) == 5 {
+        var i = 0
+        while i < json.js_len(doc, roots) {
+            out = collect_chrome(doc, json.js_at(doc, roots, i), out)
+            i = i + 1
+        }
+    }
+    return dedupe_bookmarks(out)
+}
+
+fn match_ci(chars: List<String>, at: Int, needle: String) -> Bool {
+    let target = needle.chars()
+    if at + target.len() > chars.len() {
+        return false
+    }
+    var i = 0
+    while i < target.len() {
+        if chars[at + i].lower() != target[i].lower() {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+fn decode_entities(text: String) -> String {
+    let chars = text.chars()
+    var out = ""
+    var i = 0
+    while i < chars.len() {
+        if chars[i] == "&" {
+            var j = i + 1
+            var name = ""
+            while j < chars.len() && chars[j] != ";" && j - i <= 8 {
+                name = name + chars[j]
+                j = j + 1
+            }
+            var decoded = ""
+            if j < chars.len() && chars[j] == ";" && name.len() > 0 {
+                if name == "amp" {
+                    decoded = "&"
+                } else if name == "lt" {
+                    decoded = "<"
+                } else if name == "gt" {
+                    decoded = ">"
+                } else if name == "quot" {
+                    decoded = "\""
+                } else if name == "apos" || name == "#39" {
+                    decoded = "'"
+                } else if name == "nbsp" {
+                    decoded = " "
+                }
+            }
+            if decoded.len() > 0 {
+                out = out + decoded
+                i = j + 1
+            } else {
+                out = out + chars[i]
+                i = i + 1
+            }
+        } else {
+            out = out + chars[i]
+            i = i + 1
+        }
+    }
+    return out
+}
+
+// Reads a Netscape bookmark export (Google Takeout, Chrome "Export
+// bookmarks", Firefox, Safari). Attribute order and quoting vary, so the
+// scanner walks the tags instead of assuming a fixed shape.
+fn import_html(text: String) -> List<String> {
+    let chars = text.chars()
+    var out: List<String> = []
+    var i = 0
+    while i < chars.len() {
+        if match_ci(chars, i, "<a href=") {
+            var p = i + 8
+            while p < chars.len() && chars[p] == " " {
+                p = p + 1
+            }
+            if p < chars.len() && (chars[p] == "\"" || chars[p] == "'") {
+                let quote = chars[p]
+                p = p + 1
+                var url = ""
+                while p < chars.len() && chars[p] != quote {
+                    url = url + chars[p]
+                    p = p + 1
+                }
+                var label = ""
+                if p < chars.len() {
+                    var q = p
+                    while q < chars.len() && chars[q] != ">" {
+                        q = q + 1
+                    }
+                    q = q + 1
+                    while q < chars.len() && chars[q] != "<" {
+                        label = label + chars[q]
+                        q = q + 1
+                    }
+                    p = q
+                }
+                if allowed_url(url) {
+                    let clean_url = decode_entities(url).trim()
+                    let clean_label = decode_entities(label).trim()
+                    out.push(record("bookmark", clean_url, clean_label))
+                }
+                i = p
+            } else {
+                i = i + 1
+            }
+        } else {
+            i = i + 1
+        }
+    }
+    return dedupe_bookmarks(out)
+}
+
+// ---------- settings, session and download text ----------
+
+// Decimal digits from a small text field. Stops at the first non-digit, so a
+// corrupt settings line cannot abort the browser.
+fn number_of(text: String) -> Int {
+    let digits = "0123456789".chars()
+    var value = 0
+    for ch in text.chars() {
+        var digit = 0 - 1
+        var i = 0
+        while i < digits.len() {
+            if digits[i] == ch {
+                digit = i
+            }
+            i = i + 1
+        }
+        if digit < 0 {
+            return value
+        }
+        value = value * 10 + digit
+    }
+    return value
+}
+
+fn setting_value(text: String, key: String) -> String {
+    for line in text.split("\n") {
+        let parts = line.split("=")
+        if parts.len() >= 2 && parts[0].trim() == key {
+            return parts[1].trim()
+        }
+    }
+    return ""
+}
+
+// Replaces a key while keeping the other settings, so layout and search can
+// both live in settings.tsv.
+fn setting_with(text: String, key: String, value: String) -> String {
+    var out = ""
+    for line in text.split("\n") {
+        let trimmed = line.trim()
+        if trimmed.len() == 0 {
+            continue
+        }
+        let parts = trimmed.split("=")
+        if parts.len() >= 2 && parts[0].trim() == key {
+            continue
+        }
+        out = out + trimmed + "\n"
+    }
+    return out + key + "=" + value
+}
+
+fn session_encode(urls: List<String>, active: Int) -> String {
+    var out = ""
+    for url in urls {
+        if allowed_url(url) {
+            out = out + "tab\t" + escape(url) + "\n"
+        }
+    }
+    return out + "active\t" + "${active}"
+}
+
+fn session_urls(text: String) -> List<String> {
+    var urls: List<String> = []
+    for line in parse_records(text) {
+        if field(line, 0) == "tab" {
+            let url = field(line, 1)
+            if allowed_url(url) {
+                urls.push(url)
+            }
+        }
+    }
+    return urls
+}
+
+fn session_active(text: String) -> Int {
+    for line in parse_records(text) {
+        if field(line, 0) == "active" {
+            return number_of(field(line, 1))
+        }
+    }
+    return 0
+}
+
+fn size_text(bytes: Int) -> String {
+    if bytes < 1024 {
+        return "${bytes} B"
+    }
+    if bytes < 1048576 {
+        let whole = bytes / 1024
+        let tenth = (bytes % 1024) * 10 / 1024
+        return "${whole}.${tenth} KB"
+    }
+    if bytes < 1073741824 {
+        let whole = bytes / 1048576
+        let tenth = (bytes % 1048576) * 10 / 1048576
+        return "${whole}.${tenth} MB"
+    }
+    let whole = bytes / 1073741824
+    let tenth = (bytes % 1073741824) * 10 / 1073741824
+    return "${whole}.${tenth} GB"
+}
+
+fn percent_of(part: Int, total: Int) -> Int {
+    if total <= 0 {
+        return 0
+    }
+    var value = part * 100 / total
+    if value > 100 {
+        value = 100
+    }
+    if value < 0 {
+        value = 0
+    }
+    return value
+}
